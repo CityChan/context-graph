@@ -1,0 +1,51 @@
+# ============================================================
+# FoldAgent: full dependency list (derived from source imports)
+# ============================================================
+
+# --- Distributed / training ---
+ray[default]
+hydra-core
+omegaconf
+torchdata
+tensordict>=0.8.0,<=0.10.0,!=0.9.0
+
+# --- Web / async ---
+fastapi
+uvicorn
+httpx
+aiohttp
+pydantic
+openai
+requests
+
+# --- Eval / math ---
+math_verify
+latex2sympy2_extended
+pylatexenc
+
+# --- Data ---
+numpy<2.0.0
+pandas
+pyarrow>=19.0.0
+
+# --- SWE-Bench env ---
+unidiff
+psutil
+
+# --- Misc ---
+packaging>=20.0
+tqdm
+dill
+filelock
+pybind11
+codetiming
+cloudpickle
+cachetools
+
+# --- Tracking ---
+wandb
+tensorboard
+
+# --- Optional ---
+# liger-kernel       # efficient training kernels
+# pre-commit         # development only
