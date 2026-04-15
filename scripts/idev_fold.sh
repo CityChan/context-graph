@@ -1,16 +1,8 @@
 #!/bin/bash
-#SBATCH -J fold-alf
-#SBATCH -o fold-alf.%j.out
-#SBATCH -e fold-alf.%j.err
-#SBATCH -p gh
-#SBATCH -N 1
-#SBATCH -n 1
-#SBATCH -c 72
-#SBATCH -t 01:30:00
-#SBATCH -A ASC24078
-
-# FoldAgent on ALFWorld (household tasks), single node
-# Multi-turn (15-50 steps), tiny per-turn context (~30 tokens), no search server needed
+# Run FoldAgent on ALFWorld inside idev session (NO sbatch header)
+# Usage (from idev shell):
+#   cd /work/09281/chc_1996/vista/context-graph
+#   bash scripts/idev_fold.sh
 set -e
 
 source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
@@ -36,17 +28,10 @@ export NCCL_P2P_LEVEL=NVL
 export OPENAI_API_KEY=REDACTED_OPENAI_KEY
 export WANDB_API_KEY=REDACTED_WANDB_KEY
 
-echo "=== TEST: FoldAgent on ALFWorld (single node) ==="
+echo "=== [IDEV] FoldAgent on ALFWorld (4B Instruct, 20 steps) ==="
 echo "=== Node: $(hostname), $(date) ==="
 
-# ── Step 1: Generate data ──
-# Use --mode real for actual ALFWorld games, --mode mock for synthetic
-python scripts/make_alfworld_data.py --mode real --n_train 300 --n_val 80
-
-# No search server needed — ALFWorld env is self-contained
-
-# ── Step 2: Train ──
-echo "=== Starting FoldGRPO on ALFWorld (5 steps) ==="
+python scripts/make_alfworld_data.py --mode mock --n_train 300 --n_val 80
 
 python -m scripts.train_fold \
   algorithm.adv_estimator=foldgrpo \
@@ -74,10 +59,11 @@ python -m scripts.train_fold \
   actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
   actor_rollout_ref.actor.ppo_max_token_len_per_gpu=8192 \
   actor_rollout_ref.actor.ppo_infer_max_token_len_per_gpu=8192 \
+  actor_rollout_ref.model.enable_gradient_checkpointing=True \
   +actor_rollout_ref.rollout.plugin.workflow=alfworld \
   +actor_rollout_ref.rollout.plugin.max_turn=20 \
   +actor_rollout_ref.rollout.plugin.retry_cjk=10 \
-  +actor_rollout_ref.rollout.plugin.turn_max_new_tokens=256 \
+  +actor_rollout_ref.rollout.plugin.turn_max_new_tokens=512 \
   +actor_rollout_ref.rollout.plugin.max_session=3 \
   +actor_rollout_ref.rollout.plugin.val_max_session=3 \
   +actor_rollout_ref.rollout.plugin.session_timeout=300 \
@@ -94,11 +80,11 @@ python -m scripts.train_fold \
   trainer.val_only=False \
   trainer.n_gpus_per_node=1 \
   trainer.nnodes=1 \
-  trainer.total_training_steps=5 \
-  trainer.test_freq=5 \
+  trainer.total_training_steps=20 \
+  trainer.test_freq=10 \
   trainer.save_freq=-1 \
   trainer.project_name=context-graph \
-  trainer.experiment_name=fold_alfworld \
+  trainer.experiment_name=fold_alfworld_4b_hard_20 \
   trainer.logger='["console","wandb"]'
 
-echo "=== Test finished: $(date) ==="
+echo "=== [IDEV] FoldAgent finished: $(date) ==="

@@ -46,6 +46,8 @@ class ALFWorldEnv:
 
         # Determine mode from ability string
         self._use_real = "real" in ability.lower()
+        # "hard" in ability → MemexRL-style: hide admissible commands
+        self._hide_admissible = "hard" in ability.lower()
 
         # Real TextWorld state
         self._tw_env = None
@@ -127,17 +129,35 @@ class ALFWorldEnv:
             self._init_mock(extra_info)
 
     def _init_mock(self, extra_info):
-        """Initialize mock state machine (no TextWorld needed)."""
+        """Initialize mock state machine (multi-object, possibly across multiple containers)."""
         self.instance_info['problem_statement'] = extra_info.get('task_desc', '')
+
+        target_objects = list(extra_info.get('target_objects', []))
+        target_receptacles = list(extra_info.get('target_receptacles', []))
+        # Backward compat: if old single-object fields present, promote to lists
+        if not target_objects and extra_info.get('target_object'):
+            target_objects = [extra_info['target_object']]
+            target_receptacles = [extra_info.get('target_receptacle', 'countertop 1')]
+
+        # Map each object to its target receptacle (parallel lists)
+        object_to_receptacle = dict(zip(target_objects, target_receptacles))
+
+        # Map each object to its source container.
+        # Prefer explicit per-object map; fall back to single shared container for all.
+        object_location_map = dict(extra_info.get('object_location_map', {}) or {})
+        default_loc = extra_info.get('object_location', 'fridge 1')
+        for o in target_objects:
+            object_location_map.setdefault(o, default_loc)
 
         self._mock_state = {
             'location': 'countertop 1',
             'inventory': [],
-            'task_type': extra_info.get('task_type', 'pick_and_place'),
-            'target_object': extra_info.get('target_object', 'apple'),
-            'target_receptacle': extra_info.get('target_receptacle', 'countertop 1'),
-            'object_location': extra_info.get('object_location', 'fridge 1'),
-            'object_state': 'dirty',
+            'task_type': extra_info.get('task_type', 'pick_and_place_multi'),
+            'target_objects': target_objects,
+            'target_receptacles': target_receptacles,
+            'object_to_receptacle': object_to_receptacle,
+            'object_location_map': object_location_map,
+            'objects_placed': set(),
             'task_complete': False,
             'containers_opened': set(),
         }
@@ -229,71 +249,65 @@ class ALFWorldEnv:
             'sinkbasin 2', 'toilet 1', 'bathtub 1', 'shelf 4', 'cabinet 3',
         ]
 
+        remaining = [o for o in s['target_objects'] if o not in s['objects_placed']]
+        loc_map = s['object_location_map']
+        # Objects currently present at a given receptacle (not yet picked up or placed)
+        def objects_at(recep):
+            return [o for o in remaining if loc_map.get(o) == recep and o not in s['inventory']]
+
         if cmd.startswith('go to '):
             target = cmd[6:].strip()
             match = next((r for r in ALL_RECEPTACLES if target in r or r in target), None)
             if match:
                 s['location'] = match
                 obs = f'You arrive at {match}.'
-                if match == s['object_location'] and s['target_object'] not in s['inventory']:
+                visible = objects_at(match)
+                if visible:
                     if any(w in match for w in ['fridge', 'cabinet', 'drawer', 'microwave']) and match not in s['containers_opened']:
                         obs += f' The {match} is closed.'
                     else:
-                        obs += f' You see a {s["target_object"]} here.'
+                        obs += f' You see: {", ".join(visible)}.'
                 return self._obs_with_commands(obs)
             return self._obs_with_commands(f"Can't find {target}.")
 
         if cmd.startswith('take '):
-            if s['target_object'] in cmd and s['location'] == s['object_location']:
+            # Match any target object present in command; must be at that object's container
+            obj = next((o for o in s['target_objects'] if o in cmd), None)
+            if obj and s['location'] == loc_map.get(obj) and obj not in s['objects_placed'] and obj not in s['inventory']:
                 if any(w in s['location'] for w in ['fridge', 'cabinet', 'drawer', 'microwave']) and s['location'] not in s['containers_opened']:
                     return self._obs_with_commands(f'The {s["location"]} is closed.')
-                s['inventory'].append(s['target_object'])
-                return self._obs_with_commands(f'You pick up the {s["target_object"]}.')
+                s['inventory'].append(obj)
+                return self._obs_with_commands(f'You pick up the {obj}.')
             return self._obs_with_commands("You can't take that.")
 
         if cmd.startswith('put '):
-            if s['target_object'] in s['inventory'] and s['target_object'] in cmd:
-                at_target = s['target_receptacle'] in s['location'] or s['location'] in s['target_receptacle'] or s['target_receptacle'] in cmd
-                if at_target:
-                    if 'clean' in s['task_type'] and s['object_state'] != 'clean':
-                        return self._obs_with_commands(f'The {s["target_object"]} needs cleaning.')
-                    if 'heat' in s['task_type'] and s['object_state'] != 'hot':
-                        return self._obs_with_commands(f'The {s["target_object"]} needs heating.')
-                    if 'cool' in s['task_type'] and s['object_state'] != 'cool':
-                        return self._obs_with_commands(f'The {s["target_object"]} needs cooling.')
-                    s['inventory'].remove(s['target_object'])
+            # Find which inventory object the agent is trying to put
+            obj = next((o for o in s['inventory'] if o in cmd), None)
+            if obj is None:
+                return self._obs_with_commands("You aren't carrying that.")
+            target_recep = s['object_to_receptacle'].get(obj, '')
+            at_target = target_recep and (target_recep in s['location'] or s['location'] in target_recep or target_recep in cmd)
+            if at_target:
+                s['inventory'].remove(obj)
+                s['objects_placed'].add(obj)
+                if len(s['objects_placed']) == len(s['target_objects']):
                     s['task_complete'] = True
                     self.is_finish = True
                     self.finish = True
-                    return {'observation': f'You put the {s["target_object"]} on {s["target_receptacle"]}. Task complete!'}
-                return self._obs_with_commands(f'Go to {s["target_receptacle"]} first.')
-            return self._obs_with_commands("Can't put that here.")
-
-        if cmd.startswith('clean '):
-            if s['target_object'] in s['inventory'] and ('sinkbasin' in s['location'] or 'sink' in s['location']):
-                s['object_state'] = 'clean'
-                return self._obs_with_commands(f'You clean the {s["target_object"]}.')
-            return self._obs_with_commands("Need sink + holding object.")
-
-        if cmd.startswith('heat '):
-            if s['target_object'] in s['inventory'] and 'microwave' in s['location']:
-                s['object_state'] = 'hot'
-                return self._obs_with_commands(f'You heat the {s["target_object"]}.')
-            return self._obs_with_commands("Need microwave + holding object.")
-
-        if cmd.startswith('cool '):
-            if s['target_object'] in s['inventory'] and 'fridge' in s['location']:
-                s['object_state'] = 'cool'
-                return self._obs_with_commands(f'You cool the {s["target_object"]}.')
-            return self._obs_with_commands("Need fridge + holding object.")
+                    return {'observation': f'You put the {obj} on {target_recep}. Task complete!'}
+                return self._obs_with_commands(
+                    f'You put the {obj} on {target_recep}. ({len(s["objects_placed"])}/{len(s["target_objects"])} done)'
+                )
+            return self._obs_with_commands(f'Go to {target_recep} first to put the {obj}.')
 
         if cmd.startswith('open '):
             target = cmd[5:].strip()
             match = next((r for r in ALL_RECEPTACLES if target in r or r in target), s['location'])
             s['containers_opened'].add(match)
             obs = f'You open the {match}.'
-            if match == s['object_location'] and s['target_object'] not in s['inventory']:
-                obs += f' You see a {s["target_object"]} inside.'
+            visible = objects_at(match)
+            if visible:
+                obs += f' You see inside: {", ".join(visible)}.'
             return self._obs_with_commands(obs)
 
         if cmd.startswith('close '):
@@ -306,14 +320,21 @@ class ALFWorldEnv:
             obs = f'At {s["location"]}.'
             if s['inventory']:
                 obs += f' Carrying: {", ".join(s["inventory"])}.'
-            if s['location'] == s['object_location'] and s['target_object'] not in s['inventory']:
-                obs += f' See: {s["target_object"]}.'
+            visible = objects_at(s['location'])
+            if visible:
+                obs += f' See here: {", ".join(visible)}.'
             return self._obs_with_commands(obs)
 
         return self._obs_with_commands(f'Unknown: "{command}".')
 
     def _obs_with_commands(self, obs_text: str) -> dict:
-        """Return observation without admissible commands (MemexRL style)."""
+        """Return observation with admissible commands (unless hidden in hard mode)."""
+        if self._hide_admissible:
+            return {'observation': obs_text}
+        cmds = self._admissible_commands if self._use_real else self._get_mock_admissible()
+        if cmds:
+            cmd_str = ", ".join(cmds)
+            obs_text += f"\n\nAdmissible commands: [{cmd_str}]"
         return {'observation': obs_text}
 
     def _get_mock_admissible(self) -> list:
@@ -333,11 +354,19 @@ class ALFWorldEnv:
         for r in ALL_RECEPTACLES:
             if r != s['location']:
                 cmds.append(f'go to {r}')
-        if s['location'] == s['object_location'] and s['target_object'] not in s['inventory']:
-            cmds.append(f'take {s["target_object"]} from {s["location"]}')
-        if s['target_object'] in s['inventory']:
-            cmds.append(f'put {s["target_object"]} in/on {s["location"]}')
-        return cmds[:20]
+        remaining = [o for o in s['target_objects'] if o not in s['objects_placed']]
+        loc_map = s.get('object_location_map', {})
+        # take any remaining object that's at current location
+        for o in remaining:
+            if o not in s['inventory'] and loc_map.get(o) == s['location']:
+                cmds.append(f'take {o} from {s["location"]}')
+        # put inventory objects
+        for o in s['inventory']:
+            cmds.append(f'put {o} in/on {s["location"]}')
+        # open container if closed
+        if any(w in s['location'] for w in ['fridge', 'cabinet', 'drawer', 'microwave']) and s['location'] not in s['containers_opened']:
+            cmds.append(f'open {s["location"]}')
+        return cmds[:25]
 
     def _extract_admissible(self, info) -> list:
         """Extract admissible commands from TextWorld info dict."""

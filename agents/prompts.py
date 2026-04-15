@@ -110,19 +110,41 @@ I've uploaded a python code repository in the directory /testbed. Consider the f
         if 'graph' in workflow:
             tools = tools + branch_tool() + graph_tool()
         tool_description = PARALLEL_TOOL_PROMPT.format(description=convert_tools_to_description(tools))
-        system_prompt = (
+        base_system = (
             "You are a household robot assistant completing tasks in a virtual home. "
             "You interact with the environment by executing actions step by step. "
             "Each turn, you will see the current observation and a list of admissible commands. "
             "Choose an action from the admissible commands to make progress toward the goal. "
-            "Think carefully about what to do, then execute the action. "
             "Common task patterns:\n"
             "  - Pick and place: find object → take it → go to target → put it\n"
             "  - Clean then place: find object → take → go to sink → clean → go to target → put\n"
             "  - Heat then place: find object → take → go to microwave → heat → go to target → put\n"
             "  - Cool then place: find object → take → go to fridge → cool → go to target → put\n"
-            "  - Examine: find object → take → go to lamp → examine\n"
-        ) + '\n\n' + tool_description
+        )
+        if workflow == 'alfworld_graph':
+            graph_guidance = (
+                "\n\nMULTI-OBJECT STRATEGY with ContextGraph:\n"
+                "When the task involves multiple objects, use the graph tools to remember discoveries "
+                "and reuse them across sub-tasks. This avoids re-exploring the same containers.\n\n"
+                "Recommended workflow:\n"
+                "  1. First, decompose the task into independent sub-tasks — one per object — using `branch`. "
+                "     Each branch handles one object's 'take → place' sequence.\n"
+                "  2. Before branching, if you already know where any object is (from the task or prior actions), "
+                "     use `merge` to record a single summary node like: "
+                "     'Container contents: fridge 1 has apple, bread; cabinet 1 has mug.' "
+                "     This node is shared with all child branches.\n"
+                "  3. When a branch discovers new location info (e.g., opening a drawer reveals an item), "
+                "     use `merge` to preserve that finding, so later branches can read it.\n"
+                "  4. Use `add_edge` to link a target object to its container, e.g., relation=\"semantic\" "
+                "     between object_node and container_node.\n"
+                "  5. Use `prune` to discard failed attempts or redundant observations that no longer matter.\n\n"
+                "Why this matters: branches are isolated, so information found in one branch is NOT "
+                "automatically visible to another. Graph operations are how you move facts across branches. "
+                "Use them BEFORE spawning branches whenever possible.\n"
+            )
+        else:
+            graph_guidance = ""
+        system_prompt = base_system + graph_guidance + '\n\n' + tool_description
         user_prompt = f"Task: {problem_statement}\n\nWhat do you do first?"
         chat = [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}]
         return chat

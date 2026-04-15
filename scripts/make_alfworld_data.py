@@ -38,30 +38,39 @@ MOCK_RECEPTACLES = {
 }
 
 TASK_TYPES = [
-    {"type": "pick_and_place", "template": "Put a {object} on the {receptacle}."},
-    {"type": "pick_clean_then_place", "template": "Put a clean {object} on the {receptacle}."},
-    {"type": "pick_heat_then_place", "template": "Put a hot {object} on the {receptacle}."},
-    {"type": "pick_cool_then_place", "template": "Put a cool {object} on the {receptacle}."},
-    {"type": "examine_in_light", "template": "Examine the {object} under the lamp."},
+    {"type": "pick_three_split_containers",
+     "template": "Put a {obj1} on the {recep1}, put a {obj2} on the {recep2}, AND put a {obj3} on the {recep3}. The {obj1} and {obj2} are in {loc_a}; the {obj3} is in {loc_b}."},
 ]
+
+# Containers suitable as shared storage (can hold multiple items)
+SHARED_CONTAINERS = ["fridge 1", "cabinet 1", "cabinet 2", "drawer 1", "drawer 2",
+                     "cabinet 3", "shelf 1", "shelf 2", "dresser 1"]
 
 
 def generate_mock_tasks(n=300, seed=42):
+    """Multi-object task: 3 objects split across 2 containers (2+1), 3 different receptacles."""
     random.seed(seed)
+    all_receptacles = [r for room in MOCK_RECEPTACLES.values() for r in room]
     tasks = []
     for _ in range(n):
         task_type = random.choice(TASK_TYPES)
-        obj = random.choice(OBJECTS)
-        room = random.choice(list(MOCK_RECEPTACLES.keys()))
-        receptacle = random.choice(MOCK_RECEPTACLES[room])
-        obj_room = random.choice(list(MOCK_RECEPTACLES.keys()))
-        obj_location = random.choice(MOCK_RECEPTACLES[obj_room])
+        obj1, obj2, obj3 = random.sample(OBJECTS, 3)
+        loc_a, loc_b = random.sample(SHARED_CONTAINERS, 2)
+        # 3 distinct target receptacles, none of which are the containers
+        candidates = [r for r in all_receptacles if r not in (loc_a, loc_b)]
+        recep1, recep2, recep3 = random.sample(candidates, 3)
         tasks.append({
-            "task_desc": task_type["template"].format(object=obj, receptacle=receptacle),
+            "task_desc": task_type["template"].format(
+                obj1=obj1, obj2=obj2, obj3=obj3,
+                recep1=recep1, recep2=recep2, recep3=recep3,
+                loc_a=loc_a, loc_b=loc_b,
+            ),
             "task_type": task_type["type"],
-            "target_object": obj,
-            "target_receptacle": receptacle,
-            "object_location": obj_location,
+            "target_objects": [obj1, obj2, obj3],
+            "target_receptacles": [recep1, recep2, recep3],
+            "object_location_map": {obj1: loc_a, obj2: loc_a, obj3: loc_b},
+            # keep single object_location for backward compat (used by env if map missing)
+            "object_location": loc_a,
             "answer": "success",
         })
     return tasks
@@ -125,8 +134,8 @@ def to_row(task, workflow, mode="mock"):
             "problem_statement": task["task_desc"],
             "task_desc": task["task_desc"],
             "task_type": task.get("task_type", ""),
-            "target_object": task.get("target_object", ""),
-            "target_receptacle": task.get("target_receptacle", ""),
+            "target_objects": task.get("target_objects", []),
+            "target_receptacles": task.get("target_receptacles", []),
             "object_location": task.get("object_location", ""),
             "game_file": task.get("game_file", ""),
             "workflow": workflow,
@@ -137,6 +146,8 @@ def to_row(task, workflow, mode="mock"):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", choices=["mock", "real"], default="mock")
+    parser.add_argument("--hard", action="store_true",
+                        help="Hard mode: hide admissible commands (MemexRL style). Ability becomes ALFWorld@<mode>_hard.")
     parser.add_argument("--n_train", type=int, default=300)
     parser.add_argument("--n_val", type=int, default=80)
     parser.add_argument("--seed", type=int, default=42)
@@ -179,19 +190,22 @@ def main():
     type_counts = Counter(t.get("task_type", "?") for t in train_tasks)
     print(f"Type distribution: {dict(type_counts)}")
 
+    # Ability string: ALFWorld@<mode>[_hard]
+    ability_mode = f"{mode}_hard" if args.hard else mode
+
     # FoldAgent version
-    train_rows = [to_row(t, "alfworld", mode) for t in train_tasks]
-    val_rows = [to_row(t, "alfworld", mode) for t in val_tasks]
+    train_rows = [to_row(t, "alfworld", ability_mode) for t in train_tasks]
+    val_rows = [to_row(t, "alfworld", ability_mode) for t in val_tasks]
     pd.DataFrame(train_rows).to_parquet(f"{args.out_dir}/alfworld_train.parquet", index=False)
     pd.DataFrame(val_rows).to_parquet(f"{args.out_dir}/alfworld_test.parquet", index=False)
-    print(f"Wrote alfworld_train.parquet ({len(train_rows)} rows, mode={mode})")
+    print(f"Wrote alfworld_train.parquet ({len(train_rows)} rows, ability=ALFWorld@{ability_mode})")
 
     # ContextGraph version
-    train_rows_g = [to_row(t, "alfworld_graph", mode) for t in train_tasks]
-    val_rows_g = [to_row(t, "alfworld_graph", mode) for t in val_tasks]
+    train_rows_g = [to_row(t, "alfworld_graph", ability_mode) for t in train_tasks]
+    val_rows_g = [to_row(t, "alfworld_graph", ability_mode) for t in val_tasks]
     pd.DataFrame(train_rows_g).to_parquet(f"{args.out_dir}/alfworld_graph_train.parquet", index=False)
     pd.DataFrame(val_rows_g).to_parquet(f"{args.out_dir}/alfworld_graph_test.parquet", index=False)
-    print(f"Wrote alfworld_graph_train.parquet ({len(train_rows_g)} rows, mode={mode})")
+    print(f"Wrote alfworld_graph_train.parquet ({len(train_rows_g)} rows, ability=ALFWorld@{ability_mode})")
 
     # Samples
     print("\nSample tasks:")

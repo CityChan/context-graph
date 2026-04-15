@@ -627,13 +627,18 @@ class ContextGraph:
             # Prune utility: successful task + prunes = agent discarded correctly
             prune_bonus = min(n_pruned * 0.05, 0.15)
 
-            graph_shaping = lambda_compact * (compactness + structural + merge_bonus + prune_bonus)
+            # Usage bonus: small positive signal for any LLM-initiated graph op.
+            # Encourages exploration of graph tools when task succeeds. Capped.
+            usage_bonus = min(self.explicit_op_count * 0.02, 0.1)
+
+            graph_shaping = lambda_compact * (compactness + structural + merge_bonus + prune_bonus) + usage_bonus
         else:
             # Task failed: no graph shaping (don't reward/penalize graph structure)
             compactness = 0.0
             structural = 0.0
             merge_bonus = 0.0
             prune_bonus = 0.0
+            usage_bonus = 0.0
             graph_shaping = 0.0
 
         # ── Cost penalty (only counts LLM-initiated graph ops) ──
@@ -654,6 +659,7 @@ class ContextGraph:
             "structural": structural,
             "merge_bonus": merge_bonus,
             "prune_bonus": prune_bonus,
+            "usage_bonus": usage_bonus,
             "cost_penalty": cost_penalty,
             "operation_cost": cost,
             "total_ops": self.operation_count,
