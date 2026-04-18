@@ -206,13 +206,6 @@ sbatch scripts/train_alfworld_fold_30b_16node_48h.sh        # FoldAgent baseline
 sbatch scripts/train_alfworld_ctxgraph_30b_16node_48h.sh    # ContextGraph (isolated)
 ```
 
-For interactive iteration on a small (4B) model:
-
-```bash
-bash scripts/idev_fold.sh        # FoldAgent on ALFWorld (Qwen3-4B, 20 steps)
-bash scripts/idev_ctxgraph.sh    # ContextGraph isolated on ALFWorld (Qwen3-4B, 20 steps)
-```
-
 ---
 
 ### Multi-hop QA
