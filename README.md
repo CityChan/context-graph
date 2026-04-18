@@ -90,14 +90,6 @@ bash scripts/setup_env.sh   # installs extras not pinned in requirements.txt
 pip install vllm
 ```
 
-On TACC Vista (ARM aarch64 / GH200), build on a compute node:
-
-```bash
-idev -p gh -N 1 -n 1 -t 01:00:00
-conda activate contextgraph
-pip install vllm
-```
-
 **3. (Optional) Flash Attention** — required for 8B+ models with long sequences
 
 ```bash
@@ -107,7 +99,7 @@ TORCH_CUDA_ARCH_LIST="9.0a" pip install flash-attn --no-build-isolation
 **4. Environment variables**
 
 ```bash
-export LOCAL_SEARCH_URL="http://[search-server-host]:8010"  # set after starting search server (see Training step 1)
+export LOCAL_SEARCH_URL="http://[search-server-host]:8010"  # set after starting a search server (BrowseComp / Multi-hop)
 export OPENAI_API_KEY="..."                                  # for LLM-based grading
 export WANDB_API_KEY="..."                                   # optional, for run logging
 ```
@@ -116,7 +108,11 @@ export WANDB_API_KEY="..."                                   # optional, for run
 
 ## Training
 
-**1. Start Search Server**
+All runs log to wandb project `context-graph` for direct comparison.
+
+### BrowseComp
+
+**1. Start the search server** (Qwen3-Embedding-8B over the BrowseComp+ corpus)
 
 ```bash
 cd envs && python search_server.py \
@@ -128,23 +124,68 @@ cd envs && python search_server.py \
 
 Then point `LOCAL_SEARCH_URL` at it (see Setup step 4).
 
-**2. Download Training Data**
+**2. Download the dataset**
 
-Download and decompress BrowseComp dataset: https://drive.google.com/file/d/1aX5xXAN5R-gLKd8A0AY-troxXJRawyAM/view?usp=sharing
+Download and decompress: https://drive.google.com/file/d/1aX5xXAN5R-gLKd8A0AY-troxXJRawyAM/view?usp=sharing
 
-**3. Train ContextGraph on BrowseComp**
-
-```bash
-sbatch scripts/train_bc_8b_8node_contextgraph.sh
-```
-
-**4. Train FoldAgent Baseline (for comparison)**
+**3. Launch training**
 
 ```bash
-sbatch scripts/train_bc_8b_8node.sh
+sbatch scripts/train_bc_8b_8node_contextgraph.sh   # ContextGraph
+sbatch scripts/train_bc_8b_8node.sh                # FoldAgent baseline
 ```
 
-Both log to wandb project `context-graph` for direct comparison.
+---
+
+### ALFWorld
+
+No search server needed — uses local TextWorld game files.
+
+**1. Install ALFWorld and download games**
+
+```bash
+pip install textworld alfworld
+alfworld-download                                  # writes to ~/.cache/alfworld
+```
+
+**2. Generate parquet from real game files**
+
+```bash
+python scripts/make_alfworld_data.py --n_train 300 --n_val 80
+# add --hard for MemexRL-style (admissible commands hidden from agent)
+```
+
+**3. Launch training**
+
+The `idev_*.sh` scripts run inside a TACC `idev` session (paths inside are TACC-specific — adapt for your cluster):
+
+```bash
+bash scripts/idev_fold.sh        # FoldAgent on ALFWorld
+bash scripts/idev_ctxgraph.sh    # ContextGraph (isolated) on ALFWorld
+```
+
+---
+
+### Multi-hop QA
+
+Synthetic 2–3 hop benchmark with a built-in knowledge base — no external corpus.
+
+**1. Start the multi-hop search server** (TF-IDF over a small KB, port 18999)
+
+```bash
+python scripts/multihop_search_server.py
+export LOCAL_SEARCH_URL="http://localhost:18999"
+```
+
+**2. Generate parquet**
+
+```bash
+python scripts/make_multihop_data.py --n_train 300 --n_val 80
+```
+
+**3. Launch training**
+
+Use `train_fold.py` / `train_graph.py` directly with `data.train_files=data/multihop_train.parquet` and `data.val_files=data/multihop_test.parquet` (no canned sbatch wrapper — model the args after the BrowseComp scripts).
 
 ---
 
