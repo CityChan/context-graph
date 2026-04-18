@@ -72,6 +72,48 @@ context-graph/
 
 ---
 
+## Setup
+
+**1. Create conda env and install Python deps**
+
+```bash
+conda create -n contextgraph python=3.10 -y
+conda activate contextgraph
+pip install torch  # match your CUDA version
+pip install -r requirements.txt
+bash scripts/setup_env.sh   # installs extras not pinned in requirements.txt
+```
+
+**2. Install vLLM** (rollout backend; needs a GPU node with CUDA toolkit)
+
+```bash
+pip install vllm
+```
+
+On TACC Vista (ARM aarch64 / GH200), build on a compute node:
+
+```bash
+idev -p gh -N 1 -n 1 -t 01:00:00
+conda activate contextgraph
+pip install vllm
+```
+
+**3. (Optional) Flash Attention** — required for 8B+ models with long sequences
+
+```bash
+TORCH_CUDA_ARCH_LIST="9.0a" pip install flash-attn --no-build-isolation
+```
+
+**4. Environment variables**
+
+```bash
+export LOCAL_SEARCH_URL="http://[search-server-host]:8010"  # set after starting search server (see Training step 1)
+export OPENAI_API_KEY="..."                                  # for LLM-based grading
+export WANDB_API_KEY="..."                                   # optional, for run logging
+```
+
+---
+
 ## Training
 
 **1. Start Search Server**
@@ -84,10 +126,7 @@ cd envs && python search_server.py \
   --host 0.0.0.0 --port 8010
 ```
 
-```bash
-export LOCAL_SEARCH_URL="http://[IP-of-search-server]:8010"
-export OPENAI_API_KEY="your-api-key"  # For LLM-based grading
-```
+Then point `LOCAL_SEARCH_URL` at it (see Setup step 4).
 
 **2. Download Training Data**
 
