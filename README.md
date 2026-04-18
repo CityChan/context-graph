@@ -113,14 +113,14 @@ We mirror the FoldAgent paper's experimental structure (Sun et al. 2025, [arXiv:
 
 ### Plan
 
-| Phase | Goal | Status |
-|-------|------|--------|
-| **0** | Smoke test 30B model on ALFWorld (env validation) | scripted |
-| **1** | FoldAgent baseline: Qwen3-30B-A3B-Thinking-2507 on ALFWorld | scripted |
-| **2** | ContextGraph (isolated) on ALFWorld at same settings | scripted |
-| **3** | Repeat 1+2 on BrowseComp and Multi-hop QA | TBD |
-| **4** | Ablations: auto-merge on/off, isolated vs global, prompt-length matched, FoldGRPO vs vanilla GRPO | TBD |
-| **5** | Behavior analysis: Finish rate, Main Len, Scope, # Branch, # graph ops, # cross-edges (mirror paper Table 2 + graph extras) | TBD |
+| Phase | Goal | Script | Status |
+|-------|------|--------|--------|
+| **0** | Smoke test 30B model on ALFWorld (env validation) | [`test_alfworld_30b_2node_1h.sh`](scripts/test_alfworld_30b_2node_1h.sh) | scripted |
+| **1** | FoldAgent baseline: Qwen3-30B-A3B-Thinking-2507 on ALFWorld | [`train_alfworld_fold_30b_16node_48h.sh`](scripts/train_alfworld_fold_30b_16node_48h.sh) | scripted |
+| **2** | ContextGraph (isolated) on ALFWorld at same settings | [`train_alfworld_ctxgraph_30b_16node_48h.sh`](scripts/train_alfworld_ctxgraph_30b_16node_48h.sh) | scripted |
+| **3** | Repeat 1+2 on BrowseComp and Multi-hop QA | — | TBD |
+| **4** | Ablations: auto-merge on/off, isolated vs global, prompt-length matched, FoldGRPO vs vanilla GRPO | — | TBD |
+| **5** | Behavior analysis: Finish rate, Main Len, Scope, # Branch, # graph ops, # cross-edges (mirror paper Table 2 + graph extras) | — | TBD |
 
 All hyperparameters live in the sbatch scripts (see `scripts/train_alfworld_*.sh`) — adapted from paper §5.
 
