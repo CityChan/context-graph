@@ -123,13 +123,6 @@ We mirror the FoldAgent paper's experimental structure (Sun et al. 2025, [arXiv:
 
 All hyperparameters live in the sbatch scripts (see `scripts/train_alfworld_*.sh`) — adapted from paper §5.
 
-### Caveats vs paper
-
-The paper uses **Slime + INT4 + QAT + TIS (clip 2.0) + token-in-token-out**.
-Our verl-based implementation runs in **BF16 with standard tokenization between turns**.
-INT4/QAT and TIS are not (yet) implemented in this repo — these gaps are documented
-so any quantitative deviation from the paper is expected.
-
 ---
 
 ## Training
