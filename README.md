@@ -78,8 +78,8 @@ context-graph/
 **1. Create conda env and install Python deps**
 
 ```bash
-conda create -n contextgraph python=3.10 -y
-conda activate contextgraph
+conda create -n cxtgraph python=3.10 -y
+conda activate cxtgraph
 pip install torch  # match your CUDA version
 pip install -r requirements.txt
 bash scripts/setup_env.sh   # installs extras not pinned in requirements.txt

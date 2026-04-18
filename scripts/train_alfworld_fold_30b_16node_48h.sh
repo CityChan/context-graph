@@ -24,7 +24,7 @@ set -e
 
 # ── Environment ──
 source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
-conda activate foldagent
+conda activate cxtgraph
 
 export PATH=/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/bin:${PATH}
 export LD_LIBRARY_PATH=${CONDA_PREFIX}/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/lib64:${LD_LIBRARY_PATH}
@@ -68,7 +68,7 @@ python scripts/make_alfworld_data.py --n_train 1000 --n_val 100
 echo "--- Starting Ray head on $NODE0 ---"
 srun --overlap --nodes=1 --ntasks=1 -w "$NODE0" bash -c "
   source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
-  conda activate foldagent
+  conda activate cxtgraph
   export PATH=/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/bin:\${PATH}
   export LD_LIBRARY_PATH=\${CONDA_PREFIX}/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/lib64:\${LD_LIBRARY_PATH}
   export HF_HOME=/work/09281/chc_1996/vista/cache
@@ -85,7 +85,7 @@ for i in $(seq 1 $((NUM_NODES-1))); do
   echo "--- Starting Ray worker on $WORKER_NODE (node $i) ---"
   srun --overlap --nodes=1 --ntasks=1 -w "$WORKER_NODE" bash -c "
     source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
-    conda activate foldagent
+    conda activate cxtgraph
     export PATH=/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/bin:\${PATH}
     export LD_LIBRARY_PATH=\${CONDA_PREFIX}/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/lib64:\${LD_LIBRARY_PATH}
     export HF_HOME=/work/09281/chc_1996/vista/cache

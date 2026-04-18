@@ -16,7 +16,7 @@ ContextGraph extends FoldAgent by modeling working context as a **dynamic graph*
 
 - Local: `d:\Workspace\TACC-Work\context-graph\`
 - TACC: `/work/09281/chc_1996/vista/context-graph`
-- Conda env: `foldagent`
+- Conda env: `cxtgraph`
 
 ## File Map
 

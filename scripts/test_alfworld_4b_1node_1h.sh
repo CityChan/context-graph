@@ -1,17 +1,17 @@
 #!/bin/bash
-#SBATCH -J test-alf-30b
-#SBATCH -o test-alf-30b.%j.out
-#SBATCH -e test-alf-30b.%j.err
+#SBATCH -J test-alf-4b
+#SBATCH -o test-alf-4b.%j.out
+#SBATCH -e test-alf-4b.%j.err
 #SBATCH -p gh
-#SBATCH -N 2
+#SBATCH -N 1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=72
 #SBATCH -t 01:00:00
 #SBATCH -A ASC24078
 
 # ─────────────────────────────────────────────────────────────────────
-# Smoke test: Qwen3-30B-A3B-Thinking-2507 on ALFWorld, 2 nodes / 1 hour
-# Goal: validate environment + Ray cluster + 30B model load + 2-3 RL steps.
+# Smoke test: Qwen3-4B-Instruct-2507 on ALFWorld, 1 node / 1 hour
+# Goal: validate environment + 4B model load + 3 RL steps on a single GH200.
 # Reduced settings (response=8192, batch=8, n=4, 3 steps) — NOT a real run.
 # ─────────────────────────────────────────────────────────────────────
 set -e
@@ -38,7 +38,6 @@ export HF_HOME=/work/09281/chc_1996/vista/cache
 export PYTHONPATH="$PROJECT_ROOT:$PYTHONPATH"
 export NCCL_P2P_LEVEL=NVL
 export WANDB_API_KEY="${WANDB_API_KEY:?set WANDB_API_KEY in your shell before running this script}"
-# OPENAI_API_KEY not required for ALFWorld (env reward, no LLM judge)
 
 # ── Node info ──
 NODELIST=($(scontrol show hostnames $SLURM_JOB_NODELIST))
@@ -47,7 +46,7 @@ NODE0_IP=$(getent hosts "$NODE0" | awk '{print $1}')
 NUM_NODES=${#NODELIST[@]}
 
 echo "════════════════════════════════════════════════════════════════"
-echo "  SMOKE TEST: Qwen3-30B-A3B-Thinking-2507 on ALFWorld"
+echo "  SMOKE TEST: Qwen3-4B-Instruct-2507 on ALFWorld"
 echo "  Nodes: $NUM_NODES   Head: $NODE0 ($NODE0_IP)   Time: $(date)"
 echo "════════════════════════════════════════════════════════════════"
 
@@ -59,6 +58,7 @@ python -c "import torch; print('torch:', torch.__version__, 'cuda available:', t
 python -c "import vllm; print('vllm:', vllm.__version__)" || echo "WARN: vllm import failed"
 python -c "import verl; print('verl OK')" || echo "WARN: verl import failed"
 python -c "import textworld; import alfworld; print('textworld + alfworld OK')" || echo "WARN: alfworld import failed"
+python -c "import flash_attn; print('flash_attn:', flash_attn.__version__)" || echo "WARN: flash_attn import failed"
 
 # ── Generate ALFWorld data (small) ──
 echo "--- Generating ALFWorld parquet ---"
@@ -78,24 +78,6 @@ srun --overlap --nodes=1 --ntasks=1 -w "$NODE0" bash -c "
 RAY_HEAD_PID=$!
 sleep 20
 
-# ── Ray workers on remaining nodes ──
-WORKER_PIDS=()
-for i in $(seq 1 $((NUM_NODES-1))); do
-  WORKER_NODE=${NODELIST[$i]}
-  echo "--- Starting Ray worker on $WORKER_NODE (node $i) ---"
-  srun --overlap --nodes=1 --ntasks=1 -w "$WORKER_NODE" bash -c "
-    source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
-    conda activate cxtgraph
-    export PATH=/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/bin:\${PATH}
-    export LD_LIBRARY_PATH=\${CONDA_PREFIX}/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/lib64:\${LD_LIBRARY_PATH}
-    export HF_HOME=/work/09281/chc_1996/vista/cache
-    ray start --address ${NODE0_IP}:6379 --num-cpus=70 --num-gpus=1 --block
-  " &
-  WORKER_PIDS+=($!)
-  sleep 5
-done
-sleep 20
-
 export RAY_ADDRESS=${NODE0_IP}:6379
 echo "--- Ray cluster status ---"
 ray status || echo "WARN: ray status check failed"
@@ -112,7 +94,7 @@ python -m scripts.train_fold \
   actor_rollout_ref.rollout.name=vllm \
   actor_rollout_ref.rollout.mode=async \
   actor_rollout_ref.rollout.calculate_log_probs=True \
-  actor_rollout_ref.model.path=Qwen/Qwen3-30B-A3B-Thinking-2507 \
+  actor_rollout_ref.model.path=Qwen/Qwen3-4B-Instruct-2507 \
   actor_rollout_ref.rollout.prompt_length=4096 \
   actor_rollout_ref.rollout.response_length=8192 \
   actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu=12288 \
@@ -160,7 +142,7 @@ python -m scripts.train_fold \
   trainer.test_freq=999 \
   trainer.save_freq=-1 \
   trainer.project_name=context-graph \
-  trainer.experiment_name=smoke_alfworld_30b_2n \
+  trainer.experiment_name=smoke_alfworld_4b_1n \
   trainer.logger='["console","wandb"]'
 
 RC=$?
@@ -168,15 +150,12 @@ echo "════════════════════════�
 if [ $RC -eq 0 ]; then
   echo "  ✓ SMOKE TEST PASSED — environment is ready for production run"
 else
-  echo "  ✗ SMOKE TEST FAILED (exit $RC) — fix before launching 16-node job"
+  echo "  ✗ SMOKE TEST FAILED (exit $RC) — fix before launching larger job"
 fi
 echo "  Finished: $(date)"
 echo "════════════════════════════════════════════════════════════════"
 
 # ── Cleanup ──
 kill $RAY_HEAD_PID 2>/dev/null || true
-for pid in "${WORKER_PIDS[@]}"; do
-  kill $pid 2>/dev/null || true
-done
 
 exit $RC
