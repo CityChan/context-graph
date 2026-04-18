@@ -27,7 +27,7 @@ ContextGraph extends FoldAgent by modeling working context as a **dynamic graph*
 | `agents/graph_agent.py` | Global-graph agent loop `process_item()` (registers `context_graph_agent`) |
 | `agents/graph_agent_isolated.py` | Isolated subgraph variant (registers `context_graph_isolated_agent`) |
 | `scripts/train_graph.py` | verl training entry point; registers both global + isolated agent loops |
-| `scripts/train_bc_8b_8node_contextgraph.sh` | 8-node SLURM training on BrowseComp (Qwen3-8B) |
+| `scripts/train_alfworld_ctxgraph_30b_16node_48h.sh` | 16-node SLURM training on ALFWorld (Qwen3-30B-A3B-Thinking) |
 
 ### Modified Files
 | File | Changes |
@@ -124,11 +124,11 @@ ContextGraph is **purely in-memory** (Python dict + list). No database, no file 
 
 ## How to Run
 ```bash
-# ContextGraph (8-node, Qwen3-8B, BrowseComp)
-sbatch scripts/train_bc_8b_8node_contextgraph.sh
+# ContextGraph isolated (16-node, Qwen3-30B-A3B-Thinking, ALFWorld)
+sbatch scripts/train_alfworld_ctxgraph_30b_16node_48h.sh
 
-# FoldAgent baseline (8-node, Qwen3-8B, BrowseComp)
-sbatch scripts/train_bc_8b_8node.sh
+# FoldAgent baseline (16-node, same model + ALFWorld)
+sbatch scripts/train_alfworld_fold_30b_16node_48h.sh
 ```
 
 wandb project: `context-graph`

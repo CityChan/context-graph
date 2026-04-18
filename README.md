@@ -47,8 +47,9 @@ context-graph/
 │   ├── train_graph.py              # ContextGraph training entry point
 │   ├── train_fold.py               # FoldAgent training entry point (baseline)
 │   ├── eval_bc.py                  # BrowseComp evaluation
-│   ├── train_bc_8b_8node.sh                # FoldAgent 8-node training (BrowseComp)
-│   ├── train_bc_8b_8node_contextgraph.sh   # ContextGraph 8-node training (BrowseComp)
+│   ├── test_alfworld_30b_2node_1h.sh           # ALFWorld 30B smoke test (2 nodes, 1h)
+│   ├── train_alfworld_fold_30b_16node_48h.sh   # ALFWorld FoldAgent 30B (16 nodes, 48h)
+│   ├── train_alfworld_ctxgraph_30b_16node_48h.sh # ALFWorld ContextGraph 30B (16 nodes, 48h)
 │   ├── make_alfworld_data.py / make_multihop_data.py # Dataset builders
 │   └── multihop_search_server.py   # Multihop QA search service
 ├── verl/                       # Vendored verl framework (with ARM/vllm compat fixes)
@@ -149,10 +150,7 @@ Download and decompress: https://drive.google.com/file/d/1aX5xXAN5R-gLKd8A0AY-tr
 
 **3. Launch training**
 
-```bash
-sbatch scripts/train_bc_8b_8node_contextgraph.sh   # ContextGraph
-sbatch scripts/train_bc_8b_8node.sh                # FoldAgent baseline
-```
+Sbatch scripts TBD — will mirror `scripts/train_alfworld_*_30b_16node_48h.sh` with the BrowseComp data files and `workflow=search_branch` / `search_graph`.
 
 ---
 
