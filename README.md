@@ -106,6 +106,44 @@ export WANDB_API_KEY="..."                                   # optional, for run
 
 ---
 
+## Experiments to Run
+
+We mirror the FoldAgent paper's experimental structure (Sun et al. 2025, [arXiv:2510.11967](https://arxiv.org/abs/2510.11967)), adapted for the ContextGraph extension across our three environments.
+
+### Plan
+
+| Phase | Goal | Status |
+|-------|------|--------|
+| **0** | Smoke test 30B model on ALFWorld (env validation) | scripted |
+| **1** | FoldAgent baseline: Qwen3-30B-A3B-Thinking-2507 on ALFWorld | scripted |
+| **2** | ContextGraph (isolated) on ALFWorld at same settings | TBD |
+| **3** | Repeat 1+2 on BrowseComp and Multi-hop QA | TBD |
+| **4** | Ablations: auto-merge on/off, isolated vs global, prompt-length matched, FoldGRPO vs vanilla GRPO | TBD |
+| **5** | Behavior analysis: Finish rate, Main Len, Scope, # Branch, # graph ops, # cross-edges (mirror paper Table 2 + graph extras) | TBD |
+
+### Hyperparameters (Phase 1+, adapted from paper §5)
+
+| Setting | Value | Notes |
+|---------|-------|-------|
+| Base model | `Qwen/Qwen3-30B-A3B-Thinking-2507` | MoE, 30B total / 3B active |
+| Optimizer | Adam, lr 5e-6, weight_decay 0.1 | paper §5 |
+| KL penalty | 0.001 against frozen reference | paper §5 |
+| Context window | 32K (`response_length`) | paper §5 |
+| Branch threshold | 8K (`branch_len` ≈ paper's "context penalty threshold") | paper §5 |
+| GRPO group size | n=8 | paper §5 |
+| Batch size | 32 prompts × 8 samples = 256 trajectories / step | paper §5 |
+| Hardware | 16 × GH200 (FSDP) | adapted for TACC Vista |
+| Training budget | 48 h (target ~500 steps) | |
+
+### Caveats vs paper
+
+The paper uses **Slime + INT4 + QAT + TIS (clip 2.0) + token-in-token-out**.
+Our verl-based implementation runs in **BF16 with standard tokenization between turns**.
+INT4/QAT and TIS are not (yet) implemented in this repo — these gaps are documented
+so any quantitative deviation from the paper is expected.
+
+---
+
 ## Training
 
 All runs log to wandb project `context-graph` for direct comparison.
@@ -155,13 +193,24 @@ python scripts/make_alfworld_data.py --n_train 300 --n_val 80
 # add --hard for MemexRL-style (admissible commands hidden from agent)
 ```
 
-**3. Launch training**
-
-The `idev_*.sh` scripts run inside a TACC `idev` session (paths inside are TACC-specific — adapt for your cluster):
+**3. Smoke test the environment** (2 nodes, 1 hour, validates 30B model + Ray + 3 RL steps)
 
 ```bash
-bash scripts/idev_fold.sh        # FoldAgent on ALFWorld
-bash scripts/idev_ctxgraph.sh    # ContextGraph (isolated) on ALFWorld
+sbatch scripts/test_alfworld_30b_2node_1h.sh
+```
+
+**4. Launch production training** (16 nodes × 1 GH200, 48 hours)
+
+```bash
+sbatch scripts/train_alfworld_fold_30b_16node_48h.sh        # FoldAgent baseline
+# sbatch scripts/train_alfworld_ctxgraph_30b_16node_48h.sh  # ContextGraph (TBD)
+```
+
+For interactive iteration on a small (4B) model:
+
+```bash
+bash scripts/idev_fold.sh        # FoldAgent on ALFWorld (Qwen3-4B, 20 steps)
+bash scripts/idev_ctxgraph.sh    # ContextGraph isolated on ALFWorld (Qwen3-4B, 20 steps)
 ```
 
 ---
