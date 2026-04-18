@@ -37,8 +37,8 @@ cd "$PROJECT_ROOT"
 export HF_HOME=/work/09281/chc_1996/vista/cache
 export PYTHONPATH="$PROJECT_ROOT:$PYTHONPATH"
 export NCCL_P2P_LEVEL=NVL
-export OPENAI_API_KEY=REDACTED_OPENAI_KEY
-export WANDB_API_KEY=REDACTED_WANDB_KEY
+export OPENAI_API_KEY="${OPENAI_API_KEY:?set OPENAI_API_KEY in your shell before running this script}"
+export WANDB_API_KEY="${WANDB_API_KEY:?set WANDB_API_KEY in your shell before running this script}"
 
 # ── Get node info ──
 NODELIST=($(scontrol show hostnames $SLURM_JOB_NODELIST))
