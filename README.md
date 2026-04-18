@@ -121,19 +121,7 @@ We mirror the FoldAgent paper's experimental structure (Sun et al. 2025, [arXiv:
 | **4** | Ablations: auto-merge on/off, isolated vs global, prompt-length matched, FoldGRPO vs vanilla GRPO | TBD |
 | **5** | Behavior analysis: Finish rate, Main Len, Scope, # Branch, # graph ops, # cross-edges (mirror paper Table 2 + graph extras) | TBD |
 
-### Hyperparameters (Phase 1+, adapted from paper §5)
-
-| Setting | Value | Notes |
-|---------|-------|-------|
-| Base model | `Qwen/Qwen3-30B-A3B-Thinking-2507` | MoE, 30B total / 3B active |
-| Optimizer | Adam, lr 5e-6, weight_decay 0.1 | paper §5 |
-| KL penalty | 0.001 against frozen reference | paper §5 |
-| Context window | 32K (`response_length`) | paper §5 |
-| Branch threshold | 8K (`branch_len` ≈ paper's "context penalty threshold") | paper §5 |
-| GRPO group size | n=8 | paper §5 |
-| Batch size | 32 prompts × 8 samples = 256 trajectories / step | paper §5 |
-| Hardware | 16 × GH200 (FSDP) | adapted for TACC Vista |
-| Training budget | 48 h (target ~500 steps) | |
+All hyperparameters live in the sbatch scripts (see `scripts/train_alfworld_*.sh`) — adapted from paper §5.
 
 ### Caveats vs paper
 
