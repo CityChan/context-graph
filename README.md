@@ -116,7 +116,7 @@ We mirror the FoldAgent paper's experimental structure (Sun et al. 2025, [arXiv:
 |-------|------|--------|
 | **0** | Smoke test 30B model on ALFWorld (env validation) | scripted |
 | **1** | FoldAgent baseline: Qwen3-30B-A3B-Thinking-2507 on ALFWorld | scripted |
-| **2** | ContextGraph (isolated) on ALFWorld at same settings | TBD |
+| **2** | ContextGraph (isolated) on ALFWorld at same settings | scripted |
 | **3** | Repeat 1+2 on BrowseComp and Multi-hop QA | TBD |
 | **4** | Ablations: auto-merge on/off, isolated vs global, prompt-length matched, FoldGRPO vs vanilla GRPO | TBD |
 | **5** | Behavior analysis: Finish rate, Main Len, Scope, # Branch, # graph ops, # cross-edges (mirror paper Table 2 + graph extras) | TBD |
@@ -203,7 +203,7 @@ sbatch scripts/test_alfworld_30b_2node_1h.sh
 
 ```bash
 sbatch scripts/train_alfworld_fold_30b_16node_48h.sh        # FoldAgent baseline
-# sbatch scripts/train_alfworld_ctxgraph_30b_16node_48h.sh  # ContextGraph (TBD)
+sbatch scripts/train_alfworld_ctxgraph_30b_16node_48h.sh    # ContextGraph (isolated)
 ```
 
 For interactive iteration on a small (4B) model:
