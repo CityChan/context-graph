@@ -97,6 +97,15 @@ pip install vllm
 TORCH_CUDA_ARCH_LIST="9.0a" pip install flash-attn --no-build-isolation
 ```
 
+On TACC Vista (GH200, aarch64) the above may OOM or miscompile. Use instead:
+
+```bash
+export MAX_JOBS=4
+export TORCH_CUDA_ARCH_LIST="9.0"
+export FLASH_ATTN_CUDA_ARCHS=90
+pip install flash-attn --no-build-isolation
+```
+
 **4. Environment variables**
 
 ```bash
