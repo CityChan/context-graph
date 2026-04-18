@@ -453,6 +453,14 @@ async def process_item(
                         edge_relation=EdgeRelation.CAUSAL,
                         metadata={'tool': 'open_page'},
                     )
+                elif fn_call['function'] == 'action':
+                    graph.add_node(
+                        observation[:300],
+                        NodeType.OBSERVATION,
+                        parent_id=graph.active_node_id,
+                        edge_relation=EdgeRelation.TEMPORAL,
+                        metadata={'tool': 'action', 'command': fn_call['arguments'].get('command', '')[:100]},
+                    )
 
         # ── Auto graph operations on PARENT graph (only) ──
         # Parent graph stays small (subtask + summary + main observations),
@@ -477,6 +485,22 @@ async def process_item(
 
         if process_reward:
             observation = truncate_text(observation, max_lines=100, merge_repeat=True, merge_num=4)
+
+        # Auto-compress: when graph exceeds threshold, auto-merge oldest observations
+        # into a summary. Agent doesn't need to learn merge — it happens automatically.
+        # This keeps prompt length bounded while preserving key info.
+        if len(graph.active_nodes) > 6:
+            obs_nodes = [
+                nid for nid, n in graph.nodes.items()
+                if n.type == NodeType.OBSERVATION and n.is_active()
+            ]
+            if len(obs_nodes) >= 3:
+                to_merge = obs_nodes[:3]
+                contents = [graph.nodes[nid].content[:100] for nid in to_merge]
+                auto_summary = "Explored: " + " | ".join(contents)
+                merged_id = graph.merge_nodes(to_merge, auto_summary)
+                if merged_id:
+                    print(f'[GRAPH AUTO-MERGE] {to_merge} → {merged_id} ({len(graph.active_nodes)} active)')
 
         agent['main'].append({'role': 'user', 'content': observation})
         session_message.append({'role': 'user', 'content': observation})
@@ -559,15 +583,10 @@ async def process_item(
             # Graph ops are encouraged via positive per-turn rewards (merge=+0.2 etc.)
             # rather than penalizing their absence.
 
-            if 'graph' in process_reward:
-                for i, turn in enumerate(agent['main'].chat):
-                    turn_str = str(turn)
-                    if '<function=merge>' in turn_str:
-                        agent['main'].set_process_reward(i, 0.2)
-                    elif '<function=prune>' in turn_str:
-                        agent['main'].set_process_reward(i, 0.1)
-                    elif '<function=add_edge>' in turn_str:
-                        agent['main'].set_process_reward(i, 0.1)
+            # Graph reward is now outcome-only (via compute_graph_reward).
+            # Per-turn token-level rewards removed: they caused tiny group std
+            # in GRPO → advantage explosion (±15000) → gradient explosion.
+            # See: usage_bonus in context_graph.py compute_graph_reward().
 
             if 'scope' in process_reward:
                 env.stats['scope_judge'] = 1

@@ -123,24 +123,9 @@ I've uploaded a python code repository in the directory /testbed. Consider the f
         )
         if workflow == 'alfworld_graph':
             graph_guidance = (
-                "\n\nMULTI-OBJECT STRATEGY with ContextGraph:\n"
-                "When the task involves multiple objects, use the graph tools to remember discoveries "
-                "and reuse them across sub-tasks. This avoids re-exploring the same containers.\n\n"
-                "Recommended workflow:\n"
-                "  1. First, decompose the task into independent sub-tasks — one per object — using `branch`. "
-                "     Each branch handles one object's 'take → place' sequence.\n"
-                "  2. Before branching, if you already know where any object is (from the task or prior actions), "
-                "     use `merge` to record a single summary node like: "
-                "     'Container contents: fridge 1 has apple, bread; cabinet 1 has mug.' "
-                "     This node is shared with all child branches.\n"
-                "  3. When a branch discovers new location info (e.g., opening a drawer reveals an item), "
-                "     use `merge` to preserve that finding, so later branches can read it.\n"
-                "  4. Use `add_edge` to link a target object to its container, e.g., relation=\"semantic\" "
-                "     between object_node and container_node.\n"
-                "  5. Use `prune` to discard failed attempts or redundant observations that no longer matter.\n\n"
-                "Why this matters: branches are isolated, so information found in one branch is NOT "
-                "automatically visible to another. Graph operations are how you move facts across branches. "
-                "Use them BEFORE spawning branches whenever possible.\n"
+                "\n\nContextGraph tools: use `branch` to split multi-object tasks. "
+                "If a branch finds info another branch needs (e.g. container contents), "
+                "call `merge` to save it as a shared node; use `add_edge` to link objects to containers.\n"
             )
         else:
             graph_guidance = ""

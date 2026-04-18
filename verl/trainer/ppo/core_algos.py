@@ -428,8 +428,9 @@ def compute_foldgrpo_advantage(
                 scores[i] = (scores[i] - id2mean[index[i]]) / (id2std[index[i]] + epsilon)
             else:
                 scores[i] = scores[i] - id2mean[index[i]]
-            if fix_bad_positive_adv and scores[i] > 0  and raw_scores[i] < 0: 
+            if fix_bad_positive_adv and scores[i] > 0  and raw_scores[i] < 0:
                 scores[i] = 0.0 * scores[i]
+            scores[i] = torch.clamp(scores[i], -5.0, 5.0)
 
         # TODO@Miao: Implement other variants of handling process_reward in https://arxiv.org/abs/2510.11967
         # Treat all-zero process_reward_mask as "no process reward" to avoid the

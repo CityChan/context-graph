@@ -26,7 +26,7 @@ pip install unidiff psutil pandas tqdm packaging codetiming dill 'numpy<2.0.0' '
 pip install pybind11 pre-commit
 
 echo ""
-echo "=== Basic deps installed. Now run: python scripts/test_env.py ==="
+echo "=== Basic deps installed. ==="
 echo ""
 echo "NOTE: vllm/sglang not installed here (needs compute node for ARM build)."
 echo "To install vllm on a compute node:"

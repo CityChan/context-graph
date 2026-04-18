@@ -642,12 +642,13 @@ class ContextGraph:
             graph_shaping = 0.0
 
         # ── Cost penalty (only counts LLM-initiated graph ops) ──
-        # Uses explicit_op_count (merge/prune/select/add_edge tool calls) instead
-        # of operation_count (which also includes auto-heuristic ops and observation
-        # node creation). This ensures that an agent doing zero graph ops gets
-        # zero cost_penalty, making it degenerate cleanly to FoldAgent's reward.
         cost = self.explicit_op_count
         cost_penalty = lambda_cost * cost
+
+        # Context bloat is now handled by auto-merge (graph_agent_isolated.py),
+        # not reward penalty. This avoids punishing the agent for something
+        # it can't control (4B can't learn merge/prune from scratch).
+        bloat_penalty = 0.0
 
         r_graph = task_reward + graph_shaping - cost_penalty
 
@@ -661,6 +662,7 @@ class ContextGraph:
             "prune_bonus": prune_bonus,
             "usage_bonus": usage_bonus,
             "cost_penalty": cost_penalty,
+            "bloat_penalty": bloat_penalty,
             "operation_cost": cost,
             "total_ops": self.operation_count,
             "explicit_ops": self.explicit_op_count,

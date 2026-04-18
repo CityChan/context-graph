@@ -29,21 +29,28 @@ See [docs/contextgraph_architecture.md](docs/contextgraph_architecture.md) for f
 ```
 context-graph/
 ├── agents/
-│   ├── context_graph.py        # Core ContextGraph: nodes, edges, graph ops, rewards
-│   ├── graph_agent.py          # Agent loop with graph context (extends fold_agent)
-│   ├── fold_agent.py           # Original FoldAgent (tree-based baseline)
-│   ├── tool_spec.py            # Tool definitions (search + branch + graph ops)
-│   ├── prompts.py              # Workflow prompts (search_graph, search_branch, etc.)
-│   └── utils.py                # Agent/AgentContext classes, LLM client
+│   ├── context_graph.py            # Core ContextGraph: nodes, edges, graph ops, rewards
+│   ├── graph_agent.py              # Global ContextGraph agent loop
+│   ├── graph_agent_isolated.py     # Isolated (per-branch subgraph) agent loop
+│   ├── fold_agent.py               # Original FoldAgent (tree-based baseline)
+│   ├── react_agent.py              # ReAct baseline
+│   ├── tool_spec.py                # Tool definitions (search + branch + graph ops)
+│   ├── prompts.py                  # Workflow prompts (search_graph, search_branch, etc.)
+│   ├── verifier.py                 # Reward verifier
+│   └── utils.py                    # Agent/AgentContext classes, LLM client
 ├── envs/
-│   ├── local_search.py         # Local search environment
-│   └── search_server.py        # Qwen3-Embedding search service
+│   ├── local_search.py             # Local search client
+│   ├── search_server.py            # Qwen3-Embedding search service
+│   ├── alfworld_env.py             # ALFWorld environment
+│   └── repo_env.py / repo_server.py # SWE repo environment
 ├── scripts/
-│   ├── train_graph.py          # ContextGraph training entry point
-│   ├── train_fold.py           # FoldAgent training entry point (baseline)
-│   ├── train_bc_contextgraph_4b.sh       # 1-node SLURM training
-│   ├── train_bc_contextgraph_4b_2node.sh # 2-node SLURM training
-│   └── test_train_graph_mini.sh          # Smoke test (0.6B, mock search)
+│   ├── train_graph.py              # ContextGraph training entry point
+│   ├── train_fold.py               # FoldAgent training entry point (baseline)
+│   ├── eval_bc.py                  # BrowseComp evaluation
+│   ├── train_bc_8b_8node.sh                # FoldAgent 8-node training (BrowseComp)
+│   ├── train_bc_8b_8node_contextgraph.sh   # ContextGraph 8-node training (BrowseComp)
+│   ├── make_alfworld_data.py / make_multihop_data.py # Dataset builders
+│   └── multihop_search_server.py   # Multihop QA search service
 ├── verl/                       # Vendored verl framework (with ARM/vllm compat fixes)
 │   ├── experimental/agent_loop/  # Agent loop base + registry
 │   └── trainer/ppo/              # FoldGRPO algorithm
@@ -89,26 +96,16 @@ Download and decompress BrowseComp dataset: https://drive.google.com/file/d/1aX5
 **3. Train ContextGraph on BrowseComp**
 
 ```bash
-# Single node (search service + training on same GPU)
-sbatch scripts/train_bc_contextgraph_4b.sh
-
-# 2-node (recommended: Node 0 = search + train, Node 1 = train)
-sbatch scripts/train_bc_contextgraph_4b_2node.sh
+sbatch scripts/train_bc_8b_8node_contextgraph.sh
 ```
 
 **4. Train FoldAgent Baseline (for comparison)**
 
 ```bash
-sbatch scripts/train_bc_qwen3_4b.sh
+sbatch scripts/train_bc_8b_8node.sh
 ```
 
 Both log to wandb project `context-graph` for direct comparison.
-
-**5. Smoke Test**
-
-```bash
-sbatch scripts/test_train_graph_mini.sh  # 30min, Qwen3-0.6B, mock search
-```
 
 ---
 

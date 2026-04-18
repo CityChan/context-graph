@@ -24,12 +24,10 @@ ContextGraph extends FoldAgent by modeling working context as a **dynamic graph*
 | File | Purpose |
 |------|---------|
 | `agents/context_graph.py` | Core `ContextGraph` class: nodes, edges, graph ops, auto-heuristics, context reconstruction, reward computation |
-| `agents/graph_agent.py` | Agent loop `process_item()` using ContextGraph (extends fold_agent pattern) |
-| `scripts/train_graph.py` | verl training entry point; registers `context_graph_agent` agent loop |
-| `scripts/train_bc_contextgraph_4b.sh` | Single-node SLURM training (Qwen3-4B, real search, 6h) |
-| `scripts/train_bc_contextgraph_4b_2node.sh` | 2-node SLURM training (Node 0: search+train, Node 1: train, 12h) |
-| `scripts/test_train_graph_mini.sh` | Smoke test (Qwen3-0.6B, mock search, 30min) |
-| `scripts/make_dummy_graph_data.py` | Dummy data generator with workflow=search_graph |
+| `agents/graph_agent.py` | Global-graph agent loop `process_item()` (registers `context_graph_agent`) |
+| `agents/graph_agent_isolated.py` | Isolated subgraph variant (registers `context_graph_isolated_agent`) |
+| `scripts/train_graph.py` | verl training entry point; registers both global + isolated agent loops |
+| `scripts/train_bc_8b_8node_contextgraph.sh` | 8-node SLURM training on BrowseComp (Qwen3-8B) |
 
 ### Modified Files
 | File | Changes |
@@ -126,14 +124,11 @@ ContextGraph is **purely in-memory** (Python dict + list). No database, no file 
 
 ## How to Run
 ```bash
-# Smoke test (30min, 0.6B, mock search)
-sbatch scripts/test_train_graph_mini.sh
+# ContextGraph (8-node, Qwen3-8B, BrowseComp)
+sbatch scripts/train_bc_8b_8node_contextgraph.sh
 
-# Single node (6h, 4B, real search)
-sbatch scripts/train_bc_contextgraph_4b.sh
-
-# 2-node (12h, 4B, real search, recommended)
-sbatch scripts/train_bc_contextgraph_4b_2node.sh
+# FoldAgent baseline (8-node, Qwen3-8B, BrowseComp)
+sbatch scripts/train_bc_8b_8node.sh
 ```
 
-wandb project: `context-graph`, experiment: `qwen3_4b_contextgraph_browsecomp`
+wandb project: `context-graph`
