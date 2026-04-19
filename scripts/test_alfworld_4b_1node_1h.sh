@@ -2,12 +2,12 @@
 #SBATCH -J test-alf-4b
 #SBATCH -o test-alf-4b.%j.out
 #SBATCH -e test-alf-4b.%j.err
-#SBATCH -p gh
+#SBATCH -p gh-dev
 #SBATCH -N 1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=72
 #SBATCH -t 01:00:00
-#SBATCH -A ASC24078
+#SBATCH -A AST24021
 
 # ─────────────────────────────────────────────────────────────────────
 # Smoke test: Qwen3-4B-Instruct-2507 on ALFWorld, 1 node / 1 hour
@@ -17,7 +17,7 @@
 set -e
 
 # ── Environment ──
-source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
+source /work/07144/yw23374/vista/miniconda3/etc/profile.d/conda.sh
 conda activate cxtgraph
 
 export PATH=/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/bin:${PATH}
@@ -31,13 +31,13 @@ export CUDAHOSTCXX=g++
 export TORCHDYNAMO_DISABLE=1
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
 
-PROJECT_ROOT=/work/09281/chc_1996/vista/context-graph
+PROJECT_ROOT=/work/07144/yw23374/vista/context-graph
 cd "$PROJECT_ROOT"
 
-export HF_HOME=/work/09281/chc_1996/vista/cache
+export HF_HOME=/work/07144/yw23374/vista/hf_cache
 export PYTHONPATH="$PROJECT_ROOT:$PYTHONPATH"
 export NCCL_P2P_LEVEL=NVL
-export WANDB_API_KEY="${WANDB_API_KEY:?set WANDB_API_KEY in your shell before running this script}"
+source $WORK/.wandb_env
 
 # ── Node info ──
 NODELIST=($(scontrol show hostnames $SLURM_JOB_NODELIST))
@@ -67,11 +67,11 @@ python scripts/make_alfworld_data.py --n_train 32 --n_val 8
 # ── Ray head on Node 0 ──
 echo "--- Starting Ray head on $NODE0 ---"
 srun --overlap --nodes=1 --ntasks=1 -w "$NODE0" bash -c "
-  source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
+  source /work/07144/yw23374/vista/miniconda3/etc/profile.d/conda.sh
   conda activate cxtgraph
   export PATH=/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/bin:\${PATH}
   export LD_LIBRARY_PATH=\${CONDA_PREFIX}/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/lib64:\${LD_LIBRARY_PATH}
-  export HF_HOME=/work/09281/chc_1996/vista/cache
+  export HF_HOME=/work/07144/yw23374/vista/hf_cache
   ray start --head --node-ip-address=$NODE0_IP --port=6379 \
     --num-cpus=70 --num-gpus=1 --dashboard-host=0.0.0.0 --block
 " &
@@ -102,6 +102,7 @@ python -m scripts.train_fold \
   actor_rollout_ref.rollout.n=4 \
   actor_rollout_ref.rollout.agent.num_workers=1 \
   actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=1 \
+  actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=1 \
   actor_rollout_ref.actor.optim.lr=5e-6 \
   actor_rollout_ref.actor.optim.weight_decay=0.1 \
   actor_rollout_ref.actor.use_kl_loss=True \
@@ -113,8 +114,8 @@ python -m scripts.train_fold \
   data.return_raw_chat=True \
   actor_rollout_ref.actor.ppo_mini_batch_size=8 \
   actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=1 \
-  actor_rollout_ref.actor.fsdp_config.param_offload=True \
-  actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
+  actor_rollout_ref.actor.fsdp_config.param_offload=False \
+  actor_rollout_ref.actor.fsdp_config.optimizer_offload=False \
   actor_rollout_ref.actor.ppo_max_token_len_per_gpu=12288 \
   actor_rollout_ref.actor.ppo_infer_max_token_len_per_gpu=12288 \
   actor_rollout_ref.model.enable_gradient_checkpointing=True \

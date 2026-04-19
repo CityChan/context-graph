@@ -2,12 +2,12 @@
 #SBATCH -J test-alf-30b
 #SBATCH -o test-alf-30b.%j.out
 #SBATCH -e test-alf-30b.%j.err
-#SBATCH -p gh
+#SBATCH -p gh-dev
 #SBATCH -N 2
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=72
 #SBATCH -t 01:00:00
-#SBATCH -A ASC24078
+#SBATCH -A AST24021
 
 # ─────────────────────────────────────────────────────────────────────
 # Smoke test: Qwen3-30B-A3B-Thinking-2507 on ALFWorld, 2 nodes / 1 hour
@@ -15,10 +15,16 @@
 # Reduced settings (response=8192, batch=8, n=4, 3 steps) — NOT a real run.
 # ─────────────────────────────────────────────────────────────────────
 set -e
+export TRITON_CACHE_DIR=/tmp/triton_cache_$$
+export NUMBA_CACHE_DIR=/tmp/numba_cache_$$
+export NCCL_DEBUG=WARN
+source $WORK/.wandb_env
+export RAY_memory_usage_threshold=0.99
 
 # ── Environment ──
-source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
+source /work/07144/yw23374/vista/miniconda3/etc/profile.d/conda.sh
 conda activate cxtgraph
+  export PATH=${CONDA_PREFIX}/bin:${PATH}; hash -r
 
 export PATH=/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/bin:${PATH}
 export LD_LIBRARY_PATH=${CONDA_PREFIX}/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/lib64:${LD_LIBRARY_PATH}
@@ -31,13 +37,13 @@ export CUDAHOSTCXX=g++
 export TORCHDYNAMO_DISABLE=1
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
 
-PROJECT_ROOT=/work/09281/chc_1996/vista/context-graph
+PROJECT_ROOT=/work/07144/yw23374/vista/context-graph
 cd "$PROJECT_ROOT"
 
-export HF_HOME=/work/09281/chc_1996/vista/cache
+export HF_HOME=/work/07144/yw23374/vista/hf_cache
 export PYTHONPATH="$PROJECT_ROOT:$PYTHONPATH"
 export NCCL_P2P_LEVEL=NVL
-export WANDB_API_KEY="${WANDB_API_KEY:?set WANDB_API_KEY in your shell before running this script}"
+# WANDB_API_KEY inherited from environment (wandb login)
 # OPENAI_API_KEY not required for ALFWorld (env reward, no LLM judge)
 
 # ── Node info ──
@@ -67,12 +73,13 @@ python scripts/make_alfworld_data.py --n_train 32 --n_val 8
 # ── Ray head on Node 0 ──
 echo "--- Starting Ray head on $NODE0 ---"
 srun --overlap --nodes=1 --ntasks=1 -w "$NODE0" bash -c "
-  source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
+  source /work/07144/yw23374/vista/miniconda3/etc/profile.d/conda.sh
   conda activate cxtgraph
+  export PATH=${CONDA_PREFIX}/bin:${PATH}; hash -r
   export PATH=/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/bin:\${PATH}
   export LD_LIBRARY_PATH=\${CONDA_PREFIX}/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/lib64:\${LD_LIBRARY_PATH}
-  export HF_HOME=/work/09281/chc_1996/vista/cache
-  ray start --head --node-ip-address=$NODE0_IP --port=6379 \
+  export HF_HOME=/work/07144/yw23374/vista/hf_cache
+  ray start --head --node-ip-address=$NODE0_IP --port=6379 --object-store-memory 5000000000 \
     --num-cpus=70 --num-gpus=1 --dashboard-host=0.0.0.0 --block
 " &
 RAY_HEAD_PID=$!
@@ -84,12 +91,13 @@ for i in $(seq 1 $((NUM_NODES-1))); do
   WORKER_NODE=${NODELIST[$i]}
   echo "--- Starting Ray worker on $WORKER_NODE (node $i) ---"
   srun --overlap --nodes=1 --ntasks=1 -w "$WORKER_NODE" bash -c "
-    source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
+    source /work/07144/yw23374/vista/miniconda3/etc/profile.d/conda.sh
     conda activate cxtgraph
+  export PATH=${CONDA_PREFIX}/bin:${PATH}; hash -r
     export PATH=/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/bin:\${PATH}
     export LD_LIBRARY_PATH=\${CONDA_PREFIX}/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/lib64:\${LD_LIBRARY_PATH}
-    export HF_HOME=/work/09281/chc_1996/vista/cache
-    ray start --address ${NODE0_IP}:6379 --num-cpus=70 --num-gpus=1 --block
+    export HF_HOME=/work/07144/yw23374/vista/hf_cache
+    ray start --address ${NODE0_IP}:6379 --num-cpus=70 --num-gpus=1 --object-store-memory 5000000000 --block
   " &
   WORKER_PIDS+=($!)
   sleep 5
@@ -116,10 +124,11 @@ python -m scripts.train_fold \
   actor_rollout_ref.rollout.prompt_length=4096 \
   actor_rollout_ref.rollout.response_length=8192 \
   actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu=12288 \
-  actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
+  actor_rollout_ref.rollout.tensor_model_parallel_size=8 \
   actor_rollout_ref.rollout.n=4 \
   actor_rollout_ref.rollout.agent.num_workers=1 \
   actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=1 \
+  actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=1 \
   actor_rollout_ref.actor.optim.lr=5e-6 \
   actor_rollout_ref.actor.optim.weight_decay=0.1 \
   actor_rollout_ref.actor.use_kl_loss=True \
@@ -131,8 +140,17 @@ python -m scripts.train_fold \
   data.return_raw_chat=True \
   actor_rollout_ref.actor.ppo_mini_batch_size=8 \
   actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=1 \
-  actor_rollout_ref.actor.fsdp_config.param_offload=True \
-  actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
+  actor_rollout_ref.actor.strategy=fsdp \
+  actor_rollout_ref.actor.fsdp_config.fsdp_size=-1 \
+  actor_rollout_ref.rollout.gpu_memory_utilization=0.35 \
+  actor_rollout_ref.actor.fsdp_config.reshard_after_forward=True \
+  actor_rollout_ref.actor.fsdp_config.model_dtype=bfloat16 \
+  actor_rollout_ref.actor.fsdp_config.dtype=bfloat16 \
+  actor_rollout_ref.actor.fsdp_config.param_offload=False \
+  actor_rollout_ref.actor.fsdp_config.optimizer_offload=False \
+  actor_rollout_ref.ref.fsdp_config.reshard_after_forward=True \
+  actor_rollout_ref.ref.fsdp_config.fsdp_size=-1 \
+  actor_rollout_ref.ref.fsdp_config.param_offload=False \
   actor_rollout_ref.actor.ppo_max_token_len_per_gpu=12288 \
   actor_rollout_ref.actor.ppo_infer_max_token_len_per_gpu=12288 \
   actor_rollout_ref.model.enable_gradient_checkpointing=True \
