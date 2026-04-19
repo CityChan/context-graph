@@ -114,8 +114,8 @@ python -m scripts.train_fold \
   data.return_raw_chat=True \
   actor_rollout_ref.actor.ppo_mini_batch_size=8 \
   actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=1 \
-  actor_rollout_ref.actor.fsdp_config.param_offload=True \
-  actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
+  actor_rollout_ref.actor.fsdp_config.param_offload=False \
+  actor_rollout_ref.actor.fsdp_config.optimizer_offload=False \
   actor_rollout_ref.actor.ppo_max_token_len_per_gpu=12288 \
   actor_rollout_ref.actor.ppo_infer_max_token_len_per_gpu=12288 \
   actor_rollout_ref.model.enable_gradient_checkpointing=True \
