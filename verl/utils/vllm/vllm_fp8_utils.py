@@ -328,18 +328,18 @@ def process_weights_after_loading_for_vllm11(self, layer) -> None:
 def process_weights_after_loading_moe_for_vllm10(self, layer) -> None:
     """This function is used to process the weights after loading for a FusedMoE layer, it is used for vllm v0.10"""
     from vllm.model_executor.layers.fused_moe.rocm_aiter_fused_moe import is_rocm_aiter_moe_enabled
-    from vllm.model_executor.layers.quantization.fp8 import _is_col_major, _swap_w13_to_w31
+    from vllm.model_executor.layers.quantization.fp8 import _is_col_major, swap_w13_to_w31
     from vllm.model_executor.layers.quantization.utils.fp8_utils import (
         get_col_major_tma_aligned_tensor,
         requant_weight_ue8m0_inplace,
     )
-    from vllm.utils.deep_gemm import is_blackwell_deep_gemm_used
+    from vllm.utils.deep_gemm import is_blackwell_deep_gemm_e8m0_used
 
     self.rocm_aiter_moe_enabled = is_rocm_aiter_moe_enabled()
     assert self.quant_config.activation_scheme == "dynamic"
     if self.flashinfer_moe_enabled:
-        w13_weight = _swap_w13_to_w31(layer.w13_weight.data)
-        w13_weight_scale_inv = _swap_w13_to_w31(layer.w13_weight_scale_inv.data)
+        w13_weight = swap_w13_to_w31(layer.w13_weight.data)
+        w13_weight_scale_inv = swap_w13_to_w31(layer.w13_weight_scale_inv.data)
         w2_weight = layer.w2_weight.data
         w2_weight_scale_inv = layer.w2_weight_scale_inv.data
     else:
@@ -373,14 +373,14 @@ def process_weights_after_loading_moe_for_vllm10(self, layer) -> None:
 
     # DeepGemm scales need to be transposed and aligned.  We try to do
     # it ahead of time for performance reasons.
-    if self.allow_deep_gemm and not is_blackwell_deep_gemm_used():
+    if self.allow_deep_gemm and not is_blackwell_deep_gemm_e8m0_used():
         # Lazy import to avoid CUDA initialization problems.
         if _is_col_major(layer.w13_weight_scale_inv):
             layer.w13_weight_scale_inv = get_col_major_tma_aligned_tensor(layer.w13_weight_scale_inv).contiguous()
         if _is_col_major(layer.w2_weight_scale_inv):
             layer.w2_weight_scale_inv = get_col_major_tma_aligned_tensor(layer.w2_weight_scale_inv).contiguous()
 
-    if is_blackwell_deep_gemm_used():
+    if is_blackwell_deep_gemm_e8m0_used():
         assert layer.weight_block_size is not None
         # Re-quantise the expert weights so their scales are UE8M0.
         block_sz = tuple(layer.weight_block_size)

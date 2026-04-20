@@ -165,6 +165,15 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
         world_size = torch.distributed.get_world_size()
         # TODO(sgm): support FSDP hybrid shard for larger model
         self.device_mesh = create_device_mesh(world_size=world_size, fsdp_size=self.config.actor.fsdp_config.fsdp_size)
+        # DIAGNOSTIC: is the Ray resource pool actually world_size=N or is each rank world=1?
+        import os as _os_ycheck
+        assert torch.distributed.get_world_size() == int(_os_ycheck.environ.get("WORLD_SIZE", "-1")), (
+            "torch.distributed world_size={} != env WORLD_SIZE={}".format(torch.distributed.get_world_size(), _os_ycheck.environ.get('WORLD_SIZE'))
+        )
+        logger.warning(
+            "FSDP DIAGNOSTIC rank=%s world_size=%s env_WORLD_SIZE=%s mesh=%s",
+            self.rank, world_size, _os_ycheck.environ.get("WORLD_SIZE"), self.device_mesh,
+        )
 
         # build device mesh for Ulysses Sequence Parallel
         self.ulysses_device_mesh = None
@@ -819,6 +828,11 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
             )
 
         if self._is_rollout:
+            import gc as _gc_ycheck
+            torch.cuda.synchronize()
+            _gc_ycheck.collect()
+            torch.cuda.empty_cache()
+            logger.warning(f'PRE-VLLM MEM: rank={self.rank} free={torch.cuda.mem_get_info()[0]/2**30:.1f}GiB used={torch.cuda.memory_allocated()/2**30:.1f}GiB')
             self._build_rollout(trust_remote_code=self.config.model.get("trust_remote_code", False))
 
         if self._is_ref:

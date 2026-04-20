@@ -466,10 +466,9 @@ def fsdp2_load_full_state_dict(model: torch.nn.Module, full_state: dict, device_
         from verl.third_party.torch.distributed.checkpoint.state_dict import StateDictOptions, set_model_state_dict
 
     # To broadcast, it needs to be instantiated in the GPU.
-    if dist.get_rank() == 0:
-        model = model.to(device=get_device_id(), non_blocking=True)
-    else:
-        model = model.to_empty(device=get_device_id())
+    # Use to_empty on all ranks since model has meta tensors post FSDP2 init;
+    # weights come from full_state via set_model_state_dict below.
+    model = model.to_empty(device=get_device_id())
 
     cpu_offload = cpu_offload is not None
     options = StateDictOptions(full_state_dict=True, cpu_offload=cpu_offload, broadcast_from_rank0=True)
