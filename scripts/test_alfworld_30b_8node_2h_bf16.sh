@@ -1,16 +1,16 @@
 #!/bin/bash
-#SBATCH -J test-alf-30b
-#SBATCH -o test-alf-30b.%j.out
-#SBATCH -e test-alf-30b.%j.err
+#SBATCH -J test-alf-30b-bf16-8n
+#SBATCH -o test-alf-30b-bf16-8n.%j.out
+#SBATCH -e test-alf-30b-bf16-8n.%j.err
 #SBATCH -p gh-dev
-#SBATCH -N 2
+#SBATCH -N 8
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=72
-#SBATCH -t 01:00:00
+#SBATCH -t 02:00:00
 #SBATCH -A AST24021
 
 # ─────────────────────────────────────────────────────────────────────
-# Smoke test: Qwen3-30B-A3B-Thinking-2507 on ALFWorld, 2 nodes / 1 hour
+# Smoke test: Qwen3-30B-A3B-Thinking-2507 on ALFWorld, 8 nodes / 2 hours, BF16
 # Goal: validate environment + Ray cluster + 30B model load + 2-3 RL steps.
 # Reduced settings (response=8192, batch=8, n=4, 3 steps) — NOT a real run.
 # ─────────────────────────────────────────────────────────────────────
@@ -31,8 +31,8 @@ export NCCL_HOSTID="${SLURMD_NODENAME:-$(hostname -s)}"
   export PATH=${CONDA_PREFIX}/bin:${PATH}; hash -r
 
 export PATH=/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/bin:${PATH}
-export LD_LIBRARY_PATH=${CONDA_PREFIX}/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/lib64:${LD_LIBRARY_PATH}
-export LIBRARY_PATH=/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/lib64:${LIBRARY_PATH}
+export LD_LIBRARY_PATH=${CONDA_PREFIX}/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/targets/sbsa-linux/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/lib64:${LD_LIBRARY_PATH}
+export LIBRARY_PATH=/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/targets/sbsa-linux/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/lib64:${LIBRARY_PATH}
 export CPATH=/home1/apps/nvidia/Linux_aarch64/25.3/math_libs/12.8/targets/sbsa-linux/include:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/include:${CPATH}
 
 export CC=gcc
@@ -80,13 +80,13 @@ python scripts/make_alfworld_data.py --n_train 32 --n_val 8
 
 # ── Ray head on Node 0 ──
 echo "--- Starting Ray head on $NODE0 ---"
-srun --overlap --nodes=1 --ntasks=1 -p gh-dev -t 01:00:00 -w "$NODE0" bash -c "
+srun --overlap --nodes=1 --ntasks=1 -w "$NODE0" bash -c "
   source /work/07144/yw23374/vista/miniconda3/etc/profile.d/conda.sh
   conda activate cxtgraph
   export NCCL_HOSTID=\"\${SLURMD_NODENAME:-\$(hostname -s)}\"
   export PATH=${CONDA_PREFIX}/bin:${PATH}; hash -r
   export PATH=/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/bin:\${PATH}
-  export LD_LIBRARY_PATH=\${CONDA_PREFIX}/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/lib64:\${LD_LIBRARY_PATH}
+  export LD_LIBRARY_PATH=\${CONDA_PREFIX}/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/targets/sbsa-linux/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/lib64:\${LD_LIBRARY_PATH}
   export HF_HOME=/work/07144/yw23374/vista/hf_cache
 export FLASHINFER_WORKSPACE_BASE=/tmp
   export HF_HUB_OFFLINE=1
@@ -102,13 +102,13 @@ WORKER_PIDS=()
 for i in $(seq 1 $((NUM_NODES-1))); do
   WORKER_NODE=${NODELIST[$i]}
   echo "--- Starting Ray worker on $WORKER_NODE (node $i) ---"
-  srun --overlap --nodes=1 --ntasks=1 -p gh-dev -t 01:00:00 -w "$WORKER_NODE" bash -c "
+  srun --overlap --nodes=1 --ntasks=1 -w "$WORKER_NODE" bash -c "
     source /work/07144/yw23374/vista/miniconda3/etc/profile.d/conda.sh
     conda activate cxtgraph
   export NCCL_HOSTID=\"\${SLURMD_NODENAME:-\$(hostname -s)}\"
   export PATH=${CONDA_PREFIX}/bin:${PATH}; hash -r
     export PATH=/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/bin:\${PATH}
-    export LD_LIBRARY_PATH=\${CONDA_PREFIX}/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/lib64:\${LD_LIBRARY_PATH}
+    export LD_LIBRARY_PATH=\${CONDA_PREFIX}/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/targets/sbsa-linux/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/lib64:\${LD_LIBRARY_PATH}
     export HF_HOME=/work/07144/yw23374/vista/hf_cache
 export FLASHINFER_WORKSPACE_BASE=/tmp
   export HF_HUB_OFFLINE=1
@@ -126,9 +126,10 @@ ray status || echo "WARN: ray status check failed"
 
 # ── Run 3 RL steps just to prove the pipeline works ──
 echo "════════════════════════════════════════════════════════════════"
-echo "  Launching FoldGRPO smoke test (3 steps, batch=8, n=4)"
+echo "  Launching FoldGRPO BF16 smoke test (3 steps, batch=8, n=4, rollout TP=8)"
 echo "════════════════════════════════════════════════════════════════"
 
+set +e
 python -m scripts.train_fold \
   algorithm.adv_estimator=foldgrpo \
   algorithm.kl_ctrl.kl_coef=0.001 \
@@ -141,7 +142,7 @@ python -m scripts.train_fold \
   actor_rollout_ref.rollout.prompt_length=4096 \
   actor_rollout_ref.rollout.response_length=8192 \
   actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu=12288 \
-  actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
+  actor_rollout_ref.rollout.tensor_model_parallel_size=8 \
   actor_rollout_ref.rollout.gpu_memory_utilization=0.50 \
   actor_rollout_ref.rollout.enforce_eager=True \
   actor_rollout_ref.rollout.max_num_batched_tokens=2048 \
@@ -172,7 +173,7 @@ python -m scripts.train_fold \
   actor_rollout_ref.ref.fsdp_config.reshard_after_forward=True \
   actor_rollout_ref.actor.ppo_max_token_len_per_gpu=12288 \
   actor_rollout_ref.actor.ppo_infer_max_token_len_per_gpu=12288 \
-  actor_rollout_ref.model.enable_gradient_checkpointing=True \
+  actor_rollout_ref.model.enable_gradient_checkpointing=False \
   +actor_rollout_ref.rollout.plugin.workflow=alfworld \
   +actor_rollout_ref.rollout.plugin.max_turn=20 \
   +actor_rollout_ref.rollout.plugin.retry_cjk=10 \
@@ -197,7 +198,7 @@ python -m scripts.train_fold \
   trainer.test_freq=999 \
   trainer.save_freq=-1 \
   trainer.project_name=context-graph \
-  trainer.experiment_name=smoke_alfworld_30b_2n \
+  trainer.experiment_name=smoke_alfworld_30b_bf16_8n \
   trainer.logger='["console","wandb"]'
 
 RC=$?

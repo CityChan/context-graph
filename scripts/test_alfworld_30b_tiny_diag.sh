@@ -1,16 +1,16 @@
 #!/bin/bash
-#SBATCH -J test-alf-30b
-#SBATCH -o test-alf-30b.%j.out
-#SBATCH -e test-alf-30b.%j.err
+#SBATCH -J test-alf-30b-bf16-8n
+#SBATCH -o test-alf-30b-bf16-8n.%j.out
+#SBATCH -e test-alf-30b-bf16-8n.%j.err
 #SBATCH -p gh-dev
-#SBATCH -N 2
+#SBATCH -N 8
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=72
-#SBATCH -t 01:00:00
+#SBATCH -t 02:00:00
 #SBATCH -A AST24021
 
 # ─────────────────────────────────────────────────────────────────────
-# Smoke test: Qwen3-30B-A3B-Thinking-2507 on ALFWorld, 2 nodes / 1 hour
+# Smoke test: Qwen3-30B-A3B-Thinking-2507 on ALFWorld, 8 nodes / 2 hours, BF16
 # Goal: validate environment + Ray cluster + 30B model load + 2-3 RL steps.
 # Reduced settings (response=8192, batch=8, n=4, 3 steps) — NOT a real run.
 # ─────────────────────────────────────────────────────────────────────
@@ -31,8 +31,8 @@ export NCCL_HOSTID="${SLURMD_NODENAME:-$(hostname -s)}"
   export PATH=${CONDA_PREFIX}/bin:${PATH}; hash -r
 
 export PATH=/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/bin:${PATH}
-export LD_LIBRARY_PATH=${CONDA_PREFIX}/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/lib64:${LD_LIBRARY_PATH}
-export LIBRARY_PATH=/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/lib64:${LIBRARY_PATH}
+export LD_LIBRARY_PATH=${CONDA_PREFIX}/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/targets/sbsa-linux/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/lib64:${LD_LIBRARY_PATH}
+export LIBRARY_PATH=/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/targets/sbsa-linux/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/lib64:${LIBRARY_PATH}
 export CPATH=/home1/apps/nvidia/Linux_aarch64/25.3/math_libs/12.8/targets/sbsa-linux/include:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/include:${CPATH}
 
 export CC=gcc
@@ -47,6 +47,16 @@ cd "$PROJECT_ROOT"
 
 export HF_HOME=/work/07144/yw23374/vista/hf_cache
 export FLASHINFER_WORKSPACE_BASE=/tmp
+# Diagnostic NCCL debug + longer timeout to see where collective hangs
+export NCCL_DEBUG=WARN
+export TORCH_NCCL_BLOCKING_WAIT=0
+export TORCH_NCCL_ASYNC_ERROR_HANDLING=1
+export TORCH_NCCL_DUMP_ON_TIMEOUT=1
+export TORCH_NCCL_TRACE_BUFFER_SIZE=2048
+export TORCH_NCCL_DEBUG_INFO_TEMP_FILE=/tmp/nccl_trace_$SLURMD_NODENAME_$$_
+export TORCH_NCCL_DEBUG_INFO_PIPE_FILE=/tmp/nccl_trace_pipe_$SLURMD_NODENAME_$$
+export NCCL_TIMEOUT_MS=1200000
+
 export HF_HUB_OFFLINE=1
 export TRANSFORMERS_OFFLINE=1
 export PYTHONPATH="$PROJECT_ROOT:$PYTHONPATH"
@@ -80,15 +90,25 @@ python scripts/make_alfworld_data.py --n_train 32 --n_val 8
 
 # ── Ray head on Node 0 ──
 echo "--- Starting Ray head on $NODE0 ---"
-srun --overlap --nodes=1 --ntasks=1 -p gh-dev -t 01:00:00 -w "$NODE0" bash -c "
+srun --jobid=673469 --overlap --nodes=1 --ntasks=1 -p gh-dev -t 01:30:00 -w "$NODE0" bash -c "
   source /work/07144/yw23374/vista/miniconda3/etc/profile.d/conda.sh
   conda activate cxtgraph
   export NCCL_HOSTID=\"\${SLURMD_NODENAME:-\$(hostname -s)}\"
   export PATH=${CONDA_PREFIX}/bin:${PATH}; hash -r
   export PATH=/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/bin:\${PATH}
-  export LD_LIBRARY_PATH=\${CONDA_PREFIX}/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/lib64:\${LD_LIBRARY_PATH}
+  export LD_LIBRARY_PATH=\${CONDA_PREFIX}/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/targets/sbsa-linux/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/lib64:\${LD_LIBRARY_PATH}
   export HF_HOME=/work/07144/yw23374/vista/hf_cache
 export FLASHINFER_WORKSPACE_BASE=/tmp
+# Diagnostic NCCL debug + longer timeout to see where collective hangs
+export NCCL_DEBUG=WARN
+export TORCH_NCCL_BLOCKING_WAIT=0
+export TORCH_NCCL_ASYNC_ERROR_HANDLING=1
+export TORCH_NCCL_DUMP_ON_TIMEOUT=1
+export TORCH_NCCL_TRACE_BUFFER_SIZE=2048
+export TORCH_NCCL_DEBUG_INFO_TEMP_FILE=/tmp/nccl_trace_$SLURMD_NODENAME_$$_
+export TORCH_NCCL_DEBUG_INFO_PIPE_FILE=/tmp/nccl_trace_pipe_$SLURMD_NODENAME_$$
+export NCCL_TIMEOUT_MS=1200000
+
   export HF_HUB_OFFLINE=1
   export TRANSFORMERS_OFFLINE=1
   ray start --head --node-ip-address=$NODE0_IP --port=6379 \
@@ -102,15 +122,25 @@ WORKER_PIDS=()
 for i in $(seq 1 $((NUM_NODES-1))); do
   WORKER_NODE=${NODELIST[$i]}
   echo "--- Starting Ray worker on $WORKER_NODE (node $i) ---"
-  srun --overlap --nodes=1 --ntasks=1 -p gh-dev -t 01:00:00 -w "$WORKER_NODE" bash -c "
+  srun --jobid=673469 --overlap --nodes=1 --ntasks=1 -p gh-dev -t 01:30:00 -w "$WORKER_NODE" bash -c "
     source /work/07144/yw23374/vista/miniconda3/etc/profile.d/conda.sh
     conda activate cxtgraph
   export NCCL_HOSTID=\"\${SLURMD_NODENAME:-\$(hostname -s)}\"
   export PATH=${CONDA_PREFIX}/bin:${PATH}; hash -r
     export PATH=/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/bin:\${PATH}
-    export LD_LIBRARY_PATH=\${CONDA_PREFIX}/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/lib64:\${LD_LIBRARY_PATH}
+    export LD_LIBRARY_PATH=\${CONDA_PREFIX}/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/targets/sbsa-linux/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/lib64:\${LD_LIBRARY_PATH}
     export HF_HOME=/work/07144/yw23374/vista/hf_cache
 export FLASHINFER_WORKSPACE_BASE=/tmp
+# Diagnostic NCCL debug + longer timeout to see where collective hangs
+export NCCL_DEBUG=WARN
+export TORCH_NCCL_BLOCKING_WAIT=0
+export TORCH_NCCL_ASYNC_ERROR_HANDLING=1
+export TORCH_NCCL_DUMP_ON_TIMEOUT=1
+export TORCH_NCCL_TRACE_BUFFER_SIZE=2048
+export TORCH_NCCL_DEBUG_INFO_TEMP_FILE=/tmp/nccl_trace_$SLURMD_NODENAME_$$_
+export TORCH_NCCL_DEBUG_INFO_PIPE_FILE=/tmp/nccl_trace_pipe_$SLURMD_NODENAME_$$
+export NCCL_TIMEOUT_MS=1200000
+
   export HF_HUB_OFFLINE=1
   export TRANSFORMERS_OFFLINE=1
     ray start --address ${NODE0_IP}:6379 --num-cpus=70 --num-gpus=1 --block
@@ -126,9 +156,10 @@ ray status || echo "WARN: ray status check failed"
 
 # ── Run 3 RL steps just to prove the pipeline works ──
 echo "════════════════════════════════════════════════════════════════"
-echo "  Launching FoldGRPO smoke test (3 steps, batch=8, n=4)"
+echo "  Launching FoldGRPO BF16 smoke test (3 steps, batch=8, n=4, rollout TP=8)"
 echo "════════════════════════════════════════════════════════════════"
 
+set +e
 python -m scripts.train_fold \
   algorithm.adv_estimator=foldgrpo \
   algorithm.kl_ctrl.kl_coef=0.001 \
@@ -138,45 +169,45 @@ python -m scripts.train_fold \
   actor_rollout_ref.rollout.dtype=bfloat16 \
   actor_rollout_ref.rollout.calculate_log_probs=True \
   actor_rollout_ref.model.path=/work/07144/yw23374/vista/models/Qwen3-30B-A3B-Thinking-2507 \
-  actor_rollout_ref.rollout.prompt_length=4096 \
-  actor_rollout_ref.rollout.response_length=8192 \
-  actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu=12288 \
-  actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
+  actor_rollout_ref.rollout.prompt_length=512 \
+  actor_rollout_ref.rollout.response_length=2048 \
+  actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu=4096 \
+  actor_rollout_ref.rollout.tensor_model_parallel_size=8 \
   actor_rollout_ref.rollout.gpu_memory_utilization=0.50 \
   actor_rollout_ref.rollout.enforce_eager=True \
-  actor_rollout_ref.rollout.max_num_batched_tokens=2048 \
+  actor_rollout_ref.rollout.max_num_batched_tokens=4096 \
   actor_rollout_ref.rollout.max_num_seqs=16 \
   +actor_rollout_ref.rollout.engine_kwargs.vllm.enable_sleep_mode=True \
-  actor_rollout_ref.rollout.n=4 \
+  actor_rollout_ref.rollout.n=1 \
   actor_rollout_ref.rollout.agent.num_workers=1 \
   actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=1 \
   actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=1 \
   actor_rollout_ref.actor.optim.lr=5e-6 \
   actor_rollout_ref.actor.optim.weight_decay=0.1 \
-  actor_rollout_ref.actor.use_kl_loss=True \
+  actor_rollout_ref.actor.use_kl_loss=False \
   data.train_files=data/alfworld_train.parquet \
   data.val_files=data/alfworld_test.parquet \
   data.train_batch_size=8 \
-  data.max_prompt_length=4096 \
-  data.max_response_length=8192 \
+  data.max_prompt_length=512 \
+  data.max_response_length=2048 \
   data.return_raw_chat=True \
   actor_rollout_ref.actor.ppo_mini_batch_size=8 \
   actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=1 \
-  actor_rollout_ref.actor.strategy=fsdp2 \
-  actor_rollout_ref.ref.strategy=fsdp2 \
+  actor_rollout_ref.actor.strategy=fsdp \
+  actor_rollout_ref.ref.strategy=fsdp \
   actor_rollout_ref.actor.fsdp_config.model_dtype=bfloat16 \
   actor_rollout_ref.ref.fsdp_config.model_dtype=bfloat16 \
-  actor_rollout_ref.actor.fsdp_config.offload_policy=True \
-  actor_rollout_ref.ref.fsdp_config.offload_policy=True \
+  actor_rollout_ref.actor.fsdp_config.param_offload=True \
+  actor_rollout_ref.ref.fsdp_config.param_offload=True \
   actor_rollout_ref.actor.fsdp_config.reshard_after_forward=True \
   actor_rollout_ref.ref.fsdp_config.reshard_after_forward=True \
-  actor_rollout_ref.actor.ppo_max_token_len_per_gpu=12288 \
-  actor_rollout_ref.actor.ppo_infer_max_token_len_per_gpu=12288 \
-  actor_rollout_ref.model.enable_gradient_checkpointing=True \
+  actor_rollout_ref.actor.ppo_max_token_len_per_gpu=4096 \
+  actor_rollout_ref.actor.ppo_infer_max_token_len_per_gpu=4096 \
+  actor_rollout_ref.model.enable_gradient_checkpointing=False \
   +actor_rollout_ref.rollout.plugin.workflow=alfworld \
-  +actor_rollout_ref.rollout.plugin.max_turn=20 \
+  +actor_rollout_ref.rollout.plugin.max_turn=4 \
   +actor_rollout_ref.rollout.plugin.retry_cjk=10 \
-  +actor_rollout_ref.rollout.plugin.turn_max_new_tokens=512 \
+  +actor_rollout_ref.rollout.plugin.turn_max_new_tokens=256 \
   +actor_rollout_ref.rollout.plugin.max_session=3 \
   +actor_rollout_ref.rollout.plugin.val_max_session=3 \
   +actor_rollout_ref.rollout.plugin.session_timeout=300 \
@@ -187,17 +218,17 @@ python -m scripts.train_fold \
   +actor_rollout_ref.rollout.plugin.must_finish=False \
   +actor_rollout_ref.rollout.plugin.double_check=False \
   +actor_rollout_ref.rollout.plugin.must_search=False \
-  +actor_rollout_ref.rollout.plugin.val_max_turn=20 \
-  +actor_rollout_ref.rollout.plugin.val_response_length=8192 \
+  +actor_rollout_ref.rollout.plugin.val_max_turn=4 \
+  +actor_rollout_ref.rollout.plugin.val_response_length=2048 \
   trainer.val_before_train=False \
   trainer.val_only=False \
   trainer.n_gpus_per_node=1 \
   trainer.nnodes=${NUM_NODES} \
-  trainer.total_training_steps=3 \
+  trainer.total_training_steps=1 \
   trainer.test_freq=999 \
   trainer.save_freq=-1 \
   trainer.project_name=context-graph \
-  trainer.experiment_name=smoke_alfworld_30b_2n \
+  trainer.experiment_name=tiny_diag_30b_fsdp1 \
   trainer.logger='["console","wandb"]'
 
 RC=$?
