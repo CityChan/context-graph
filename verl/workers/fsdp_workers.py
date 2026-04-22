@@ -335,6 +335,10 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
         actor_model_config = AutoConfig.from_pretrained(
             local_path, trust_remote_code=trust_remote_code, attn_implementation=attn_implementation
         )
+        # Strip quantization_config for actor/ref so HF does not meta-init (FSDP1 broadcast fails on meta).
+        # Rollout (vLLM) reads quantization_config directly from disk config.json.
+        if hasattr(actor_model_config, 'quantization_config'):
+            delattr(actor_model_config, 'quantization_config')
         # TODO: VL models use VisionAttention, which directly uses flash_attention in transformers>=4.53
         # which will be patched by _ulysses_flash_attention_forward, but errorly misses position_ids
         # Maybe support Ulysses in VisionAttention in the future and remove this patch

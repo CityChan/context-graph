@@ -51,4 +51,27 @@ def get_ppo_ray_runtime_env():
     for key in list(runtime_env["env_vars"].keys()):
         if os.environ.get(key) is not None:
             runtime_env["env_vars"].pop(key, None)
+
+    # Preserve CUDA and compiler paths for Ray workers so vLLM child processes
+    # can resolve CUDA shared libraries like libnvrtc at process start.
+    for key in (
+        "PATH",
+        "LD_LIBRARY_PATH",
+        "LIBRARY_PATH",
+        "CPATH",
+        "CUDAHOSTCXX",
+        "CC",
+        "CXX",
+        "CUDA_HOME",
+        "CUDA_ROOT",
+        "CONDA_PREFIX",
+        "HF_HOME",
+        "HF_HUB_OFFLINE",
+        "TRANSFORMERS_OFFLINE",
+        "FLASHINFER_WORKSPACE_BASE",
+    ):
+        value = os.environ.get(key)
+        if value is not None:
+            runtime_env["env_vars"][key] = value
+
     return runtime_env
