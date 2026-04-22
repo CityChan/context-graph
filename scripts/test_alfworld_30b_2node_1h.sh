@@ -142,6 +142,7 @@ python -m scripts.train_fold \
   actor_rollout_ref.rollout.response_length=8192 \
   actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu=12288 \
   actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
+  +actor_rollout_ref.rollout.quantization=fp8 \
   actor_rollout_ref.rollout.gpu_memory_utilization=0.50 \
   actor_rollout_ref.rollout.enforce_eager=True \
   actor_rollout_ref.rollout.max_num_batched_tokens=2048 \
