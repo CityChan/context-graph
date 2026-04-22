@@ -4,6 +4,14 @@ __pycache__/
 .DS_Store
 *.egg-info/
 data/
+wandb/
+logs/
+outputs/
+paper/
 *.pt
 *.bin
-wandb/
+*.log
+*.out
+*.err
+*.bak
+scripts/test_alfworld_30b_tiny_diag_no_compile.sh

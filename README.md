@@ -187,6 +187,8 @@ python scripts/make_alfworld_data.py --n_train 300 --n_val 80
 sbatch scripts/test_alfworld_30b_2node_1h.sh
 ```
 
+On Vista, the Chen-style 8-node idev FP8 reproduction script is `scripts/test_alfworld_30b_8node_2h_chen_fp8.sh`; see `VISTA_NOTES.md` for the exact workflow.
+
 **4. Launch production training** (16 nodes × 1 GH200, 48 hours)
 
 ```bash
