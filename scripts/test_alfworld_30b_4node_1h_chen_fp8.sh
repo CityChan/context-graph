@@ -61,8 +61,8 @@ export NCCL_P2P_LEVEL=NVL
 
 # ── Project paths ──
 PROJECT_ROOT=/work/09281/chc_1996/vista/context-graph
-MODEL_PATH=${MODEL_PATH:-/work/09281/chc_1996/vista/models/Qwen3-30B-A3B-Thinking-2507}
-export HF_HOME=${HF_HOME:-/work/09281/chc_1996/vista/hf_cache}
+MODEL_PATH=${MODEL_PATH:-Qwen/Qwen3-30B-A3B-Thinking-2507}
+export HF_HOME=${HF_HOME:-/work/09281/chc_1996/vista/cache}
 cd "$PROJECT_ROOT"
 export PYTHONPATH="$PROJECT_ROOT:${PYTHONPATH:-}"
 
