@@ -7,7 +7,7 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=72
 #SBATCH -t 01:00:00
-#SBATCH -A ASC24078
+#SBATCH -A AST24021
 
 # ─────────────────────────────────────────────────────────────────────
 # Smoke test: Qwen3-4B-Instruct-2507 on ALFWorld, 1 node / 1 hour
