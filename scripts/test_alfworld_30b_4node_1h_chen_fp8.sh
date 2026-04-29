@@ -9,50 +9,21 @@
 #SBATCH -t 01:00:00
 #SBATCH -A AST24021
 
-# Chen Apr 19, 2026 setup adapted for Vista idev — 4-node communication test.
-# Same proven config as the 8-node script, sized down to 4 nodes to verify
-# multi-node IB collectives at smaller scale before committing to 8/16-node runs.
+# ─────────────────────────────────────────────────────────────────────
+# 30B Chen FP8 rollout smoke on Vista, 4 nodes / 1 hour.
+# Submit from a login node:
+#   sbatch scripts/test_alfworld_30b_4node_1h_chen_fp8.sh
+#
+# Same proven config as the 8-node Chen FP8 smoke, sized down to 4 nodes.
+# Goal: validate IB collectives at smaller scale before 8/16-node runs.
 # - BF16 base model
-# - vLLM rollout quantization=fp8
-# - rollout tensor parallel size = 1
+# - vLLM rollout quantization=fp8, TP=1
 # - FSDP1 actor/ref with param + optimizer offload
-#
-# Usage from login node with an existing idev allocation:
-#   IDEV_JOBID=<jobid> bash scripts/test_alfworld_30b_4node_1h_chen_fp8.sh
-#
-# Usage from inside an allocation:
-#   bash scripts/test_alfworld_30b_4node_1h_chen_fp8.sh
+# ─────────────────────────────────────────────────────────────────────
 
 set -euo pipefail
 
-SRUN_PARTITION=${SRUN_PARTITION:-gh-dev}
-SRUN_TIME=${SRUN_TIME:-01:00:00}
-
-if [ -n "${SLURM_JOB_ID:-}" ] && [ -n "${SLURM_JOB_NODELIST:-}" ]; then
-  ALLOC_JOB_ID="$SLURM_JOB_ID"
-  NODELIST_SPEC="$SLURM_JOB_NODELIST"
-  SRUN_PREFIX=(srun --overlap -p "$SRUN_PARTITION" -t "$SRUN_TIME")
-elif [ -n "${IDEV_JOBID:-}" ]; then
-  ALLOC_JOB_ID="$IDEV_JOBID"
-  NODELIST_SPEC=$(squeue -j "$ALLOC_JOB_ID" -h -o "%N" | head -n 1)
-  if [ -z "$NODELIST_SPEC" ]; then
-    echo "Could not resolve nodes for IDEV_JOBID=$ALLOC_JOB_ID"
-    exit 1
-  fi
-  SRUN_PREFIX=(srun --jobid="$ALLOC_JOB_ID" --overlap -p "$SRUN_PARTITION" -t "$SRUN_TIME")
-else
-  echo "Run inside a Slurm allocation or set IDEV_JOBID=<jobid>."
-  exit 1
-fi
-
-mapfile -t NODELIST < <(scontrol show hostnames "$NODELIST_SPEC")
-NUM_NODES=${#NODELIST[@]}
-if [ "$NUM_NODES" -ne 4 ]; then
-  echo "Expected 4 nodes for this smoke script, got $NUM_NODES"
-  printf 'Nodes: %s\n' "${NODELIST[*]}"
-  exit 1
-fi
-
+# ── Vista cache redirects (avoid NFS flock) ──
 export TRITON_CACHE_DIR=/tmp/triton_cache_$$
 export VLLM_CACHE_ROOT=/tmp/vllm_cache_$$
 export FLASHINFER_WORKSPACE_BASE=/tmp
@@ -62,11 +33,13 @@ export TRANSFORMERS_OFFLINE=1
 export RAY_memory_usage_threshold=0.99
 export RAY_memory_monitor_refresh_ms=0
 
+# ── WANDB (optional) ──
 if [ -n "${WORK:-}" ] && [ -f "$WORK/.wandb_env" ]; then
   # shellcheck disable=SC1090
   source "$WORK/.wandb_env"
 fi
 
+# ── Conda + CUDA ──
 source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
 conda activate cxtgraph
 export NCCL_HOSTID="${SLURMD_NODENAME:-$(hostname -s)}"
@@ -86,14 +59,23 @@ export HYDRA_FULL_ERROR=1
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
 export NCCL_P2P_LEVEL=NVL
 
+# ── Project paths ──
 PROJECT_ROOT=/work/09281/chc_1996/vista/context-graph
 MODEL_PATH=${MODEL_PATH:-/work/09281/chc_1996/vista/models/Qwen3-30B-A3B-Thinking-2507}
 export HF_HOME=${HF_HOME:-/work/09281/chc_1996/vista/hf_cache}
 cd "$PROJECT_ROOT"
 export PYTHONPATH="$PROJECT_ROOT:${PYTHONPATH:-}"
 
+# ── Node info ──
+mapfile -t NODELIST < <(scontrol show hostnames "$SLURM_JOB_NODELIST")
 NODE0=${NODELIST[0]}
 NODE0_IP=$(getent hosts "$NODE0" | awk '{print $1}')
+NUM_NODES=${#NODELIST[@]}
+
+if [ "$NUM_NODES" -ne 4 ]; then
+  echo "Expected 4 nodes (set #SBATCH -N 4), got $NUM_NODES"
+  exit 1
+fi
 
 if [ -n "${WANDB_API_KEY:-}" ]; then
   TRAINER_LOGGER='["console","wandb"]'
@@ -102,19 +84,24 @@ else
 fi
 
 echo "=============================================================="
-echo "Chen FP8 rollout smoke on Vista"
-echo "Allocation: $ALLOC_JOB_ID"
-echo "Nodes: $NUM_NODES   Head: $NODE0 ($NODE0_IP)"
-echo "Model: $MODEL_PATH"
-echo "Started: $(date)"
+echo "  30B Chen FP8 smoke (4 nodes) on Vista"
+echo "  Job: $SLURM_JOB_ID   Head: $NODE0 ($NODE0_IP)"
+echo "  Model: $MODEL_PATH"
+echo "  Started: $(date)"
 echo "=============================================================="
 
-echo "--- Cleaning up any stale Ray processes on allocation nodes ---"
+# ── Stale Ray cleanup on all allocated nodes ──
+echo "--- Cleaning up stale Ray processes ---"
 for node in "${NODELIST[@]}"; do
-  "${SRUN_PREFIX[@]}" --nodes=1 --ntasks=1 -w "$node" bash -c 'source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh && conda activate cxtgraph && ray stop -f >/dev/null 2>&1 || true' || true
+  srun --overlap --nodes=1 --ntasks=1 -w "$node" bash -c '
+    source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
+    conda activate cxtgraph
+    ray stop -f >/dev/null 2>&1 || true
+  ' || true
 done
 sleep 5
 
+# ── Sanity ──
 python -c "import torch; print('torch:', torch.__version__, 'cuda available:', torch.cuda.is_available(), 'devices:', torch.cuda.device_count())"
 python -c "import vllm; print('vllm:', vllm.__version__)"
 python -c "import verl; print('verl OK')"
@@ -123,8 +110,9 @@ python -c "import textworld, alfworld; print('textworld + alfworld OK')"
 echo "--- Generating ALFWorld parquet ---"
 python scripts/make_alfworld_data.py --n_train 32 --n_val 8
 
+# ── Ray head ──
 echo "--- Starting Ray head on $NODE0 ---"
-"${SRUN_PREFIX[@]}" --nodes=1 --ntasks=1 -w "$NODE0" bash -c '
+srun --overlap --nodes=1 --ntasks=1 -w "$NODE0" bash -c '
   source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
   conda activate cxtgraph
   export NCCL_HOSTID="${SLURMD_NODENAME:-$(hostname -s)}"
@@ -142,11 +130,12 @@ echo "--- Starting Ray head on $NODE0 ---"
 RAY_HEAD_PID=$!
 sleep 20
 
+# ── Ray workers ──
 WORKER_PIDS=()
 for i in $(seq 1 $((NUM_NODES - 1))); do
   WORKER_NODE=${NODELIST[$i]}
   echo "--- Starting Ray worker on $WORKER_NODE (node $i) ---"
-  "${SRUN_PREFIX[@]}" --nodes=1 --ntasks=1 -w "$WORKER_NODE" bash -c '
+  srun --overlap --nodes=1 --ntasks=1 -w "$WORKER_NODE" bash -c '
     source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
     conda activate cxtgraph
     export NCCL_HOSTID="${SLURMD_NODENAME:-$(hostname -s)}"
@@ -178,11 +167,11 @@ echo "--- Ray cluster status ---"
 ray status || echo "WARN: ray status check failed"
 
 echo "=============================================================="
-echo "Launching Chen FP8 rollout smoke test on 4 nodes"
+echo "  Launching FoldGRPO smoke test (4 nodes, 3 RL steps)"
 echo "=============================================================="
 
 set +e
-"${SRUN_PREFIX[@]}" --nodes=1 --ntasks=1 -w "$NODE0" --chdir="$PROJECT_ROOT" python -m scripts.train_fold \
+srun --overlap --nodes=1 --ntasks=1 -w "$NODE0" --chdir="$PROJECT_ROOT" python -m scripts.train_fold \
   algorithm.adv_estimator=foldgrpo \
   algorithm.kl_ctrl.kl_coef=0.001 \
   actor_rollout_ref.rollout.agent.default_agent_loop=fold_agent \
@@ -251,11 +240,11 @@ set -e
 
 echo "=============================================================="
 if [ $RC -eq 0 ]; then
-  echo "SMOKE TEST PASSED"
+  echo "  ✓ SMOKE TEST PASSED"
 else
-  echo "SMOKE TEST FAILED (exit $RC)"
+  echo "  ✗ SMOKE TEST FAILED (exit $RC)"
 fi
-echo "Finished: $(date)"
+echo "  Finished: $(date)"
 echo "=============================================================="
 
 exit $RC
