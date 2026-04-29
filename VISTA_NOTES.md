@@ -71,11 +71,27 @@ These are the changes that made Chen's setup work here.
    - set rollout TP=1 to match Chen's scripts
    - disable vLLM sleep mode / free-cache engine on Vista
 
+## Recommended test ladder
+
+Submit each via `sbatch` from a Vista login node, in order. Move up only
+after the previous tier passes:
+
+1. `scripts/test_alfworld_4b_1node_1h.sh`
+   4B model, 1 node, 1 hour. Validates conda env, CUDA, vLLM, ALFWorld import,
+   and the basic training loop on a single GH200.
+2. `scripts/test_alfworld_30b_4node_1h_chen_fp8.sh`
+   30B Chen FP8, 4 nodes, 1 hour. First multi-node IB collective test; cheaper
+   than 8-node and uses the same proven config.
+3. `scripts/test_alfworld_30b_8node_2h_chen_fp8.sh`
+   30B Chen FP8, 8 nodes, 2 hours. Production scale validation; this is the
+   smoke that previously passed (wandb run `7r00zzo9`).
+4. `scripts/train_alfworld_fold_30b_16node_48h.sh` and
+   `scripts/train_alfworld_ctxgraph_30b_16node_48h.sh`
+   16-node, 48h production runs.
+
 ## Important caveats
 
-- Do not use `scripts/test_alfworld_30b_tiny_diag.sh` to reproduce Chen's
-  intended setup. That script was a debug path using a different FP8 route.
-- The smoke currently disables:
+- The smoke disables vLLM sleep mode and the free-cache engine:
   - `actor_rollout_ref.rollout.free_cache_engine=False`
   - `+actor_rollout_ref.rollout.engine_kwargs.vllm.enable_sleep_mode=False`
   This avoids the Vista `libnvrtc.so.12` / cuMem sleep-mode failure.
