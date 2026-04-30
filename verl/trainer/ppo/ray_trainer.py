@@ -506,6 +506,36 @@ class RayPPOTrainer:
                 dump_path=rollout_data_dir,
             )
 
+    @staticmethod
+    def _scalarize_reward_extra_infos(reward_extra_infos_dict: dict, prefix: str) -> dict[str, float]:
+        import numpy as np
+
+        scalar_metrics = {}
+        batch_level_metrics = {
+            "avg_score",
+            "std_score",
+            "min_score",
+            "max_score",
+            "num_unique_gen_uids",
+            "avg_trajs_per_gen_uid",
+            "overlong_rate",
+            "avg_num_turns",
+        }
+
+        for key, values in reward_extra_infos_dict.items():
+            arr = np.array(values)
+            if arr.size == 0:
+                continue
+
+            try:
+                scalar_val = float(arr[0]) if key in batch_level_metrics else float(arr.astype(float).mean())
+            except Exception:
+                continue
+
+            scalar_metrics[f"{prefix}{key}"] = scalar_val
+
+        return scalar_metrics
+
     def _maybe_log_val_generations(self, inputs, outputs, scores):
         """Log a table of validation samples to the configured logger (wandb or swanlab)"""
 
@@ -1175,6 +1205,25 @@ class RayPPOTrainer:
                             reward_tensor, reward_extra_infos_dict = compute_reward(batch, self.reward_fn)
                             print(reward_tensor)
 
+                        live_reward_metrics = self._scalarize_reward_extra_infos(
+                            reward_extra_infos_dict, prefix="rollout_live/"
+                        )
+                        if live_reward_metrics:
+                            logger.log(data=live_reward_metrics, step=self.global_steps)
+                            summary_keys = (
+                                "rollout_live/avg_score",
+                                "rollout_live/reward_score",
+                                "rollout_live/overlong_rate",
+                                "rollout_live/avg_num_turns",
+                            )
+                            summary = " ".join(
+                                f"{key.rsplit(chr(47), 1)[-1]}={live_reward_metrics[key]:.4f}"
+                                for key in summary_keys
+                                if key in live_reward_metrics
+                            )
+                            if summary:
+                                print(f"[rollout_live] step={self.global_steps} {summary}")
+
                     # Operating Mode Selection:
                     # - Bypass mode: Sets old_log_probs = rollout_log_probs (2 policies: π_rollout, π_θ)
                     # - Decoupled mode: Recomputes old_log_probs as proximal anchor (3 policies: π_rollout, π_old, π_θ)
@@ -1365,30 +1414,8 @@ class RayPPOTrainer:
 
                 # TODO@Miao[Done]: update metrics from reward_extra_infos_dict (where we calculated metrics deduplicated by gen_uid)
                 if reward_extra_infos_dict:
-                    import numpy as np
+                    metrics.update(self._scalarize_reward_extra_infos(reward_extra_infos_dict, prefix="reward/"))
 
-                    def _scalarize(name, values):
-                        # values are per-sample arrays; some are repeated batch-level metrics (e.g., avg_score),
-                        # others are per-sample metrics (e.g., reward_score)
-                        arr = np.array(values)
-                        if arr.size == 0:
-                            return None
-                        # If this is a batch-level metric repeated across samples, take the first element
-                        if name in {"avg_score", "std_score", "min_score", "max_score",
-                                    "num_unique_gen_uids", "avg_trajs_per_gen_uid",
-                                    "overlong_rate", "avg_num_turns"}:
-                            return float(arr[0])
-                        # Otherwise use mean over samples
-                        try:
-                            return float(arr.astype(float).mean())
-                        except Exception:
-                            return None
-
-                    for key, val in reward_extra_infos_dict.items():
-                        scalar_val = _scalarize(key, val)
-                        if scalar_val is not None:
-                            metrics[f"reward/{key}"] = scalar_val
-                            
                 # collect metrics
                 metrics.update(compute_data_metrics(batch=batch, use_critic=self.use_critic))
                 metrics.update(compute_timing_metrics(batch=batch, timing_raw=timing_raw))

@@ -248,6 +248,10 @@ class ContextGraph:
 
         return merged_id
 
+    def merge_nodes(self, node_ids: list[str], summary: str) -> Optional[str]:
+        """Compatibility wrapper for callers that use the older graph API name."""
+        return self.merge(node_ids, summary)
+
     def split(self, node_id: str, sub_descriptions: list[str]) -> list[str]:
         """Split a node into multiple subtask nodes connected by DECOMPOSITION edges."""
         if node_id not in self.nodes:
