@@ -90,6 +90,20 @@ echo "  Model: $MODEL_PATH"
 echo "  Started: $(date)"
 echo "=============================================================="
 
+# ── Pre-download model on head node (single process, avoids NFS race) ──
+SNAPSHOT_DIR="$HF_HOME/hub/models--Qwen--Qwen3-30B-A3B-Thinking-2507/snapshots"
+NUM_SHARDS=$(find "$SNAPSHOT_DIR" -name "model-*-of-00016.safetensors" 2>/dev/null | wc -l)
+if [ "$NUM_SHARDS" -ne 16 ]; then
+  echo "--- Model not fully cached ($NUM_SHARDS/16 shards). Downloading on head node ---"
+  HF_HUB_OFFLINE=0 TRANSFORMERS_OFFLINE=0 \
+    huggingface-cli download Qwen/Qwen3-30B-A3B-Thinking-2507 --cache-dir "$HF_HOME" || {
+      echo "Model download failed. Check compute node network access or HF_HOME path."
+      exit 1
+    }
+else
+  echo "--- Model already cached: 16/16 shards present ---"
+fi
+
 # ── Stale Ray cleanup on all allocated nodes ──
 echo "--- Cleaning up stale Ray processes ---"
 for node in "${NODELIST[@]}"; do
