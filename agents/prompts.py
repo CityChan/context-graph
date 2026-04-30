@@ -115,6 +115,9 @@ I've uploaded a python code repository in the directory /testbed. Consider the f
             "You interact with the environment by executing actions step by step. "
             "Each turn, you will see the current observation and a list of admissible commands. "
             "Choose an action from the admissible commands to make progress toward the goal. "
+            "The initial room description is hidden; on the first turn, use the action tool with command `look` "
+            "to reveal the room and admissible commands. Never call the action tool with an empty command. "
+            "After looking, copy one exact command from the admissible commands list whenever possible. "
             "Common task patterns:\n"
             "  - Pick and place: find object → take it → go to target → put it\n"
             "  - Clean then place: find object → take → go to sink → clean → go to target → put\n"
@@ -130,7 +133,13 @@ I've uploaded a python code repository in the directory /testbed. Consider the f
         else:
             graph_guidance = ""
         system_prompt = base_system + graph_guidance + '\n\n' + tool_description
-        user_prompt = f"Task: {problem_statement}\n\nWhat do you do first?"
+        user_prompt = (
+            f"Task: {problem_statement}\n\n"
+            "First reveal the room by calling:\n"
+            "<function=action>\n"
+            "<parameter=command>look</parameter>\n"
+            "</function>"
+        )
         chat = [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}]
         return chat
     else:

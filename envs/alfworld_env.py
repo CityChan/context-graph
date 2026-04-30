@@ -206,8 +206,44 @@ class ALFWorldEnv:
         last_function = func_matches[-1]
         last_func_pos = text.rfind(f'<function={last_function}>')
         text_after = text[last_func_pos:]
-        params = dict(re.findall(r'<parameter=([^>]+)>(.*?)</parameter>', text_after, re.DOTALL))
+        params = self._parse_params(text_after)
         return {'function': last_function, 'arguments': params}
+
+    def _parse_params(self, text_after: str) -> dict:
+        """Parse tool parameters, tolerating missing closing parameter tags.
+
+        Qwen occasionally emits ``<parameter=command>look</function>`` or starts
+        a parameter and then stops before ``</parameter>``. Treating those as
+        empty commands wastes ALFWorld steps, so salvage the text up to the next
+        tag/function close.
+        """
+        params = {}
+        matches = list(re.finditer(r'<parameter=([^>]+)>', text_after))
+        for idx, match in enumerate(matches):
+            name = match.group(1).strip()
+            value_start = match.end()
+            value_end = len(text_after)
+            for marker in ('</parameter>', '</function>'):
+                marker_pos = text_after.find(marker, value_start)
+                if marker_pos != -1:
+                    value_end = min(value_end, marker_pos)
+            if idx + 1 < len(matches):
+                value_end = min(value_end, matches[idx + 1].start())
+            value = text_after[value_start:value_end].strip()
+            params[name] = self._clean_param_value(value)
+        return params
+
+    def _clean_param_value(self, value: str) -> str:
+        value = re.sub(r'</?[^>]+>', '', value).strip()
+        if not value:
+            return value
+        # ALFWorld commands are single-line. Keep the first meaningful line if
+        # the model continues with explanation or another malformed tag.
+        for line in value.splitlines():
+            line = line.strip().strip('`"\'')
+            if line:
+                return line
+        return value.strip('`"\'')
 
     async def get_reward(self, item, messages, context) -> tuple:
         if self.env_fail:
