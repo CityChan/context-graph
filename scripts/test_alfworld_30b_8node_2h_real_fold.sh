@@ -98,22 +98,30 @@ echo "  Experiment: $EXPERIMENT_NAME"
 echo "  Started: $(date)"
 echo "=============================================================="
 
+# Progress probe: prints a timestamped line before each slow step so a
+# stalled run can be diagnosed from the .out file alone.
+probe() { printf '+++ [%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
+
 # ── Pre-download model on head node (single process, avoids NFS race) ──
+probe "checking HF model cache (find on NFS, may take ~30s)"
 SNAPSHOT_DIR="$HF_HOME/hub/models--Qwen--Qwen3-30B-A3B-Thinking-2507/snapshots"
 NUM_SHARDS=$(find "$SNAPSHOT_DIR" -name "model-*-of-00016.safetensors" 2>/dev/null | wc -l)
+probe "cache check done, shards present = $NUM_SHARDS / 16"
 if [ "$NUM_SHARDS" -ne 16 ]; then
   echo "--- Model not fully cached ($NUM_SHARDS/16 shards). Downloading on head node ---"
+  probe "huggingface-cli download starting (~50GB, can take 5-20 min on NFS)"
   HF_HUB_OFFLINE=0 TRANSFORMERS_OFFLINE=0 \
     huggingface-cli download Qwen/Qwen3-30B-A3B-Thinking-2507 --cache-dir "$HF_HOME" || {
       echo "Model download failed. Check compute node network access or HF_HOME path."
       exit 1
     }
+  probe "huggingface-cli download done"
 else
   echo "--- Model already cached: 16/16 shards present ---"
 fi
 
 # ── Stale Ray cleanup on all allocated nodes ──
-echo "--- Cleaning up stale Ray processes ---"
+probe "ray stop sweep across $NUM_NODES nodes"
 for node in "${NODELIST[@]}"; do
   srun --overlap --nodes=1 --ntasks=1 -w "$node" bash -c '
     source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
@@ -122,17 +130,23 @@ for node in "${NODELIST[@]}"; do
   ' || true
 done
 sleep 5
+probe "ray stop sweep done"
 
 # ── Sanity ──
+probe "python sanity imports (cold torch import can take ~60s)"
 python -c "import torch; print('torch:', torch.__version__, 'cuda available:', torch.cuda.is_available(), 'devices:', torch.cuda.device_count())"
 python -c "import vllm; print('vllm:', vllm.__version__)"
 python -c "import verl; print('verl OK')"
 python -c "import textworld, alfworld; print('textworld + alfworld OK')"
+probe "sanity imports done"
 
 echo "--- Generating ALFWorld parquet (real mode, n_train=300 n_val=80) ---"
+probe "make_alfworld_data.py starting"
 python scripts/make_alfworld_data.py --n_train 300 --n_val 80
+probe "make_alfworld_data.py done"
 
 # ── Ray head ──
+probe "starting Ray head on $NODE0"
 echo "--- Starting Ray head on $NODE0 ---"
 srun --overlap --nodes=1 --ntasks=1 -w "$NODE0" bash -c '
   source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
@@ -151,6 +165,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$NODE0" bash -c '
 ' &
 RAY_HEAD_PID=$!
 sleep 20
+probe "Ray head sleep done; launching $((NUM_NODES - 1)) workers"
 
 # ── Ray workers ──
 WORKER_PIDS=()
@@ -175,6 +190,7 @@ for i in $(seq 1 $((NUM_NODES - 1))); do
   sleep 5
 done
 sleep 20
+probe "all Ray workers launched, cluster settling"
 
 cleanup() {
   kill "$RAY_HEAD_PID" 2>/dev/null || true
@@ -185,12 +201,14 @@ cleanup() {
 trap cleanup EXIT
 
 export RAY_ADDRESS=${NODE0_IP}:6379
+probe "querying ray status"
 echo "--- Ray cluster status ---"
 ray status || echo "WARN: ray status check failed"
 
 echo "=============================================================="
 echo "  Launching FoldGRPO test run (8 nodes, 10 RL steps target)"
 echo "=============================================================="
+probe "launching trainer (model load + vLLM init typically ~5-10 min before first wandb log)"
 
 set +e
 srun --overlap --nodes=1 --ntasks=1 -w "$NODE0" --chdir="$PROJECT_ROOT" python -m scripts.train_fold \
