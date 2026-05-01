@@ -11,7 +11,11 @@
 
 set -euo pipefail
 
-SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+if [ -n "${SLURM_SUBMIT_DIR:-}" ] && [ -f "${SLURM_SUBMIT_DIR}/scripts/run_alfworld_ctxgraph_30b_ghdev_8n_memory_polish.sh" ]; then
+  SCRIPT_DIR="${SLURM_SUBMIT_DIR}/scripts"
+else
+  SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+fi
 RUN_STAMP=${RUN_STAMP:-$(date +%Y%m%d_%H%M%S)}
 
 export SRUN_PARTITION=${SRUN_PARTITION:-gh-dev}
