@@ -105,7 +105,14 @@ probe() { printf '+++ [%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 # ── Pre-download model on head node (single process, avoids NFS race) ──
 probe "checking HF model cache (find on NFS, may take ~30s)"
 SNAPSHOT_DIR="$HF_HOME/hub/models--Qwen--Qwen3-30B-A3B-Thinking-2507/snapshots"
-NUM_SHARDS=$(find "$SNAPSHOT_DIR" -name "model-*-of-00016.safetensors" 2>/dev/null | wc -l)
+# Guard: if snapshot dir doesn't exist (first run on this $HF_HOME), find
+# exits 1, which under `set -euo pipefail` would kill the script silently.
+# Treat missing dir as 0 shards and let the download branch handle it.
+if [ -d "$SNAPSHOT_DIR" ]; then
+  NUM_SHARDS=$(find "$SNAPSHOT_DIR" -name "model-*-of-00016.safetensors" | wc -l)
+else
+  NUM_SHARDS=0
+fi
 probe "cache check done, shards present = $NUM_SHARDS / 16"
 if [ "$NUM_SHARDS" -ne 16 ]; then
   echo "--- Model not fully cached ($NUM_SHARDS/16 shards). Downloading on head node ---"
