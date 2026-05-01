@@ -7,7 +7,7 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=72
 #SBATCH -t 48:00:00
-#SBATCH -A ASC24078
+#SBATCH -A AST24021
 
 # ─────────────────────────────────────────────────────────────────────
 # Production: ContextGraph (isolated) / Qwen3-30B-A3B-Thinking-2507 / ALFWorld
