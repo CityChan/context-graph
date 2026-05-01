@@ -17,10 +17,11 @@ RUN_STAMP=${RUN_STAMP:-$(date +%Y%m%d_%H%M%S)}
 export SRUN_PARTITION=${SRUN_PARTITION:-gh}
 export SRUN_TIME=${SRUN_TIME:-12:00:00}
 
-# The 2h probe averaged roughly 18 minutes per PPO step at 16k/16k.
-# 32 steps leaves margin in a 12h allocation for checkpoint writes and HF sync.
-export TOTAL_TRAINING_STEPS=${TOTAL_TRAINING_STEPS:-32}
-export SAVE_FREQ=${SAVE_FREQ:-6}
+# The 2h probe averaged roughly 18 minutes per PPO step with rollout.n=4.
+# rollout.n=8 roughly doubles trajectories per PPO step, so use fewer steps
+# and keep checkpoint cadence near 20% of the run.
+export TOTAL_TRAINING_STEPS=${TOTAL_TRAINING_STEPS:-16}
+export SAVE_FREQ=${SAVE_FREQ:-3}
 export TEST_FREQ=${TEST_FREQ:--1}
 export EXPERIMENT_NAME=${EXPERIMENT_NAME:-ctxgraph_alfworld_30b_8n_promptfix_p16384_r16384_12h_${RUN_STAMP}}
 export DATA_N_TRAIN=${DATA_N_TRAIN:-128}
@@ -35,7 +36,7 @@ export ROLLOUT_MAX_NUM_SEQS=${ROLLOUT_MAX_NUM_SEQS:-64}
 export ROLLOUT_PROMPT_LENGTH=${ROLLOUT_PROMPT_LENGTH:-16384}
 export ROLLOUT_RESPONSE_LENGTH=${ROLLOUT_RESPONSE_LENGTH:-16384}
 export ROLLOUT_LOG_PROB_MAX_LEN=${ROLLOUT_LOG_PROB_MAX_LEN:-32768}
-export ROLLOUT_N=${ROLLOUT_N:-4}
+export ROLLOUT_N=${ROLLOUT_N:-8}
 
 export TRAIN_BATCH_SIZE=${TRAIN_BATCH_SIZE:-16}
 export DATA_MAX_PROMPT_LENGTH=${DATA_MAX_PROMPT_LENGTH:-16384}
