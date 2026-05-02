@@ -127,7 +127,7 @@ probe "starting envs/search_server.py with $EMBED_MODEL on localhost:18999"
 export LOCAL_CORPUS_PARQUET="$CORPUS_PARQUET"
 export LOCAL_EMBEDDINGS_PKL="$EMBED_PKL"
 export NUM_GPUS=1
-export MAX_BATCH_SIZE=64
+export MAX_BATCH_SIZE=16
 python -u envs/search_server.py \
   --model "$EMBED_MODEL" \
   --port 18999 \
@@ -184,7 +184,7 @@ trap cleanup EXIT
 
 echo "=============================================================="
 echo "  Launching ContextGraph FoldGRPO smoke (3 steps)"
-echo "  vLLM gpu_memory_utilization=0.6 (rest reserved for the embedder)"
+echo "  vLLM gpu_memory_utilization=0.5 + FSDP CPU offload (embedder takes ~40 GB)"
 echo "=============================================================="
 probe "launching trainer"
 
@@ -196,7 +196,7 @@ python -m scripts.train_graph \
   actor_rollout_ref.rollout.name=vllm \
   actor_rollout_ref.rollout.mode=async \
   actor_rollout_ref.rollout.calculate_log_probs=True \
-  actor_rollout_ref.rollout.gpu_memory_utilization=0.6 \
+  actor_rollout_ref.rollout.gpu_memory_utilization=0.5 \
   actor_rollout_ref.model.path="$MODEL_PATH" \
   actor_rollout_ref.rollout.prompt_length=2048 \
   actor_rollout_ref.rollout.response_length=4096 \
@@ -209,8 +209,8 @@ python -m scripts.train_graph \
   actor_rollout_ref.actor.optim.lr=5e-6 \
   actor_rollout_ref.actor.optim.weight_decay=0.1 \
   actor_rollout_ref.actor.use_kl_loss=True \
-  actor_rollout_ref.actor.fsdp_config.param_offload=False \
-  actor_rollout_ref.actor.fsdp_config.optimizer_offload=False \
+  actor_rollout_ref.actor.fsdp_config.param_offload=True \
+  actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
   data.train_files=data/hotpotqa_graph_train.parquet \
   data.val_files=data/hotpotqa_graph_test.parquet \
   data.train_batch_size=8 \
