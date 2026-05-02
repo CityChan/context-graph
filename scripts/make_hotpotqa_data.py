@@ -36,11 +36,13 @@ import pandas as pd
 def to_row(item, workflow):
     # supporting_facts in HF schema is a parallel-array dict.
     # Convert to list of [title, sent_id] for downstream readability.
+    # NOTE: PyArrow can't serialize a list whose inner elements have mixed
+    # types ([str, int]), so stringify sent_id — eval code can int() it back.
     sf = item.get("supporting_facts", {})
     if isinstance(sf, dict):
         titles = sf.get("title", [])
         sent_ids = sf.get("sent_id", [])
-        supporting = [[t, s] for t, s in zip(titles, sent_ids)]
+        supporting = [[t, str(s)] for t, s in zip(titles, sent_ids)]
     else:
         supporting = sf
 
