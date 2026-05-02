@@ -41,6 +41,13 @@ CORPUS_DATASET = "Tevatron/browsecomp-plus-corpus"
 CORPUS_EMBEDDING_DATASET = "miaolu3/browsecomp-plus"
 CORPUS_EMBEDDING_FILE = "corpus_embeddings.pkl"
 
+# Local-file mode: if set (via env var or CLI flag), the server reads the
+# corpus from a parquet on disk and the embeddings from a pickle on disk
+# instead of pulling from HuggingFace. Used by the HotpotQA pipeline
+# (build_hotpotqa_corpus.py + build_hotpotqa_index.py produce these files).
+LOCAL_CORPUS_PARQUET = os.getenv("LOCAL_CORPUS_PARQUET", "") or None
+LOCAL_EMBEDDINGS_PKL = os.getenv("LOCAL_EMBEDDINGS_PKL", "") or None
+
 @dataclass
 class SearchRequest:
     query: str
@@ -128,7 +135,38 @@ def keep_first_n_words(text: str, n: int = 1000) -> str:
 
 
 def load_corpus():
-    """Load the corpus dataset from HuggingFace"""
+    """Load the corpus dataset.
+
+    If LOCAL_CORPUS_PARQUET is set, read from that parquet file (columns:
+    docid, url, text; optional title is folded into content). Otherwise
+    fall back to the HuggingFace dataset path.
+    """
+    if LOCAL_CORPUS_PARQUET:
+        import pandas as pd
+        print(f"Loading corpus from local parquet {LOCAL_CORPUS_PARQUET}...")
+        df = pd.read_parquet(LOCAL_CORPUS_PARQUET)
+        docid_to_text = {}
+        url_to_docid = {}
+        has_title = "title" in df.columns
+        for row in df.itertuples(index=False):
+            docid = row.docid
+            url = row.url
+            text = row.text or ""
+            # Prepend the title (if available) so search snippets are easier
+            # for the agent to identify; mirrors what build_hotpotqa_index.py
+            # encoded the embeddings against.
+            if has_title:
+                text = f"{getattr(row, 'title', '')}. {text}"
+            docid_to_text[docid] = {
+                'raw': keep_first_n_words(text, 15000),
+                'content': keep_first_n_words(text, 1000),
+                'url': url,
+                'docid': docid,
+            }
+            url_to_docid[url] = docid
+        print(f"Loaded {len(docid_to_text)} documents from local parquet")
+        return docid_to_text, url_to_docid
+
     print(f"Loading corpus dataset from {CORPUS_DATASET}...")
     ds = load_dataset(CORPUS_DATASET, split='train')
     docid_to_text = {row["docid"]: {
@@ -143,7 +181,16 @@ def load_corpus():
 
 
 def encode_corpus():
-    """Load corpus embeddings from HuggingFace dataset"""
+    """Load corpus embeddings.
+
+    If LOCAL_EMBEDDINGS_PKL is set, load that pickle directly. Otherwise
+    download from the configured HuggingFace dataset.
+    """
+    if LOCAL_EMBEDDINGS_PKL:
+        print(f"Loading corpus embeddings from local pickle {LOCAL_EMBEDDINGS_PKL}...")
+        with open(LOCAL_EMBEDDINGS_PKL, 'rb') as f:
+            return pickle.load(f)
+
     from huggingface_hub import hf_hub_download
 
     print(f"Downloading corpus embeddings from {CORPUS_EMBEDDING_DATASET}...")
@@ -529,6 +576,10 @@ if __name__ == "__main__":
     parser.add_argument('--corpus', type=str, default=CORPUS_DATASET)
     parser.add_argument('--corpus-embedding-dataset', type=str, default=CORPUS_EMBEDDING_DATASET)
     parser.add_argument('--corpus-embedding-file', type=str, default=CORPUS_EMBEDDING_FILE)
+    parser.add_argument('--local-corpus', type=str, default=LOCAL_CORPUS_PARQUET,
+                        help="Path to a local parquet (docid,url,text[,title]); overrides --corpus.")
+    parser.add_argument('--local-embeddings', type=str, default=LOCAL_EMBEDDINGS_PKL,
+                        help="Path to a local pickle ({embeddings, docids}); overrides --corpus-embedding-*.")
     parser.add_argument('--host', type=str, default='0.0.0.0')
     parser.add_argument('--port', type=int, default=8000)
     args = parser.parse_args()
@@ -537,6 +588,8 @@ if __name__ == "__main__":
     CORPUS_DATASET = args.corpus
     CORPUS_EMBEDDING_DATASET = args.corpus_embedding_dataset
     CORPUS_EMBEDDING_FILE = args.corpus_embedding_file
+    LOCAL_CORPUS_PARQUET = args.local_corpus or None
+    LOCAL_EMBEDDINGS_PKL = args.local_embeddings or None
 
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
