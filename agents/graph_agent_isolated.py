@@ -498,7 +498,7 @@ async def process_item(
                 to_merge = obs_nodes[:3]
                 contents = [graph.nodes[nid].content[:100] for nid in to_merge]
                 auto_summary = "Explored: " + " | ".join(contents)
-                merged_id = graph.merge_nodes(to_merge, auto_summary)
+                merged_id = graph.merge(to_merge, auto_summary)
                 if merged_id:
                     print(f'[GRAPH AUTO-MERGE] {to_merge} → {merged_id} ({len(graph.active_nodes)} active)')
 
