@@ -187,7 +187,7 @@ python -m scripts.train_graph \
   +actor_rollout_ref.rollout.plugin.workflow=search_branch \
   +actor_rollout_ref.rollout.plugin.max_turn=20 \
   +actor_rollout_ref.rollout.plugin.retry_cjk=10 \
-  +actor_rollout_ref.rollout.plugin.turn_max_new_tokens=512 \
+  +actor_rollout_ref.rollout.plugin.turn_max_new_tokens=384 \
   +actor_rollout_ref.rollout.plugin.max_session=3 \
   +actor_rollout_ref.rollout.plugin.val_max_session=3 \
   +actor_rollout_ref.rollout.plugin.session_timeout=300 \
@@ -199,7 +199,7 @@ python -m scripts.train_graph \
   +actor_rollout_ref.rollout.plugin.double_check=False \
   +actor_rollout_ref.rollout.plugin.must_search=False \
   +actor_rollout_ref.rollout.plugin.val_max_turn=20 \
-  +actor_rollout_ref.rollout.plugin.val_response_length=4096 \
+  +actor_rollout_ref.rollout.plugin.val_response_length=8192 \
   trainer.val_before_train=True \
   trainer.val_only=False \
   trainer.n_gpus_per_node=1 \

@@ -328,7 +328,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$NODE0" --chdir="$PROJECT_ROOT" \
   +actor_rollout_ref.rollout.plugin.workflow=search_graph \
   +actor_rollout_ref.rollout.plugin.max_turn=20 \
   +actor_rollout_ref.rollout.plugin.retry_cjk=10 \
-  +actor_rollout_ref.rollout.plugin.turn_max_new_tokens=512 \
+  +actor_rollout_ref.rollout.plugin.turn_max_new_tokens=384 \
   +actor_rollout_ref.rollout.plugin.max_session=5 \
   +actor_rollout_ref.rollout.plugin.val_max_session=5 \
   +actor_rollout_ref.rollout.plugin.session_timeout=300 \
