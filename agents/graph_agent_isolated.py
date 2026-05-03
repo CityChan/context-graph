@@ -543,6 +543,12 @@ async def process_item(
     env.stats['graph_ops'] = graph.operation_count
     env.stats['graph_n_summaries'] = graph_rewards.get('n_summaries', 0)
     env.stats['graph_reward'] = graph_rewards.get('graph_reward', score[1])
+    # Pure task accuracy + isolated shaping component, exposed so wandb
+    # can show CtxGraph's task hit-rate without graph_reward inflation.
+    # task_reward should match score[1] (LocalSearch judge), but read from
+    # graph_rewards dict for consistency with the breakdown.
+    env.stats['task_reward'] = float(graph_rewards.get('task_reward', score[1]))
+    env.stats['graph_shaping'] = float(graph_rewards.get('graph_shaping', 0.0))
     # Isolated-variant specific stats: aggregate child subgraph sizes
     env.stats['isolated_n_subgraphs'] = len(branch_subgraph_stats)
     env.stats['isolated_total_subgraph_nodes'] = sum(s.get('n_total', 0) for s in branch_subgraph_stats.values())

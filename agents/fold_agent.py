@@ -231,6 +231,9 @@ async def process_item(
 
     outs = []
     env.stats['get_final_score'] = score[1]
+    # Mirror the field CtxGraph logs so wandb has reward/task_reward on
+    # both runs for apples-to-apples task-accuracy comparison.
+    env.stats['task_reward'] = float(score[1])
     env.stats['traj_num'] = len(agent)
     env.stats['main_len'] = min(len(agent['main'].context()) - init_len, config.response_length)
     env.stats['total_token'] = len(tokenizer.encode(print_chat(user_prompt + session_message)))
