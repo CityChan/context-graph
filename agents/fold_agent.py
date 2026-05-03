@@ -40,6 +40,11 @@ def extract_summary(text: str) -> str:
     return matches[-1].strip() if matches else None
 
 def clean_response(response):
+    # vLLM returns None when token budget for a turn is negative (rollout skipped);
+    # downstream code uses the cleaned text as a fallback branch summary, so emit
+    # a clear placeholder rather than raising TypeError on None.
+    if not response:
+        return '[no response — turn skipped (token budget exhausted)]'
     if '<function=return>' in response:
         response = response.split('<function=return>')[-1]
     else:
