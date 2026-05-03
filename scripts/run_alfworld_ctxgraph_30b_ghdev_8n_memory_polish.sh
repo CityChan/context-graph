@@ -100,7 +100,10 @@ DATA_N_TRAIN=${DATA_N_TRAIN:-64}
 DATA_N_VAL=${DATA_N_VAL:-16}
 SAVE_FREQ=${SAVE_FREQ:-1}
 TEST_FREQ=${TEST_FREQ:--1}
-CHECKPOINT_ROOT=${CHECKPOINT_ROOT:-${PROJECT_ROOT}/checkpoints/context-graph/${EXPERIMENT_NAME}}
+CHECKPOINT_BASE=${CHECKPOINT_BASE:-/scratch/07144/yw23374/vista/checkpoints/context-graph}
+CHECKPOINT_ROOT=${CHECKPOINT_ROOT:-${CHECKPOINT_BASE}/${EXPERIMENT_NAME}}
+MAX_ACTOR_CKPT_TO_KEEP=${MAX_ACTOR_CKPT_TO_KEEP:-2}
+MAX_CRITIC_CKPT_TO_KEEP=${MAX_CRITIC_CKPT_TO_KEEP:-2}
 HF_SYNC_CHECKPOINTS=${HF_SYNC_CHECKPOINTS:-1}
 HF_SYNC_REQUIRED=${HF_SYNC_REQUIRED:-1}
 HF_NAMESPACE=${HF_NAMESPACE:-lingchensanwen}
@@ -149,10 +152,15 @@ echo "Plugin: max_turn=${PLUGIN_MAX_TURN} turn_tokens=${PLUGIN_TURN_MAX_NEW_TOKE
 echo "Actor offload: param=${ACTOR_PARAM_OFFLOAD} optimizer=${ACTOR_OPTIMIZER_OFFLOAD}"
 echo "Rollout sleep/free-cache: free_cache=${ROLLOUT_FREE_CACHE_ENGINE} sleep_mode=${ROLLOUT_ENABLE_SLEEP_MODE}"
 echo "Checkpoint root: $CHECKPOINT_ROOT"
+echo "Checkpoint retention: actor=${MAX_ACTOR_CKPT_TO_KEEP} critic=${MAX_CRITIC_CKPT_TO_KEEP}"
 echo "WANDB_ENTITY: ${WANDB_ENTITY}"
 echo "HF sync: ${HF_SYNC_CHECKPOINTS} repo=${HF_REPO_ID}"
 echo "Started: $(date)"
 echo "=============================================================="
+
+mkdir -p "$(dirname "$CHECKPOINT_ROOT")"
+df -h "$(dirname "$CHECKPOINT_ROOT")" || true
+lfs quota -h -u "${USER:-$(whoami)}" "$(dirname "$CHECKPOINT_ROOT")" 2>/dev/null || true
 
 print_gpu_snapshot() {
   local label="$1"
@@ -316,6 +324,8 @@ set +e
   trainer.test_freq=${TEST_FREQ} \
   trainer.save_freq=${SAVE_FREQ} \
   trainer.default_local_dir="${CHECKPOINT_ROOT}" \
+  trainer.max_actor_ckpt_to_keep=${MAX_ACTOR_CKPT_TO_KEEP} \
+  trainer.max_critic_ckpt_to_keep=${MAX_CRITIC_CKPT_TO_KEEP} \
   trainer.project_name=context-graph \
   trainer.experiment_name=${EXPERIMENT_NAME} \
   trainer.logger="$TRAINER_LOGGER"
@@ -323,10 +333,8 @@ RC=$?
 set -e
 
 if [ "$HF_SYNC_CHECKPOINTS" = "1" ] && [ "$SAVE_FREQ" -gt 0 ]; then
-  echo "--- Syncing latest checkpoint to Hugging Face ---"
-  if [ "$RC" -ne 0 ] && [ ! -d "$CHECKPOINT_ROOT" ]; then
-    echo "Skipping HF sync because training failed before creating checkpoint root: $CHECKPOINT_ROOT"
-  else
+  if [ "$RC" -eq 0 ]; then
+    echo "--- Syncing latest checkpoint to Hugging Face ---"
     set +e
     bash scripts/sync_latest_checkpoint_to_hf.sh "$CHECKPOINT_ROOT" "$HF_REPO_ID" "$EXPERIMENT_NAME" "$HF_REPO_PRIVATE"
     SYNC_RC=$?
@@ -337,6 +345,8 @@ if [ "$HF_SYNC_CHECKPOINTS" = "1" ] && [ "$SAVE_FREQ" -gt 0 ]; then
         RC=$SYNC_RC
       fi
     fi
+  else
+    echo "Skipping HF sync because training failed (exit $RC); not uploading partial checkpoints."
   fi
 fi
 
