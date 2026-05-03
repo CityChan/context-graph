@@ -478,6 +478,17 @@ class vLLMHttpServerBase:
             sampling_params["max_tokens"] = min(sampling_params["max_tokens"], max_tokens)
         else:
             sampling_params["max_tokens"] = max_tokens
+        # Prompt may exceed max_model_len once turn history accumulates; in
+        # that case max_tokens goes <=0 and SamplingParams refuses. Return an
+        # empty TokenOutput so the caller treats it as a skipped turn rather
+        # than a hard crash. Agent's _create_completion handles empty output
+        # by returning None and the branch collapse path uses the placeholder
+        # from clean_response().
+        if sampling_params["max_tokens"] < 1:
+            print(f"[vllm_async_server] max_tokens={sampling_params['max_tokens']} "
+                  f"(prompt {len(prompt_ids)} tokens >= max_model_len "
+                  f"{self.config.max_model_len}); returning empty TokenOutput")
+            return TokenOutput(token_ids=[], log_probs=[], stop_reason="aborted")
         sampling_params = SamplingParams(**sampling_params)
         prompt_ids = _qwen2_5_vl_dedup_image_tokens(prompt_ids, self.model_config.processor)
         prompt = TokensPrompt(
