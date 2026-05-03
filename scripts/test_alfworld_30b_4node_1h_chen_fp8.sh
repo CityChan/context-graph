@@ -9,6 +9,8 @@
 #SBATCH -t 01:00:00
 #SBATCH -A AST24021
 
+export WANDB_API_KEY=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
+
 # ─────────────────────────────────────────────────────────────────────
 # 30B Chen FP8 rollout smoke on Vista, 4 nodes / 1 hour.
 # Submit from a login node:

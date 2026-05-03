@@ -9,6 +9,8 @@
 #SBATCH -t 01:00:00
 #SBATCH -A AST24021
 
+export WANDB_API_KEY=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
+
 # ─────────────────────────────────────────────────────────────────────
 # Smoke test: Qwen3-4B-Instruct-2507 on ALFWorld, 1 node / 1 hour
 # Goal: validate environment + 4B model load + 3 RL steps on a single GH200.

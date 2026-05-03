@@ -9,6 +9,8 @@
 #SBATCH -t 48:00:00
 #SBATCH -A AST24021
 
+export WANDB_API_KEY=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
+
 # ─────────────────────────────────────────────────────────────────────
 # Production: ContextGraph (isolated) / Qwen3-30B-A3B-Thinking-2507 / ALFWorld
 #   16 nodes × 1 GH200 = 16 GPUs (FSDP)  |  48 hours
