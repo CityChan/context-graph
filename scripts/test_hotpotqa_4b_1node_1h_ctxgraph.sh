@@ -192,7 +192,7 @@ probe "launching trainer"
 set +e
 python -m scripts.train_graph \
   algorithm.adv_estimator=foldgrpo \
-  algorithm.kl_ctrl.kl_coef=0.001 \
+  algorithm.kl_ctrl.kl_coef=0.005 \
   actor_rollout_ref.rollout.agent.default_agent_loop=context_graph_isolated_agent \
   actor_rollout_ref.rollout.name=vllm \
   actor_rollout_ref.rollout.mode=async \
@@ -207,18 +207,18 @@ python -m scripts.train_graph \
   actor_rollout_ref.rollout.agent.num_workers=1 \
   actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=1 \
   actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=1 \
-  actor_rollout_ref.actor.optim.lr=5e-6 \
+  actor_rollout_ref.actor.optim.lr=2e-6 \
   actor_rollout_ref.actor.optim.weight_decay=0.1 \
   actor_rollout_ref.actor.use_kl_loss=True \
   actor_rollout_ref.actor.fsdp_config.param_offload=True \
   actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
   data.train_files=data/hotpotqa_graph_train.parquet \
   data.val_files=data/hotpotqa_graph_test.parquet \
-  data.train_batch_size=8 \
+  data.train_batch_size=16 \
   data.max_prompt_length=2048 \
   data.max_response_length=4096 \
   data.return_raw_chat=True \
-  actor_rollout_ref.actor.ppo_mini_batch_size=8 \
+  actor_rollout_ref.actor.ppo_mini_batch_size=16 \
   actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=1 \
   actor_rollout_ref.actor.ppo_max_token_len_per_gpu=6144 \
   actor_rollout_ref.actor.ppo_infer_max_token_len_per_gpu=6144 \

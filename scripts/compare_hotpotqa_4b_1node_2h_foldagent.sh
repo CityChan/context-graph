@@ -155,7 +155,7 @@ probe "launching trainer"
 set +e
 python -m scripts.train_graph \
   algorithm.adv_estimator=foldgrpo \
-  algorithm.kl_ctrl.kl_coef=0.001 \
+  algorithm.kl_ctrl.kl_coef=0.005 \
   actor_rollout_ref.rollout.agent.default_agent_loop=fold_agent \
   actor_rollout_ref.rollout.name=vllm \
   actor_rollout_ref.rollout.mode=async \
@@ -169,7 +169,7 @@ python -m scripts.train_graph \
   actor_rollout_ref.rollout.agent.num_workers=1 \
   actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=1 \
   actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=1 \
-  actor_rollout_ref.actor.optim.lr=5e-6 \
+  actor_rollout_ref.actor.optim.lr=2e-6 \
   actor_rollout_ref.actor.optim.weight_decay=0.1 \
   actor_rollout_ref.actor.use_kl_loss=True \
   actor_rollout_ref.actor.fsdp_config.param_offload=False \

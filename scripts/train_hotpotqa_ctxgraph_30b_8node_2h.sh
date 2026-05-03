@@ -289,7 +289,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$NODE0" --chdir="$PROJECT_ROOT" \
   --export=ALL,LOCAL_SEARCH_URL="$LOCAL_SEARCH_URL" \
   python -m scripts.train_graph \
   algorithm.adv_estimator=foldgrpo \
-  algorithm.kl_ctrl.kl_coef=0.001 \
+  algorithm.kl_ctrl.kl_coef=0.005 \
   actor_rollout_ref.rollout.agent.default_agent_loop=context_graph_isolated_agent \
   actor_rollout_ref.rollout.name=vllm \
   actor_rollout_ref.rollout.mode=async \
@@ -322,6 +322,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$NODE0" --chdir="$PROJECT_ROOT" \
   data.max_response_length=8192 \
   data.return_raw_chat=True \
   actor_rollout_ref.actor.ppo_mini_batch_size=32 \
+  actor_rollout_ref.actor.optim.lr=2e-6 \
   actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=1 \
   actor_rollout_ref.actor.ppo_max_token_len_per_gpu=12288 \
   actor_rollout_ref.actor.ppo_infer_max_token_len_per_gpu=12288 \
