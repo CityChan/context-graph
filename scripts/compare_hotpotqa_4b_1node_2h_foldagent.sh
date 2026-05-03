@@ -72,6 +72,7 @@ export NCCL_P2P_LEVEL=NVL
 # ── Project paths ──
 PROJECT_ROOT=/work/09281/chc_1996/vista/context-graph
 MODEL_PATH=${MODEL_PATH:-Qwen/Qwen3-4B-Instruct-2507}
+EMBED_MODEL=${EMBED_MODEL:-Qwen/Qwen3-Embedding-4B}
 export HF_HOME=${HF_HOME:-/work/09281/chc_1996/vista/cache}
 cd "$PROJECT_ROOT"
 export PYTHONPATH="$PROJECT_ROOT:${PYTHONPATH:-}"
@@ -99,22 +100,34 @@ probe "checking HotpotQA artefacts"
 TRAIN_PARQUET="$PROJECT_ROOT/data/hotpotqa_train.parquet"
 VAL_PARQUET="$PROJECT_ROOT/data/hotpotqa_test.parquet"
 CORPUS_PARQUET="$PROJECT_ROOT/data/hotpotqa_corpus.parquet"
-for f in "$TRAIN_PARQUET" "$VAL_PARQUET" "$CORPUS_PARQUET"; do
+EMBED_PKL="$PROJECT_ROOT/data/hotpotqa_corpus_embeddings.pkl"
+for f in "$TRAIN_PARQUET" "$VAL_PARQUET" "$CORPUS_PARQUET" "$EMBED_PKL"; do
   if [ ! -f "$f" ]; then
     echo "ERROR: missing $f"
-    echo "Login-node prep:"
-    echo "  python scripts/make_hotpotqa_data.py"
-    echo "  python scripts/build_hotpotqa_corpus.py"
+    echo "Stage-2 prep, in order:"
+    echo "  (login node)   python scripts/make_hotpotqa_data.py"
+    echo "  (login node)   python scripts/build_hotpotqa_corpus.py"
+    echo "  (compute node) sbatch scripts/build_hotpotqa_index.sh"
     exit 1
   fi
 done
 
-# ── BM25 search server ──
-probe "starting hotpotqa_search_server (BM25) on localhost:18999"
-python scripts/hotpotqa_search_server.py --corpus "$CORPUS_PARQUET" \
-  >/tmp/hp_bm25_$$.log 2>&1 &
+# ── Qwen3-Embedding-4B search server ──
+probe "starting envs/search_server.py with $EMBED_MODEL on localhost:18999"
+export LOCAL_CORPUS_PARQUET="$CORPUS_PARQUET"
+export LOCAL_EMBEDDINGS_PKL="$EMBED_PKL"
+export NUM_GPUS=1
+export MAX_BATCH_SIZE=16
+python -u envs/search_server.py \
+  --model "$EMBED_MODEL" \
+  --port 18999 \
+  --local-corpus "$CORPUS_PARQUET" \
+  --local-embeddings "$EMBED_PKL" \
+  >/tmp/hp_server_$$.log 2>&1 &
 SEARCH_PID=$!
-for i in $(seq 1 45); do
+# Boot can take 1-3 min: model load + embeddings move-to-GPU
+probe "waiting for search server /health (up to 240s)"
+for i in $(seq 1 120); do
   if curl -fsS "http://localhost:18999/health" >/dev/null 2>&1; then
     break
   fi
@@ -123,13 +136,13 @@ done
 if ! curl -fsS -X POST -H 'Content-Type: application/json' \
         -d '{"query":"Eiffel Tower","k":1}' \
         http://localhost:18999/search >/dev/null; then
-  echo "ERROR: BM25 search server did not come up. Last 50 lines:"
-  tail -50 /tmp/hp_bm25_$$.log || true
+  echo "ERROR: search server did not come up. Last 80 lines:"
+  tail -80 /tmp/hp_server_$$.log || true
   kill "$SEARCH_PID" 2>/dev/null || true
   exit 1
 fi
 export LOCAL_SEARCH_URL="http://localhost:18999"
-probe "BM25 search server up at $LOCAL_SEARCH_URL"
+probe "search server up at $LOCAL_SEARCH_URL"
 
 # ── Ray ──
 probe "ray stop + restart"
@@ -160,6 +173,7 @@ python -m scripts.train_graph \
   actor_rollout_ref.rollout.name=vllm \
   actor_rollout_ref.rollout.mode=async \
   actor_rollout_ref.rollout.calculate_log_probs=True \
+  actor_rollout_ref.rollout.gpu_memory_utilization=0.5 \
   actor_rollout_ref.model.path="$MODEL_PATH" \
   actor_rollout_ref.rollout.prompt_length=2048 \
   actor_rollout_ref.rollout.response_length=4096 \
@@ -172,8 +186,8 @@ python -m scripts.train_graph \
   actor_rollout_ref.actor.optim.lr=2e-6 \
   actor_rollout_ref.actor.optim.weight_decay=0.1 \
   actor_rollout_ref.actor.use_kl_loss=True \
-  actor_rollout_ref.actor.fsdp_config.param_offload=False \
-  actor_rollout_ref.actor.fsdp_config.optimizer_offload=False \
+  actor_rollout_ref.actor.fsdp_config.param_offload=True \
+  actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
   data.train_files=data/hotpotqa_train.parquet \
   data.val_files=data/hotpotqa_test.parquet \
   data.train_batch_size=16 \
