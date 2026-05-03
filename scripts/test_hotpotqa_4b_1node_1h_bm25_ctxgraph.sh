@@ -2,7 +2,7 @@
 #SBATCH -J test-hp-4b-cg-bm25
 #SBATCH -o test-hp-4b-cg-bm25.%j.out
 #SBATCH -e test-hp-4b-cg-bm25.%j.err
-#SBATCH -p gh-dev
+#SBATCH -p gh
 #SBATCH -N 1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=72

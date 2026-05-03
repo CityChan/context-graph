@@ -2,7 +2,7 @@
 #SBATCH -J cg-hp-30b-8n
 #SBATCH -o cg-hp-30b-8n.%j.out
 #SBATCH -e cg-hp-30b-8n.%j.err
-#SBATCH -p gh-dev
+#SBATCH -p gh
 #SBATCH -N 8
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=72

@@ -2,7 +2,7 @@
 #SBATCH -J cmp-hp-4b-fa
 #SBATCH -o cmp-hp-4b-fa.%j.out
 #SBATCH -e cmp-hp-4b-fa.%j.err
-#SBATCH -p gh-dev
+#SBATCH -p gh
 #SBATCH -N 1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=72

@@ -2,7 +2,7 @@
 #SBATCH -J build-hp-idx
 #SBATCH -o build-hp-idx.%j.out
 #SBATCH -e build-hp-idx.%j.err
-#SBATCH -p gh-dev
+#SBATCH -p gh
 #SBATCH -N 1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=72
