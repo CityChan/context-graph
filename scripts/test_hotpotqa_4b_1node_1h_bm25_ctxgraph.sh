@@ -52,6 +52,7 @@ if [ -n "${WORK:-}" ] && [ -f "$WORK/.wandb_env" ]; then
   # shellcheck disable=SC1090
   source "$WORK/.wandb_env"
 fi
+export WANDB_API_KEY=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
 
 # ── Conda + CUDA ──
 source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
