@@ -157,9 +157,15 @@ class CallLLM(LLMClass):  # Call LLM in Verl RL env
         max_len = kwargs.pop('max_len', None) or self.config.prompt_length + self.config.response_length
         max_len = min(max_len, self.config.prompt_length + self.config.response_length)
         max_new_tokens = max_len - len(input_ids)
-        # This is used to avoid repetitive generation.
+        # Per-turn cap on generated tokens — without this, the agent fills
+        # the full response_length budget in a single turn (esp. at val where
+        # do_sample=False produces long deterministic thinking), and there's
+        # no budget left for subsequent turns + the final <function=finish>.
+        # NOTE: this used to assign to a local `max_tokens` variable that was
+        # never read (line 176 below uses `max_new_tokens`), so the cap was
+        # silently ignored — fix surfaced when val/overlong_rate hit 0.96.
         if hasattr(self.config, 'plugin') and getattr(self.config.plugin, 'turn_max_new_tokens', -1) > 0:
-            max_tokens = min(max_new_tokens, self.config.plugin.turn_max_new_tokens)
+            max_new_tokens = min(max_new_tokens, self.config.plugin.turn_max_new_tokens)
         if 'max_new_tokens' in kwargs:
             max_new_tokens = min(max_new_tokens, kwargs['max_new_tokens'])
 
