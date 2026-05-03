@@ -185,7 +185,7 @@ python -m scripts.train_graph \
   actor_rollout_ref.model.path="$MODEL_PATH" \
   actor_rollout_ref.rollout.prompt_length=2048 \
   actor_rollout_ref.rollout.response_length=16384 \
-  actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu=18432 \
+  actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu=10240 \
   actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
   actor_rollout_ref.rollout.n=4 \
   actor_rollout_ref.rollout.agent.num_workers=1 \
@@ -204,8 +204,8 @@ python -m scripts.train_graph \
   data.return_raw_chat=True \
   actor_rollout_ref.actor.ppo_mini_batch_size=16 \
   actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=1 \
-  actor_rollout_ref.actor.ppo_max_token_len_per_gpu=18432 \
-  actor_rollout_ref.actor.ppo_infer_max_token_len_per_gpu=18432 \
+  actor_rollout_ref.actor.ppo_max_token_len_per_gpu=10240 \
+  actor_rollout_ref.actor.ppo_infer_max_token_len_per_gpu=10240 \
   actor_rollout_ref.model.enable_gradient_checkpointing=True \
   +actor_rollout_ref.rollout.plugin.workflow=search_graph \
   +actor_rollout_ref.rollout.plugin.max_turn=20 \
