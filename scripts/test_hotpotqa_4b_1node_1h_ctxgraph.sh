@@ -6,7 +6,7 @@
 #SBATCH -N 1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=72
-#SBATCH -t 01:00:00
+#SBATCH -t 01:30:00
 #SBATCH -A AST24021
 
 # ─────────────────────────────────────────────────────────────────────
@@ -245,7 +245,7 @@ python -m scripts.train_graph \
   trainer.val_only=False \
   trainer.n_gpus_per_node=1 \
   trainer.nnodes=1 \
-  trainer.total_training_steps=3 \
+  trainer.total_training_steps=10 \
   trainer.test_freq=999 \
   trainer.save_freq=-1 \
   trainer.project_name=context-graph \
