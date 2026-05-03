@@ -68,6 +68,7 @@ export TORCHDYNAMO_DISABLE=1
 export HYDRA_FULL_ERROR=1
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
 export NCCL_P2P_LEVEL=NVL
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 # ── Project paths ──
 PROJECT_ROOT=/work/09281/chc_1996/vista/context-graph
@@ -173,7 +174,7 @@ python -m scripts.train_graph \
   actor_rollout_ref.rollout.name=vllm \
   actor_rollout_ref.rollout.mode=async \
   actor_rollout_ref.rollout.calculate_log_probs=True \
-  actor_rollout_ref.rollout.gpu_memory_utilization=0.4 \
+  actor_rollout_ref.rollout.gpu_memory_utilization=0.3 \
   actor_rollout_ref.model.path="$MODEL_PATH" \
   actor_rollout_ref.rollout.prompt_length=2048 \
   actor_rollout_ref.rollout.response_length=16384 \
