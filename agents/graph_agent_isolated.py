@@ -507,8 +507,12 @@ async def process_item(
                 if merged_id:
                     print(f'[GRAPH AUTO-MERGE] {to_merge} → {merged_id} ({len(graph.active_nodes)} active)')
 
-        agent['main'].append({'role': 'user', 'content': observation})
-        session_message.append({'role': 'user', 'content': observation})
+        # Truncate observation before appending to main chat to keep trajectory
+        # within budget. Without this, raw search obs (~7K tokens each) blow up
+        # ctx after 1-2 hops. Graph nodes already store truncated copies.
+        main_observation = observation[:2000] if isinstance(observation, str) else observation
+        agent['main'].append({'role': 'user', 'content': main_observation})
+        session_message.append({'role': 'user', 'content': main_observation})
 
     env.stats['session_time'] = time.time() - session_start_time
 
