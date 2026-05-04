@@ -24,8 +24,8 @@
 #
 # Pre-flight (one-time, before this sbatch):
 #   (login)   python scripts/make_2wikimqa_data.py
-#   (login)   python scripts/build_2wikimqa_corpus.py
-#   (compute) sbatch scripts/build_2wikimqa_index.sh
+#   (login)   python scripts/build_unified_wiki_corpus.py
+#   (compute) sbatch scripts/build_unified_wiki_index.sh
 #
 # Pairs with FoldAgent baseline by swapping three lines:
 #   default_agent_loop=fold_agent, workflow=search_branch,
@@ -113,16 +113,16 @@ echo "=============================================================="
 probe "checking 2WikiMQA artefacts"
 TRAIN_PARQUET="$PROJECT_ROOT/data/2wikimqa_graph_train.parquet"
 VAL_PARQUET="$PROJECT_ROOT/data/2wikimqa_graph_test.parquet"
-CORPUS_PARQUET="$PROJECT_ROOT/data/2wikimqa_corpus.parquet"
-EMBED_PKL="$PROJECT_ROOT/data/2wikimqa_corpus_embeddings.pkl"
+CORPUS_PARQUET="$PROJECT_ROOT/data/wiki_corpus.parquet"
+EMBED_PKL="$PROJECT_ROOT/data/wiki_corpus_embeddings.pkl"
 for f in "$TRAIN_PARQUET" "$VAL_PARQUET" "$CORPUS_PARQUET" "$EMBED_PKL"; do
   if [ ! -f "$f" ]; then
     echo "ERROR: missing $f"
     echo
     echo "Stage-2 prep, in order:"
     echo "  (login node)   python scripts/make_2wikimqa_data.py"
-    echo "  (login node)   python scripts/build_2wikimqa_corpus.py"
-    echo "  (compute node) sbatch scripts/build_2wikimqa_index.sh"
+    echo "  (login node)   python scripts/build_unified_wiki_corpus.py"
+    echo "  (compute node) sbatch scripts/build_unified_wiki_index.sh"
     exit 1
   fi
 done
