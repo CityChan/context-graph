@@ -98,23 +98,93 @@ def iter_articles_hotpot(item):
             yield t, " ".join(sents)
 
 
+_2wiki_ctx_diag = {"printed": False}
+
+
+def _join_sents(s):
+    if s is None:
+        return ""
+    if isinstance(s, str):
+        return s
+    try:
+        return " ".join(str(x) for x in s)
+    except TypeError:
+        return str(s)
+
+
 def iter_articles_2wiki(item):
     """Yield (title, paragraph_text) for 2WikiMQA distractor row.
 
-    2WikiMQA mirrors expose context with either `content` or `sentences` field,
-    so accept both.
+    Handles several context layouts produced by different HF mirrors / auto-
+    converted parquet:
+      A. parallel-array dict-like: {"title": [...], "content"|"sentences": [[...], ...]}
+      B. list of dicts: [{"title": ..., "content"|"sentences": ...}, ...]
+      C. list of [title, sentences] pairs (raw 2WikiMQA JSON form)
     """
-    ctx = item.get("context", {})
-    if isinstance(ctx, dict):
-        titles = ctx.get("title", [])
-        sents_field = ctx.get("content", ctx.get("sentences", []))
-        for t, sents in zip(titles, sents_field):
-            yield t, " ".join(sents)
-    else:
-        for entry in ctx:
+    ctx = item.get("context", None)
+    if ctx is None:
+        return
+
+    # One-shot diagnostic on first call so we can see what format we got.
+    if not _2wiki_ctx_diag["printed"]:
+        _2wiki_ctx_diag["printed"] = True
+        print(f"  [DIAG] 2WikiMQA item keys: {list(item.keys())[:12]}")
+        print(f"  [DIAG] context type: {type(ctx).__name__}")
+        try:
+            print(f"  [DIAG] context repr (first 400 chars): {repr(ctx)[:400]}")
+        except Exception:
+            pass
+        if hasattr(ctx, "__iter__") and not isinstance(ctx, (str, bytes)):
+            try:
+                first = next(iter(ctx))
+                print(f"  [DIAG] first entry type: {type(first).__name__}")
+                print(f"  [DIAG] first entry repr (first 300 chars): {repr(first)[:300]}")
+            except StopIteration:
+                pass
+            except Exception:
+                pass
+
+    # Form A: parallel-array dict-like (real dict, arrow StructScalar, pandas Series, ...)
+    titles_field = None
+    sents_field = None
+    for tk in ("title", "titles"):
+        try:
+            if tk in ctx:
+                titles_field = ctx[tk]
+                break
+        except TypeError:
+            break
+    for sk in ("content", "sentences", "contents"):
+        try:
+            if sk in ctx:
+                sents_field = ctx[sk]
+                break
+        except TypeError:
+            break
+    if titles_field is not None and sents_field is not None:
+        for t, sents in zip(titles_field, sents_field):
+            yield str(t), _join_sents(sents)
+        return
+
+    # Forms B/C: iterate
+    if not hasattr(ctx, "__iter__") or isinstance(ctx, (str, bytes)):
+        return
+    for entry in ctx:
+        if isinstance(entry, dict):
             t = entry.get("title", "")
-            sents = entry.get("content", entry.get("sentences", []))
-            yield t, " ".join(sents)
+            sents = entry.get("content", entry.get("sentences", ""))
+            yield str(t), _join_sents(sents)
+        elif hasattr(entry, "__getitem__") and not isinstance(entry, (str, bytes)):
+            # numpy.void / arrow StructScalar — try field access
+            try:
+                t = entry["title"] if "title" in entry else entry[0]
+                sents = (entry["content"] if "content" in entry else
+                         entry["sentences"] if "sentences" in entry else
+                         entry[1])
+                yield str(t), _join_sents(sents)
+            except (KeyError, IndexError, TypeError):
+                pass
+        # str entries silently skipped — schema is title-only without paragraph text
 
 
 def main():
