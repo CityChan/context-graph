@@ -507,12 +507,37 @@ async def process_item(
                 if merged_id:
                     print(f'[GRAPH AUTO-MERGE] {to_merge} → {merged_id} ({len(graph.active_nodes)} active)')
 
-        # Truncate observation before appending to main chat to keep trajectory
-        # within budget. Without this, raw search obs (~7K tokens each) blow up
-        # ctx after 1-2 hops. Graph nodes already store truncated copies.
-        main_observation = observation[:2000] if isinstance(observation, str) else observation
+        # Per-tool truncation for main chat: open_page is the legitimate way to
+        # see full content, search is just a discovery list, action is short.
+        # Graph nodes store their own (smaller) snapshots.
+        if isinstance(observation, str) and fn_call is not None:
+            tool = fn_call.get('function')
+            if tool == 'search':
+                main_observation = observation[:1500]
+            elif tool == 'open_page':
+                main_observation = observation[:4000]
+            elif tool == 'action':
+                main_observation = observation[:600]
+            else:
+                main_observation = observation[:2000]
+        else:
+            main_observation = observation[:2000] if isinstance(observation, str) else observation
         agent['main'].append({'role': 'user', 'content': main_observation})
         session_message.append({'role': 'user', 'content': main_observation})
+
+        # Sliding window: keep only the K most recent raw observations in main
+        # chat. Older user turns are replaced with a placeholder pointing back
+        # to the graph (which retains their truncated content as nodes).
+        K_RECENT_OBS = 3
+        OBS_PLACEHOLDER = '[earlier observation; details merged into graph]'
+        obs_indices = [
+            i for i, m in enumerate(agent['main'].chat)
+            if m['role'] == 'user' and i >= prompt_turn
+        ]
+        if len(obs_indices) > K_RECENT_OBS:
+            for old_idx in obs_indices[:-K_RECENT_OBS]:
+                if agent['main'].chat[old_idx]['content'] != OBS_PLACEHOLDER:
+                    agent['main'].replace_user_turn(old_idx, OBS_PLACEHOLDER)
 
     env.stats['session_time'] = time.time() - session_start_time
 

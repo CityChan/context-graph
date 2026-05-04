@@ -374,6 +374,20 @@ class AgentContext:
         self.token_mask = self.token_mask[:-k]
         self.additional_info = self.additional_info[:-k]
 
+    def replace_user_turn(self, turn_idx, new_content):
+        """Replace a non-assistant turn's content with shorter text (sliding-window
+        compression for old observations). Assistant turns must not be touched —
+        their token_mask carries gradient mass.
+        """
+        assert self.chat[turn_idx]['role'] != 'assistant', \
+            f"Cannot replace assistant turn at {turn_idx}"
+        self.chat[turn_idx]['content'] = new_content
+        # Concatenative chat templates: only this turn's tokens depend on its
+        # own content; subsequent turns' chat_ids are unaffected.
+        self.chat_ids[turn_idx] = self.get_turn_context(turn_idx)
+        self.log_probs[turn_idx] = [0.0] * len(self.chat_ids[turn_idx])
+        self.token_mask[turn_idx] = [False] * len(self.chat_ids[turn_idx])
+
     def get_metrics(self):
         if self.metrics is None:
             return {}
