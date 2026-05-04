@@ -6,7 +6,7 @@
 #SBATCH -N 1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=72
-#SBATCH -t 02:00:00
+#SBATCH -t 04:00:00
 #SBATCH -A AST24021
 
 # ─────────────────────────────────────────────────────────────────────
@@ -18,8 +18,9 @@
 #
 # Pre-flight (login node):
 #   python scripts/build_unified_wiki_corpus.py
-# Then sbatch this script. ~200-250K articles take ~30-60 min to encode at
-# batch_size=32 with Qwen3-Embedding-4B.
+# Then sbatch this script. The merged HotpotQA + 2WikiMQA corpus is
+# ~840K articles; expect 2-3h to encode at batch_size=32 with
+# Qwen3-Embedding-4B. Walltime set to 4h for headroom.
 # ─────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
