@@ -77,6 +77,41 @@ def _normalize_evidences(ev):
     return out
 
 
+def _hf_parquet_load(repo, cache_dir=None):
+    """Load a HF dataset via auto-converted parquet refs, bypassing datasets.load_dataset.
+
+    Works for script-based datasets (e.g. xanhho/2WikiMultihopQA) on modern
+    datasets versions that refuse to run loading scripts. HF Hub auto-converts
+    every dataset to parquet at refs/convert/parquet.
+
+    Returns: {split_name: list[dict]}
+    """
+    from huggingface_hub import HfApi, hf_hub_download
+    api = HfApi()
+    files = api.list_repo_files(repo, repo_type="dataset", revision="refs/convert/parquet")
+    splits = {}
+    for f in files:
+        if not f.endswith(".parquet"):
+            continue
+        # path format: <config>/<split>/<num>.parquet
+        parts = f.split("/")
+        if len(parts) < 3:
+            continue
+        split_name = parts[-2]
+        splits.setdefault(split_name, []).append(f)
+    if not splits:
+        raise RuntimeError(f"No parquet files found at refs/convert/parquet for {repo}")
+    result = {}
+    for split, paths in splits.items():
+        dfs = []
+        for p in sorted(paths):
+            local = hf_hub_download(repo, p, repo_type="dataset",
+                                    revision="refs/convert/parquet", cache_dir=cache_dir)
+            dfs.append(pd.read_parquet(local))
+        result[split] = pd.concat(dfs, ignore_index=True).to_dict("records")
+    return result
+
+
 def to_row(item, workflow):
     return {
         "prompt": [{"role": "user", "content": item["question"]}],
@@ -110,26 +145,33 @@ def main():
 
     os.makedirs(args.out_dir, exist_ok=True)
 
+    print(f"Loading 2WikiMultiHopQA from HuggingFace: {args.hf_repo} ...")
+    ds_dict = None
     try:
         from datasets import load_dataset
-    except ImportError as e:
-        raise SystemExit(
-            "`datasets` not installed. `pip install datasets` (should be in cxtgraph env)."
-        ) from e
-
-    print(f"Loading 2WikiMultiHopQA from HuggingFace: {args.hf_repo} ...")
-    ds = load_dataset(args.hf_repo, trust_remote_code=True, cache_dir=args.cache_dir)
-    print(f"Loaded splits: {list(ds.keys())}")
+        ds = load_dataset(args.hf_repo, cache_dir=args.cache_dir)
+        ds_dict = {k: list(v) for k, v in ds.items()}
+        print(f"Loaded via datasets.load_dataset, splits: {list(ds_dict.keys())}")
+    except Exception as e:
+        msg = str(e)
+        if ("scripts are no longer supported" in msg or "trust_remote_code" in msg.lower()
+                or "loading script" in msg.lower()):
+            print(f"datasets.load_dataset refused script-based repo; falling back to "
+                  f"HF Hub auto-convert parquet refs ...")
+            ds_dict = _hf_parquet_load(args.hf_repo, args.cache_dir)
+            print(f"Loaded via parquet refs, splits: {list(ds_dict.keys())}")
+        else:
+            raise
 
     # Common split names: train / dev / test (or validation)
     train_key = "train"
-    val_key = "validation" if "validation" in ds else ("dev" if "dev" in ds else None)
+    val_key = "validation" if "validation" in ds_dict else ("dev" if "dev" in ds_dict else None)
     if val_key is None:
-        raise SystemExit(f"No validation/dev split found in {args.hf_repo}: got {list(ds.keys())}")
-    print(f"  {train_key}: {len(ds[train_key])}  {val_key}: {len(ds[val_key])}")
+        raise SystemExit(f"No validation/dev split found in {args.hf_repo}: got {list(ds_dict.keys())}")
+    print(f"  {train_key}: {len(ds_dict[train_key])}  {val_key}: {len(ds_dict[val_key])}")
 
-    train_items = list(ds[train_key])
-    val_items = list(ds[val_key])
+    train_items = list(ds_dict[train_key])
+    val_items = list(ds_dict[val_key])
 
     rng = random.Random(args.seed)
     rng.shuffle(train_items)

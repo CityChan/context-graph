@@ -31,6 +31,32 @@ import argparse
 import pandas as pd
 
 
+def _hf_parquet_load(repo, cache_dir=None):
+    """Load HF dataset via auto-converted parquet refs (bypass loading scripts)."""
+    from huggingface_hub import HfApi, hf_hub_download
+    api = HfApi()
+    files = api.list_repo_files(repo, repo_type="dataset", revision="refs/convert/parquet")
+    splits = {}
+    for f in files:
+        if not f.endswith(".parquet"):
+            continue
+        parts = f.split("/")
+        if len(parts) < 3:
+            continue
+        splits.setdefault(parts[-2], []).append(f)
+    if not splits:
+        raise RuntimeError(f"No parquet files at refs/convert/parquet for {repo}")
+    result = {}
+    for split, paths in splits.items():
+        dfs = []
+        for p in sorted(paths):
+            local = hf_hub_download(repo, p, repo_type="dataset",
+                                    revision="refs/convert/parquet", cache_dir=cache_dir)
+            dfs.append(pd.read_parquet(local))
+        result[split] = pd.concat(dfs, ignore_index=True).to_dict("records")
+    return result
+
+
 def iter_articles(item):
     """Yield (title, paragraph_text) for every article in a 2WikiMQA distractor row.
 
@@ -64,22 +90,29 @@ def main():
 
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
 
+    print(f"Loading 2WikiMultiHopQA from HuggingFace: {args.hf_repo} ...")
+    ds_dict = None
     try:
         from datasets import load_dataset
-    except ImportError as e:
-        raise SystemExit("`datasets` not installed. `pip install datasets` (should be in cxtgraph env).") from e
-
-    print(f"Loading 2WikiMultiHopQA from HuggingFace: {args.hf_repo} ...")
-    ds = load_dataset(args.hf_repo, trust_remote_code=True, cache_dir=args.cache_dir)
-    print(f"Splits: { {k: len(v) for k, v in ds.items()} }")
+        ds = load_dataset(args.hf_repo, cache_dir=args.cache_dir)
+        ds_dict = {k: list(v) for k, v in ds.items()}
+    except Exception as e:
+        msg = str(e)
+        if ("scripts are no longer supported" in msg or "trust_remote_code" in msg.lower()
+                or "loading script" in msg.lower()):
+            print("datasets refused script-based repo; falling back to HF Hub auto-convert parquet refs ...")
+            ds_dict = _hf_parquet_load(args.hf_repo, args.cache_dir)
+        else:
+            raise
+    print(f"Splits: { {k: len(v) for k, v in ds_dict.items()} }")
 
     # title -> paragraph text (last write wins; small whitespace differences OK)
     title_to_text = {}
-    val_key = "validation" if "validation" in ds else ("dev" if "dev" in ds else None)
+    val_key = "validation" if "validation" in ds_dict else ("dev" if "dev" in ds_dict else None)
     splits = [val_key] if args.include_val_only else (["train", val_key] if val_key else ["train"])
-    splits = [s for s in splits if s and s in ds]
+    splits = [s for s in splits if s and s in ds_dict]
     for split in splits:
-        rows = ds[split]
+        rows = ds_dict[split]
         for i, item in enumerate(rows):
             for title, text in iter_articles(item):
                 if not title or not text:

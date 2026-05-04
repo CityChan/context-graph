@@ -32,6 +32,57 @@ import os
 import pandas as pd
 
 
+def _hf_parquet_load(repo, config=None, cache_dir=None):
+    """Load HF dataset via auto-converted parquet refs (bypass loading scripts).
+
+    For repos with multiple configs (e.g. hotpot_qa has 'distractor', 'fullwiki'),
+    pass `config` to filter; the parquet refs path format is
+    <config>/<split>/<num>.parquet so we filter by parts[0].
+    """
+    from huggingface_hub import HfApi, hf_hub_download
+    api = HfApi()
+    files = api.list_repo_files(repo, repo_type="dataset", revision="refs/convert/parquet")
+    splits = {}
+    for f in files:
+        if not f.endswith(".parquet"):
+            continue
+        parts = f.split("/")
+        if len(parts) < 3:
+            continue
+        if config is not None and parts[0] != config:
+            continue
+        splits.setdefault(parts[-2], []).append(f)
+    if not splits:
+        raise RuntimeError(f"No parquet files at refs/convert/parquet for {repo} (config={config})")
+    result = {}
+    for split, paths in splits.items():
+        dfs = []
+        for p in sorted(paths):
+            local = hf_hub_download(repo, p, repo_type="dataset",
+                                    revision="refs/convert/parquet", cache_dir=cache_dir)
+            dfs.append(pd.read_parquet(local))
+        result[split] = pd.concat(dfs, ignore_index=True).to_dict("records")
+    return result
+
+
+def _load_with_fallback(repo, config=None, cache_dir=None):
+    """Try datasets.load_dataset; on script-rejection fall back to parquet refs."""
+    try:
+        from datasets import load_dataset
+        if config is not None:
+            ds = load_dataset(repo, config, cache_dir=cache_dir)
+        else:
+            ds = load_dataset(repo, cache_dir=cache_dir)
+        return {k: list(v) for k, v in ds.items()}
+    except Exception as e:
+        msg = str(e)
+        if ("scripts are no longer supported" in msg or "trust_remote_code" in msg.lower()
+                or "loading script" in msg.lower()):
+            print(f"  datasets refused script-based repo {repo}; falling back to parquet refs ...")
+            return _hf_parquet_load(repo, config=config, cache_dir=cache_dir)
+        raise
+
+
 def iter_articles_hotpot(item):
     """Yield (title, paragraph_text) for HotpotQA distractor row."""
     ctx = item.get("context", {})
@@ -82,16 +133,11 @@ def main():
 
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
 
-    try:
-        from datasets import load_dataset
-    except ImportError as e:
-        raise SystemExit("`datasets` not installed. `pip install datasets` (should be in cxtgraph env).") from e
-
     title_to_text = {}
 
     if not args.skip_hotpot:
         print(f"Loading HotpotQA ({args.hotpot_repo}, config={args.hotpot_config}) ...")
-        ds_hp = load_dataset(args.hotpot_repo, args.hotpot_config, trust_remote_code=True, cache_dir=args.cache_dir)
+        ds_hp = _load_with_fallback(args.hotpot_repo, config=args.hotpot_config, cache_dir=args.cache_dir)
         print(f"  HotpotQA splits: { {k: len(v) for k, v in ds_hp.items()} }")
         hp_splits = ["validation"] if args.include_val_only else ["train", "validation"]
         for split in hp_splits:
@@ -108,7 +154,7 @@ def main():
 
     if not args.skip_2wiki:
         print(f"Loading 2WikiMQA ({args.two_wiki_repo}) ...")
-        ds_2w = load_dataset(args.two_wiki_repo, trust_remote_code=True, cache_dir=args.cache_dir)
+        ds_2w = _load_with_fallback(args.two_wiki_repo, cache_dir=args.cache_dir)
         print(f"  2WikiMQA splits: { {k: len(v) for k, v in ds_2w.items()} }")
         val_key = "validation" if "validation" in ds_2w else ("dev" if "dev" in ds_2w else None)
         two_wiki_splits = [val_key] if args.include_val_only else (["train", val_key] if val_key else ["train"])
