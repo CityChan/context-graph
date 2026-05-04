@@ -25,8 +25,9 @@ Usage:
   python scripts/build_2wikimqa_corpus.py --hf_repo voidful/2WikiMultihopQA
 """
 
-import os
 import argparse
+import json
+import os
 
 import pandas as pd
 
@@ -83,6 +84,13 @@ def iter_articles(item):
     ctx = item.get("context", None)
     if ctx is None:
         return
+
+    # xanhho's auto-converted parquet stores `context` as a JSON-encoded string.
+    if isinstance(ctx, str):
+        try:
+            ctx = json.loads(ctx)
+        except (json.JSONDecodeError, ValueError):
+            return
 
     if not _ctx_diag["printed"]:
         _ctx_diag["printed"] = True

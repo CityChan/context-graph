@@ -23,12 +23,25 @@ Usage:
   python scripts/make_2wikimqa_data.py --hf_repo voidful/2WikiMultihopQA
 """
 
-import os
 import argparse
+import json
+import os
 import random
 from collections import Counter
 
 import pandas as pd
+
+
+def _maybe_json_loads(x):
+    """Decode if x is a JSON-encoded string (xanhho's auto-convert parquet);
+    otherwise return as-is.
+    """
+    if isinstance(x, str):
+        try:
+            return json.loads(x)
+        except (json.JSONDecodeError, ValueError):
+            return None
+    return x
 
 
 def _normalize_supporting_facts(sf):
@@ -37,7 +50,9 @@ def _normalize_supporting_facts(sf):
     HF parallel-array form: {"title": [...], "sent_id": [...]}
     Older list-of-dicts form: [{"title": ..., "sent_id": ...}, ...]
     Some 2WikiMQA mirrors use plain list of [title, sent_id].
+    xanhho's auto-convert parquet stores it as a JSON-encoded string.
     """
+    sf = _maybe_json_loads(sf)
     if sf is None:
         return []
     if isinstance(sf, dict):
@@ -59,7 +74,9 @@ def _normalize_evidences(ev):
     HF parallel-array form: {"fact": [[s, r, o], ...]}  (xanhho's port)
     or {"subject": [...], "relation": [...], "object": [...]}
     or plain list of [s, r, o].
+    xanhho's auto-convert parquet stores it as a JSON-encoded string.
     """
+    ev = _maybe_json_loads(ev)
     if ev is None:
         return []
     if isinstance(ev, dict):

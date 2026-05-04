@@ -27,6 +27,7 @@ Usage:
 """
 
 import argparse
+import json
 import os
 
 import pandas as pd
@@ -124,6 +125,14 @@ def iter_articles_2wiki(item):
     ctx = item.get("context", None)
     if ctx is None:
         return
+
+    # xanhho's auto-converted parquet stores `context` as a JSON-encoded
+    # string. Decode first so the structural handler below sees a list.
+    if isinstance(ctx, str):
+        try:
+            ctx = json.loads(ctx)
+        except (json.JSONDecodeError, ValueError):
+            return
 
     # One-shot diagnostic on first call so we can see what format we got.
     if not _2wiki_ctx_diag["printed"]:
