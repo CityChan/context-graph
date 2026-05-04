@@ -80,6 +80,9 @@ export PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:Tr
 PROJECT_ROOT=/work/07144/yw23374/vista/context-graph
 MODEL_PATH=${MODEL_PATH:-/work/07144/yw23374/vista/models/Qwen3-30B-A3B-Thinking-2507}
 export HF_HOME=${HF_HOME:-/work/07144/yw23374/vista/hf_cache}
+export VISTA_SCRATCH_BASE=${VISTA_SCRATCH_BASE:-/scratch/07144/yw23374/vista}
+export XDG_CACHE_HOME=${XDG_CACHE_HOME:-${VISTA_SCRATCH_BASE}/cache}
+export ALFWORLD_DATA=${ALFWORLD_DATA:-${VISTA_SCRATCH_BASE}/alfworld}
 cd "$PROJECT_ROOT"
 export PYTHONPATH="$PROJECT_ROOT:${PYTHONPATH:-}"
 
@@ -153,11 +156,13 @@ echo "Actor offload: param=${ACTOR_PARAM_OFFLOAD} optimizer=${ACTOR_OPTIMIZER_OF
 echo "Rollout sleep/free-cache: free_cache=${ROLLOUT_FREE_CACHE_ENGINE} sleep_mode=${ROLLOUT_ENABLE_SLEEP_MODE}"
 echo "Checkpoint root: $CHECKPOINT_ROOT"
 echo "Checkpoint retention: actor=${MAX_ACTOR_CKPT_TO_KEEP} critic=${MAX_CRITIC_CKPT_TO_KEEP}"
+echo "ALFWORLD_DATA: ${ALFWORLD_DATA}"
 echo "WANDB_ENTITY: ${WANDB_ENTITY}"
 echo "HF sync: ${HF_SYNC_CHECKPOINTS} repo=${HF_REPO_ID}"
 echo "Started: $(date)"
 echo "=============================================================="
 
+mkdir -p "$XDG_CACHE_HOME" "$ALFWORLD_DATA"
 mkdir -p "$(dirname "$CHECKPOINT_ROOT")"
 df -h "$(dirname "$CHECKPOINT_ROOT")" || true
 lfs quota -h -u "${USER:-$(whoami)}" "$(dirname "$CHECKPOINT_ROOT")" 2>/dev/null || true
@@ -204,6 +209,8 @@ echo "--- Starting Ray head on $NODE0 ---"
   export PATH=/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/bin:${PATH}
   export LD_LIBRARY_PATH=${CONDA_PREFIX}/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/targets/sbsa-linux/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/lib64:${LD_LIBRARY_PATH}
   export HF_HOME='"$HF_HOME"'
+  export XDG_CACHE_HOME='"$XDG_CACHE_HOME"'
+  export ALFWORLD_DATA='"$ALFWORLD_DATA"'
   export FLASHINFER_WORKSPACE_BASE=/tmp
   export HF_HUB_OFFLINE=1
   export TRANSFORMERS_OFFLINE=1
@@ -226,6 +233,8 @@ for i in $(seq 1 $((NUM_NODES - 1))); do
     export PATH=/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/bin:${PATH}
     export LD_LIBRARY_PATH=${CONDA_PREFIX}/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/targets/sbsa-linux/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/lib64:${LD_LIBRARY_PATH}
     export HF_HOME='"$HF_HOME"'
+    export XDG_CACHE_HOME='"$XDG_CACHE_HOME"'
+    export ALFWORLD_DATA='"$ALFWORLD_DATA"'
     export FLASHINFER_WORKSPACE_BASE=/tmp
     export HF_HUB_OFFLINE=1
     export TRANSFORMERS_OFFLINE=1
