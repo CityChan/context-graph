@@ -534,7 +534,36 @@ Once you’re confident everything is covered and verified, submit the final ans
         if self.env_fail:  # If env fail, direct return 0 reward
             return "", 0, {}
         if self.predicted_answer is None:
-            return "", 0, {}
+            # Fallback: model didn't emit a parseable <answer>...</answer> tag.
+            # This is common under greedy decoding (do_sample=False) at val time:
+            # sampled training rollouts hit the format, but greedy collapses to a
+            # search-only mode that never finalizes. Recover the signal by taking
+            # the last assistant message and letting the judge (em_score /
+            # relaxed_em / LLM grader) handle extraction.
+            last_assistant_text = ""
+            for m in reversed(messages or []):
+                role = m.get("role") if isinstance(m, dict) else getattr(m, "role", None)
+                if role == "assistant":
+                    content = m.get("content") if isinstance(m, dict) else getattr(m, "content", "")
+                    last_assistant_text = (content or "").strip()
+                    break
+            if not last_assistant_text:
+                return "", 0, {}
+            # Try a looser regex grab first: "Answer: X" / "answer is X" / final line
+            ans = None
+            mm = re.search(r"(?:^|\n)\s*(?:final\s+answer|answer)\s*[:=]\s*(.+?)(?:\n|$)",
+                           last_assistant_text, re.IGNORECASE)
+            if mm:
+                ans = mm.group(1).strip().rstrip(".")
+            if not ans:
+                # last non-empty line
+                for line in reversed(last_assistant_text.splitlines()):
+                    line = line.strip()
+                    if line:
+                        ans = line.rstrip(".")
+                        break
+            ans = ans or last_assistant_text
+            self.predicted_answer = (ans, "", 0.0)
         # print(self.label_answer)
         # print(self.predicted_answer[0])
         if '<q1>' in self.label_answer:
