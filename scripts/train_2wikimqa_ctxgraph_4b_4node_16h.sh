@@ -344,7 +344,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$NODE0" --chdir="$PROJECT_ROOT" \
   trainer.val_only=False \
   trainer.n_gpus_per_node=1 \
   trainer.nnodes=${NUM_NODES} \
-  trainer.total_training_steps=200 \
+  trainer.total_training_steps=199 \
   trainer.test_freq=999 \
   trainer.save_freq=25 \
   trainer.project_name=context-graph \
