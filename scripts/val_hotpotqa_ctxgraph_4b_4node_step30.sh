@@ -64,7 +64,7 @@ export NCCL_P2P_LEVEL=NVL
 
 # ── Project paths ──
 PROJECT_ROOT=/work/09281/chc_1996/vista/context-graph
-MODEL_PATH=${MODEL_PATH:-Qwen/Qwen3-4B-Thinking-2507}
+MODEL_PATH=${MODEL_PATH:-Qwen/Qwen3-4B-Instruct-2507}
 EMBED_MODEL=${EMBED_MODEL:-Qwen/Qwen3-Embedding-4B}
 export HF_HOME=${HF_HOME:-/work/09281/chc_1996/vista/cache}
 cd "$PROJECT_ROOT"
