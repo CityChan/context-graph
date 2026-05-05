@@ -196,18 +196,76 @@ def iter_articles_2wiki(item):
         # str entries silently skipped — schema is title-only without paragraph text
 
 
+_musique_ctx_diag = {"printed": False}
+
+
+def iter_articles_musique(item):
+    """Yield (title, paragraph_text) for MuSiQue paragraphs.
+
+    MuSiQue schema: `paragraphs` is list of dicts with keys
+        idx, title, paragraph_text, is_supporting
+    or in some auto-converted parquet mirrors: a JSON-encoded string of the same.
+    """
+    paragraphs = item.get("paragraphs", None)
+    if paragraphs is None:
+        return
+
+    if isinstance(paragraphs, str):
+        try:
+            paragraphs = json.loads(paragraphs)
+        except (json.JSONDecodeError, ValueError):
+            return
+
+    if not _musique_ctx_diag["printed"]:
+        _musique_ctx_diag["printed"] = True
+        print(f"  [DIAG] MuSiQue item keys: {list(item.keys())[:12]}")
+        print(f"  [DIAG] paragraphs type: {type(paragraphs).__name__}")
+        if hasattr(paragraphs, "__iter__"):
+            try:
+                first = next(iter(paragraphs))
+                print(f"  [DIAG] first paragraph type: {type(first).__name__}")
+                print(f"  [DIAG] first paragraph repr (first 300 chars): {repr(first)[:300]}")
+            except StopIteration:
+                pass
+            except Exception:
+                pass
+
+    if not hasattr(paragraphs, "__iter__") or isinstance(paragraphs, (str, bytes)):
+        return
+    for entry in paragraphs:
+        if isinstance(entry, dict):
+            t = entry.get("title", "")
+            text = entry.get("paragraph_text", "") or entry.get("text", "")
+            if t and text:
+                yield str(t), str(text)
+        elif hasattr(entry, "__getitem__") and not isinstance(entry, (str, bytes)):
+            try:
+                t = entry["title"] if "title" in entry else ""
+                text = (entry["paragraph_text"] if "paragraph_text" in entry
+                        else entry["text"] if "text" in entry else "")
+                if t and text:
+                    yield str(t), str(text)
+            except (KeyError, IndexError, TypeError):
+                pass
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--out", default="data/wiki_corpus.parquet")
     parser.add_argument("--hotpot_repo", default="hotpot_qa")
     parser.add_argument("--hotpot_config", default="distractor")
     parser.add_argument("--two_wiki_repo", dest="two_wiki_repo", default="xanhho/2WikiMultihopQA")
+    parser.add_argument("--musique_repo", default="dgslibisey/MuSiQue")
+    parser.add_argument("--musique_config", default="answerable")
     parser.add_argument("--cache_dir", default=None)
     parser.add_argument("--include_val_only", action="store_true",
                         help="Skip train splits — useful for a smaller smoke-test corpus.")
     parser.add_argument("--skip_hotpot", action="store_true",
-                        help="Skip HotpotQA (e.g. when corpus is too big and you only want 2WikiMQA).")
-    parser.add_argument("--skip_2wiki", action="store_true")
+                        help="Skip HotpotQA.")
+    parser.add_argument("--skip_2wiki", action="store_true",
+                        help="Skip 2WikiMQA.")
+    parser.add_argument("--skip_musique", action="store_true",
+                        help="Skip MuSiQue.")
     args = parser.parse_args()
 
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
@@ -248,7 +306,27 @@ def main():
                     print(f"  2wiki/{split}: {i+1}/{len(rows)} rows scanned, {len(title_to_text)} unique titles")
             print(f"  2wiki/{split}: done. unique titles so far = {len(title_to_text)}")
 
-    print(f"Total unique articles across both datasets: {len(title_to_text)}")
+    if not args.skip_musique:
+        print(f"Loading MuSiQue ({args.musique_repo}, config={args.musique_config}) ...")
+        try:
+            ds_mq = _load_with_fallback(args.musique_repo, config=args.musique_config, cache_dir=args.cache_dir)
+        except Exception:
+            ds_mq = _load_with_fallback(args.musique_repo, cache_dir=args.cache_dir)
+        print(f"  MuSiQue splits: { {k: len(v) for k, v in ds_mq.items()} }")
+        val_key = "validation" if "validation" in ds_mq else ("dev" if "dev" in ds_mq else None)
+        mq_splits = [val_key] if args.include_val_only else (["train", val_key] if val_key else ["train"])
+        mq_splits = [s for s in mq_splits if s and s in ds_mq]
+        for split in mq_splits:
+            rows = ds_mq[split]
+            for i, item in enumerate(rows):
+                for title, text in iter_articles_musique(item):
+                    if title and text and title not in title_to_text:
+                        title_to_text[title] = text
+                if (i + 1) % 5000 == 0:
+                    print(f"  musique/{split}: {i+1}/{len(rows)} rows scanned, {len(title_to_text)} unique titles")
+            print(f"  musique/{split}: done. unique titles so far = {len(title_to_text)}")
+
+    print(f"Total unique articles across all datasets: {len(title_to_text)}")
 
     rows_out = []
     for i, (title, text) in enumerate(sorted(title_to_text.items())):
