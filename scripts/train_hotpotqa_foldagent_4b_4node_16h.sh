@@ -6,11 +6,11 @@
 #SBATCH -N 4
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=72
-#SBATCH -t 04:00:00
+#SBATCH -t 16:00:00
 #SBATCH -A AST24021
 
 # ─────────────────────────────────────────────────────────────────────
-# Main run: FoldAgent on HotpotQA, 4B / 4 nodes / 4h.
+# Main run: FoldAgent on HotpotQA, 4B / 4 nodes / 16h / 200 step.
 # Scales the 1-node compare script up to 4 nodes (FSDP shards optim
 # states across nodes, removing the single-GPU OOM at optimizer step).
 # Pairs with train_hotpotqa_ctxgraph_4b_4node_2h.sh — same backbone,
@@ -94,7 +94,7 @@ else
 fi
 
 TS=$(date +%Y%m%d_%H%M%S)
-EXPERIMENT_NAME="foldagent_hotpotqa_4b_4n_p2048_r8192_4h_${TS}"
+EXPERIMENT_NAME="foldagent_hotpotqa_4b_4n_p2048_r8192_16h_${TS}"
 
 probe() { printf '+++ [%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 
@@ -272,7 +272,7 @@ probe "querying ray status"
 ray status || echo "WARN: ray status check failed"
 
 echo "=============================================================="
-echo "  Launching FoldAgent FoldGRPO training (4 nodes, 30 step target)"
+echo "  Launching FoldAgent FoldGRPO training (4 nodes, 200 step target)"
 echo "  vLLM gpu_memory_utilization=0.5 (NODE0 shares its GPU with the embedder)"
 echo "=============================================================="
 probe "launching trainer (model load + vLLM init typically ~3-5 min before first wandb log)"
@@ -340,9 +340,9 @@ srun --overlap --nodes=1 --ntasks=1 -w "$NODE0" --chdir="$PROJECT_ROOT" \
   trainer.val_only=False \
   trainer.n_gpus_per_node=1 \
   trainer.nnodes=${NUM_NODES} \
-  trainer.total_training_steps=30 \
+  trainer.total_training_steps=200 \
   trainer.test_freq=999 \
-  trainer.save_freq=5 \
+  trainer.save_freq=25 \
   trainer.project_name=context-graph \
   trainer.experiment_name="$EXPERIMENT_NAME" \
   trainer.logger="$TRAINER_LOGGER"

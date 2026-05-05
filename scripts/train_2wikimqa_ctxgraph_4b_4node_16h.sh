@@ -1,19 +1,19 @@
 #!/bin/bash
-#SBATCH -J cg-hp-4b-4n
-#SBATCH -o cg-hp-4b-4n.%j.out
-#SBATCH -e cg-hp-4b-4n.%j.err
+#SBATCH -J cg-2w-4b-4n
+#SBATCH -o cg-2w-4b-4n.%j.out
+#SBATCH -e cg-2w-4b-4n.%j.err
 #SBATCH -p gh
 #SBATCH -N 4
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=72
-#SBATCH -t 04:00:00
+#SBATCH -t 16:00:00
 #SBATCH -A AST24021
 
 # ─────────────────────────────────────────────────────────────────────
-# Main run: ContextGraph (isolated) on HotpotQA, 4B / 4 nodes / 4h.
+# Main run: ContextGraph (isolated) on 2WikiMQA, 4B / 4 nodes / 16h / 200 step.
 # Scales the 1-node compare script up to 4 nodes (FSDP shards optim
 # states across nodes, removing the single-GPU OOM at optimizer step).
-# Pairs with train_hotpotqa_foldagent_4b_4node_2h.sh — same backbone,
+# Pairs with train_2wikimqa_foldagent_4b_4node_2h.sh — same backbone,
 # same retrieval, same data, only the agent architecture differs.
 #
 # Retrieval: envs/search_server.py with Qwen3-Embedding-4B, co-located
@@ -23,13 +23,13 @@
 # during update.
 #
 # Pre-flight (one-time, before this sbatch):
-#   (login)   python scripts/make_hotpotqa_data.py
+#   (login)   python scripts/make_2wikimqa_data.py
 #   (login)   python scripts/build_unified_wiki_corpus.py
 #   (compute) sbatch scripts/build_unified_wiki_index.sh
 #
 # Pairs with FoldAgent baseline by swapping three lines:
 #   default_agent_loop=fold_agent, workflow=search_branch,
-#   data files = data/hotpotqa_{train,test}.parquet
+#   data files = data/2wikimqa_{train,test}.parquet
 # ─────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
@@ -96,12 +96,12 @@ else
 fi
 
 TS=$(date +%Y%m%d_%H%M%S)
-EXPERIMENT_NAME="ctxgraph_hotpotqa_4b_4n_p2048_r8192_4h_${TS}"
+EXPERIMENT_NAME="ctxgraph_2wikimqa_4b_4n_p2048_r8192_16h_${TS}"
 
 probe() { printf '+++ [%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 
 echo "=============================================================="
-echo "  ContextGraph (isolated) on HotpotQA (4B, 4 nodes)"
+echo "  ContextGraph (isolated) on 2WikiMQA (4B, 4 nodes)"
 echo "  Job: $SLURM_JOB_ID   Head: $NODE0 ($NODE0_IP)"
 echo "  Trainer model:  $MODEL_PATH"
 echo "  Embedder model: $EMBED_MODEL"
@@ -109,10 +109,10 @@ echo "  Experiment: $EXPERIMENT_NAME"
 echo "  Started: $(date)"
 echo "=============================================================="
 
-# ── Pre-flight: HotpotQA artefacts must already exist ──
-probe "checking HotpotQA artefacts"
-TRAIN_PARQUET="$PROJECT_ROOT/data/hotpotqa_graph_train.parquet"
-VAL_PARQUET="$PROJECT_ROOT/data/hotpotqa_graph_test.parquet"
+# ── Pre-flight: 2WikiMQA artefacts must already exist ──
+probe "checking 2WikiMQA artefacts"
+TRAIN_PARQUET="$PROJECT_ROOT/data/2wikimqa_graph_train.parquet"
+VAL_PARQUET="$PROJECT_ROOT/data/2wikimqa_graph_test.parquet"
 CORPUS_PARQUET="$PROJECT_ROOT/data/wiki_corpus.parquet"
 EMBED_PKL="$PROJECT_ROOT/data/wiki_corpus_embeddings.pkl"
 for f in "$TRAIN_PARQUET" "$VAL_PARQUET" "$CORPUS_PARQUET" "$EMBED_PKL"; do
@@ -120,13 +120,13 @@ for f in "$TRAIN_PARQUET" "$VAL_PARQUET" "$CORPUS_PARQUET" "$EMBED_PKL"; do
     echo "ERROR: missing $f"
     echo
     echo "Stage-2 prep, in order:"
-    echo "  (login node)   python scripts/make_hotpotqa_data.py"
+    echo "  (login node)   python scripts/make_2wikimqa_data.py"
     echo "  (login node)   python scripts/build_unified_wiki_corpus.py"
     echo "  (compute node) sbatch scripts/build_unified_wiki_index.sh"
     exit 1
   fi
 done
-probe "HotpotQA artefacts ok"
+probe "2WikiMQA artefacts ok"
 
 # ── Pre-download trainer model on head node (single process, avoids NFS race) ──
 probe "checking HF model cache for $MODEL_PATH"
@@ -276,7 +276,7 @@ probe "querying ray status"
 ray status || echo "WARN: ray status check failed"
 
 echo "=============================================================="
-echo "  Launching ContextGraph FoldGRPO training (4 nodes, 30 step target)"
+echo "  Launching ContextGraph FoldGRPO training (4 nodes, 200 step target)"
 echo "  vLLM gpu_memory_utilization=0.5 (NODE0 shares its GPU with the embedder)"
 echo "=============================================================="
 probe "launching trainer (model load + vLLM init typically ~3-5 min before first wandb log)"
@@ -311,8 +311,8 @@ srun --overlap --nodes=1 --ntasks=1 -w "$NODE0" --chdir="$PROJECT_ROOT" \
   actor_rollout_ref.actor.optim.lr=2e-6 \
   actor_rollout_ref.actor.optim.weight_decay=0.1 \
   actor_rollout_ref.actor.use_kl_loss=True \
-  data.train_files=data/hotpotqa_graph_train.parquet \
-  data.val_files=data/hotpotqa_graph_test.parquet \
+  data.train_files=data/2wikimqa_graph_train.parquet \
+  data.val_files=data/2wikimqa_graph_test.parquet \
   data.train_batch_size=32 \
   data.max_prompt_length=2048 \
   data.max_response_length=8192 \
@@ -344,9 +344,9 @@ srun --overlap --nodes=1 --ntasks=1 -w "$NODE0" --chdir="$PROJECT_ROOT" \
   trainer.val_only=False \
   trainer.n_gpus_per_node=1 \
   trainer.nnodes=${NUM_NODES} \
-  trainer.total_training_steps=30 \
+  trainer.total_training_steps=200 \
   trainer.test_freq=999 \
-  trainer.save_freq=5 \
+  trainer.save_freq=25 \
   trainer.project_name=context-graph \
   trainer.experiment_name="$EXPERIMENT_NAME" \
   trainer.logger="$TRAINER_LOGGER"
