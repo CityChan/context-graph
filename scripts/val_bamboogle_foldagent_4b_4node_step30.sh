@@ -88,10 +88,11 @@ else
 fi
 
 TS=$(date +%Y%m%d_%H%M%S)
-EXPERIMENT_NAME="val_foldagent_bamboogle_4b_4n_step30_${TS}"
+EXPERIMENT_NAME="val_foldagent_bamboogle_4b_4n_step75_${TS}"
 
 # ── Checkpoint to evaluate (override via CKPT_PATH env var) ──
-DEFAULT_CKPT="$PROJECT_ROOT/checkpoints/context-graph/foldagent_hotpotqa_4b_4n_p2048_r8192_4h_20260504_153541/global_step_30"
+# OOD eval: source ckpt is the HotpotQA-trained foldagent at step 75.
+DEFAULT_CKPT="$PROJECT_ROOT/checkpoints/context-graph/foldagent_hotpotqa_4b_4n_p2048_r8192_16h_20260505_122001/global_step_75"
 CKPT_PATH=${CKPT_PATH:-$DEFAULT_CKPT}
 if [ ! -d "$CKPT_PATH/actor" ]; then
   echo "ERROR: ckpt not found at $CKPT_PATH/actor"
