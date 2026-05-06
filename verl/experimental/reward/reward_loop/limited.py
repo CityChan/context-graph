@@ -416,6 +416,20 @@ class RateLimitedRewardLoopManager(RewardLoopManagerBase):
                 reward_extra_info["error"] = str(e)
                 reward_extra_info["acc"] = 0.0
 
+        # Surface env_stats keys (set by agent loop) into reward_extra_info
+        # so they appear as `reward/<key>` in wandb. See naive.py for rationale.
+        env_stats = extra_info.get("env_stats") if isinstance(extra_info, dict) else None
+        if isinstance(env_stats, dict):
+            for k in ("task_reward", "graph_shaping", "graph_reward",
+                      "graph_n_nodes", "graph_n_edges", "graph_n_active",
+                      "main_turn", "is_branch", "branch_success",
+                      "concise_main", "scope_judge"):
+                if k in env_stats and k not in reward_extra_info:
+                    try:
+                        reward_extra_info[k] = float(env_stats[k])
+                    except (TypeError, ValueError):
+                        pass
+
         return {"reward_score": reward, "reward_extra_info": reward_extra_info}
 
     def __call__(self, data: DataProto, return_dict: bool = False):
