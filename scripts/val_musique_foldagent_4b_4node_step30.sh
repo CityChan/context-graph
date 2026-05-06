@@ -335,7 +335,9 @@ srun --overlap --nodes=1 --ntasks=1 -w "$NODE0" --chdir="$PROJECT_ROOT" \
   +actor_rollout_ref.rollout.plugin.lambda_compact=0.1 \
   +actor_rollout_ref.rollout.plugin.lambda_cost=0.005 \
   +actor_rollout_ref.rollout.plugin.max_traj=4 \
-  +actor_rollout_ref.rollout.plugin.must_finish=False \
+  +actor_rollout_ref.rollout.plugin.must_finish=True \
+  actor_rollout_ref.rollout.val_kwargs.do_sample=True \
+  actor_rollout_ref.rollout.val_kwargs.temperature=0.6 \
   +actor_rollout_ref.rollout.plugin.double_check=False \
   +actor_rollout_ref.rollout.plugin.must_search=False \
   +actor_rollout_ref.rollout.plugin.val_max_turn=20 \
