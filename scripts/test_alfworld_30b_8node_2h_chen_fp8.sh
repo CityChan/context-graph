@@ -85,7 +85,7 @@ export VLLM_WORKER_MULTIPROC_METHOD=spawn
 export NCCL_P2P_LEVEL=NVL
 
 PROJECT_ROOT=/work/07144/yw23374/vista/context-graph
-MODEL_PATH=${MODEL_PATH:-/work/07144/yw23374/vista/models/Qwen3-30B-A3B-Thinking-2507}
+MODEL_PATH=${MODEL_PATH:-Qwen/Qwen3-30B-A3B-Thinking-2507}
 export HF_HOME=${HF_HOME:-/work/07144/yw23374/vista/hf_cache}
 cd "$PROJECT_ROOT"
 export PYTHONPATH="$PROJECT_ROOT:${PYTHONPATH:-}"
