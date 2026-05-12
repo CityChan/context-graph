@@ -25,7 +25,7 @@ export RAY_memory_monitor_refresh_ms=0
 source $WORK/.wandb_env
 
 # ── Environment ──
-source /work/07144/yw23374/vista/miniconda3/etc/profile.d/conda.sh
+source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
 conda activate cxtgraph
 export NCCL_HOSTID="${SLURMD_NODENAME:-$(hostname -s)}"
   export PATH=${CONDA_PREFIX}/bin:${PATH}; hash -r
@@ -42,10 +42,10 @@ export TORCHDYNAMO_DISABLE=1
 export HYDRA_FULL_ERROR=1
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
 
-PROJECT_ROOT=/work/07144/yw23374/vista/context-graph
+PROJECT_ROOT=/work/09281/chc_1996/vista/context-graph
 cd "$PROJECT_ROOT"
 
-export HF_HOME=/work/07144/yw23374/vista/hf_cache
+export HF_HOME=/work/09281/chc_1996/vista/cache
 export FLASHINFER_WORKSPACE_BASE=/tmp
 export HF_HUB_OFFLINE=1
 export TRANSFORMERS_OFFLINE=1
@@ -81,13 +81,13 @@ python scripts/make_alfworld_data.py --n_train 32 --n_val 8
 # ── Ray head on Node 0 ──
 echo "--- Starting Ray head on $NODE0 ---"
 srun --overlap --nodes=1 --ntasks=1 -p gh-dev -t 01:00:00 -w "$NODE0" bash -c "
-  source /work/07144/yw23374/vista/miniconda3/etc/profile.d/conda.sh
+  source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
   conda activate cxtgraph
   export NCCL_HOSTID=\"\${SLURMD_NODENAME:-\$(hostname -s)}\"
   export PATH=${CONDA_PREFIX}/bin:${PATH}; hash -r
   export PATH=/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/bin:\${PATH}
   export LD_LIBRARY_PATH=\${CONDA_PREFIX}/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/lib64:\${LD_LIBRARY_PATH}
-  export HF_HOME=/work/07144/yw23374/vista/hf_cache
+  export HF_HOME=/work/09281/chc_1996/vista/cache
 export FLASHINFER_WORKSPACE_BASE=/tmp
   export HF_HUB_OFFLINE=1
   export TRANSFORMERS_OFFLINE=1
@@ -103,13 +103,13 @@ for i in $(seq 1 $((NUM_NODES-1))); do
   WORKER_NODE=${NODELIST[$i]}
   echo "--- Starting Ray worker on $WORKER_NODE (node $i) ---"
   srun --overlap --nodes=1 --ntasks=1 -p gh-dev -t 01:00:00 -w "$WORKER_NODE" bash -c "
-    source /work/07144/yw23374/vista/miniconda3/etc/profile.d/conda.sh
+    source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
     conda activate cxtgraph
   export NCCL_HOSTID=\"\${SLURMD_NODENAME:-\$(hostname -s)}\"
   export PATH=${CONDA_PREFIX}/bin:${PATH}; hash -r
     export PATH=/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/bin:\${PATH}
     export LD_LIBRARY_PATH=\${CONDA_PREFIX}/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/lib64:\${LD_LIBRARY_PATH}
-    export HF_HOME=/work/07144/yw23374/vista/hf_cache
+    export HF_HOME=/work/09281/chc_1996/vista/cache
 export FLASHINFER_WORKSPACE_BASE=/tmp
   export HF_HUB_OFFLINE=1
   export TRANSFORMERS_OFFLINE=1
@@ -137,7 +137,7 @@ python -m scripts.train_fold \
   actor_rollout_ref.rollout.mode=async \
   actor_rollout_ref.rollout.dtype=bfloat16 \
   actor_rollout_ref.rollout.calculate_log_probs=True \
-  actor_rollout_ref.model.path=/work/07144/yw23374/vista/models/Qwen3-30B-A3B-Thinking-2507 \
+  actor_rollout_ref.model.path=Qwen/Qwen3-30B-A3B-Thinking-2507 \
   actor_rollout_ref.rollout.prompt_length=4096 \
   actor_rollout_ref.rollout.response_length=8192 \
   actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu=12288 \

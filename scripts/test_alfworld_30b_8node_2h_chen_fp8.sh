@@ -65,7 +65,7 @@ if [ -n "${WORK:-}" ] && [ -f "$WORK/.wandb_env" ]; then
   source "$WORK/.wandb_env"
 fi
 
-source /work/07144/yw23374/vista/miniconda3/etc/profile.d/conda.sh
+source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
 conda activate cxtgraph
 export NCCL_HOSTID="${SLURMD_NODENAME:-$(hostname -s)}"
 export PATH="${CONDA_PREFIX}/bin:${PATH}"
@@ -84,9 +84,9 @@ export HYDRA_FULL_ERROR=1
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
 export NCCL_P2P_LEVEL=NVL
 
-PROJECT_ROOT=/work/07144/yw23374/vista/context-graph
+PROJECT_ROOT=/work/09281/chc_1996/vista/context-graph
 MODEL_PATH=${MODEL_PATH:-Qwen/Qwen3-30B-A3B-Thinking-2507}
-export HF_HOME=${HF_HOME:-/work/07144/yw23374/vista/hf_cache}
+export HF_HOME=${HF_HOME:-/work/09281/chc_1996/vista/cache}
 cd "$PROJECT_ROOT"
 export PYTHONPATH="$PROJECT_ROOT:${PYTHONPATH:-}"
 
@@ -109,7 +109,7 @@ echo "=============================================================="
 
 echo "--- Cleaning up any stale Ray processes on allocation nodes ---"
 for node in "${NODELIST[@]}"; do
-  "${SRUN_PREFIX[@]}" --nodes=1 --ntasks=1 -w "$node" bash -c 'source /work/07144/yw23374/vista/miniconda3/etc/profile.d/conda.sh && conda activate cxtgraph && ray stop -f >/dev/null 2>&1 || true' || true
+  "${SRUN_PREFIX[@]}" --nodes=1 --ntasks=1 -w "$node" bash -c 'source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh && conda activate cxtgraph && ray stop -f >/dev/null 2>&1 || true' || true
 done
 sleep 5
 
@@ -123,7 +123,7 @@ python scripts/make_alfworld_data.py --n_train 32 --n_val 8
 
 echo "--- Starting Ray head on $NODE0 ---"
 "${SRUN_PREFIX[@]}" --nodes=1 --ntasks=1 -w "$NODE0" bash -c '
-  source /work/07144/yw23374/vista/miniconda3/etc/profile.d/conda.sh
+  source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
   conda activate cxtgraph
   export NCCL_HOSTID="${SLURMD_NODENAME:-$(hostname -s)}"
   export PATH="${CONDA_PREFIX}/bin:${PATH}"
@@ -145,7 +145,7 @@ for i in $(seq 1 $((NUM_NODES - 1))); do
   WORKER_NODE=${NODELIST[$i]}
   echo "--- Starting Ray worker on $WORKER_NODE (node $i) ---"
   "${SRUN_PREFIX[@]}" --nodes=1 --ntasks=1 -w "$WORKER_NODE" bash -c '
-    source /work/07144/yw23374/vista/miniconda3/etc/profile.d/conda.sh
+    source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
     conda activate cxtgraph
     export NCCL_HOSTID="${SLURMD_NODENAME:-$(hostname -s)}"
     export PATH="${CONDA_PREFIX}/bin:${PATH}"
