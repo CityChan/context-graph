@@ -153,6 +153,13 @@ ray_env='
 '
 ray_env=${ray_env#$'\n'}
 ray_env=${ray_env%$'\n'}
+if [ "$TASK" = "hotpotqa" ] && [ "$USE_OPENAI_JUDGE" != "1" ]; then
+  ray_env="${ray_env}
+  export OPENAI_API_KEY=dummy
+  unset OPENAI_URL
+"
+  ray_env=${ray_env%$'\n'}
+fi
 
 echo "=============================================================="
 echo "ContextGraph 30B 8-node master smoke"
