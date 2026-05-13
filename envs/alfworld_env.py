@@ -206,8 +206,37 @@ class ALFWorldEnv:
         last_function = func_matches[-1]
         last_func_pos = text.rfind(f'<function={last_function}>')
         text_after = text[last_func_pos:]
-        params = dict(re.findall(r'<parameter=([^>]+)>(.*?)</parameter>', text_after, re.DOTALL))
+        params = self._parse_params(text_after)
         return {'function': last_function, 'arguments': params}
+
+    def _parse_params(self, text: str) -> dict:
+        params = {}
+        for match in re.finditer(r'<parameter=([^>]+)>', text):
+            key = match.group(1).strip()
+            value_start = match.end()
+
+            stops = []
+            for token in ('</parameter>', '</function>'):
+                idx = text.find(token, value_start)
+                if idx >= 0:
+                    stops.append(idx)
+            next_param = re.search(r'<parameter=[^>]+>', text[value_start:], re.DOTALL)
+            if next_param:
+                stops.append(value_start + next_param.start())
+
+            value_end = min(stops) if stops else len(text)
+            value = self._clean_param_value(text[value_start:value_end])
+            if key and value:
+                params[key] = value
+        return params
+
+    def _clean_param_value(self, value: str) -> str:
+        value = re.sub(r'</?(?:function|parameter)(?:=[^>]*)?>', '', value)
+        for line in value.splitlines():
+            line = line.strip().strip('`"\'')
+            if line:
+                return line
+        return ''
 
     async def get_reward(self, item, messages, context) -> tuple:
         if self.env_fail:

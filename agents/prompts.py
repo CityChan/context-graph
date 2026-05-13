@@ -113,8 +113,8 @@ I've uploaded a python code repository in the directory /testbed. Consider the f
         base_system = (
             "You are a household robot assistant completing tasks in a virtual home. "
             "You interact with the environment by executing actions step by step. "
-            "Each turn, you will see the current observation and a list of admissible commands. "
-            "Choose an action from the admissible commands to make progress toward the goal. "
+            "When admissible commands are shown, choose an action from them to make progress toward the goal. "
+            "In ALFWorld hard mode the initial room description is hidden; your first action should be `look`. "
             "Common task patterns:\n"
             "  - Pick and place: find object → take it → go to target → put it\n"
             "  - Clean then place: find object → take → go to sink → clean → go to target → put\n"
@@ -130,7 +130,13 @@ I've uploaded a python code repository in the directory /testbed. Consider the f
         else:
             graph_guidance = ""
         system_prompt = base_system + graph_guidance + '\n\n' + tool_description
-        user_prompt = f"Task: {problem_statement}\n\nWhat do you do first?"
+        user_prompt = (
+            f"Task: {problem_statement}\n\n"
+            "First reveal the room with this exact tool call:\n"
+            "<function=action>\n"
+            "<parameter=command>look</parameter>\n"
+            "</function>"
+        )
         chat = [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}]
         return chat
     else:
