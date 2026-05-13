@@ -156,9 +156,7 @@ ray_env=${ray_env%$'\n'}
 if [ "$TASK" = "hotpotqa" ] && [ "$USE_OPENAI_JUDGE" != "1" ]; then
   ray_env="${ray_env}
   export OPENAI_API_KEY=dummy
-  unset OPENAI_URL
-"
-  ray_env=${ray_env%$'\n'}
+  unset OPENAI_URL"
 fi
 
 echo "=============================================================="
@@ -237,9 +235,7 @@ fi
 # Ray workers inherit environment from their `ray start` shells. For HotpotQA,
 # make the search endpoint visible there as well as in the trainer process.
 ray_env="${ray_env}
-  export LOCAL_SEARCH_URL='${LOCAL_SEARCH_URL:-}'
-"
-ray_env=${ray_env%$'\n'}
+  export LOCAL_SEARCH_URL='${LOCAL_SEARCH_URL:-}'"
 
 probe "start Ray head"
 "${SRUN_PREFIX[@]}" --nodes=1 --ntasks=1 -w "$NODE0" bash -c "${ray_env}; ray start --head --node-ip-address='$NODE0_IP' --port=6379 --num-cpus=70 --num-gpus=1 --dashboard-host=0.0.0.0 --block" &

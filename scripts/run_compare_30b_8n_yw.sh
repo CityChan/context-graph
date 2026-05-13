@@ -183,9 +183,7 @@ ray_env=${ray_env%$'\n'}
 if [ "$TASK" = "hotpotqa" ] && [ "$USE_OPENAI_JUDGE" != "1" ]; then
   ray_env="${ray_env}
   export OPENAI_API_KEY=dummy
-  unset OPENAI_URL
-"
-  ray_env=${ray_env%$'\n'}
+  unset OPENAI_URL"
 fi
 
 echo "=============================================================="
@@ -275,9 +273,7 @@ elif [ "$TASK" = "hotpotqa" ]; then
   export LOCAL_SEARCH_URL="http://${NODE0_IP}:18999"
   probe "search server ready at $LOCAL_SEARCH_URL"
   ray_env="${ray_env}
-    export LOCAL_SEARCH_URL='${LOCAL_SEARCH_URL:-}'
-  "
-  ray_env=${ray_env%$'\n'}
+    export LOCAL_SEARCH_URL='${LOCAL_SEARCH_URL:-}'"
 fi
 
 probe "start Ray head"
