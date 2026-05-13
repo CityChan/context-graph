@@ -80,7 +80,11 @@ case "$AGENT" in
   *) echo "Unknown AGENT=$AGENT; expected ctxgraph or baseline"; exit 2 ;;
 esac
 
-ROLLOUT_GPU_MEMORY_UTILIZATION=${ROLLOUT_GPU_MEMORY_UTILIZATION:-0.35}
+if [ "$TASK" = "alfworld" ]; then
+  ROLLOUT_GPU_MEMORY_UTILIZATION=${ROLLOUT_GPU_MEMORY_UTILIZATION:-0.45}
+else
+  ROLLOUT_GPU_MEMORY_UTILIZATION=${ROLLOUT_GPU_MEMORY_UTILIZATION:-0.35}
+fi
 ROLLOUT_MAX_NUM_BATCHED_TOKENS=${ROLLOUT_MAX_NUM_BATCHED_TOKENS:-8192}
 ROLLOUT_MAX_NUM_SEQS=${ROLLOUT_MAX_NUM_SEQS:-64}
 ACTOR_PPO_MAX_TOKEN_LEN=${ACTOR_PPO_MAX_TOKEN_LEN:-${ROLLOUT_LOG_PROB_MAX_LEN}}
@@ -165,6 +169,18 @@ cleanup() {
 }
 trap cleanup EXIT
 
+print_gpu_snapshot() {
+  local label="$1"
+  echo "--- GPU snapshot: $label ---"
+  for node in "${NODELIST[@]}"; do
+    "${SRUN_PREFIX[@]}" --nodes=1 --ntasks=1 -w "$node" bash -c '
+      printf "%s " "$(hostname -s)"
+      nvidia-smi --query-gpu=index,name,memory.total,memory.used,utilization.gpu,utilization.memory \
+        --format=csv,noheader,nounits || true
+    ' || true
+  done
+}
+
 ray_env='
   source '"${CONDA_ROOT}"'/etc/profile.d/conda.sh
   conda activate cxtgraph
@@ -209,6 +225,7 @@ for node in "${NODELIST[@]}"; do
   "${SRUN_PREFIX[@]}" --nodes=1 --ntasks=1 -w "$node" bash -c "${ray_env}; ray stop -f >/dev/null 2>&1 || true" || true
 done
 sleep 5
+print_gpu_snapshot "after stale Ray cleanup"
 
 probe "python sanity"
 python -c "import torch; print('torch:', torch.__version__, 'cuda:', torch.cuda.is_available(), 'devices:', torch.cuda.device_count())"
@@ -293,6 +310,7 @@ sleep 20
 export RAY_ADDRESS=${NODE0_IP}:6379
 probe "ray status"
 ray status || echo "WARN: ray status check failed"
+print_gpu_snapshot "before trainer"
 
 probe "launch trainer"
 set +e
@@ -374,6 +392,7 @@ set +e
     trainer.logger="$TRAINER_LOGGER"
 RC=$?
 set -e
+print_gpu_snapshot "after trainer"
 
 echo "=============================================================="
 if [ "$RC" -eq 0 ]; then
