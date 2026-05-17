@@ -62,7 +62,7 @@ python -c "import flash_attn; print('flash_attn:', flash_attn.__version__)" || e
 
 # ── Generate ALFWorld data (small) ──
 echo "--- Generating ALFWorld parquet ---"
-python scripts/make_alfworld_data.py --n_train 32 --n_val 8
+python scripts/make_alfworld_data.py --hard --n_train 32 --n_val 8
 
 # ── Ray head on Node 0 ──
 echo "--- Starting Ray head on $NODE0 ---"
