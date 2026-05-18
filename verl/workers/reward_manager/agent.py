@@ -196,4 +196,32 @@ class AgentLoopRewardManager(AbstractRewardManager):
             "overlong_rate": repeat(overlong_rate),
             "avg_num_turns": repeat(avg_num_turns),
         }
+
+        # Lift selected env_stats fields (set by the agent loop, packaged into
+        # non_tensor_batch by agent_loop.py:720) into reward_extra_info so they
+        # surface as reward/<key> in wandb. Mirrors the lift in
+        # verl/experimental/reward/reward_loop/naive.py:107-117 — that path is
+        # bypassed whenever AgentLoopOutput.reward_score is non-None (which
+        # fold_agent and graph_agent_isolated always set), so without this
+        # block reward/task_reward and reward/graph_shaping never appear,
+        # leaving only the composite reward/avg_score that conflates CtxGraph
+        # shaping with task accuracy.
+        env_stats_arr = data.non_tensor_batch.get("env_stats", None)
+        if env_stats_arr is not None:
+            for k in ("task_reward", "graph_shaping", "graph_reward",
+                      "graph_n_nodes", "graph_n_edges", "graph_n_active",
+                      "main_turn", "is_branch", "branch_success",
+                      "concise_main", "scope_judge"):
+                per_sample = np.full(bsz, np.nan, dtype=float)
+                for i, s in enumerate(env_stats_arr):
+                    if isinstance(s, dict) and k in s:
+                        try:
+                            per_sample[i] = float(s[k])
+                        except (TypeError, ValueError):
+                            pass
+                if np.isnan(per_sample).all():
+                    continue
+                per_sample = np.where(np.isnan(per_sample), 0.0, per_sample)
+                reward_extra_info[k] = per_sample
+
         return reward_extra_info
