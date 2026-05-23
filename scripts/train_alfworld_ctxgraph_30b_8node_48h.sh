@@ -47,6 +47,23 @@ export CUDAHOSTCXX=g++
 export TORCHDYNAMO_DISABLE=1
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
 
+# Memory polish (ported from yating's gh-dev mempolish smoke):
+#   - expandable_segments cuts CUDA allocator fragmentation across long rollouts
+#   - Ray host-mem kill disabled so workers don't get reaped under transient pressure
+#   - per-PID Triton/vLLM caches avoid shared-FS contention across the 8 nodes
+export PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
+export RAY_memory_usage_threshold=0.99
+export RAY_memory_monitor_refresh_ms=0
+export TRITON_CACHE_DIR=/tmp/triton_cache_$$
+export VLLM_CACHE_ROOT=/tmp/vllm_cache_$$
+export FLASHINFER_WORKSPACE_BASE=/tmp
+
+# Pin HF cache offline. Hypothesis for job 704096 tokenizer_config.json JSONDecodeError:
+# concurrent rank refetches racing on the same file. Offline mode reads cache only.
+export HF_HUB_OFFLINE=1
+export TRANSFORMERS_OFFLINE=1
+export HF_HUB_DISABLE_FILE_LOCKING=1
+
 PROJECT_ROOT=/work/09281/chc_1996/vista/context-graph
 cd "$PROJECT_ROOT"
 
@@ -102,6 +119,11 @@ srun --overlap --nodes=1 --ntasks=1 -w "$NODE0" bash -c "
   export LD_LIBRARY_PATH=\${CONDA_PREFIX}/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/lib64:\${LD_LIBRARY_PATH}
   export HF_HOME=/work/09281/chc_1996/vista/cache
   export ALFWORLD_DATA=$ALFWORLD_DATA
+  export HF_HUB_OFFLINE=1
+  export TRANSFORMERS_OFFLINE=1
+  export HF_HUB_DISABLE_FILE_LOCKING=1
+  export FLASHINFER_WORKSPACE_BASE=/tmp
+  export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
   ray start --head --node-ip-address=$NODE0_IP --port=6379 \
     --num-cpus=70 --num-gpus=1 --dashboard-host=0.0.0.0 --block
 " &
@@ -120,6 +142,11 @@ for i in $(seq 1 $((NUM_NODES-1))); do
     export LD_LIBRARY_PATH=\${CONDA_PREFIX}/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/lib64:\${LD_LIBRARY_PATH}
     export HF_HOME=/work/09281/chc_1996/vista/cache
     export ALFWORLD_DATA=$ALFWORLD_DATA
+    export HF_HUB_OFFLINE=1
+    export TRANSFORMERS_OFFLINE=1
+    export HF_HUB_DISABLE_FILE_LOCKING=1
+    export FLASHINFER_WORKSPACE_BASE=/tmp
+    export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
     ray start --address ${NODE0_IP}:6379 --num-cpus=70 --num-gpus=1 --block
   " &
   WORKER_PIDS+=($!)
@@ -150,6 +177,12 @@ python -m scripts.train_graph \
   actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu=40960 \
   actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
   +actor_rollout_ref.rollout.quantization=fp8 \
+  actor_rollout_ref.rollout.dtype=bfloat16 \
+  actor_rollout_ref.rollout.gpu_memory_utilization=0.55 \
+  actor_rollout_ref.rollout.enforce_eager=True \
+  actor_rollout_ref.rollout.max_num_seqs=32 \
+  actor_rollout_ref.rollout.free_cache_engine=False \
+  +actor_rollout_ref.rollout.engine_kwargs.vllm.enable_sleep_mode=False \
   actor_rollout_ref.rollout.n=8 \
   actor_rollout_ref.rollout.agent.num_workers=1 \
   actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=1 \
@@ -167,6 +200,8 @@ python -m scripts.train_graph \
   actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=1 \
   actor_rollout_ref.actor.fsdp_config.param_offload=False \
   actor_rollout_ref.actor.fsdp_config.optimizer_offload=False \
+  actor_rollout_ref.actor.fsdp_config.model_dtype=bfloat16 \
+  actor_rollout_ref.ref.fsdp_config.model_dtype=bfloat16 \
   actor_rollout_ref.actor.ppo_max_token_len_per_gpu=40960 \
   actor_rollout_ref.actor.ppo_infer_max_token_len_per_gpu=40960 \
   actor_rollout_ref.model.enable_gradient_checkpointing=True \
