@@ -68,6 +68,10 @@ PROJECT_ROOT=/work/09281/chc_1996/vista/context-graph
 cd "$PROJECT_ROOT"
 
 export HF_HOME=/work/09281/chc_1996/vista/cache
+# Vista cache uses legacy layout ($HF_HOME/models--XXX), not $HF_HOME/hub/.
+# Override HF_HUB_CACHE so new `hf`/transformers tooling reads the existing
+# 60GB of Apr 29 weights instead of looking at an empty hub/ subdir.
+export HF_HUB_CACHE=${HF_HUB_CACHE:-$HF_HOME}
 export ALFWORLD_DATA=${ALFWORLD_DATA:-$HOME/.cache/alfworld}
 export PYTHONPATH="$PROJECT_ROOT:$PYTHONPATH"
 export NCCL_P2P_LEVEL=NVL
@@ -118,6 +122,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$NODE0" bash -c "
   export PATH=/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/bin:\${PATH}
   export LD_LIBRARY_PATH=\${CONDA_PREFIX}/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/lib64:\${LD_LIBRARY_PATH}
   export HF_HOME=/work/09281/chc_1996/vista/cache
+  export HF_HUB_CACHE=/work/09281/chc_1996/vista/cache
   export ALFWORLD_DATA=$ALFWORLD_DATA
   export HF_HUB_OFFLINE=1
   export TRANSFORMERS_OFFLINE=1

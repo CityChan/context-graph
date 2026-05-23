@@ -71,6 +71,9 @@ PROJECT_ROOT=/work/09281/chc_1996/vista/context-graph
 cd "$PROJECT_ROOT"
 
 export HF_HOME=${HF_HOME:-/work/09281/chc_1996/vista/cache}
+# Vista quirk: weights live at $HF_HOME/models--XXX, not $HF_HOME/hub/.
+# Pin HF_HUB_CACHE so new `hf`/transformers tooling reads the existing cache.
+export HF_HUB_CACHE=${HF_HUB_CACHE:-$HF_HOME}
 export ALFWORLD_DATA=${ALFWORLD_DATA:-$HOME/.cache/alfworld}
 export PYTHONPATH="$PROJECT_ROOT:${PYTHONPATH:-}"
 
@@ -182,6 +185,7 @@ echo "--- Starting Ray head on $NODE0 ($NODE0_IP) ---"
   export PATH=/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/bin:\${PATH}
   export LD_LIBRARY_PATH=\${CONDA_PREFIX}/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/lib64:\${LD_LIBRARY_PATH}
   export HF_HOME=$HF_HOME
+  export HF_HUB_CACHE=$HF_HUB_CACHE
   export ALFWORLD_DATA=$ALFWORLD_DATA
   export HF_HUB_OFFLINE=1
   export TRANSFORMERS_OFFLINE=1
@@ -203,6 +207,7 @@ echo "--- Starting Ray worker on $WORKER_NODE ---"
   export PATH=/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/bin:\${PATH}
   export LD_LIBRARY_PATH=\${CONDA_PREFIX}/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/lib64:\${LD_LIBRARY_PATH}
   export HF_HOME=$HF_HOME
+  export HF_HUB_CACHE=$HF_HUB_CACHE
   export ALFWORLD_DATA=$ALFWORLD_DATA
   export HF_HUB_OFFLINE=1
   export TRANSFORMERS_OFFLINE=1
