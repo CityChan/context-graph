@@ -134,7 +134,7 @@ probe "HotpotQA artefacts ok"
 
 # ── Pre-flight: 8B weights must be present (offline mode, no auto-download) ──
 probe "checking 8B weights in HF cache"
-MODEL_CACHE_DIR="$HF_HUB_CACHE/models--$(echo "$MODEL_PATH" | tr / -)"
+MODEL_CACHE_DIR="$HF_HUB_CACHE/models--${MODEL_PATH//\//--}"
 if [ ! -d "$MODEL_CACHE_DIR" ]; then
   echo "ERROR: $MODEL_PATH not found at $MODEL_CACHE_DIR"
   echo "       HF_HUB_OFFLINE=1 is set, so the trainer will not download."
