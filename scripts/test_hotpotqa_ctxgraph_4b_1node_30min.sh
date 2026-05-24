@@ -74,6 +74,9 @@ PROJECT_ROOT=/work/09281/chc_1996/vista/context-graph
 MODEL_PATH=${MODEL_PATH:-Qwen/Qwen3-4B-Instruct-2507}
 EMBED_MODEL=${EMBED_MODEL:-Qwen/Qwen3-Embedding-4B}
 export HF_HOME=${HF_HOME:-/work/09281/chc_1996/vista/cache}
+# Vista quirk: weights live at $HF_HOME/models--XXX, not $HF_HOME/hub/.
+# Pin HF_HUB_CACHE so new `hf`/transformers tooling reads the existing cache.
+export HF_HUB_CACHE=${HF_HUB_CACHE:-$HF_HOME}
 cd "$PROJECT_ROOT"
 export PYTHONPATH="$PROJECT_ROOT:${PYTHONPATH:-}"
 
