@@ -77,6 +77,8 @@ export HF_HUB_CACHE=${HF_HUB_CACHE:-$HF_HOME}
 export ALFWORLD_DATA=${ALFWORLD_DATA:-$HOME/.cache/alfworld}
 export PYTHONPATH="$PROJECT_ROOT:${PYTHONPATH:-}"
 
+export WANDB_API_KEY=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
+
 # WANDB optional — if no key, fall back to console-only
 if [ -n "${WANDB_API_KEY:-}" ]; then
   TRAINER_LOGGER='["console","wandb"]'

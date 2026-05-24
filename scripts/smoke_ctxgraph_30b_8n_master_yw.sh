@@ -71,6 +71,7 @@ for env_file in "${WORK:-}/.wandb_env" "${DEFAULT_WORK_BASE}/.wandb_env" "${HOME
     break
   fi
 done
+export WANDB_API_KEY=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
 export WANDB_ENTITY=${WANDB_ENTITY:-huancheng}
 USE_OPENAI_JUDGE=${USE_OPENAI_JUDGE:-0}
 if [ "$TASK" = "hotpotqa" ] && [ "$USE_OPENAI_JUDGE" != "1" ]; then
