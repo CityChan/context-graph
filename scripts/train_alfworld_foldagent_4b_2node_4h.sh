@@ -93,13 +93,20 @@ else
   TRAINER_LOGGER='["console"]'
 fi
 
+# ── ALFWorld mode (real / hard) — switch without regenerating data ──
+ALFWORLD_MODE=${ALFWORLD_MODE:-real}
+if [ "$ALFWORLD_MODE" != "real" ] && [ "$ALFWORLD_MODE" != "hard" ]; then
+  echo "ERROR: ALFWORLD_MODE must be 'real' or 'hard' (got '$ALFWORLD_MODE')"
+  exit 1
+fi
+
 TS=$(date +%Y%m%d_%H%M%S)
-EXPERIMENT_NAME="foldagent_alfworld_real_4b_2n_p4096_r8192_4h_${TS}"
+EXPERIMENT_NAME="foldagent_alfworld_${ALFWORLD_MODE}_4b_2n_p4096_r8192_4h_${TS}"
 
 probe() { printf '+++ [%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 
 echo "=============================================================="
-echo "  FoldAgent on ALFWorld @real (4B, 2 nodes, 80 steps, 4h)"
+echo "  FoldAgent on ALFWorld @${ALFWORLD_MODE} (4B, 2 nodes, 80 steps, 4h)"
 echo "  Job: $SLURM_JOB_ID   Head: $NODE0 ($NODE0_IP)"
 echo "  Trainer model:  $MODEL_PATH"
 echo "  ALFWORLD_DATA:  $ALFWORLD_DATA"
@@ -108,9 +115,9 @@ echo "  Started: $(date)"
 echo "=============================================================="
 
 # ── Pre-flight: ALFWorld artefacts must already exist ──
-probe "checking ALFWorld artefacts"
-TRAIN_PARQUET="$PROJECT_ROOT/data/alfworld_train.parquet"
-VAL_PARQUET="$PROJECT_ROOT/data/alfworld_test.parquet"
+probe "checking ALFWorld artefacts (mode=$ALFWORLD_MODE)"
+TRAIN_PARQUET="$PROJECT_ROOT/data/alfworld_${ALFWORLD_MODE}_train.parquet"
+VAL_PARQUET="$PROJECT_ROOT/data/alfworld_${ALFWORLD_MODE}_test.parquet"
 JSON_DIR="$ALFWORLD_DATA/json_2.1.1"
 for f in "$TRAIN_PARQUET" "$VAL_PARQUET"; do
   if [ ! -f "$f" ]; then
@@ -255,8 +262,8 @@ srun --overlap --nodes=1 --ntasks=1 -w "$NODE0" --chdir="$PROJECT_ROOT" \
   actor_rollout_ref.actor.optim.lr=2e-6 \
   actor_rollout_ref.actor.optim.weight_decay=0.1 \
   actor_rollout_ref.actor.use_kl_loss=True \
-  data.train_files=data/alfworld_train.parquet \
-  data.val_files=data/alfworld_test.parquet \
+  data.train_files=data/alfworld_${ALFWORLD_MODE}_train.parquet \
+  data.val_files=data/alfworld_${ALFWORLD_MODE}_test.parquet \
   data.train_batch_size=16 \
   data.max_prompt_length=4096 \
   data.max_response_length=8192 \

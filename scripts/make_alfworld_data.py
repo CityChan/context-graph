@@ -75,15 +75,28 @@ def to_row(task, workflow, ability):
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument("--mode", choices=["real", "hard", "both"], default="both",
+                        help="Which ability mode(s) to write. Default 'both' writes "
+                             "real and hard variants in one go so you can switch by "
+                             "filename later without regenerating.")
     parser.add_argument("--hard", action="store_true",
-                        help="Hard mode: hide admissible commands (MemexRL style). Ability becomes ALFWorld@hard.")
+                        help="DEPRECATED alias for --mode=hard. Kept for back-compat.")
     parser.add_argument("--n_train", type=int, default=300)
     parser.add_argument("--n_val", type=int, default=80)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--out_dir", default="data")
+    parser.add_argument("--legacy", choices=["real", "hard"], default="real",
+                        help="Which mode the un-suffixed legacy filenames "
+                             "(alfworld_train.parquet etc) should point to. "
+                             "Default 'real'. Older 4-node 16h scripts read these.")
     parser.add_argument("--alfworld_data", default=None,
                         help="Path to ALFWorld data (default: ALFWORLD_DATA env or ~/.cache/alfworld)")
     args = parser.parse_args()
+
+    # Back-compat: --hard implies --mode=hard
+    if args.hard:
+        args.mode = "hard"
+    modes = ["real", "hard"] if args.mode == "both" else [args.mode]
 
     os.makedirs(args.out_dir, exist_ok=True)
 
@@ -106,22 +119,42 @@ def main():
     type_counts = Counter(t.get("task_type", "?") for t in train_tasks)
     print(f"Type distribution: {dict(type_counts)}")
 
-    # Ability string: ALFWorld@real or ALFWorld@hard
-    ability = "ALFWorld@hard" if args.hard else "ALFWorld@real"
+    for mode in modes:
+        ability = f"ALFWorld@{mode}"
+        is_legacy = (mode == args.legacy)
 
-    # FoldAgent version
-    train_rows = [to_row(t, "alfworld", ability) for t in train_tasks]
-    val_rows = [to_row(t, "alfworld", ability) for t in val_tasks]
-    pd.DataFrame(train_rows).to_parquet(f"{args.out_dir}/alfworld_train.parquet", index=False)
-    pd.DataFrame(val_rows).to_parquet(f"{args.out_dir}/alfworld_test.parquet", index=False)
-    print(f"Wrote alfworld_train.parquet ({len(train_rows)} rows, ability={ability})")
+        # FoldAgent version
+        train_rows = [to_row(t, "alfworld", ability) for t in train_tasks]
+        val_rows = [to_row(t, "alfworld", ability) for t in val_tasks]
+        pd.DataFrame(train_rows).to_parquet(
+            f"{args.out_dir}/alfworld_{mode}_train.parquet", index=False)
+        pd.DataFrame(val_rows).to_parquet(
+            f"{args.out_dir}/alfworld_{mode}_test.parquet", index=False)
+        print(f"Wrote alfworld_{mode}_{{train,test}}.parquet "
+              f"({len(train_rows)} / {len(val_rows)} rows, ability={ability})")
 
-    # ContextGraph version
-    train_rows_g = [to_row(t, "alfworld_graph", ability) for t in train_tasks]
-    val_rows_g = [to_row(t, "alfworld_graph", ability) for t in val_tasks]
-    pd.DataFrame(train_rows_g).to_parquet(f"{args.out_dir}/alfworld_graph_train.parquet", index=False)
-    pd.DataFrame(val_rows_g).to_parquet(f"{args.out_dir}/alfworld_graph_test.parquet", index=False)
-    print(f"Wrote alfworld_graph_train.parquet ({len(train_rows_g)} rows, ability={ability})")
+        # ContextGraph version
+        train_rows_g = [to_row(t, "alfworld_graph", ability) for t in train_tasks]
+        val_rows_g = [to_row(t, "alfworld_graph", ability) for t in val_tasks]
+        pd.DataFrame(train_rows_g).to_parquet(
+            f"{args.out_dir}/alfworld_graph_{mode}_train.parquet", index=False)
+        pd.DataFrame(val_rows_g).to_parquet(
+            f"{args.out_dir}/alfworld_graph_{mode}_test.parquet", index=False)
+        print(f"Wrote alfworld_graph_{mode}_{{train,test}}.parquet "
+              f"({len(train_rows_g)} / {len(val_rows_g)} rows, ability={ability})")
+
+        if is_legacy:
+            # Also emit the un-suffixed legacy filenames so older 4-node 16h
+            # scripts (which read alfworld_train.parquet etc) keep working.
+            pd.DataFrame(train_rows).to_parquet(
+                f"{args.out_dir}/alfworld_train.parquet", index=False)
+            pd.DataFrame(val_rows).to_parquet(
+                f"{args.out_dir}/alfworld_test.parquet", index=False)
+            pd.DataFrame(train_rows_g).to_parquet(
+                f"{args.out_dir}/alfworld_graph_train.parquet", index=False)
+            pd.DataFrame(val_rows_g).to_parquet(
+                f"{args.out_dir}/alfworld_graph_test.parquet", index=False)
+            print(f"  + legacy un-suffixed copies (ability={ability})")
 
     print("\nSample tasks:")
     for t in train_tasks[:5]:
