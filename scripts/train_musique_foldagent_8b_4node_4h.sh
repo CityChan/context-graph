@@ -293,7 +293,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$NODE0" --chdir="$PROJECT_ROOT" \
   actor_rollout_ref.rollout.response_length=8192 \
   actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu=10240 \
   actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
-  actor_rollout_ref.rollout.n=4 \
+  actor_rollout_ref.rollout.n=8 \
   actor_rollout_ref.rollout.agent.num_workers=1 \
   actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=1 \
   actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=1 \
@@ -306,6 +306,8 @@ srun --overlap --nodes=1 --ntasks=1 -w "$NODE0" --chdir="$PROJECT_ROOT" \
   actor_rollout_ref.actor.optim.lr=2e-6 \
   actor_rollout_ref.actor.optim.weight_decay=0.1 \
   actor_rollout_ref.actor.use_kl_loss=True \
+  actor_rollout_ref.actor.grad_clip=0.5 \
+  actor_rollout_ref.actor.kl_loss_coef=0.0005 \
   data.train_files=data/musique_train.parquet \
   data.val_files=data/musique_test.parquet \
   data.train_batch_size=32 \
@@ -323,7 +325,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$NODE0" --chdir="$PROJECT_ROOT" \
   +actor_rollout_ref.rollout.plugin.turn_max_new_tokens=384 \
   +actor_rollout_ref.rollout.plugin.max_session=3 \
   +actor_rollout_ref.rollout.plugin.val_max_session=3 \
-  +actor_rollout_ref.rollout.plugin.session_timeout=300 \
+  +actor_rollout_ref.rollout.plugin.session_timeout=600 \
   +actor_rollout_ref.rollout.plugin.enable_summary=False \
   +actor_rollout_ref.rollout.plugin.branch_len=2048 \
   +actor_rollout_ref.rollout.plugin.process_reward='[flat,scope]' \
