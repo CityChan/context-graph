@@ -55,6 +55,9 @@ export FLASHINFER_WORKSPACE_BASE=/tmp
 export HF_HUB_DISABLE_FILE_LOCKING=1
 export HF_HUB_OFFLINE=1
 export TRANSFORMERS_OFFLINE=1
+# HF datasets cache MUST live on local /tmp, not NFS — datasets writes
+# .incomplete/ dirs then renames, which races on Vista's /work.
+export HF_DATASETS_CACHE=/tmp/hf_datasets_cache_$$
 export RAY_memory_usage_threshold=0.99
 export RAY_memory_monitor_refresh_ms=0
 
