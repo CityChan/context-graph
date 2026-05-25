@@ -10,10 +10,13 @@
 #SBATCH -A AST24021
 
 # ─────────────────────────────────────────────────────────────────────
-# ContextGraph on ALFWorld @hard, 4B / 2 nodes / 4h.
-# Pivot from HotpotQA (4B-Instruct saturated at val/task_reward=0.7,
-# no learning headroom). ALFWorld @hard at 4B has ~0% baseline per
-# prior smokes, so RL has huge headroom even for small absolute gains.
+# ContextGraph on ALFWorld @real, 4B / 2 nodes / 4h.
+# Pivot from HotpotQA (4B-Instruct saturated at 0.7) AND from ALFWorld
+# @hard (cold-start at 0%, all rollouts get reward 0, no gradient).
+# @real shows admissible commands so 4B baseline lands ~0.35-0.50 with
+# real headroom for RL. Reads data/alfworld_{train,test}.parquet which
+# must have ability=ALFWorld@real (regenerate via
+# `python scripts/make_alfworld_data.py --n_train 300 --n_val 80`).
 #
 # Why 2-node 4h: matches the experimentation cadence used for the
 # HotpotQA 4B variants in this iteration, fits a single idev session.
@@ -26,14 +29,15 @@
 # Pre-flight (one-time, before this run):
 #   (login) pip install textworld alfworld
 #   (login) alfworld-download                 # writes to ~/.cache/alfworld
-#   (login) python scripts/make_alfworld_data.py --hard --n_train 300 --n_val 80
-#                                              ^^^^^^  KEY: regenerate with --hard
-#                                              so data/alfworld_{train,test}.parquet
-#                                              are @hard (admissible commands hidden).
-#                                              If you currently have @real data, this
-#                                              run will silently train on the easier
-#                                              variant — verify ability=ALFWorld@hard
-#                                              in the parquet before launching.
+#   (login) python scripts/make_alfworld_data.py --n_train 300 --n_val 80
+#                                              ^^ NO --hard flag for this script
+#                                              (admissible commands shown = @real).
+#                                              Verify ability=ALFWorld@real in the
+#                                              parquet before launching:
+#                                                python -c "import pandas as pd; \
+#                                                  print(pd.read_parquet( \
+#                                                  'data/alfworld_train.parquet' \
+#                                                  )['ability'].value_counts())"
 #
 # Pairs with train_alfworld_foldagent_4b_2node_4h.sh — same backbone,
 # same data, only the agent loop + workflow + reward differ:
@@ -107,12 +111,12 @@ else
 fi
 
 TS=$(date +%Y%m%d_%H%M%S)
-EXPERIMENT_NAME="ctxgraph_alfworld_hard_4b_2n_p4096_r8192_4h_${TS}"
+EXPERIMENT_NAME="ctxgraph_alfworld_real_4b_2n_p4096_r8192_4h_${TS}"
 
 probe() { printf '+++ [%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 
 echo "=============================================================="
-echo "  ContextGraph (isolated) on ALFWorld @hard (4B, 2 nodes, 80 steps, 4h)"
+echo "  ContextGraph (isolated) on ALFWorld @real (4B, 2 nodes, 80 steps, 4h)"
 echo "  Job: ${SLURM_JOB_ID:-<idev>}   Head: $NODE0 ($NODE0_IP)"
 echo "  Worker(s): ${NODELIST[@]:1}"
 echo "  Trainer model:  $MODEL_PATH"

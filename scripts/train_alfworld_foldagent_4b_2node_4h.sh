@@ -10,7 +10,7 @@
 #SBATCH -A AST24021
 
 # ─────────────────────────────────────────────────────────────────────
-# FoldAgent baseline on ALFWorld @hard, 4B / 2 nodes / 4h.
+# FoldAgent baseline on ALFWorld @real, 4B / 2 nodes / 4h.
 # Pairs with train_alfworld_ctxgraph_4b_2node_4h.sh — same backbone,
 # same data, only the agent loop + workflow + reward differ:
 #   agent loop  : fold_agent (no graph state)
@@ -18,14 +18,16 @@
 #   reward      : flat + scope (no graph shaping channel)
 #
 # Pivot context: HotpotQA 4B saturated (val/task_reward=0.7 zero-shot),
-# moving to ALFWorld @hard which has ~0% 4B baseline — clean headroom
-# for both ctxgraph and fold so we can actually measure learning.
+# AND ALFWorld @hard 4B too cold (0% baseline → all-zero rollouts → no
+# gradient). @real is the Goldilocks zone: 4B baseline ~0.35-0.50 with
+# real RL headroom to push to ~0.6-0.7.
 #
 # Pre-flight (one-time, before this run):
 #   (login) pip install textworld alfworld
 #   (login) alfworld-download                 # writes to ~/.cache/alfworld
-#   (login) python scripts/make_alfworld_data.py --hard --n_train 300 --n_val 80
-#                                              ^^^^^^ verify @hard data, not @real
+#   (login) python scripts/make_alfworld_data.py --n_train 300 --n_val 80
+#                                              ^^ NO --hard. Verify ability=
+#                                              ALFWorld@real in the parquet.
 # ─────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
@@ -92,12 +94,12 @@ else
 fi
 
 TS=$(date +%Y%m%d_%H%M%S)
-EXPERIMENT_NAME="foldagent_alfworld_hard_4b_2n_p4096_r8192_4h_${TS}"
+EXPERIMENT_NAME="foldagent_alfworld_real_4b_2n_p4096_r8192_4h_${TS}"
 
 probe() { printf '+++ [%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 
 echo "=============================================================="
-echo "  FoldAgent on ALFWorld @hard (4B, 2 nodes, 80 steps, 4h)"
+echo "  FoldAgent on ALFWorld @real (4B, 2 nodes, 80 steps, 4h)"
 echo "  Job: $SLURM_JOB_ID   Head: $NODE0 ($NODE0_IP)"
 echo "  Trainer model:  $MODEL_PATH"
 echo "  ALFWORLD_DATA:  $ALFWORLD_DATA"
