@@ -346,6 +346,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$NODE0" --chdir="$PROJECT_ROOT" \
   trainer.total_training_steps=30 \
   trainer.test_freq=999 \
   trainer.save_freq=15 \
+  trainer.default_local_dir=${SCRATCH:-/scratch/09281/chc_1996}/context-graph-ckpts/$EXPERIMENT_NAME \
   trainer.project_name=context-graph \
   trainer.experiment_name="$EXPERIMENT_NAME" \
   trainer.logger="$TRAINER_LOGGER"
