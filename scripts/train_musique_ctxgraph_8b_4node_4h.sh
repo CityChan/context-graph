@@ -81,7 +81,7 @@ PROJECT_ROOT=/work/09281/chc_1996/vista/context-graph
 MODEL_PATH=${MODEL_PATH:-Qwen/Qwen3-8B}
 EMBED_MODEL=${EMBED_MODEL:-Qwen/Qwen3-Embedding-4B}
 export HF_HOME=${HF_HOME:-/work/09281/chc_1996/vista/cache}
-export HF_HUB_CACHE=${HF_HUB_CACHE:-$HF_HOME}
+export HF_HUB_CACHE=${HF_HUB_CACHE:-$HF_HOME/hub}
 cd "$PROJECT_ROOT"
 export PYTHONPATH="$PROJECT_ROOT:${PYTHONPATH:-}"
 
@@ -120,10 +120,10 @@ echo "  Logger: ${probe_msg}"
 echo "  Started: $(date)"
 echo "=============================================================="
 
-# ── Pre-flight: HotpotQA artefacts must already exist ──
-probe "checking HotpotQA artefacts"
-TRAIN_PARQUET="$PROJECT_ROOT/data/hotpotqa_graph_train.parquet"
-VAL_PARQUET="$PROJECT_ROOT/data/hotpotqa_graph_test.parquet"
+# ── Pre-flight: MuSiQue artefacts must already exist ──
+probe "checking MuSiQue artefacts"
+TRAIN_PARQUET="$PROJECT_ROOT/data/musique_graph_train.parquet"
+VAL_PARQUET="$PROJECT_ROOT/data/musique_graph_test.parquet"
 CORPUS_PARQUET="$PROJECT_ROOT/data/wiki_corpus.parquet"
 EMBED_PKL="$PROJECT_ROOT/data/wiki_corpus_embeddings.pkl"
 for f in "$TRAIN_PARQUET" "$VAL_PARQUET" "$CORPUS_PARQUET" "$EMBED_PKL"; do
@@ -132,7 +132,7 @@ for f in "$TRAIN_PARQUET" "$VAL_PARQUET" "$CORPUS_PARQUET" "$EMBED_PKL"; do
     exit 1
   fi
 done
-probe "HotpotQA artefacts ok"
+probe "MuSiQue artefacts ok"
 
 # ── Pre-flight: 8B + embedder weights must be present (offline) ──
 probe "checking model caches"

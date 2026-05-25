@@ -75,7 +75,7 @@ PROJECT_ROOT=/work/09281/chc_1996/vista/context-graph
 MODEL_PATH=${MODEL_PATH:-Qwen/Qwen3-8B}
 EMBED_MODEL=${EMBED_MODEL:-Qwen/Qwen3-Embedding-4B}
 export HF_HOME=${HF_HOME:-/work/09281/chc_1996/vista/cache}
-export HF_HUB_CACHE=${HF_HUB_CACHE:-$HF_HOME}
+export HF_HUB_CACHE=${HF_HUB_CACHE:-$HF_HOME/hub}
 cd "$PROJECT_ROOT"
 export PYTHONPATH="$PROJECT_ROOT:${PYTHONPATH:-}"
 
@@ -114,21 +114,21 @@ echo "  Logger: ${probe_msg}"
 echo "  Started: $(date)"
 echo "=============================================================="
 
-# ── Pre-flight: HotpotQA fold artefacts must already exist ──
-probe "checking HotpotQA fold artefacts"
-TRAIN_PARQUET="$PROJECT_ROOT/data/hotpotqa_train.parquet"
-VAL_PARQUET="$PROJECT_ROOT/data/hotpotqa_test.parquet"
+# ── Pre-flight: MuSiQue fold artefacts must already exist ──
+probe "checking MuSiQue fold artefacts"
+TRAIN_PARQUET="$PROJECT_ROOT/data/musique_train.parquet"
+VAL_PARQUET="$PROJECT_ROOT/data/musique_test.parquet"
 CORPUS_PARQUET="$PROJECT_ROOT/data/wiki_corpus.parquet"
 EMBED_PKL="$PROJECT_ROOT/data/wiki_corpus_embeddings.pkl"
 for f in "$TRAIN_PARQUET" "$VAL_PARQUET" "$CORPUS_PARQUET" "$EMBED_PKL"; do
   if [ ! -f "$f" ]; then
     echo "ERROR: missing $f"
-    echo "       Fold uses data/hotpotqa_{train,test}.parquet (no _graph_ infix)."
-    echo "       Re-run scripts/make_hotpotqa_data.py if either is missing."
+    echo "       Fold uses data/musique_{train,test}.parquet (no _graph_ infix)."
+    echo "       Re-run scripts/make_musique_data.py if either is missing."
     exit 1
   fi
 done
-probe "HotpotQA fold artefacts ok"
+probe "MuSiQue fold artefacts ok"
 
 # ── Pre-flight: 8B + embedder weights must be present (offline) ──
 probe "checking model caches"

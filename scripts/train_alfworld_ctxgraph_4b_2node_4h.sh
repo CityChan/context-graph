@@ -163,7 +163,7 @@ fi
 probe "ALFWorld artefacts ok"
 
 # ── Pre-flight: trainer weights must be present (offline, no auto-dl) ──
-export HF_HUB_CACHE=${HF_HUB_CACHE:-$HF_HOME}
+export HF_HUB_CACHE=${HF_HUB_CACHE:-$HF_HOME/hub}
 probe "checking HF model cache for $MODEL_PATH"
 TRAINER_CACHE_DIR="$HF_HUB_CACHE/models--${MODEL_PATH//\//--}"
 if [ ! -d "$TRAINER_CACHE_DIR" ]; then

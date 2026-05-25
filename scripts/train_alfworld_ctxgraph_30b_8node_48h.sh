@@ -71,7 +71,7 @@ export HF_HOME=/work/09281/chc_1996/vista/cache
 # Vista cache uses legacy layout ($HF_HOME/models--XXX), not $HF_HOME/hub/.
 # Override HF_HUB_CACHE so new `hf`/transformers tooling reads the existing
 # 60GB of Apr 29 weights instead of looking at an empty hub/ subdir.
-export HF_HUB_CACHE=${HF_HUB_CACHE:-$HF_HOME}
+export HF_HUB_CACHE=${HF_HUB_CACHE:-$HF_HOME/hub}
 export ALFWORLD_DATA=${ALFWORLD_DATA:-$HOME/.cache/alfworld}
 export PYTHONPATH="$PROJECT_ROOT:$PYTHONPATH"
 export NCCL_P2P_LEVEL=NVL

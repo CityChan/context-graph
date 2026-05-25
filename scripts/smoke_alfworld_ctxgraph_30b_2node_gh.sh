@@ -73,7 +73,7 @@ cd "$PROJECT_ROOT"
 export HF_HOME=${HF_HOME:-/work/09281/chc_1996/vista/cache}
 # Vista quirk: weights live at $HF_HOME/models--XXX, not $HF_HOME/hub/.
 # Pin HF_HUB_CACHE so new `hf`/transformers tooling reads the existing cache.
-export HF_HUB_CACHE=${HF_HUB_CACHE:-$HF_HOME}
+export HF_HUB_CACHE=${HF_HUB_CACHE:-$HF_HOME/hub}
 export ALFWORLD_DATA=${ALFWORLD_DATA:-$HOME/.cache/alfworld}
 export PYTHONPATH="$PROJECT_ROOT:${PYTHONPATH:-}"
 
