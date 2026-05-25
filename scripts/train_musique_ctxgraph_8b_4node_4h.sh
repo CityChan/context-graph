@@ -232,34 +232,40 @@ srun --overlap --nodes=1 --ntasks=1 -w "$NODE0" bash -c '
 ' &
 RAY_HEAD_PID=$!
 sleep 20
-probe "Ray head sleep done; launching 1 worker"
+probe "Ray head sleep done; launching $((NUM_NODES - 1)) workers"
 
-# ── Ray worker on NODE1 ──
-WORKER_NODE=${NODELIST[1]}
-srun --overlap --nodes=1 --ntasks=1 -w "$WORKER_NODE" bash -c '
-  source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
-  conda activate cxtgraph
-  export NCCL_HOSTID="${SLURMD_NODENAME:-$(hostname -s)}"
-  export PATH="${CONDA_PREFIX}/bin:${PATH}"
-  hash -r
-  export PATH=/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/bin:${PATH}
-  export LD_LIBRARY_PATH=${CONDA_PREFIX}/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/targets/sbsa-linux/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/lib64:${LD_LIBRARY_PATH}
-  export HF_HOME='"$HF_HOME"'
-  export HF_HUB_CACHE='"$HF_HUB_CACHE"'
-  export FLASHINFER_WORKSPACE_BASE=/tmp
-  export HF_HUB_OFFLINE=1
-  export TRANSFORMERS_OFFLINE=1
-  export LOCAL_SEARCH_URL='"$LOCAL_SEARCH_URL"'
-  ray start --address='"${NODE0_IP}:6379"' --num-cpus=70 --num-gpus=1 --block
-' &
-WORKER_PID=$!
+# ── Ray workers on NODELIST[1..N-1] ──
+WORKER_PIDS=()
+for i in $(seq 1 $((NUM_NODES - 1))); do
+  WORKER_NODE=${NODELIST[$i]}
+  srun --overlap --nodes=1 --ntasks=1 -w "$WORKER_NODE" bash -c '
+    source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
+    conda activate cxtgraph
+    export NCCL_HOSTID="${SLURMD_NODENAME:-$(hostname -s)}"
+    export PATH="${CONDA_PREFIX}/bin:${PATH}"
+    hash -r
+    export PATH=/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/bin:${PATH}
+    export LD_LIBRARY_PATH=${CONDA_PREFIX}/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/targets/sbsa-linux/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/lib64:${LD_LIBRARY_PATH}
+    export HF_HOME='"$HF_HOME"'
+    export HF_HUB_CACHE='"$HF_HUB_CACHE"'
+    export FLASHINFER_WORKSPACE_BASE=/tmp
+    export HF_HUB_OFFLINE=1
+    export TRANSFORMERS_OFFLINE=1
+    export LOCAL_SEARCH_URL='"$LOCAL_SEARCH_URL"'
+    ray start --address='"${NODE0_IP}:6379"' --num-cpus=70 --num-gpus=1 --block
+  ' &
+  WORKER_PIDS+=("$!")
+  sleep 5
+done
 sleep 20
-probe "Ray worker launched, cluster settling"
+probe "all $((NUM_NODES - 1)) Ray workers launched, cluster settling"
 
 cleanup() {
   kill "$SEARCH_PID" 2>/dev/null || true
   kill "$RAY_HEAD_PID" 2>/dev/null || true
-  kill "$WORKER_PID" 2>/dev/null || true
+  for pid in "${WORKER_PIDS[@]}"; do
+    kill "$pid" 2>/dev/null || true
+  done
 }
 trap cleanup EXIT
 
