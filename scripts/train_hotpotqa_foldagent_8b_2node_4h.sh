@@ -10,19 +10,23 @@
 #SBATCH -A AST24021
 
 # ─────────────────────────────────────────────────────────────────────
-# 4-hour 2-node FoldAgent baseline training on HotpotQA at 8B. Paired
-# with train_hotpotqa_ctxgraph_8b_2node_4h.sh — same backbone, same
-# retrieval, same data domain, only the agent architecture differs:
+# 4-hour 2-node FoldAgent baseline training on HotpotQA at 8B,
+# BUDGET REVISED to mirror the ctxgraph 8K variant (clean comparison):
+#   response_length: 4096 → 8192
+#   ppo_max_token_len: 6144 → 10240
+#   gpu_memory_utilization: 0.45 → 0.5
+#   total_training_steps: 50 → 35
+#
+# Paired with train_hotpotqa_ctxgraph_8b_2node_4h.sh (also 8K) — same
+# backbone, retrieval, data domain, budget. Only the agent architecture
+# differs now that ctxgraph's c866e62 engineering tricks are removed:
 #   default_agent_loop=fold_agent       (vs context_graph_isolated_agent)
 #   plugin.workflow=search_branch       (vs search_graph)
 #   plugin.process_reward='[flat,scope]' (vs '[flat,scope,graph]')
 #   data files = data/hotpotqa_{train,test}.parquet
 #                                       (vs hotpotqa_graph_{train,test})
-#
-# Step budget / wandb expectations are the same as the ctxgraph variant
-# (~255 s/step, 50 steps + val_before_train ≈ 4h). On wandb the run
-# prefix is `train_foldagent_hotpotqa_8b_2n_4h_*`; pair with the
-# ctxgraph run of the same date for the side-by-side reward curve.
+# This is the paper-faithful comparison: graph-structure-only vs flat,
+# both at 8K budget, both without any hard-coded per-turn truncation.
 #
 # Pre-flight (one-time):
 #   (login) python scripts/make_hotpotqa_data.py
@@ -105,7 +109,7 @@ EXPERIMENT_NAME="train_foldagent_hotpotqa_8b_2n_4h_${TS}"
 probe() { printf '+++ [%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 
 echo "=============================================================="
-echo "  TRAIN: FoldAgent on HotpotQA (8B, 2 nodes, 50 steps, 4h)"
+echo "  TRAIN: FoldAgent on HotpotQA (8B, 2 nodes, 35 steps, 4h, 8K-resp)"
 echo "  Job: ${SLURM_JOB_ID:-<idev>}   Head: $NODE0 ($NODE0_IP)"
 echo "  Worker(s): ${NODELIST[@]:1}"
 echo "  Trainer model:  $MODEL_PATH"
@@ -265,9 +269,9 @@ probe "querying ray status"
 ray status || echo "WARN: ray status check failed"
 
 echo "=============================================================="
-echo "  Launching FoldAgent FoldGRPO training (2 nodes, 50 steps)"
-echo "  vLLM gpu_memory_utilization=0.45 + FSDP CPU offload"
-echo "  val_before_train=True (step-0 anchor), save_freq=25"
+echo "  Launching FoldAgent FoldGRPO training (2 nodes, 35 steps, 8K resp)"
+echo "  vLLM gpu_memory_utilization=0.5 + FSDP CPU offload"
+echo "  val_before_train=True (step-0 anchor), save_freq=15"
 echo "=============================================================="
 probe "launching trainer (model load + vLLM init typically ~3-5 min)"
 
@@ -282,11 +286,11 @@ srun --overlap --nodes=1 --ntasks=1 -w "$NODE0" --chdir="$PROJECT_ROOT" \
   actor_rollout_ref.rollout.mode=async \
   actor_rollout_ref.rollout.dtype=bfloat16 \
   actor_rollout_ref.rollout.calculate_log_probs=True \
-  actor_rollout_ref.rollout.gpu_memory_utilization=0.45 \
+  actor_rollout_ref.rollout.gpu_memory_utilization=0.5 \
   actor_rollout_ref.model.path="$MODEL_PATH" \
   actor_rollout_ref.rollout.prompt_length=2048 \
-  actor_rollout_ref.rollout.response_length=4096 \
-  actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu=6144 \
+  actor_rollout_ref.rollout.response_length=8192 \
+  actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu=10240 \
   actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
   actor_rollout_ref.rollout.n=4 \
   actor_rollout_ref.rollout.agent.num_workers=1 \
@@ -305,12 +309,12 @@ srun --overlap --nodes=1 --ntasks=1 -w "$NODE0" --chdir="$PROJECT_ROOT" \
   data.val_files=data/hotpotqa_test.parquet \
   data.train_batch_size=16 \
   data.max_prompt_length=2048 \
-  data.max_response_length=4096 \
+  data.max_response_length=8192 \
   data.return_raw_chat=True \
   actor_rollout_ref.actor.ppo_mini_batch_size=16 \
   actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=1 \
-  actor_rollout_ref.actor.ppo_max_token_len_per_gpu=6144 \
-  actor_rollout_ref.actor.ppo_infer_max_token_len_per_gpu=6144 \
+  actor_rollout_ref.actor.ppo_max_token_len_per_gpu=10240 \
+  actor_rollout_ref.actor.ppo_infer_max_token_len_per_gpu=10240 \
   actor_rollout_ref.model.enable_gradient_checkpointing=True \
   +actor_rollout_ref.rollout.plugin.workflow=search_branch \
   +actor_rollout_ref.rollout.plugin.max_turn=20 \
@@ -329,14 +333,14 @@ srun --overlap --nodes=1 --ntasks=1 -w "$NODE0" --chdir="$PROJECT_ROOT" \
   +actor_rollout_ref.rollout.plugin.double_check=False \
   +actor_rollout_ref.rollout.plugin.must_search=False \
   +actor_rollout_ref.rollout.plugin.val_max_turn=20 \
-  +actor_rollout_ref.rollout.plugin.val_response_length=4096 \
+  +actor_rollout_ref.rollout.plugin.val_response_length=8192 \
   trainer.val_before_train=True \
   trainer.val_only=False \
   trainer.n_gpus_per_node=1 \
   trainer.nnodes=${NUM_NODES} \
-  trainer.total_training_steps=50 \
+  trainer.total_training_steps=35 \
   trainer.test_freq=999 \
-  trainer.save_freq=25 \
+  trainer.save_freq=15 \
   trainer.project_name=context-graph \
   trainer.experiment_name="$EXPERIMENT_NAME" \
   trainer.logger="$TRAINER_LOGGER"

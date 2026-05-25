@@ -10,32 +10,31 @@
 #SBATCH -A AST24021
 
 # ─────────────────────────────────────────────────────────────────────
-# 4-hour 2-node ContextGraph training on HotpotQA at 8B. Mirrors the
-# 2-node smoke (test_hotpotqa_ctxgraph_8b_2node_30min.sh) for all
-# model / batch / token settings — only difference is wall time, step
-# count, val_before_train, and save_freq. This keeps the smoke-vs-train
-# delta minimal so a working smoke implies a working train.
+# 4-hour 2-node ContextGraph training on HotpotQA at 8B, BUDGET REVISED:
+#   response_length: 4096 → 8192
+#   ppo_max_token_len: 6144 → 10240
+#   gpu_memory_utilization: 0.45 → 0.5  (more KV budget for longer seqs)
+#   total_training_steps: 50 → 35       (~400 s/step at 8K vs ~255 s at 4K)
 #
-# Step budget at 2 nodes, response_length=4096, bs=16, ppo_max_token=6144
-# measured ~255 s/step in smoke. With val_before_train enabled (~320 s)
-# 4h is approximately:
-#   (14400 - 320) / 255 ≈ 55 training steps
-# Set total_training_steps=50 to land just under the time limit and
-# allow the final save_freq=25 checkpoint to flush cleanly.
+# Pairs with REMOVAL of the c866e62 engineering tricks from
+# agents/graph_agent_isolated.py (K=3 sliding window, graph auto-merge,
+# per-tool obs truncation). That removal aligns ctxgraph with the paper's
+# canonical design — only branch/return + FoldGRPO should drive context
+# compaction, no hard-coded per-turn truncation. Pair vs the matching
+# 8K fold baseline (train_hotpotqa_foldagent_8b_2node_4h.sh, also at 8K).
+#
+# Step budget at 2 nodes, response_length=8192, bs=16, ppo_max_token=10240
+# expected ~350-450 s/step (vs ~255 s at 4K). With val_before_train (~320 s):
+#   (14400 - 320) / 400 ≈ 35 training steps
+# Set total_training_steps=35 so the final save_freq=15 checkpoint flushes.
 #
 # What you should see on wandb (project=context-graph, run prefix
 # `train_ctxgraph_hotpotqa_8b_2n_4h_*`):
-#   step 0  (val_before_train) → val/task_reward and val/reward anchor
-#                                 around 0.566 / 0.634 (per the smoke).
-#   steps 1-50 → reward/task_reward, reward/graph_reward, reward/avg_score
-#                 curves climbing if learning works.
-#   step 25, 50 → checkpoint saved (save_freq=25).
-#
-# Comparable to but NOT identical to train_hotpotqa_ctxgraph_4b_4node_16h.sh:
-#   - 4B 4-node uses response_length=8192, bs=32 (full 20-turn budget).
-#   - This 8B 2-node uses response_length=4096, bs=16 (conservative for
-#     the smoke-train parity). Production 8B should later bump back to
-#     the 4B parity config once we know it fits.
+#   step 0 (val_before_train) → val/task_reward + val/reward anchor.
+#     Note: WITHOUT the K=3 trick the val numbers will likely be LOWER
+#     than the previous 4K-with-trick smoke (val/task_reward=0.566).
+#   steps 1-35 → reward/task_reward curve.
+#   step 15, 30 → checkpoint saved (save_freq=15).
 #
 # Pre-flight (one-time):
 #   (login) python scripts/make_hotpotqa_data.py
@@ -117,7 +116,7 @@ EXPERIMENT_NAME="train_ctxgraph_hotpotqa_8b_2n_4h_${TS}"
 probe() { printf '+++ [%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 
 echo "=============================================================="
-echo "  TRAIN: ContextGraph on HotpotQA (8B, 2 nodes, 50 steps, 4h)"
+echo "  TRAIN: ContextGraph on HotpotQA (8B, 2 nodes, 35 steps, 4h, 8K-resp)"
 echo "  Job: ${SLURM_JOB_ID:-<idev>}   Head: $NODE0 ($NODE0_IP)"
 echo "  Worker(s): ${NODELIST[@]:1}"
 echo "  Trainer model:  $MODEL_PATH"
@@ -275,9 +274,9 @@ probe "querying ray status"
 ray status || echo "WARN: ray status check failed"
 
 echo "=============================================================="
-echo "  Launching ContextGraph FoldGRPO training (2 nodes, 50 steps)"
-echo "  vLLM gpu_memory_utilization=0.45 + FSDP CPU offload"
-echo "  val_before_train=True (step-0 anchor), save_freq=25"
+echo "  Launching ContextGraph FoldGRPO training (2 nodes, 35 steps, 8K resp)"
+echo "  vLLM gpu_memory_utilization=0.5 + FSDP CPU offload"
+echo "  val_before_train=True (step-0 anchor), save_freq=15"
 echo "=============================================================="
 probe "launching trainer (model load + vLLM init typically ~3-5 min)"
 
@@ -292,11 +291,11 @@ srun --overlap --nodes=1 --ntasks=1 -w "$NODE0" --chdir="$PROJECT_ROOT" \
   actor_rollout_ref.rollout.mode=async \
   actor_rollout_ref.rollout.dtype=bfloat16 \
   actor_rollout_ref.rollout.calculate_log_probs=True \
-  actor_rollout_ref.rollout.gpu_memory_utilization=0.45 \
+  actor_rollout_ref.rollout.gpu_memory_utilization=0.5 \
   actor_rollout_ref.model.path="$MODEL_PATH" \
   actor_rollout_ref.rollout.prompt_length=2048 \
-  actor_rollout_ref.rollout.response_length=4096 \
-  actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu=6144 \
+  actor_rollout_ref.rollout.response_length=8192 \
+  actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu=10240 \
   actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
   actor_rollout_ref.rollout.n=4 \
   actor_rollout_ref.rollout.agent.num_workers=1 \
@@ -315,12 +314,12 @@ srun --overlap --nodes=1 --ntasks=1 -w "$NODE0" --chdir="$PROJECT_ROOT" \
   data.val_files=data/hotpotqa_graph_test.parquet \
   data.train_batch_size=16 \
   data.max_prompt_length=2048 \
-  data.max_response_length=4096 \
+  data.max_response_length=8192 \
   data.return_raw_chat=True \
   actor_rollout_ref.actor.ppo_mini_batch_size=16 \
   actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=1 \
-  actor_rollout_ref.actor.ppo_max_token_len_per_gpu=6144 \
-  actor_rollout_ref.actor.ppo_infer_max_token_len_per_gpu=6144 \
+  actor_rollout_ref.actor.ppo_max_token_len_per_gpu=10240 \
+  actor_rollout_ref.actor.ppo_infer_max_token_len_per_gpu=10240 \
   actor_rollout_ref.model.enable_gradient_checkpointing=True \
   +actor_rollout_ref.rollout.plugin.workflow=search_graph \
   +actor_rollout_ref.rollout.plugin.max_turn=20 \
@@ -339,14 +338,14 @@ srun --overlap --nodes=1 --ntasks=1 -w "$NODE0" --chdir="$PROJECT_ROOT" \
   +actor_rollout_ref.rollout.plugin.double_check=False \
   +actor_rollout_ref.rollout.plugin.must_search=False \
   +actor_rollout_ref.rollout.plugin.val_max_turn=20 \
-  +actor_rollout_ref.rollout.plugin.val_response_length=4096 \
+  +actor_rollout_ref.rollout.plugin.val_response_length=8192 \
   trainer.val_before_train=True \
   trainer.val_only=False \
   trainer.n_gpus_per_node=1 \
   trainer.nnodes=${NUM_NODES} \
-  trainer.total_training_steps=50 \
+  trainer.total_training_steps=35 \
   trainer.test_freq=999 \
-  trainer.save_freq=25 \
+  trainer.save_freq=15 \
   trainer.project_name=context-graph \
   trainer.experiment_name="$EXPERIMENT_NAME" \
   trainer.logger="$TRAINER_LOGGER"

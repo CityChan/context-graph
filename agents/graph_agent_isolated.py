@@ -491,53 +491,13 @@ async def process_item(
         if process_reward:
             observation = truncate_text(observation, max_lines=100, merge_repeat=True, merge_num=4)
 
-        # Auto-compress: when graph exceeds threshold, auto-merge oldest observations
-        # into a summary. Agent doesn't need to learn merge — it happens automatically.
-        # This keeps prompt length bounded while preserving key info.
-        if len(graph.active_nodes) > 6:
-            obs_nodes = [
-                nid for nid, n in graph.nodes.items()
-                if n.type == NodeType.OBSERVATION and n.is_active()
-            ]
-            if len(obs_nodes) >= 3:
-                to_merge = obs_nodes[:3]
-                contents = [graph.nodes[nid].content[:100] for nid in to_merge]
-                auto_summary = "Explored: " + " | ".join(contents)
-                merged_id = graph.merge(to_merge, auto_summary)
-                if merged_id:
-                    print(f'[GRAPH AUTO-MERGE] {to_merge} → {merged_id} ({len(graph.active_nodes)} active)')
-
-        # Per-tool truncation for main chat: open_page is the legitimate way to
-        # see full content, search is just a discovery list, action is short.
-        # Graph nodes store their own (smaller) snapshots.
-        if isinstance(observation, str) and fn_call is not None:
-            tool = fn_call.get('function')
-            if tool == 'search':
-                main_observation = observation[:1500]
-            elif tool == 'open_page':
-                main_observation = observation[:4000]
-            elif tool == 'action':
-                main_observation = observation[:600]
-            else:
-                main_observation = observation[:2000]
-        else:
-            main_observation = observation[:2000] if isinstance(observation, str) else observation
-        agent['main'].append({'role': 'user', 'content': main_observation})
-        session_message.append({'role': 'user', 'content': main_observation})
-
-        # Sliding window: keep only the K most recent raw observations in main
-        # chat. Older user turns are replaced with a placeholder pointing back
-        # to the graph (which retains their truncated content as nodes).
-        K_RECENT_OBS = 3
-        OBS_PLACEHOLDER = '[earlier observation; details merged into graph]'
-        obs_indices = [
-            i for i, m in enumerate(agent['main'].chat)
-            if m['role'] == 'user' and i >= prompt_turn
-        ]
-        if len(obs_indices) > K_RECENT_OBS:
-            for old_idx in obs_indices[:-K_RECENT_OBS]:
-                if agent['main'].chat[old_idx]['content'] != OBS_PLACEHOLDER:
-                    agent['main'].replace_user_turn(old_idx, OBS_PLACEHOLDER)
+        # Match fold_agent.py: append observation in full (post truncate_text)
+        # to the main chat. The c866e62 additions (graph auto-merge, per-tool
+        # byte truncation, K=3 sliding window) are removed to align with the
+        # paper's design — only branch/return + FoldGRPO should drive context
+        # management, not a hard-coded sliding window.
+        agent['main'].append({'role': 'user', 'content': observation})
+        session_message.append({'role': 'user', 'content': observation})
 
     env.stats['session_time'] = time.time() - session_start_time
 
