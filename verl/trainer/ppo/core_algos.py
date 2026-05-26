@@ -413,17 +413,38 @@ def compute_foldgrpo_advantage(
             else:
                 id2gen_uid[_idx].append(_uid)
             id2score[_idx].append(scores[i])
+        # Track which groups are degenerate (std ≤ small threshold) so we can
+        # zero-out their advantages explicitly instead of relying on the +epsilon
+        # fudge — needed because at n=8 with truncated trajectories we routinely
+        # see groups where all surviving rollouts share the same reward,
+        # producing 0/ε ≈ 0 → numerically OK but downstream PG / KL loss can
+        # still NaN when combined with extreme logπ ratios from those same
+        # constant-reward rollouts.
+        STD_DEGEN_THRESHOLD = 1e-4
+        degenerate_idxs = set()
         for idx in id2score:
             if len(id2score[idx]) == 1:
                 id2mean[idx] = torch.tensor(0.0)
                 id2std[idx] = torch.tensor(1.0)
+                degenerate_idxs.add(idx)  # single-sample group: no group signal
             elif len(id2score[idx]) > 1:
                 scores_tensor = torch.stack(id2score[idx])
                 id2mean[idx] = torch.mean(scores_tensor)
                 id2std[idx] = torch.std(scores_tensor)
+                if not torch.isfinite(id2std[idx]) or id2std[idx].item() < STD_DEGEN_THRESHOLD:
+                    degenerate_idxs.add(idx)
             else:
                 raise ValueError(f"no score in prompt index: {idx}")
+        if degenerate_idxs:
+            print(f"[FOLDGRPO] degenerate groups (std≈0): {len(degenerate_idxs)} / {len(id2score)}")
         for i in range(bsz):
+            if index[i] in degenerate_idxs:
+                # Zero-out advantage for degenerate groups so they contribute no
+                # gradient. This is exactly what verl's GRPO would have done if
+                # std=0 division was clean (0 numerator / 0 denominator), but
+                # done explicitly so no NaN leaks into PG / KL loss.
+                scores[i] = scores[i] * 0.0
+                continue
             if norm_adv_by_std_in_grpo:
                 scores[i] = (scores[i] - id2mean[index[i]]) / (id2std[index[i]] + epsilon)
             else:
@@ -431,6 +452,10 @@ def compute_foldgrpo_advantage(
             if fix_bad_positive_adv and scores[i] > 0  and raw_scores[i] < 0:
                 scores[i] = 0.0 * scores[i]
             scores[i] = torch.clamp(scores[i], -5.0, 5.0)
+        # Final NaN/Inf scrub — any NaN/Inf in scores (from upstream sources,
+        # e.g. ratio explosion contaminating the gmin/gmax path below) gets
+        # replaced with a safe value so PG / KL loss can't pick up NaN.
+        scores = torch.nan_to_num(scores, nan=0.0, posinf=5.0, neginf=-5.0)
 
         # TODO@Miao: Implement other variants of handling process_reward in https://arxiv.org/abs/2510.11967
         # Treat all-zero process_reward_mask as "no process reward" to avoid the
@@ -455,6 +480,11 @@ def compute_foldgrpo_advantage(
             scores = scores * response_mask
         else:
             scores = scores.unsqueeze(dim=1).tile([1, response_length]) * response_mask
+        # Belt-and-suspenders: scrub any NaN/Inf that survived the gmin/gmax
+        # patching or response_mask multiplication. Without this we've seen
+        # actor/pg_loss=NaN and actor/kl_loss=NaN in MuSiQue 8B runs at
+        # ~25-30% of steps due to small-group GRPO collapse.
+        scores = torch.nan_to_num(scores, nan=0.0, posinf=5.0, neginf=-5.0)
 
     return scores, scores
 
