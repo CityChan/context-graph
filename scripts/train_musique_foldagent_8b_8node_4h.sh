@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH -J train-mu-8b-fa-8n
-#SBATCH -o train-mu-8b-fa-8n.%j.out
-#SBATCH -e train-mu-8b-fa-8n.%j.err
+#SBATCH -o logs/train-mu-8b-fa-8n.%j.out
+#SBATCH -e logs/train-mu-8b-fa-8n.%j.err
 #SBATCH -p gh
 #SBATCH -N 8
 #SBATCH --ntasks-per-node=1

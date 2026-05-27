@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH -J build-wiki-idx
-#SBATCH -o build-wiki-idx.%j.out
-#SBATCH -e build-wiki-idx.%j.err
+#SBATCH -o logs/build-wiki-idx.%j.out
+#SBATCH -e logs/build-wiki-idx.%j.err
 #SBATCH -p gh
 #SBATCH -N 1
 #SBATCH --ntasks-per-node=1

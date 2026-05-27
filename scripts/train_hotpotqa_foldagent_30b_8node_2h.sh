@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH -J fa-hp-30b-8n
-#SBATCH -o fa-hp-30b-8n.%j.out
-#SBATCH -e fa-hp-30b-8n.%j.err
+#SBATCH -o logs/fa-hp-30b-8n.%j.out
+#SBATCH -e logs/fa-hp-30b-8n.%j.err
 #SBATCH -p gh
 #SBATCH -N 8
 #SBATCH --ntasks-per-node=1

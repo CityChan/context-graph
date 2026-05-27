@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH -J cleanup-cg-4b
-#SBATCH -o cleanup-cg-4b.%j.out
-#SBATCH -e cleanup-cg-4b.%j.err
+#SBATCH -o logs/cleanup-cg-4b.%j.out
+#SBATCH -e logs/cleanup-cg-4b.%j.err
 #SBATCH -p gh
 #SBATCH -N 4
 #SBATCH --ntasks-per-node=1

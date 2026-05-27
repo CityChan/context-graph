@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH -J test-alf-4b
-#SBATCH -o test-alf-4b.%j.out
-#SBATCH -e test-alf-4b.%j.err
+#SBATCH -o logs/test-alf-4b.%j.out
+#SBATCH -e logs/test-alf-4b.%j.err
 #SBATCH -p gh
 #SBATCH -N 1
 #SBATCH --ntasks-per-node=1

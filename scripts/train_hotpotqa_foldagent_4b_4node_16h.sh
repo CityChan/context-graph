@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH -J fa-hp-4b-4n
-#SBATCH -o fa-hp-4b-4n.%j.out
-#SBATCH -e fa-hp-4b-4n.%j.err
+#SBATCH -o logs/fa-hp-4b-4n.%j.out
+#SBATCH -e logs/fa-hp-4b-4n.%j.err
 #SBATCH -p gh
 #SBATCH -N 4
 #SBATCH --ntasks-per-node=1

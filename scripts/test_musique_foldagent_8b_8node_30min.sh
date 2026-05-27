@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH -J smoke-mu-8b-fa-8n
-#SBATCH -o smoke-mu-8b-fa-8n.%j.out
-#SBATCH -e smoke-mu-8b-fa-8n.%j.err
+#SBATCH -o logs/smoke-mu-8b-fa-8n.%j.out
+#SBATCH -e logs/smoke-mu-8b-fa-8n.%j.err
 #SBATCH -p gh
 #SBATCH -N 8
 #SBATCH --ntasks-per-node=1

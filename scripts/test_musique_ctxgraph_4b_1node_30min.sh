@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH -J test-mq-4b-cg-1n
-#SBATCH -o test-mq-4b-cg-1n.%j.out
-#SBATCH -e test-mq-4b-cg-1n.%j.err
+#SBATCH -o logs/test-mq-4b-cg-1n.%j.out
+#SBATCH -e logs/test-mq-4b-cg-1n.%j.err
 #SBATCH -p gh
 #SBATCH -N 1
 #SBATCH --ntasks-per-node=1

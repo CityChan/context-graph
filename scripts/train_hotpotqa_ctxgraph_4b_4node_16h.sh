@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH -J cg-hp-4b-4n
-#SBATCH -o cg-hp-4b-4n.%j.out
-#SBATCH -e cg-hp-4b-4n.%j.err
+#SBATCH -o logs/cg-hp-4b-4n.%j.out
+#SBATCH -e logs/cg-hp-4b-4n.%j.err
 #SBATCH -p gh
 #SBATCH -N 4
 #SBATCH --ntasks-per-node=1

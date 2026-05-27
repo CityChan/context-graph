@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH -J fold-alf-30b-16n
-#SBATCH -o fold-alf-30b-16n.%j.out
-#SBATCH -e fold-alf-30b-16n.%j.err
+#SBATCH -o logs/fold-alf-30b-16n.%j.out
+#SBATCH -e logs/fold-alf-30b-16n.%j.err
 #SBATCH -p gh
 #SBATCH -N 16
 #SBATCH --ntasks-per-node=1

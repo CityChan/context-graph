@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH -J train-hp-8b-fa-2n
-#SBATCH -o train-hp-8b-fa-2n.%j.out
-#SBATCH -e train-hp-8b-fa-2n.%j.err
+#SBATCH -o logs/train-hp-8b-fa-2n.%j.out
+#SBATCH -e logs/train-hp-8b-fa-2n.%j.err
 #SBATCH -p gh
 #SBATCH -N 2
 #SBATCH --ntasks-per-node=1

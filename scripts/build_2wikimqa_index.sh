@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH -J build-2w-idx
-#SBATCH -o build-2w-idx.%j.out
-#SBATCH -e build-2w-idx.%j.err
+#SBATCH -o logs/build-2w-idx.%j.out
+#SBATCH -e logs/build-2w-idx.%j.err
 #SBATCH -p gh
 #SBATCH -N 1
 #SBATCH --ntasks-per-node=1

@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH -J test-hp-8b-cg-2n
-#SBATCH -o test-hp-8b-cg-2n.%j.out
-#SBATCH -e test-hp-8b-cg-2n.%j.err
+#SBATCH -o logs/test-hp-8b-cg-2n.%j.out
+#SBATCH -e logs/test-hp-8b-cg-2n.%j.err
 #SBATCH -p gh
 #SBATCH -N 2
 #SBATCH --ntasks-per-node=1

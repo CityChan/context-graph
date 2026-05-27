@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH -J cg30b-smoke
-#SBATCH -o cg30b-smoke.%j.out
-#SBATCH -e cg30b-smoke.%j.err
+#SBATCH -o logs/cg30b-smoke.%j.out
+#SBATCH -e logs/cg30b-smoke.%j.err
 #SBATCH -p gh-dev
 #SBATCH -N 8
 #SBATCH --ntasks-per-node=1

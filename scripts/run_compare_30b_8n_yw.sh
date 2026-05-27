@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH -J cg30b-compare
-#SBATCH -o cg30b-compare.%j.out
-#SBATCH -e cg30b-compare.%j.err
+#SBATCH -o logs/cg30b-compare.%j.out
+#SBATCH -e logs/cg30b-compare.%j.err
 #SBATCH -p gh
 #SBATCH -N 8
 #SBATCH --ntasks-per-node=1

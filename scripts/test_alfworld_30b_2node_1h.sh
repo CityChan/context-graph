@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH -J test-alf-30b
-#SBATCH -o test-alf-30b.%j.out
-#SBATCH -e test-alf-30b.%j.err
+#SBATCH -o logs/test-alf-30b.%j.out
+#SBATCH -e logs/test-alf-30b.%j.err
 #SBATCH -p gh-dev
 #SBATCH -N 2
 #SBATCH --ntasks-per-node=1

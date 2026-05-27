@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH -J val-cg-hp-4b
-#SBATCH -o val-cg-hp-4b.%j.out
-#SBATCH -e val-cg-hp-4b.%j.err
+#SBATCH -o logs/val-cg-hp-4b.%j.out
+#SBATCH -e logs/val-cg-hp-4b.%j.err
 #SBATCH -p gh
 #SBATCH -N 4
 #SBATCH --ntasks-per-node=1

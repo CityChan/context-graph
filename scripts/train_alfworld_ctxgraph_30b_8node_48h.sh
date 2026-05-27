@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH -J cg-alf-30b-8n
-#SBATCH -o cg-alf-30b-8n.%j.out
-#SBATCH -e cg-alf-30b-8n.%j.err
+#SBATCH -o logs/cg-alf-30b-8n.%j.out
+#SBATCH -e logs/cg-alf-30b-8n.%j.err
 #SBATCH -p gh
 #SBATCH -N 8
 #SBATCH --ntasks-per-node=1

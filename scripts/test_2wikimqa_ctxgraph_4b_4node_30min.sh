@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH -J test-2w-4b-cg-4n
-#SBATCH -o test-2w-4b-cg-4n.%j.out
-#SBATCH -e test-2w-4b-cg-4n.%j.err
+#SBATCH -o logs/test-2w-4b-cg-4n.%j.out
+#SBATCH -e logs/test-2w-4b-cg-4n.%j.err
 #SBATCH -p gh
 #SBATCH -N 4
 #SBATCH --ntasks-per-node=1
