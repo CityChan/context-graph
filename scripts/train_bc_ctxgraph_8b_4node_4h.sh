@@ -194,8 +194,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$SEARCH_NODE" bash -c "
   export PYTHONPATH=$PROJECT_ROOT:\${PYTHONPATH:-}
   export HF_HOME=$HF_HOME
   export HF_HUB_CACHE=$HF_HUB_CACHE
-  export HF_HUB_OFFLINE=1
-  export TRANSFORMERS_OFFLINE=1
+  unset HF_HUB_OFFLINE TRANSFORMERS_OFFLINE  # search server needs HF Hub for BC load_dataset (cache still preferred)
   export NUM_GPUS=1
   export MAX_BATCH_SIZE=128
   unset LOCAL_CORPUS_PARQUET LOCAL_EMBEDDINGS_PKL  # use HF dataset mode for BC
