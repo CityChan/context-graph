@@ -346,11 +346,11 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   actor_rollout_ref.actor.kl_loss_coef=0.0005 \
   data.train_files=data/bc_train.parquet \
   data.val_files=data/bc_test.parquet \
-  data.train_batch_size=32 \
+  data.train_batch_size=24 \
   data.max_prompt_length=4096 \
   data.max_response_length=16384 \
   data.return_raw_chat=True \
-  actor_rollout_ref.actor.ppo_mini_batch_size=32 \
+  actor_rollout_ref.actor.ppo_mini_batch_size=24 \
   actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=1 \
   actor_rollout_ref.actor.ppo_max_token_len_per_gpu=18432 \
   actor_rollout_ref.actor.ppo_infer_max_token_len_per_gpu=18432 \
