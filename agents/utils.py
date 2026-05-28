@@ -15,7 +15,6 @@ from pydantic import BaseModel
 from typing import Any, Optional
 import asyncio, httpx
 from envs.local_search import LocalSearch
-from envs.repo_env import GymEnv
 from envs.alfworld_env import ALFWorldEnv
 
 
@@ -26,7 +25,9 @@ def select_env(ability, config, extra_info=None):
     elif 'LocalSearch' in ability:
         EnvClass = LocalSearch
     else:
-        EnvClass = GymEnv
+        raise ValueError(
+            f"Unknown ability: {ability}. Supported: ALFWorld@*, LocalSearch."
+        )
     return EnvClass
 
 
