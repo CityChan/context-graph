@@ -507,6 +507,13 @@ class DataParallelPPOActor(BasePPOActor):
                         rollout_is_weights=rollout_is_weights,
                         overlong_mask=overlong_mask,
                     )
+                    # Last line of defense: if pg_loss is NaN despite upstream
+                    # nan_to_num (e.g. bf16 overflow in agg_loss, 0/0 from
+                    # all-masked micro-batch), zero it so backward produces no
+                    # gradient instead of poisoning grad_norm.
+                    if not torch.isfinite(pg_loss):
+                        print(f"WARN: pg_loss is non-finite ({pg_loss.item()}), zeroing")
+                        pg_loss = pg_loss * 0.0
                     micro_batch_metrics.update(pg_metrics)
 
                     # Skip if using pure rollout correction mode (metrics already in pg_metrics)
@@ -537,6 +544,10 @@ class DataParallelPPOActor(BasePPOActor):
                             logprob=log_prob, ref_logprob=ref_log_prob, kl_penalty=self.config.kl_loss_type
                         )
                         kl_loss = agg_loss(loss_mat=kld, loss_mask=response_mask, loss_agg_mode=loss_agg_mode)
+                        # Same last-line-of-defense as pg_loss above.
+                        if not torch.isfinite(kl_loss):
+                            print(f"WARN: kl_loss is non-finite ({kl_loss.item()}), zeroing")
+                            kl_loss = kl_loss * 0.0
 
                         policy_loss = policy_loss + kl_loss * self.config.kl_loss_coef
                         micro_batch_metrics["actor/kl_loss"] = kl_loss.detach().item() * loss_scale_factor
