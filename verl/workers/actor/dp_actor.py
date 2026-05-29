@@ -304,6 +304,12 @@ class DataParallelPPOActor(BasePPOActor):
                         else:
                             entropy = torch.utils.checkpoint.checkpoint(verl_F.entropy_from_logits, logits)
 
+            # Sanitize NaN/Inf from bf16 forward — Qwen3-8B + FSDP + 16K response
+            # has ~20% NaN rate in log_prob on specific token patterns, which then
+            # cascades into pg_loss/kl_loss NaN downstream. Clamp to safe values.
+            log_probs = torch.nan_to_num(log_probs, nan=0.0, posinf=0.0, neginf=-20.0)
+            if entropy is not None:
+                entropy = torch.nan_to_num(entropy, nan=0.0, posinf=10.0, neginf=0.0)
             return entropy, log_probs
 
     def _optimizer_step(self):

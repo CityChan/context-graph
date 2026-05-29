@@ -577,7 +577,7 @@ class ContextGraph:
         self,
         task_reward: float,
         lambda_compact: float = 0.1,
-        lambda_cost: float = 0.005,
+        lambda_cost: float = 0.02,
     ) -> dict:
         """Compute graph-aware reward conditioned on task success.
 
@@ -609,17 +609,20 @@ class ContextGraph:
             and self.nodes.get(e.source, ContextNode("", NodeType.QUERY, "")).status != NodeStatus.PRUNED
         )
 
-        # ── Graph shaping (only when task succeeds) ──
+        # ── Graph shaping (semi-de-gated) ──
+        # Process-level signals always computed (visible regardless of outcome):
+        # structural = cross-branch connections per active node
+        # usage_bonus = small reward per explicit LLM-initiated graph op
+        structural = 0.0
+        if n_active > 1:
+            structural = min(n_cross_edges / n_active, 1.0)  # [0, 1]
+        usage_bonus = min(self.explicit_op_count * 0.02, 0.1)
+
         if task_reward > 0:
+            # Task succeeded: full shaping including outcome-derived terms
             # Compactness: ratio of compression (folded + pruned) / total
-            # Higher = more compressed = better context management
             compression_ratio = (n_folded + n_pruned) / n_total if n_total > 1 else 0.0
             compactness = compression_ratio  # [0, 1], higher is better
-
-            # Structural quality: cross-branch connections show synthesis
-            structural = 0.0
-            if n_active > 1:
-                structural = min(n_cross_edges / n_active, 1.0)  # [0, 1]
 
             # Merge utility: successful task + merges = agent compressed effectively
             merge_bonus = min(n_summaries * 0.1, 0.3)
@@ -627,19 +630,15 @@ class ContextGraph:
             # Prune utility: successful task + prunes = agent discarded correctly
             prune_bonus = min(n_pruned * 0.05, 0.15)
 
-            # Usage bonus: small positive signal for any LLM-initiated graph op.
-            # Encourages exploration of graph tools when task succeeds. Capped.
-            usage_bonus = min(self.explicit_op_count * 0.02, 0.1)
-
             graph_shaping = lambda_compact * (compactness + structural + merge_bonus + prune_bonus) + usage_bonus
         else:
-            # Task failed: no graph shaping (don't reward/penalize graph structure)
+            # Task failed: semi-de-gated. Give partial process-only signals
+            # so policy can learn graph ops have value even on failed paths.
+            # Outcome-derived terms (compactness/merge/prune) still gated.
             compactness = 0.0
-            structural = 0.0
             merge_bonus = 0.0
             prune_bonus = 0.0
-            usage_bonus = 0.0
-            graph_shaping = 0.0
+            graph_shaping = 0.3 * (usage_bonus + 0.5 * structural)
 
         # ── Cost penalty (only counts LLM-initiated graph ops) ──
         cost = self.explicit_op_count
