@@ -211,7 +211,12 @@ class AgentLoopRewardManager(AbstractRewardManager):
             for k in ("task_reward", "graph_shaping", "graph_reward",
                       "graph_n_nodes", "graph_n_edges", "graph_n_active",
                       "main_turn", "is_branch", "branch_success",
-                      "concise_main", "scope_judge"):
+                      "concise_main", "scope_judge",
+                      # v3 consolidation checkpoint stats
+                      "consol_attempts", "consol_ops", "consol_pass_valid",
+                      "consol_pass_invalid", "consol_invalid",
+                      "consol_op_rate", "consol_valid_pass_rate",
+                      "consol_invalid_pass_rate", "consol_invalid_rate"):
                 per_sample = np.full(bsz, np.nan, dtype=float)
                 for i, s in enumerate(env_stats_arr):
                     if isinstance(s, dict) and k in s:

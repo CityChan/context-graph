@@ -110,6 +110,10 @@ class ContextGraph:
         # Hierarchical fields (used by isolated graph_agent variant)
         self.parent: Optional[ContextGraph] = parent
         self.namespace_prefix: str = namespace_prefix
+        # Forced-consolidation tracking: counts main-loop turns since the last
+        # time a node was added. Used by env to decide whether `pass` is a
+        # valid response at a consolidation checkpoint (saturation criterion).
+        self.turns_since_last_node_add: int = 0
 
     def _next_id(self, prefix: Optional[str] = None) -> str:
         self._node_counter += 1
@@ -190,6 +194,8 @@ class ContextGraph:
             metadata=metadata or {},
         )
         self.nodes[node_id] = node
+        # New content arrived -> reset the consolidation saturation clock.
+        self.turns_since_last_node_add = 0
 
         if parent_id and parent_id in self.nodes:
             self.add_edge(parent_id, node_id, edge_relation)
@@ -446,6 +452,26 @@ class ContextGraph:
     @property
     def active_nodes(self) -> list[ContextNode]:
         return [n for n in self.nodes.values() if n.is_active()]
+
+    def is_saturated(
+        self,
+        max_active: int = 8,
+        max_edges: int = 15,
+        max_idle_turns: int = 3,
+    ) -> bool:
+        """Whether the graph is dense enough that <pass> is a valid consolidation
+        response. Used to gate the negative reward at forced-consolidation
+        checkpoints in graph_agent_isolated. Defaults are tuned from BC smoke
+        data (val mean n_active=4.3, n_edges=8.8) -- thresholds sit in the
+        distribution tail.
+        """
+        if len(self.active_nodes) > max_active:
+            return True
+        if len(self.edges) > max_edges:
+            return True
+        if self.turns_since_last_node_add >= max_idle_turns:
+            return True
+        return False
 
     @property
     def subtask_nodes(self) -> list[ContextNode]:

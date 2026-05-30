@@ -257,6 +257,18 @@ async def process_item(
 
     lambda_compact = getattr(config.plugin, "lambda_compact", 0.1)
     lambda_cost = getattr(config.plugin, "lambda_cost", 0.02)
+    # Forced consolidation: every N main turns env injects a checkpoint where
+    # policy MUST emit a graph op or <pass>. <pass> is reward-neutral only if
+    # graph.is_saturated() returns True. 0 disables consolidation entirely
+    # (back to v2 behavior).
+    consolidation_interval = getattr(config.plugin, "consolidation_interval", 0)
+    consolidation_op_reward = getattr(config.plugin, "consolidation_op_reward", 0.05)
+    consolidation_pass_invalid_penalty = getattr(
+        config.plugin, "consolidation_pass_invalid_penalty", -0.2
+    )
+    consolidation_invalid_penalty = getattr(
+        config.plugin, "consolidation_invalid_penalty", -0.3
+    )
 
     llm_client = context.llm_client
 
@@ -277,6 +289,10 @@ async def process_item(
     current = 'main'
     session_start_time = time.time()
     iteration = 0
+    main_turn_count = 0   # counts only main-agent turns (not branch internals)
+    consolidation_stats = {
+        'attempts': 0, 'ops': 0, 'pass_valid': 0, 'pass_invalid': 0, 'invalid': 0,
+    }
     mask_rollout = True
     session_message = []
 
@@ -286,6 +302,10 @@ async def process_item(
             break
 
         iteration += 1
+        main_turn_count += 1
+        # Tick the consolidation saturation clock at start of each main turn.
+        # add_node() resets it back to 0 whenever new content arrives this turn.
+        graph.turns_since_last_node_add += 1
 
         if enable_summary and len(agent[current].context()) - init_len > config.response_length * 0.95:
             if len(agent) >= max_session:
@@ -499,6 +519,84 @@ async def process_item(
         agent['main'].append({'role': 'user', 'content': observation})
         session_message.append({'role': 'user', 'content': observation})
 
+        # ── Forced consolidation checkpoint ──
+        # Every `consolidation_interval` main turns, inject a checkpoint
+        # asking the policy to emit a graph op or <pass>. <pass> is valid
+        # (reward-neutral) only when the graph is saturated; otherwise
+        # penalized. See ContextGraph.is_saturated() for thresholds.
+        if (consolidation_interval > 0
+                and main_turn_count > 0
+                and main_turn_count % consolidation_interval == 0
+                and iteration < max_turn):
+            is_sat = graph.is_saturated()
+            n_active = len(graph.active_nodes)
+            n_edges = len(graph.edges)
+            n_nodes = len(graph.nodes)
+            pass_clause = (
+                "If no obvious merge/prune/edge improvement helps, emit "
+                "<function=pass>{}</function>."
+                if is_sat else
+                "You MUST emit a real operation; <function=pass> is NOT valid here "
+                "and will be penalized."
+            )
+            consol_prompt = (
+                f"[CONSOLIDATION CHECKPOINT turn={main_turn_count}]\n"
+                f"Current graph: {n_active} active nodes, {n_edges} edges, {n_nodes} total. "
+                f"Choose ONE operation: merge / prune / add_edge / select / pass.\n"
+                f"{pass_clause}\n"
+                f"After this checkpoint you continue the task normally."
+            )
+            agent['main'].append({'role': 'user', 'content': consol_prompt})
+            session_message.append({'role': 'user', 'content': consol_prompt})
+
+            consol_response = await agent['main'].step()
+            if consol_response is None:
+                break
+            session_message.append({'role': 'assistant', 'content': consol_response})
+            consol_turn_idx = len(agent['main'].chat) - 1
+            consol_fn = extract_fn_call(consol_response)
+            consolidation_stats['attempts'] += 1
+            iteration += 1  # account for the extra LLM step
+
+            if consol_fn is not None and consol_fn['function'] in GRAPH_OPS:
+                # Real op — apply the same handler as the main loop branch.
+                handler = {
+                    'merge': handle_merge,
+                    'add_edge': handle_add_edge,
+                    'select': handle_select,
+                    'prune': handle_prune,
+                }[consol_fn['function']]
+                consol_obs = handler(graph, consol_fn)
+                graph.explicit_op_count += 1
+                consolidation_stats['ops'] += 1
+                if process_reward and is_train:
+                    agent['main'].set_process_reward(consol_turn_idx, consolidation_op_reward)
+                print(f'[CONSOL OP] {consol_fn["function"]} -> {consol_obs[:100]}')
+                ack = f"[CONSOLIDATION OK] {consol_obs[:300]}"
+            elif consol_fn is not None and consol_fn['function'] == 'pass':
+                if is_sat:
+                    consolidation_stats['pass_valid'] += 1
+                    # reward-neutral
+                    print('[CONSOL PASS] saturated, valid pass')
+                    ack = "[CONSOLIDATION ACK] pass accepted (graph saturated)."
+                else:
+                    consolidation_stats['pass_invalid'] += 1
+                    if process_reward and is_train:
+                        agent['main'].set_process_reward(
+                            consol_turn_idx, consolidation_pass_invalid_penalty)
+                    print('[CONSOL PASS] NOT saturated -> penalty')
+                    ack = "[CONSOLIDATION ACK] pass rejected (graph still sparse, op was expected)."
+            else:
+                consolidation_stats['invalid'] += 1
+                if process_reward and is_train:
+                    agent['main'].set_process_reward(
+                        consol_turn_idx, consolidation_invalid_penalty)
+                print('[CONSOL INVALID]', str(consol_response)[:120])
+                ack = "[CONSOLIDATION ACK] invalid response, continuing."
+
+            agent['main'].append({'role': 'user', 'content': ack})
+            session_message.append({'role': 'user', 'content': ack})
+
     env.stats['session_time'] = time.time() - session_start_time
 
     # ── Reward computation ──
@@ -532,6 +630,19 @@ async def process_item(
     env.stats['graph_ops'] = graph.operation_count
     env.stats['graph_n_summaries'] = graph_rewards.get('n_summaries', 0)
     env.stats['graph_reward'] = graph_rewards.get('graph_reward', score[1])
+    # Consolidation checkpoint stats — surface in wandb to track whether
+    # the policy is actually using the forced-exploration channel.
+    env.stats['consol_attempts'] = consolidation_stats['attempts']
+    env.stats['consol_ops'] = consolidation_stats['ops']
+    env.stats['consol_pass_valid'] = consolidation_stats['pass_valid']
+    env.stats['consol_pass_invalid'] = consolidation_stats['pass_invalid']
+    env.stats['consol_invalid'] = consolidation_stats['invalid']
+    # Rates (denominator-safe; 0 when no consolidation fired)
+    _ca = max(consolidation_stats['attempts'], 1)
+    env.stats['consol_op_rate'] = consolidation_stats['ops'] / _ca
+    env.stats['consol_valid_pass_rate'] = consolidation_stats['pass_valid'] / _ca
+    env.stats['consol_invalid_pass_rate'] = consolidation_stats['pass_invalid'] / _ca
+    env.stats['consol_invalid_rate'] = consolidation_stats['invalid'] / _ca
     # Pure task accuracy + isolated shaping component, exposed so wandb
     # can show CtxGraph's task hit-rate without graph_reward inflation.
     # task_reward should match score[1] (LocalSearch judge), but read from
