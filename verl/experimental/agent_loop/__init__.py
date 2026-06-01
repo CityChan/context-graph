@@ -19,7 +19,8 @@ from .tool_agent_loop import ToolAgentLoop
 # Register agent loops so Ray workers can find them
 from scripts.train_fold import FoldAgentLoop
 from scripts.train_graph import ContextGraphAgentLoop
+from scripts.train_baseline import ReactAgentLoop
 
-_ = [SingleTurnAgentLoop, ToolAgentLoop, FoldAgentLoop, ContextGraphAgentLoop]
+_ = [SingleTurnAgentLoop, ToolAgentLoop, FoldAgentLoop, ContextGraphAgentLoop, ReactAgentLoop]
 
 __all__ = ["AgentLoopBase", "AgentLoopManager", "AsyncLLMServerManager", "AgentLoopWorker"]
