@@ -1,5 +1,7 @@
 import os
 import asyncio
+import copy
+from uuid import uuid4
 
 from verl import DataProto
 from .utils import Agent, select_env, TaskContext, run_action, AgentLoopOutput, AgentLoopMetrics
@@ -28,6 +30,9 @@ async def process_item(
         return v.item() if v.ndim == 0 else v[0]
 
     ability = _get(item.non_tensor_batch['ability'])
+
+    uid = item.non_tensor_batch.get('uid', uuid4().hex)
+    gen_uid = item.non_tensor_batch.get('gen_uid', None)
     # Select env
     EnvClass = select_env(ability, config, )
     print(is_train, EnvClass)
@@ -48,15 +53,23 @@ async def process_item(
 
     agent = Agent(llm_client, user_prompt, tokenizer, config, prompt_turn=prompt_turn)
     iteration = 0
+    natural_finish = False
     while iteration < max_turn:
         iteration += 1
         response = await agent.step()
         if response is None:
+            natural_finish = True
             break
         observation = await run_action(env, response)
         if observation is None:
+            natural_finish = True
             break
         agent.append({'role': 'user', 'content': observation})
+
+    # mask_rollout = True when we hit the turn cap without the env signalling
+    # completion. Used by the reward manager to compute overlong_rate; required
+    # for verl's val metrics aggregation to avoid None-mean crashes.
+    mask_rollout = (iteration >= max_turn) and not natural_finish
 
     print('[TASK] Task Finish, Start Reward')
     try:
@@ -68,17 +81,36 @@ async def process_item(
         print(f"[Error] Getting reward: {e}")
         score, reward_dict = ("", 0), {"ans_reward": 0.0, "format_reward": 0.0, "ref_reward": 0.0}
 
-    out = await agent.get_data()
+    # Populate env.stats with the minimum keys the reward manager lifts so
+    # wandb shows reward/task_reward / reward/main_turn / reward/avg_num_turns
+    # in line with the fold/ctxgraph runs.
+    if not hasattr(env, 'stats') or env.stats is None:
+        env.stats = {}
+    env.stats['task_reward'] = float(score[1])
+    env.stats['main_turn'] = int(iteration)
+    env.stats['is_branch'] = 0
+    env.stats['branch_success'] = 0
+
+    out_data = await agent.get_data()
     agent_reward = score[1]
     out = AgentLoopOutput(
-        prompt_ids=out['prompt_ids'],
-        response_ids=out['response_ids'],
-        response_mask=out['response_mask'],
-        response_logprobs=out['response_logprobs'],
+        prompt_ids=out_data['prompt_ids'],
+        response_ids=out_data['response_ids'],
+        response_mask=out_data['response_mask'],
+        response_logprobs=out_data['response_logprobs'],
         multi_modal_data={},
         metrics=AgentLoopMetrics(),
         reward_score=agent_reward,
-        num_turns=out['num_turns'],
+        num_turns=out_data['num_turns'],
+        extra_fields={
+            'messages': out_data['messages'],
+            'env_stats': copy.deepcopy(env.stats),
+            'mask_rollout': mask_rollout,
+            'is_finish': natural_finish,
+            'process_reward_mask': out_data['process_reward_mask'],
+            'uid': uid,
+            'gen_uid': gen_uid,
+        },
     )
     return out
 
