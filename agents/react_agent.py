@@ -18,7 +18,16 @@ async def process_item(
     if not is_train:
         if getattr(config.plugin, "val_response_length", None):
             config.response_length = getattr(config.plugin, "val_response_length", None)
-    ability = item.non_tensor_batch['ability'][0]
+
+    # Helper: verl may squeeze the batch dim at val time, yielding 0-d arrays.
+    # Bare [0] indexing crashes on those; .item() / [0] dispatch handles both
+    # shapes. Mirrors agents/fold_agent.py:70-73 and graph_agent_isolated.py:223-226.
+    def _get(arr):
+        import numpy as np
+        v = np.asarray(arr)
+        return v.item() if v.ndim == 0 else v[0]
+
+    ability = _get(item.non_tensor_batch['ability'])
     # Select env
     EnvClass = select_env(ability, config, )
     print(is_train, EnvClass)
@@ -29,8 +38,8 @@ async def process_item(
     except Exception as e:
         print(f"[Error] during environment init: {str(e)}")
 
-    workflow = item.non_tensor_batch['extra_info'][0].get('workflow', None) or getattr(config.plugin, "workflow",
-                                                                                       "search")
+    workflow = _get(item.non_tensor_batch['extra_info']).get('workflow', None) or getattr(config.plugin, "workflow",
+                                                                                          "search")
     user_prompt = create_chat(env.instance_info['problem_statement'], workflow, item)
     max_turn = getattr(config.plugin, 'max_turn', 64) if config.plugin else 64
 
