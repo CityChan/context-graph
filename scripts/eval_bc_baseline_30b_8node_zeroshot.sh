@@ -40,7 +40,6 @@
 #   * MODEL_PATH = Qwen/Qwen3-30B-A3B-Thinking-2507
 #   * +rollout.quantization=fp8 + gpu_memory_utilization=0.55
 #   * train_batch_size = ppo_mini_batch_size = 14 (14 × n=8 ÷ 7 trainer = 16/GPU)
-#   * PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 #
 # Topology: NODELIST[0] = dedicated search server (no Ray), NODELIST[1]
 # = Ray head + trainer rank 0, NODELIST[2..7] = Ray workers. FSDP across 7 GPUs.
@@ -79,8 +78,6 @@ export HF_HUB_OFFLINE=1
 export TRANSFORMERS_OFFLINE=1
 export RAY_memory_usage_threshold=0.99
 export RAY_memory_monitor_refresh_ms=0
-# 30B-specific: cut CUDA allocator fragmentation across long 32K rollouts
-export PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
 
 # ── WANDB (optional) ──
 if [ -n "${WORK:-}" ] && [ -f "$WORK/.wandb_env" ]; then

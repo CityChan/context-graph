@@ -30,7 +30,6 @@
 #       since 30B FSDP shard is 60GB/7≈8.6GB params + bigger activation footprint)
 #   * train_batch_size = ppo_mini_batch_size = 14 (so 14 × n=8 = 112 ÷ 7
 #       trainer = 16/GPU; conservative vs 8B's 32/GPU)
-#   * PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True (ported from
 #       ALFWorld 30B template; cuts fragmentation across 32K rollouts)
 #
 # Topology: NODELIST[0] = dedicated search server (no Ray), NODELIST[1]
@@ -66,9 +65,6 @@ export HF_HUB_OFFLINE=1
 export TRANSFORMERS_OFFLINE=1
 export RAY_memory_usage_threshold=0.99
 export RAY_memory_monitor_refresh_ms=0
-# 30B-specific: expandable_segments cuts CUDA allocator fragmentation across
-# long rollouts at 32K response × n=8. Ported from ALFWorld 30B 8-node template.
-export PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
 
 # ── WANDB (optional) ──
 if [ -n "${WORK:-}" ] && [ -f "$WORK/.wandb_env" ]; then

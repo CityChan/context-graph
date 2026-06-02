@@ -26,7 +26,6 @@
 #   * +rollout.quantization=fp8 + gpu_memory_utilization=0.55
 #   * train_batch_size = ppo_mini_batch_size = 30 (30 × n=8 ÷ 15 trainer = 16/GPU;
 #       same per-GPU load as 8-node but 2x trajectory throughput, ~half wall time)
-#   * PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 #
 # Topology: NODELIST[0] = dedicated search server (no Ray), NODELIST[1]
 # = Ray head + trainer rank 0, NODELIST[2..15] = Ray workers. FSDP across 15 GPUs.
@@ -61,8 +60,6 @@ export HF_HUB_OFFLINE=1
 export TRANSFORMERS_OFFLINE=1
 export RAY_memory_usage_threshold=0.99
 export RAY_memory_monitor_refresh_ms=0
-# 30B-specific: cut CUDA allocator fragmentation across long 32K rollouts
-export PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
 
 # ── WANDB (optional) ──
 if [ -n "${WORK:-}" ] && [ -f "$WORK/.wandb_env" ]; then

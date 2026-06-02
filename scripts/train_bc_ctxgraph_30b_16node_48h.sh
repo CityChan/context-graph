@@ -31,7 +31,6 @@
 #   * train_batch_size = ppo_mini_batch_size = 30 (so 30 × n=8 = 240 ÷ 15
 #       trainer = 16/GPU; same per-GPU as the 8-node config but 2x trajectory
 #       throughput per step, so wall time per step roughly halves)
-#   * PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True (ported from
 #       ALFWorld 30B template; cuts fragmentation across 32K rollouts)
 #
 # Topology: NODELIST[0] = dedicated search server (no Ray), NODELIST[1]
@@ -67,9 +66,6 @@ export HF_HUB_OFFLINE=1
 export TRANSFORMERS_OFFLINE=1
 export RAY_memory_usage_threshold=0.99
 export RAY_memory_monitor_refresh_ms=0
-# 30B-specific: expandable_segments cuts CUDA allocator fragmentation across
-# long rollouts at 32K response × n=8. Ported from ALFWorld 30B 8-node template.
-export PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
 
 # ── WANDB (optional) ──
 if [ -n "${WORK:-}" ] && [ -f "$WORK/.wandb_env" ]; then
