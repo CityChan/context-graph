@@ -1,12 +1,12 @@
 #!/bin/bash
-#SBATCH -J train-bc-30b-cg-8n-48h
-#SBATCH -o logs/train-bc-30b-cg-8n-48h.%j.out
-#SBATCH -e logs/train-bc-30b-cg-8n-48h.%j.err
+#SBATCH -J train-bc-30b-cg-8n-24h
+#SBATCH -o logs/train-bc-30b-cg-8n-24h.%j.out
+#SBATCH -e logs/train-bc-30b-cg-8n-24h.%j.err
 #SBATCH -p gh
 #SBATCH -N 8
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=72
-#SBATCH -t 48:00:00
+#SBATCH -t 24:00:00
 #SBATCH -A AST24021
 
 # ─────────────────────────────────────────────────────────────────────
@@ -398,7 +398,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   trainer.val_only=False \
   trainer.n_gpus_per_node=1 \
   trainer.nnodes=$((NUM_NODES - 1)) \
-  trainer.total_training_steps=30 \
+  trainer.total_training_steps=50 \
   trainer.test_freq=10 \
   trainer.save_freq=10 \
   trainer.default_local_dir=${SCRATCH:-/scratch/09281/chc_1996}/context-graph-ckpts/$EXPERIMENT_NAME \
