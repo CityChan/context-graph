@@ -10,25 +10,30 @@
 #SBATCH -A AST24021
 
 # ─────────────────────────────────────────────────────────────────────
-# 48-hour 8-NODE training for BrowseComp-Plus FoldAgent @ Qwen3-30B-A3B-Thinking-2507
+# 24-hour 8-NODE training for BrowseComp-Plus FoldAgent @ Qwen3-30B-A3B-Thinking-2507
 #   8 nodes × 1 GH200 = 8 GPUs (1 dedicated search + 7 trainer, FSDP)
 #   FP8 vLLM rollout + BF16 FSDP actor/ref + CPU param/optim offload
-#   total_training_steps=30 (matches the 8B 32K paper-match epoch budget;
-#   30B step time ~3-4x slower → ~80-100 min/step, 30 step ≈ 40-50h)
+#   total_training_steps=50 (smoke jobs 734305/734306 measured 19.7 min/step
+#   on 30B-Thinking + batch=7; 50 steps ≈ 16.4h + ~3h val + ~0.4h ckpt ≈ 20h
+#   total, fits 24h walltime with ~4h headroom)
+#   50 x 56 prompt-visits = 2800 = 4.1 epochs over 680 train set,
+#   matching the 4.2-epoch data exposure of the 8B 32K paper-match config
 #
-# Pairs with train_bc_ctxgraph_30b_8node_48h.sh and
+# Pairs with train_bc_ctxgraph_30b_8node_24h.sh and
 #                train_bc_baseline_30b_8node_48h.sh — same backbone, same
 # retrieval substrate, same context budget, only the agent loop differs.
 #
 # 30B-specific knobs vs the 8B 4-node 32K v3 template:
-#   * #SBATCH -N 8 / -t 48:00:00
+#   * #SBATCH -N 8 / -t 24:00:00
 #   * MODEL_PATH = Qwen/Qwen3-30B-A3B-Thinking-2507
 #   * +rollout.quantization=fp8 + gpu_memory_utilization=0.55
-#   * train_batch_size = ppo_mini_batch_size = 14 (14 × n=8 ÷ 7 trainer = 16/GPU)
+#   * train_batch_size = ppo_mini_batch_size = 7 (7 × n=8 ÷ 7 trainer = 8/GPU;
+#       halved from 8B's 16/GPU to give Thinking CoT activation headroom)
 #
 # Topology: NODELIST[0] = dedicated search server (no Ray), NODELIST[1]
 # = Ray head + trainer rank 0, NODELIST[2..7] = Ray workers. FSDP across 7 GPUs.
-# Production training (30 steps, val every 10 steps, ckpt every 10 steps):
+# Production training (50 steps, val + ckpt every 10 steps = 6 val points
+#                                                            0/10/20/30/40/50):
 #   - search_server.py loads HF datasets (Tevatron/browsecomp-plus-corpus +
 #     precomputed embeddings from miaolu3/browsecomp-plus)
 #   - trainer hits OpenAI judge per rollout completion (gpt-5-nano default,
@@ -128,12 +133,12 @@ else
 fi
 
 TS=$(date +%Y%m%d_%H%M%S)
-EXPERIMENT_NAME="train_foldagent_bc_30b_8n_48h_v3_32k_${TS}"
+EXPERIMENT_NAME="train_foldagent_bc_30b_8n_24h_v3_32k_${TS}"
 
 probe() { printf '+++ [%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 
 echo "=============================================================="
-echo "  TRAIN: FoldAgent v3 on BrowseComp-Plus (30B-A3B Thinking, 8 nodes [1 search + 7 trainer], 30 steps, 48h training, 32K-resp, FP8 rollout)"
+echo "  TRAIN: FoldAgent v3 on BrowseComp-Plus (30B-A3B Thinking, 8 nodes [1 search + 7 trainer], 50 steps, 24h training, 32K-resp, FP8 rollout)"
 echo "  Job: ${SLURM_JOB_ID:-<idev>}   Head: $NODE0 ($NODE0_IP)"
 echo "  Worker(s): ${NODELIST[@]:1}"
 echo "  Trainer model:  $MODEL_PATH"
@@ -318,7 +323,7 @@ probe "querying ray status"
 ray status || echo "WARN: ray status check failed"
 
 echo "=============================================================="
-echo "  Launching FoldAgent FoldGRPO v3 (30B-A3B Thinking, 8 nodes [1 search + 7 trainer], 30 steps, 32K resp [48h], FP8 rollout, BrowseComp-Plus)"
+echo "  Launching FoldAgent FoldGRPO v3 (30B-A3B Thinking, 8 nodes [1 search + 7 trainer], 50 steps, 32K resp [24h], FP8 rollout, BrowseComp-Plus)"
 echo "  v2 fix: continuous concise_main penalty (paired with ctxgraph_v3)"
 echo "  vLLM gpu_memory_utilization=0.55 + FP8 rollout + FSDP CPU offload"
 echo "  val_before_train=True, save_freq=10 (6 ckpts: steps 10/20/.../60), val every 10 steps"

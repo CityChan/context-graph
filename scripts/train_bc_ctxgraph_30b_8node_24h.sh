@@ -10,31 +10,37 @@
 #SBATCH -A AST24021
 
 # ─────────────────────────────────────────────────────────────────────
-# 48-hour 8-NODE training for BrowseComp-Plus ContextGraph @ Qwen3-30B-A3B-Thinking-2507
+# 24-hour 8-NODE training for BrowseComp-Plus ContextGraph @ Qwen3-30B-A3B-Thinking-2507
 #   8 nodes × 1 GH200 = 8 GPUs (1 dedicated search + 7 trainer, FSDP)
 #   FP8 vLLM rollout + BF16 FSDP actor/ref + CPU param/optim offload
-#   total_training_steps=30 (matches the 8B 32K paper-match epoch budget;
-#   30B step time ~3-4x slower → ~80-100 min/step, 30 step ≈ 40-50h)
+#   total_training_steps=50 (smoke jobs 734305/734306 measured 19.7 min/step
+#   on 30B-Thinking + batch=7 with temperature=1.0 + n=8 diverse sampling;
+#   50 steps ≈ 16.4h training + ~3h val + ~0.4h ckpt ≈ 20h total, fits 24h
+#   walltime with ~4h headroom)
+#   50 x 56 prompt-visits = 2800 = 4.1 epochs over 680 train set,
+#   matching the 4.2-epoch data exposure of the 8B 32K paper-match config
 #
-# Pairs with train_bc_foldagent_30b_8node_48h.sh and
+# Pairs with train_bc_foldagent_30b_8node_24h.sh and
 #                train_bc_baseline_30b_8node_48h.sh — same backbone, same
 # retrieval substrate, same context budget, only the agent loop differs.
 #
 # 30B-specific knobs vs the 8B 4-node 32K v3 template:
-#   * #SBATCH -N 8 / -t 48:00:00
+#   * #SBATCH -N 8 / -t 24:00:00
 #   * MODEL_PATH = Qwen/Qwen3-30B-A3B-Thinking-2507 (MoE A3B variant; only
 #       3B params activate per token but all 30B must shard across 7 trainer GPUs)
 #   * +rollout.quantization=fp8 (vLLM rollout halves weight footprint;
 #       FSDP actor stays BF16 for gradient correctness)
 #   * gpu_memory_utilization=0.55 (was 0.6 at 8B; give actor more margin
 #       since 30B FSDP shard is 60GB/7≈8.6GB params + bigger activation footprint)
-#   * train_batch_size = ppo_mini_batch_size = 14 (so 14 × n=8 = 112 ÷ 7
-#       trainer = 16/GPU; conservative vs 8B's 32/GPU)
-#       ALFWorld 30B template; cuts fragmentation across 32K rollouts)
+#   * train_batch_size = ppo_mini_batch_size = 7 (so 7 × n=8 = 56 ÷ 7
+#       trainer = 8/GPU; halved from 8B's 16/GPU to give Thinking CoT
+#       activation headroom; smoke measured max_memory_allocated_gb ~98 GB
+#       which is at the GH200 ceiling)
 #
 # Topology: NODELIST[0] = dedicated search server (no Ray), NODELIST[1]
 # = Ray head + trainer rank 0, NODELIST[2..7] = Ray workers. FSDP across 7 GPUs.
-# Production training (30 steps, val + ckpt every 10 steps):
+# Production training (50 steps, val + ckpt every 10 steps = 6 val points
+#                                                            0/10/20/30/40/50):
 #   - search_server.py loads HF datasets (Tevatron/browsecomp-plus-corpus +
 #     precomputed embeddings from miaolu3/browsecomp-plus)
 #   - trainer hits OpenAI judge per rollout completion (gpt-5-nano default,
@@ -134,12 +140,12 @@ else
 fi
 
 TS=$(date +%Y%m%d_%H%M%S)
-EXPERIMENT_NAME="train_ctxgraph_bc_30b_8n_48h_v3_32k_${TS}"
+EXPERIMENT_NAME="train_ctxgraph_bc_30b_8n_24h_v3_32k_${TS}"
 
 probe() { printf '+++ [%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 
 echo "=============================================================="
-echo "  TRAIN: ContextGraph v3 on BrowseComp-Plus (30B-A3B Thinking, 8 nodes [1 search + 7 trainer], 30 steps, 48h training, 32K-resp, FP8 rollout)"
+echo "  TRAIN: ContextGraph v3 on BrowseComp-Plus (30B-A3B Thinking, 8 nodes [1 search + 7 trainer], 50 steps, 24h training, 32K-resp, FP8 rollout)"
 echo "  Job: ${SLURM_JOB_ID:-<idev>}   Head: $NODE0 ($NODE0_IP)"
 echo "  Worker(s): ${NODELIST[@]:1}"
 echo "  Trainer model:  $MODEL_PATH"
@@ -324,7 +330,7 @@ probe "querying ray status"
 ray status || echo "WARN: ray status check failed"
 
 echo "=============================================================="
-echo "  Launching ContextGraph FoldGRPO v3 (30B-A3B Thinking, 8 nodes [1 search + 7 trainer], 30 steps, 32K resp [48h], FP8 rollout, BrowseComp-Plus)"
+echo "  Launching ContextGraph FoldGRPO v3 (30B-A3B Thinking, 8 nodes [1 search + 7 trainer], 50 steps, 32K resp [24h], FP8 rollout, BrowseComp-Plus)"
 echo "  v3 reward: continuous concise_main, semi-de-gated graph_shaping (alpha=0.3), lambda_cost=0.02, forced consolidation K=5"
 echo "  vLLM gpu_memory_utilization=0.55 + FP8 rollout + FSDP CPU offload"
 echo "  val_before_train=True, save_freq=10 (6 ckpts: steps 10/20/.../60), val every 10 steps"
