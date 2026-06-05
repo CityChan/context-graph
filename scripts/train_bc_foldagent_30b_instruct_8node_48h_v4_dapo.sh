@@ -363,9 +363,9 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   python -m scripts.train_graph \
   algorithm.adv_estimator=foldgrpo \
   algorithm.kl_ctrl.kl_coef=0 \
-  algorithm.filter_groups.enable=True \
-  algorithm.filter_groups.metric=seq_reward \
-  algorithm.filter_groups.max_num_gen_batches=3 \
+  +algorithm.filter_groups.enable=True \
+  +algorithm.filter_groups.metric=seq_reward \
+  +algorithm.filter_groups.max_num_gen_batches=3 \
   actor_rollout_ref.rollout.agent.default_agent_loop=fold_agent \
   actor_rollout_ref.rollout.name=vllm \
   actor_rollout_ref.rollout.mode=async \
