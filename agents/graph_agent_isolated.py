@@ -257,6 +257,16 @@ async def process_item(
 
     lambda_compact = getattr(config.plugin, "lambda_compact", 0.1)
     lambda_cost = getattr(config.plugin, "lambda_cost", 0.02)
+    # Improvement #1: branch_uniqueness_bonus. Default 0 = off. When >0,
+    # rewards branches whose summary content has low Jaccard overlap with
+    # other sibling summaries. See context_graph._compute_branch_uniqueness.
+    uniqueness_weight = getattr(config.plugin, "uniqueness_weight", 0.0)
+    # Improvement #3: auto-bind branch summary to most-related existing node
+    # with a SEMANTIC edge, in addition to the CAUSAL edge to its subtask.
+    # Default False = off (preserves v3/v4 behavior). When True, branches
+    # produce a graph rather than a tree (cross-subtask relations enabled).
+    auto_bind_branch_edges = getattr(config.plugin, "auto_bind_branch_edges", False)
+    auto_bind_min_overlap = getattr(config.plugin, "auto_bind_min_overlap", 0.05)
     # Forced consolidation: every N main turns env injects a checkpoint where
     # policy MUST emit a graph op or <pass>. <pass> is reward-neutral only if
     # graph.is_saturated() returns True. 0 disables consolidation entirely
@@ -445,6 +455,35 @@ async def process_item(
                 )
                 print(f'[BRANCH ISOLATED] Collapsed {agent_name}: child stats={child_stats}')
 
+                # Improvement #3: auto-bind branch summary to most-related EXISTING
+                # parent node with a SEMANTIC edge. Without this, branches only
+                # ever connect back to their own subtask (a tree, not a graph),
+                # which is why edge/node ratio stayed flat at ~1.85 across v3
+                # training. Use lexical Jaccard for matching — no embedding model
+                # dependency. Bypasses self, subtask parent, and inactive nodes.
+                if auto_bind_branch_edges:
+                    summary_tok = set(branch_message[:2000].lower().split())
+                    if summary_tok:
+                        best_overlap, best_target = 0.0, None
+                        for nid, node in graph.nodes.items():
+                            if nid == summary_id or nid == subtask_id or not node.is_active():
+                                continue
+                            if node.type not in (NodeType.SUMMARY, NodeType.OBSERVATION):
+                                continue
+                            cand_tok = set(node.content.lower().split())
+                            if not cand_tok:
+                                continue
+                            union = len(summary_tok | cand_tok)
+                            overlap = len(summary_tok & cand_tok) / union if union else 0.0
+                            if overlap > best_overlap:
+                                best_overlap, best_target = overlap, nid
+                        if best_target is not None and best_overlap > auto_bind_min_overlap:
+                            graph.add_edge(
+                                summary_id, best_target,
+                                EdgeRelation.SEMANTIC, weight=best_overlap,
+                            )
+                            print(f'[BRANCH AUTO-BIND] {summary_id} -> {best_target} (Jaccard={best_overlap:.2f})')
+
                 # Only inject parent graph state if there are multiple branches
                 # (so the agent can see what summaries exist for cross-branch reasoning).
                 # Single-branch case degenerates to fold-like behavior (no graph noise).
@@ -611,7 +650,10 @@ async def process_item(
         score, reward_dict = ("", 0), {"ans_reward": 0.0, "format_reward": 0.0, "ref_reward": 0.0}
 
     graph_rewards = graph.compute_graph_reward(
-        score[1], lambda_compact=lambda_compact, lambda_cost=lambda_cost
+        score[1],
+        lambda_compact=lambda_compact,
+        lambda_cost=lambda_cost,
+        uniqueness_weight=uniqueness_weight,
     )
     print(f'[GRAPH REWARD ISOLATED] {graph_rewards} | branch_subgraphs={branch_subgraph_stats}')
 

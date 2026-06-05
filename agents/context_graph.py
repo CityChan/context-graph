@@ -599,11 +599,44 @@ class ContextGraph:
 
     # ── Reward Computation ──
 
+    def _compute_branch_uniqueness(self) -> float:
+        """Token-level Jaccard uniqueness across active SUMMARY nodes.
+
+        For each active summary node (typically created by collapsing a
+        finished branch), compute the fraction of its tokens that do not
+        appear in any other active summary. Sum across summaries, scaled,
+        bounded to 0.3.
+
+        Returns 0 if fewer than 2 active summaries exist (uniqueness is
+        only meaningful relative to siblings).
+
+        Cheap: O(n_summaries * n_tokens_per_summary).
+        """
+        summaries = [
+            n for n in self.nodes.values()
+            if n.type == NodeType.SUMMARY and n.is_active()
+        ]
+        if len(summaries) < 2:
+            return 0.0
+        token_sets = {n.id: set(n.content.lower().split()) for n in summaries}
+        scores = []
+        for nid, t in token_sets.items():
+            if not t:
+                continue
+            others = set().union(
+                *(v for k, v in token_sets.items() if k != nid)
+            )
+            scores.append(len(t - others) / len(t))
+        if not scores:
+            return 0.0
+        return min(sum(scores) * 0.05, 0.3)
+
     def compute_graph_reward(
         self,
         task_reward: float,
         lambda_compact: float = 0.1,
         lambda_cost: float = 0.02,
+        uniqueness_weight: float = 0.0,
     ) -> dict:
         """Compute graph-aware reward conditioned on task success.
 
@@ -644,6 +677,14 @@ class ContextGraph:
             structural = min(n_cross_edges / n_active, 1.0)  # [0, 1]
         usage_bonus = min(self.explicit_op_count * 0.02, 0.1)
 
+        # Branch uniqueness (Improvement #1, gated by uniqueness_weight; default 0)
+        # Rewards branches that surface info not already in sibling summaries —
+        # incentivizes branch_success to decouple from task_reward (in v3 we
+        # observed branch_success ~= task_reward, meaning branches did not add
+        # independent value beyond the main agent's final answer).
+        uniqueness_raw = self._compute_branch_uniqueness()
+        uniqueness_bonus = uniqueness_weight * uniqueness_raw
+
         if task_reward > 0:
             # Task succeeded: full shaping including outcome-derived terms
             # Compactness: ratio of compression (folded + pruned) / total
@@ -656,15 +697,22 @@ class ContextGraph:
             # Prune utility: successful task + prunes = agent discarded correctly
             prune_bonus = min(n_pruned * 0.05, 0.15)
 
-            graph_shaping = lambda_compact * (compactness + structural + merge_bonus + prune_bonus) + usage_bonus
+            graph_shaping = (
+                lambda_compact * (compactness + structural + merge_bonus + prune_bonus)
+                + usage_bonus
+                + uniqueness_bonus
+            )
         else:
             # Task failed: semi-de-gated. Give partial process-only signals
             # so policy can learn graph ops have value even on failed paths.
             # Outcome-derived terms (compactness/merge/prune) still gated.
+            # Uniqueness bonus also applied here (de-rated by same 0.3) — failed
+            # branches that still produced novel content should be partially
+            # rewarded as "useful exploration even if final answer wrong".
             compactness = 0.0
             merge_bonus = 0.0
             prune_bonus = 0.0
-            graph_shaping = 0.3 * (usage_bonus + 0.5 * structural)
+            graph_shaping = 0.3 * (usage_bonus + 0.5 * structural + uniqueness_bonus)
 
         # ── Cost penalty (only counts LLM-initiated graph ops) ──
         cost = self.explicit_op_count
@@ -686,6 +734,8 @@ class ContextGraph:
             "merge_bonus": merge_bonus,
             "prune_bonus": prune_bonus,
             "usage_bonus": usage_bonus,
+            "uniqueness_bonus": uniqueness_bonus,
+            "uniqueness_raw": uniqueness_raw,
             "cost_penalty": cost_penalty,
             "bloat_penalty": bloat_penalty,
             "operation_cost": cost,
