@@ -6,7 +6,7 @@
 #SBATCH -N 5
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=72
-#SBATCH -t 32:00:00
+#SBATCH -t 48:00:00
 #SBATCH -A AST24021
 
 # ─────────────────────────────────────────────────────────────────────
