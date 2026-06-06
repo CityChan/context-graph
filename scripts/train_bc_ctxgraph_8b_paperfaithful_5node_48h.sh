@@ -1,9 +1,9 @@
 #!/bin/bash
-#SBATCH -J train-bc-8b-cg-paperfaithful-8n-48h
-#SBATCH -o logs/train-bc-8b-cg-paperfaithful-8n-48h.%j.out
-#SBATCH -e logs/train-bc-8b-cg-paperfaithful-8n-48h.%j.err
+#SBATCH -J train-bc-8b-cg-paperfaithful-5n-48h
+#SBATCH -o logs/train-bc-8b-cg-paperfaithful-5n-48h.%j.out
+#SBATCH -e logs/train-bc-8b-cg-paperfaithful-5n-48h.%j.err
 #SBATCH -p gh
-#SBATCH -N 8
+#SBATCH -N 5
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=72
 #SBATCH -t 48:00:00
@@ -113,8 +113,8 @@ NODE0=${NODELIST[0]}
 NODE0_IP=$(getent hosts "$NODE0" | awk '{print $1}')
 NUM_NODES=${#NODELIST[@]}
 
-if [ "$NUM_NODES" -ne 8 ]; then
-  echo "Expected 8 nodes (set #SBATCH -N 8 or use idev -N 8), got $NUM_NODES"
+if [ "$NUM_NODES" -ne 5 ]; then
+  echo "Expected 5 nodes (set #SBATCH -N 5 or use idev -N 5), got $NUM_NODES"
   exit 1
 fi
 
@@ -127,12 +127,12 @@ else
 fi
 
 TS=$(date +%Y%m%d_%H%M%S)
-EXPERIMENT_NAME="train_ctxgraph_bc_8b_paperfaithful_8n_48h_${TS}"
+EXPERIMENT_NAME="train_ctxgraph_bc_8b_paperfaithful_5n_48h_${TS}"
 
 probe() { printf '+++ [%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 
 echo "=============================================================="
-echo "  TRAIN: ContextGraph paper-faithful + v5 on BrowseComp-Plus (Qwen3-8B dense, 8 nodes [1 search + 7 trainer], 50 steps, 48h training, 32K-resp)"
+echo "  TRAIN: ContextGraph paper-faithful + v5 on BrowseComp-Plus (Qwen3-8B dense, 5 nodes [1 search + 4 trainer], 50 steps, 48h training, 32K-resp)"
 echo "  Job: ${SLURM_JOB_ID:-<idev>}   Head: $NODE0 ($NODE0_IP)"
 echo "  Worker(s): ${NODELIST[@]:1}"
 echo "  Trainer model:  $MODEL_PATH"
@@ -317,8 +317,8 @@ probe "querying ray status"
 ray status || echo "WARN: ray status check failed"
 
 echo "=============================================================="
-echo "  Launching ContextGraph FoldGRPO paper-faithful + v5 (Qwen3-8B dense, 8 nodes [1 search + 7 trainer], 50 steps, BS=28, ppo_mini=112, 32K resp [48h], BrowseComp-Plus)"
-echo "  Paper-faithful knobs: batch=28 (paper 32), ppo_mini=112 (paper 128, 2 PPO updates/step), turn_max_new_tokens=2048 (paper), session_timeout=3600 (paper), max_traj=11 (paper)"
+echo "  Launching ContextGraph FoldGRPO paper-faithful + v5 (Qwen3-8B dense, 5 nodes [1 search + 4 trainer], 50 steps, BS=32, ppo_mini=128, 32K resp [48h], BrowseComp-Plus)"
+echo "  Paper-faithful knobs: batch=32 (EXACT paper), ppo_mini=128 (EXACT paper, 2 PPO updates/step), turn_max_new_tokens=2048 (paper), session_timeout=3600 (paper), max_traj=11 (paper)"
 echo "  CG-specific (kept): workflow=search_graph, process_reward=[flat,scope,graph], lambda_compact=0.2, lambda_cost=0.02, consolidation K=5"
 echo "  v5 add-ons: uniqueness_weight=0.10 (Improvement #1), auto_bind_branch_edges=True with min_overlap=0.05 (Improvement #3)"
 echo "  vLLM gpu_memory_utilization=0.6 + FSDP CPU offload"
@@ -360,11 +360,11 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   actor_rollout_ref.actor.kl_loss_coef=0.0005 \
   data.train_files=data/bc_train.parquet \
   data.val_files=data/bc_test.parquet \
-  data.train_batch_size=28 \
+  data.train_batch_size=32 \
   data.max_prompt_length=8192 \
   data.max_response_length=32768 \
   data.return_raw_chat=True \
-  actor_rollout_ref.actor.ppo_mini_batch_size=112 \
+  actor_rollout_ref.actor.ppo_mini_batch_size=128 \
   actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=1 \
   actor_rollout_ref.actor.ppo_max_token_len_per_gpu=40960 \
   actor_rollout_ref.actor.ppo_infer_max_token_len_per_gpu=40960 \
