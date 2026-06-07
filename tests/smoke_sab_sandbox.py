@@ -245,6 +245,54 @@ def test_loader_basic():
     return "test_loader_basic"
 
 
+def test_loader_deep_nested_tree():
+    """SAB has tasks with 4-5 level nested trees (e.g., BBBC002 image
+    directories, RGI60 glacier archives). Earlier loader only handled
+    2 levels, dropping 6/102 tasks. Regression guard."""
+    from envs.scienceagent_loader import load_sab_tasks
+
+    with tempfile.TemporaryDirectory() as tmp:
+        # Build a real 4-level nested input file
+        bench = os.path.join(tmp, "bench")
+        deep = os.path.join(bench, "datasets", "BBBC002", "test",
+                            "drosophila_kc167_1_images")
+        os.makedirs(deep, exist_ok=True)
+        leaf_file = os.path.join(deep, "CPvalid1_340_40x_Tiles_p1175DAPI.TIF")
+        with open(leaf_file, "w") as f:
+            f.write("(fake)")
+
+        # CSV row pointing at this 4-level tree. Real SAB embeds REAL newlines
+        # inside the quoted `dataset_folder_tree` field (CSV-legal), so we write
+        # actual \n characters here, not literal backslash-n.
+        tree = (
+            "|-- BBBC002/\n"
+            "|---- test/\n"
+            "|------ drosophila_kc167_1_images/\n"
+            "|-------- CPvalid1_340_40x_Tiles_p1175DAPI.TIF"
+        )
+        csv_path = os.path.join(tmp, "sab.csv")
+        with open(csv_path, "w", encoding="utf-8") as f:
+            f.write(_FAKE_CSV_HEADER)
+            f.write(
+                f"11,Bioinformatics,\"Image Analysis\",broad-institute/BBBC,"
+                f"\"Train an image classifier on BBBC002 cell images.\","
+                f"\"BBBC002 is fluorescence microscopy.\","
+                f"\"{tree}\","
+                f"\"\",examples/bbbc002,bbbc002.py,"
+                f"pred_results/bbbc002.csv,eval_bbbc002.py\n"
+            )
+
+        tasks = load_sab_tasks(csv_path, benchmark_dir=bench)
+        assert len(tasks) == 1, f"got {len(tasks)} tasks"
+        ifs = tasks[0]['input_files']
+        assert len(ifs) == 1, f"deep tree returned {len(ifs)} files: {ifs}"
+        assert ifs[0].endswith(
+            os.path.join("BBBC002", "test", "drosophila_kc167_1_images",
+                         "CPvalid1_340_40x_Tiles_p1175DAPI.TIF")
+        ), f"wrong path: {ifs[0]}"
+    return "test_loader_deep_nested_tree"
+
+
 async def test_loader_with_env():
     """End-to-end: loader -> env.init_env -> python_exec -> finish."""
     from envs.scienceagent_loader import load_sab_tasks
@@ -469,6 +517,7 @@ async def main():
         test_prompt_code_workflow_assembly,
         test_xml_tool_call_parsing,
         test_loader_basic,
+        test_loader_deep_nested_tree,
     ]
     async_tests = [
         test_env_end_to_end,

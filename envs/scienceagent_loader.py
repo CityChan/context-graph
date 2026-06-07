@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import csv
 import os
+import re
 from typing import Iterable, Optional
 
 
@@ -59,26 +60,37 @@ def _build_input_files(row: dict, benchmark_dir: Optional[str]) -> list[str]:
 
     tree = row.get('dataset_folder_tree') or ''
     files: list[str] = []
-    current_subdir: str | None = None
+    # stack[depth] = subdir name at that depth (1-indexed).
+    # '|--' = depth 1, '|----' = depth 2, '|------' = depth 3, etc.
+    # Some tasks (e.g., BBBC002 image dir, RGI60 glacier archives) nest 4-5
+    # levels deep, so we need to track the full path stack, not just one
+    # current_subdir.
+    stack: dict[int, str] = {}
+    line_re = re.compile(r'^\|(-+)\s*(.*)$')
     for raw_line in tree.splitlines():
         line = raw_line.strip()
         if not line or not line.startswith('|--'):
             continue
-        name = line.lstrip('|').lstrip('-').strip()
+        m = line_re.match(line)
+        if not m:
+            continue
+        depth = len(m.group(1)) // 2
+        name = m.group(2).strip()
         is_subdir = name.endswith('/')
         name = name.rstrip('/')
-        # Dash count discriminates depth: '|--' = 2 dashes (top-level),
-        # '|----' = 4 dashes (one level inside the previous subdir).
-        depth_dashes = line.count('-')
-        if is_subdir:
-            current_subdir = name
+        if not name:
             continue
-        if depth_dashes >= 4 and current_subdir:
-            rel = os.path.join(current_subdir, name)
-        else:
-            # Top-level leaf (no subdir prefix). Possible but uncommon
-            # in real ScienceAgentBench data.
-            rel = name
+        if is_subdir:
+            stack[depth] = name
+            # Drop any deeper subdir state that no longer applies.
+            for d in [k for k in stack if k > depth]:
+                del stack[d]
+            continue
+        # Leaf file: build the path from stack entries at depths < this leaf's,
+        # then append the leaf name.
+        parts = [stack[d] for d in sorted(stack) if d < depth]
+        parts.append(name)
+        rel = os.path.join(*parts) if parts else name
         abs_path = os.path.join(datasets_dir, rel)
         if os.path.exists(abs_path):
             files.append(abs_path)
