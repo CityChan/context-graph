@@ -271,8 +271,8 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   actor_rollout_ref.rollout.gpu_memory_utilization=0.6 \
   actor_rollout_ref.model.path="$MODEL_PATH" \
   actor_rollout_ref.rollout.prompt_length=16384 \
-  actor_rollout_ref.rollout.response_length=32768 \
-  actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu=49152 \
+  actor_rollout_ref.rollout.response_length=24576 \
+  actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu=40960 \
   actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
   actor_rollout_ref.rollout.n=1 \
   actor_rollout_ref.rollout.agent.num_workers=1 \
@@ -293,12 +293,12 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   data.val_files=data/sab_test_code_graph.parquet \
   data.train_batch_size=8 \
   data.max_prompt_length=16384 \
-  data.max_response_length=32768 \
+  data.max_response_length=24576 \
   data.return_raw_chat=True \
   actor_rollout_ref.actor.ppo_mini_batch_size=8 \
   actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=1 \
-  actor_rollout_ref.actor.ppo_max_token_len_per_gpu=49152 \
-  actor_rollout_ref.actor.ppo_infer_max_token_len_per_gpu=49152 \
+  actor_rollout_ref.actor.ppo_max_token_len_per_gpu=40960 \
+  actor_rollout_ref.actor.ppo_infer_max_token_len_per_gpu=40960 \
   actor_rollout_ref.model.enable_gradient_checkpointing=True \
   +actor_rollout_ref.rollout.plugin.workflow=code_graph \
   +actor_rollout_ref.rollout.plugin.max_turn=32 \
@@ -320,7 +320,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   +actor_rollout_ref.rollout.plugin.auto_bind_branch_edges=True \
   +actor_rollout_ref.rollout.plugin.auto_bind_min_overlap=0.05 \
   +actor_rollout_ref.rollout.plugin.val_max_turn=32 \
-  +actor_rollout_ref.rollout.plugin.val_response_length=32768 \
+  +actor_rollout_ref.rollout.plugin.val_response_length=24576 \
   trainer.val_before_train=True \
   trainer.val_only=True \
   trainer.n_gpus_per_node=1 \
