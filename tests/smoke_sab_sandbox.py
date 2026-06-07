@@ -175,6 +175,138 @@ def test_xml_tool_call_parsing():
     return "test_xml_tool_call_parsing"
 
 
+# ── Test 2b: CSV loader produces task dicts the env can consume ──
+
+_FAKE_CSV_HEADER = (
+    "instance_id,domain,subtask_categories,github_name,task_inst,"
+    "domain_knowledge,dataset_folder_tree,dataset_preview,"
+    "src_file_or_path,gold_program_name,output_fname,eval_script_name\n"
+)
+
+
+def _write_fake_sab_csv(path: str) -> None:
+    rows = [
+        # Minimal first task — uses synthetic input.csv we will create in workdir
+        (
+            "1,Computational Chemistry,\"Feature Engineering\","
+            "deepchem/deepchem,"
+            "\"Compute the mean of the 'value' column of input.csv and save "
+            "as pred_results/result.csv with column 'mean_value'.\","
+            "\"This is a smoke task. Use pandas.\","
+            "\"|-- input.csv\","
+            "\"name,value\\nalice,10\\nbob,20\\ncarol,30\","
+            "examples/smoke,smoke_program.py,"
+            "pred_results/result.csv,eval_smoke.py\n"
+        ),
+        # Second task with different output path
+        (
+            "2,Bioinformatics,\"Visualization\","
+            "scverse/scvi-tutorials,"
+            "\"Save a CSV with single row count=99 to pred_results/count.csv\","
+            "\"\","
+            "\"\","
+            "\"\","
+            "examples/count,count.py,"
+            "pred_results/count.csv,eval_count.py\n"
+        ),
+    ]
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(_FAKE_CSV_HEADER)
+        for row in rows:
+            f.write(row)
+
+
+def test_loader_basic():
+    from envs.scienceagent_loader import load_sab_tasks
+
+    with tempfile.TemporaryDirectory() as tmp:
+        csv_path = os.path.join(tmp, "sab.csv")
+        _write_fake_sab_csv(csv_path)
+
+        tasks = load_sab_tasks(csv_path, benchmark_dir=None, workflow='code_branch')
+        assert len(tasks) == 2, f"got {len(tasks)} tasks"
+
+        t1 = tasks[0]
+        assert t1['task_id'] == '1'
+        assert t1['expected_output'] == 'pred_results/result.csv'
+        assert t1['workflow'] == 'code_branch'
+        assert t1['input_files'] == [], "no benchmark_dir -> empty input_files"
+        # Composite instruction should include domain knowledge + preview
+        assert 'Compute the mean' in t1['instruction']
+        assert 'Domain Knowledge' in t1['instruction']
+        assert 'Dataset Folder Tree' in t1['instruction']
+        assert 'Dataset Preview' in t1['instruction']
+        assert 'alice' in t1['instruction']  # preview content
+
+        # Subset filter
+        only_2 = load_sab_tasks(csv_path, instance_ids=[2])
+        assert len(only_2) == 1 and only_2[0]['task_id'] == '2'
+
+    return "test_loader_basic"
+
+
+async def test_loader_with_env():
+    """End-to-end: loader -> env.init_env -> python_exec -> finish."""
+    from envs.scienceagent_loader import load_sab_tasks
+    from envs.scienceagent_env import ScienceAgentEnv
+
+    with tempfile.TemporaryDirectory() as tmp:
+        csv_path = os.path.join(tmp, "sab.csv")
+        _write_fake_sab_csv(csv_path)
+
+        # Fake "benchmark_dir" with the input file the first task expects
+        bench_dir = os.path.join(tmp, "benchmark")
+        os.makedirs(os.path.join(bench_dir, "datasets"), exist_ok=True)
+        with open(os.path.join(bench_dir, "datasets", "input.csv"), "w") as f:
+            f.write("name,value\nalice,10\nbob,20\ncarol,30\n")
+
+        tasks = load_sab_tasks(csv_path, benchmark_dir=bench_dir, workflow='code')
+        assert len(tasks[0]['input_files']) == 1, f"input files: {tasks[0]['input_files']}"
+
+        # Now wire to env
+        config = SimpleNamespace(plugin=SimpleNamespace(sandbox_timeout=10.0))
+        env = ScienceAgentEnv(config, tokenizer=None, ability='ScienceAgentBench')
+        # ScienceAgentEnv.init_env reads .item() then dispatches
+        task_dict = dict(tasks[0])
+        task_dict['workdir'] = os.path.join(tmp, "run_workdir")
+        item = _MockDataProto(task_dict, task_dict['instruction'])
+        await env.init_env(item)
+
+        # Verify input file was symlinked/copied into workdir
+        assert os.path.exists(os.path.join(env.workdir, "input.csv")), \
+            f"workdir contents: {os.listdir(env.workdir)}"
+
+        # Trivial agent: compute mean + save
+        resp = textwrap.dedent("""
+            <function=python_exec>
+            <parameter=code>
+            import pandas as pd, os
+            df = pd.read_csv('input.csv')
+            os.makedirs('pred_results', exist_ok=True)
+            pd.DataFrame({'mean_value': [df['value'].mean()]}).to_csv(
+                'pred_results/result.csv', index=False)
+            print('done')
+            </parameter>
+            </function>
+        """).strip()
+        out = await env.run_action(resp)
+        assert 'done' in out['observation']
+
+        fin = textwrap.dedent("""
+            <function=finish>
+            <parameter=message>saved</parameter>
+            </function>
+        """).strip()
+        out2 = await env.run_action(fin)
+        assert out2.get('action') == 'finish'
+
+        score_msg, reward, info = await env.get_reward(item, [], None)
+        assert reward == 1.0, f"reward: {reward}, msg: {score_msg}"
+
+        env.close()
+    return "test_loader_with_env"
+
+
 # ── Test 3: ScienceAgentEnv end-to-end on a synthetic task ──
 
 class _MockExtraInfo(dict):
@@ -336,10 +468,12 @@ async def main():
         test_sandbox_pred_results_dir,
         test_prompt_code_workflow_assembly,
         test_xml_tool_call_parsing,
+        test_loader_basic,
     ]
     async_tests = [
         test_env_end_to_end,
         test_env_missing_output,
+        test_loader_with_env,
     ]
     for t in sync_tests:
         try:
