@@ -78,12 +78,17 @@ def finish_tool() -> dict:
 # ── Workflow assembly ──
 
 def get_tools_for_workflow(workflow: str) -> list[dict]:
-    """Return the tool list a given workflow exposes to the LLM."""
+    """Return the tool list a given workflow exposes to the LLM.
+
+    Note: branch_tool() and graph_tool() each return a LIST of tools
+    (branch + return for the former; merge + add_edge + select + prune
+    for the latter), so we use list concatenation, not nesting.
+    """
     base = [python_exec_tool(), finish_tool()]
     if workflow == 'code':
         return base
     if workflow == 'code_branch':
-        return base + [branch_tool()]
+        return base + branch_tool()
     if workflow == 'code_graph':
-        return base + [branch_tool(), graph_tool()]
+        return base + branch_tool() + graph_tool()
     raise ValueError(f"Unknown code workflow: {workflow}")

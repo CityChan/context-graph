@@ -104,6 +104,45 @@ def test_sandbox_pred_results_dir():
     return "test_sandbox_pred_results_dir"
 
 
+# ── Test 1b: prompt builders + workflow tool assembly ──
+
+def test_prompt_code_workflow_assembly():
+    from agents.tool_spec_code import get_tools_for_workflow
+    from agents.prompts_code import create_chat_code
+
+    # code (ReAct): python_exec + finish only
+    tools = get_tools_for_workflow('code')
+    names = [t['function']['name'] for t in tools]
+    assert names == ['python_exec', 'finish'], f"code tools: {names}"
+
+    # code_branch: add branch
+    tools_b = get_tools_for_workflow('code_branch')
+    names_b = [t['function']['name'] for t in tools_b]
+    assert 'branch' in names_b, f"code_branch tools: {names_b}"
+    assert 'python_exec' in names_b
+    assert 'merge' not in names_b, "code_branch should NOT expose merge"
+
+    # code_graph: add branch + merge + add_edge + select + prune
+    tools_g = get_tools_for_workflow('code_graph')
+    names_g = [t['function']['name'] for t in tools_g]
+    assert all(n in names_g for n in ['python_exec', 'branch', 'merge', 'add_edge', 'select', 'prune']), \
+        f"code_graph tools: {names_g}"
+
+    # Prompt builder includes the python_exec tool description
+    chat = create_chat_code("Compute the mean of column 'value'.", 'code')
+    assert isinstance(chat, list) and len(chat) == 2
+    assert chat[0]['role'] == 'system' and chat[1]['role'] == 'user'
+    assert 'python_exec' in chat[0]['content']
+    assert 'persistent sandbox' in chat[0]['content']
+    assert 'Compute the mean' in chat[1]['content']
+
+    # code_graph prompt includes the graph addendum
+    chat_g = create_chat_code("foo", 'code_graph')
+    assert 'merge' in chat_g[0]['content'].lower()
+    assert 'pass' in chat_g[0]['content'].lower()  # saturation pass hint
+    return "test_prompt_code_workflow_assembly"
+
+
 # ── Test 2: extract_fn_call (existing utility) parses XML format we emit ──
 
 def test_xml_tool_call_parsing():
@@ -295,6 +334,7 @@ async def main():
         test_sandbox_basic,
         test_sandbox_timeout,
         test_sandbox_pred_results_dir,
+        test_prompt_code_workflow_assembly,
         test_xml_tool_call_parsing,
     ]
     async_tests = [
