@@ -364,7 +364,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   data.max_prompt_length=8192 \
   data.max_response_length=32768 \
   data.return_raw_chat=True \
-  actor_rollout_ref.actor.ppo_mini_batch_size=128 \
+  actor_rollout_ref.actor.ppo_mini_batch_size=16 \
   actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=1 \
   actor_rollout_ref.actor.ppo_max_token_len_per_gpu=40960 \
   actor_rollout_ref.actor.ppo_infer_max_token_len_per_gpu=40960 \
