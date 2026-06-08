@@ -21,25 +21,77 @@ import re
 from typing import Iterable, Optional
 
 
+def _truncate_text(s: str, max_chars: int) -> str:
+    """Soft cap a string to max_chars, ending on a word boundary if possible."""
+    if len(s) <= max_chars:
+        return s
+    head = s[:max_chars]
+    cut = head.rsplit(' ', 1)[0]
+    return cut + f"\n... [{len(s) - len(cut)} chars truncated]"
+
+
+def _truncate_tree(tree: str, max_leaves: int = 20) -> str:
+    """Keep all subdir lines + first `max_leaves` leaf-file lines.
+
+    Some tasks (BBBC002, RGI60 glaciers) list 50-200 image / archive files
+    in their folder tree. The agent does not need every filename — it
+    needs the shape (which subdirs exist, sample of files). We keep up to
+    max_leaves leaves total, then emit "... N more files truncated".
+    """
+    lines = tree.splitlines()
+    out: list[str] = []
+    leaves_kept = 0
+    leaves_total = sum(
+        1 for ln in lines
+        if ln.lstrip('|').lstrip('-').strip()
+        and not ln.lstrip('|').lstrip('-').strip().endswith('/')
+    )
+    for line in lines:
+        body = line.lstrip('|').lstrip('-').strip()
+        if not body:
+            out.append(line)
+            continue
+        is_subdir = body.endswith('/')
+        if is_subdir:
+            out.append(line)
+            continue
+        # leaf
+        if leaves_kept < max_leaves:
+            out.append(line)
+            leaves_kept += 1
+        elif leaves_kept == max_leaves:
+            out.append(f"... [{leaves_total - max_leaves} more files truncated]")
+            leaves_kept += 1  # sentinel so we don't repeat the message
+    return "\n".join(out)
+
+
 def _build_instruction(row: dict) -> str:
     """Compose the user-facing instruction from CSV columns.
 
     The order mirrors the upstream baselines so our results stay comparable.
+
+    Truncations applied to keep prompts under ~16K tokens for Qwen3-8B
+    (which has max_position_embeddings=40960 split with the response budget):
+      - domain_knowledge: 4000 chars (~1K tokens)
+      - dataset_folder_tree: 20 leaf files (image/archive directories can list
+        50-200+ filenames otherwise; agent doesn't need every name)
+      - dataset_preview: 3000 chars (~750 tokens; large CSV/h5 previews
+        otherwise dominate the prompt)
     """
     parts = []
     parts.append(row.get('task_inst', '').strip())
 
     dk = (row.get('domain_knowledge') or '').strip()
     if dk:
-        parts.append("# Domain Knowledge\n" + dk)
+        parts.append("# Domain Knowledge\n" + _truncate_text(dk, 4000))
 
     tree = (row.get('dataset_folder_tree') or '').strip()
     if tree:
-        parts.append("# Dataset Folder Tree\n" + tree)
+        parts.append("# Dataset Folder Tree\n" + _truncate_tree(tree, max_leaves=20))
 
     preview = (row.get('dataset_preview') or '').strip()
     if preview:
-        parts.append("# Dataset Preview\n" + preview)
+        parts.append("# Dataset Preview\n" + _truncate_text(preview, 3000))
 
     return "\n\n".join(parts).strip()
 
