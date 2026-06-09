@@ -20,7 +20,24 @@ from .tool_agent_loop import ToolAgentLoop
 from scripts.train_fold import FoldAgentLoop
 from scripts.train_graph import ContextGraphAgentLoop
 from scripts.train_baseline import ReactAgentLoop
+# ScienceAgentBench code-domain agent loops (react_agent_code / fold_agent_code /
+# context_graph_code_isolated_agent) — must be imported here so Ray agent-loop
+# workers register them too, not just the driver process running train_sab.
+from scripts.train_sab import (
+    ReactAgentCodeLoop,
+    FoldAgentCodeLoop,
+    ContextGraphCodeIsolatedLoop,
+)
 
-_ = [SingleTurnAgentLoop, ToolAgentLoop, FoldAgentLoop, ContextGraphAgentLoop, ReactAgentLoop]
+_ = [
+    SingleTurnAgentLoop,
+    ToolAgentLoop,
+    FoldAgentLoop,
+    ContextGraphAgentLoop,
+    ReactAgentLoop,
+    ReactAgentCodeLoop,
+    FoldAgentCodeLoop,
+    ContextGraphCodeIsolatedLoop,
+]
 
 __all__ = ["AgentLoopBase", "AgentLoopManager", "AsyncLLMServerManager", "AgentLoopWorker"]
