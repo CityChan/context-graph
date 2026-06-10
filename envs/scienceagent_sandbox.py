@@ -277,6 +277,16 @@ def prewarm_heavy_imports(verbose: bool = True) -> None:
     import importlib
     import time
 
+    # CRITICAL: the AgentLoopWorker shares its single GH200 with vLLM. deepchem
+    # drags in tensorflow, which by default pre-allocates ALL GPU memory and
+    # would OOM the vLLM engine. Force on-demand growth and silence the import
+    # log spam BEFORE any of these libs is imported. setdefault so an explicit
+    # sbatch-level override still wins.
+    os.environ.setdefault("TF_FORCE_GPU_ALLOW_GROWTH", "true")
+    os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
+    os.environ.setdefault("GRPC_VERBOSITY", "ERROR")
+    os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")  # jax, if pulled
+
     # Headless figure backend before pyplot is imported anywhere.
     try:
         import matplotlib
