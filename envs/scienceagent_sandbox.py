@@ -249,9 +249,17 @@ def _truncate(s: str, n: int) -> str:
 
 _PREWARM_DONE = False
 
+# Per-package import timeout (seconds). A package that doesn't finish importing
+# in this window is ABANDONED (its daemon thread keeps running but the worker
+# proceeds) — so one slow/hanging package (e.g. DeepPurpose stalling on a
+# network call on an offline compute node) can never freeze worker startup.
+# Override via env SAB_PREWARM_TIMEOUT.
+_PREWARM_TIMEOUT = float(os.environ.get("SAB_PREWARM_TIMEOUT", "90"))
+
 # Ordered cheap→heavy. matplotlib is forced to the headless Agg backend first
-# (tasks save figures, never display). Each import is best-effort: a missing or
-# broken package is skipped, never fatal to worker startup.
+# (tasks save figures, never display). The long-tail heavies most likely to
+# hang an offline node on import (DeepPurpose; GDAL-backed geopandas/rasterio)
+# are LAST so a timeout on them still leaves the common stack warmed.
 _PREWARM_PACKAGES = [
     "numpy", "pandas", "scipy", "sklearn",
     "statsmodels", "xgboost",
@@ -259,22 +267,54 @@ _PREWARM_PACKAGES = [
     "torch",
     "rdkit", "rdkit.Chem",
     "scanpy", "anndata",
-    "deepchem", "DeepPurpose",
+    "deepchem",
     "geopandas", "rasterio",
+    "DeepPurpose",
 ]
+
+
+def _import_with_timeout(name: str, timeout: float):
+    """Import `name` in a daemon thread, waiting at most `timeout` s.
+
+    Returns 'ok', 'timeout', or ('skip', exception). On timeout the thread is
+    abandoned (daemon, so it won't block process exit) and the worker moves on
+    — a hanging native/network import can stall this one package but never the
+    whole worker. The import still populates the process-global sys.modules if
+    it eventually completes.
+    """
+    import importlib
+    import threading
+
+    box: dict = {}
+
+    def _do():
+        try:
+            importlib.import_module(name)
+            box["ok"] = True
+        except BaseException as e:  # noqa: BLE001 - record, never propagate
+            box["err"] = e
+
+    th = threading.Thread(target=_do, name=f"prewarm-{name}", daemon=True)
+    th.start()
+    th.join(timeout)
+    if th.is_alive():
+        return "timeout"
+    if box.get("ok"):
+        return "ok"
+    return ("skip", box.get("err"))
 
 
 def prewarm_heavy_imports(verbose: bool = True) -> None:
     """Import heavy scientific packages once per process so per-trajectory
     `import X` in the sandbox is an instant sys.modules cache hit and never
-    blocks the event loop. Idempotent; safe to call from every agent-loop
-    init_class."""
+    blocks the event loop. Each import is time-boxed (see _PREWARM_TIMEOUT) so
+    a hanging package can't freeze worker startup. Idempotent; safe to call
+    from every agent-loop init_class."""
     global _PREWARM_DONE
     if _PREWARM_DONE:
         return
     _PREWARM_DONE = True
 
-    import importlib
     import time
 
     # CRITICAL: the AgentLoopWorker shares its single GH200 with vLLM. deepchem
@@ -295,18 +335,30 @@ def prewarm_heavy_imports(verbose: bool = True) -> None:
         pass
 
     t0 = time.time()
-    warmed, skipped = 0, 0
+    warmed = skipped = timed_out = 0
     for name in _PREWARM_PACKAGES:
+        # Announce BEFORE importing so a hang is pinpointed to this exact
+        # package in the log (the previous version only logged on success).
+        if verbose:
+            print(f"[SAB prewarm] importing {name} ...", flush=True)
         t = time.time()
-        try:
-            importlib.import_module(name)
+        res = _import_with_timeout(name, _PREWARM_TIMEOUT)
+        dt = time.time() - t
+        if res == "ok":
             warmed += 1
-            if verbose and time.time() - t > 1.0:
-                print(f"[SAB prewarm] {name} in {time.time() - t:.1f}s")
-        except Exception as e:
+            if verbose and dt > 1.0:
+                print(f"[SAB prewarm]   {name} ok ({dt:.1f}s)", flush=True)
+        elif res == "timeout":
+            timed_out += 1
+            if verbose:
+                print(f"[SAB prewarm]   {name} TIMEOUT after {_PREWARM_TIMEOUT:.0f}s "
+                      f"— abandoned, continuing", flush=True)
+        else:  # ("skip", err)
             skipped += 1
             if verbose:
-                print(f"[SAB prewarm] skip {name}: {type(e).__name__}: {e}")
+                err = res[1]
+                print(f"[SAB prewarm]   skip {name}: {type(err).__name__}: {err}",
+                      flush=True)
     if verbose:
         print(f"[SAB prewarm] done: {warmed} warmed, {skipped} skipped, "
-              f"{time.time() - t0:.1f}s total")
+              f"{timed_out} timed out, {time.time() - t0:.1f}s total", flush=True)
