@@ -30,6 +30,7 @@ from agents.react_agent_code import process_item as process_item_react
 from agents.fold_agent_code import process_item as process_item_fold
 from agents.graph_agent_code_isolated import process_item as process_item_graph
 from agents.utils import CallLLM, TaskContext
+from envs.scienceagent_sandbox import prewarm_heavy_imports
 
 logger = logging.getLogger(__file__)
 logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "WARN"))
@@ -69,6 +70,7 @@ class ReactAgentCodeLoop(AgentLoopBase):
         cls.tokenizer = tokenizer
         cls.processor = processor
         cls.config = config
+        prewarm_heavy_imports()
 
     async def run(self, sampling_params: dict[str, Any], **kwargs):
         item, context = _build_context(self, sampling_params, kwargs)
@@ -88,6 +90,7 @@ class FoldAgentCodeLoop(AgentLoopBase):
         cls.tokenizer = tokenizer
         cls.processor = processor
         cls.config = config
+        prewarm_heavy_imports()
 
     async def run(self, sampling_params: dict[str, Any], **kwargs):
         item, context = _build_context(self, sampling_params, kwargs)
@@ -108,6 +111,7 @@ class ContextGraphCodeIsolatedLoop(AgentLoopBase):
         cls.tokenizer = tokenizer
         cls.processor = processor
         cls.config = config
+        prewarm_heavy_imports()
 
     async def run(self, sampling_params: dict[str, Any], **kwargs):
         item, context = _build_context(self, sampling_params, kwargs)

@@ -224,3 +224,79 @@ def _truncate(s: str, n: int) -> str:
     head = s[: n // 2]
     tail = s[-n // 2 :]
     return f"{head}\n... [{len(s) - n} chars truncated] ...\n{tail}"
+
+
+# ── Import pre-warming (event-loop-stall fix) ──
+#
+# The sandbox runs `exec()` SYNCHRONOUSLY on the agent loop's event-loop thread.
+# When an agent does a heavy native import (e.g. `import deepchem`, which drags
+# in tensorflow + probes jax/torch_geometric), that import blocks the event
+# loop for tens of seconds — starving every OTHER trajectory on the same
+# AgentLoopWorker, and neither the outer asyncio.wait_for(120s) (loop is
+# blocked, can't fire) nor the sandbox SIGALRM(60s) (deferred during C-level
+# imports) can interrupt it. With 102 tasks each re-importing the same heavy
+# libs, the serialized import time reads as a multi-minute hang.
+#
+# Fix: import the heavy packages ONCE per worker process at agent-loop
+# init_class time. `sys.modules` is process-global, so every later
+# `import X` inside a sandbox is then an instant dict hit that never blocks the
+# loop. The one-time cost is paid visibly at worker startup, not mid-eval.
+#
+# This does NOT fix slow non-import compute blocking the loop — the durable fix
+# for that is a subprocess-based sandbox (design doc §5), where each trajectory
+# is a killable child process. Pre-warming just removes the dominant stall
+# (repeated heavy imports) that the first 4-node smoke hit.
+
+_PREWARM_DONE = False
+
+# Ordered cheap→heavy. matplotlib is forced to the headless Agg backend first
+# (tasks save figures, never display). Each import is best-effort: a missing or
+# broken package is skipped, never fatal to worker startup.
+_PREWARM_PACKAGES = [
+    "numpy", "pandas", "scipy", "sklearn",
+    "statsmodels", "xgboost",
+    "matplotlib", "matplotlib.pyplot", "seaborn",
+    "torch",
+    "rdkit", "rdkit.Chem",
+    "scanpy", "anndata",
+    "deepchem", "DeepPurpose",
+    "geopandas", "rasterio",
+]
+
+
+def prewarm_heavy_imports(verbose: bool = True) -> None:
+    """Import heavy scientific packages once per process so per-trajectory
+    `import X` in the sandbox is an instant sys.modules cache hit and never
+    blocks the event loop. Idempotent; safe to call from every agent-loop
+    init_class."""
+    global _PREWARM_DONE
+    if _PREWARM_DONE:
+        return
+    _PREWARM_DONE = True
+
+    import importlib
+    import time
+
+    # Headless figure backend before pyplot is imported anywhere.
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+    except Exception:
+        pass
+
+    t0 = time.time()
+    warmed, skipped = 0, 0
+    for name in _PREWARM_PACKAGES:
+        t = time.time()
+        try:
+            importlib.import_module(name)
+            warmed += 1
+            if verbose and time.time() - t > 1.0:
+                print(f"[SAB prewarm] {name} in {time.time() - t:.1f}s")
+        except Exception as e:
+            skipped += 1
+            if verbose:
+                print(f"[SAB prewarm] skip {name}: {type(e).__name__}: {e}")
+    if verbose:
+        print(f"[SAB prewarm] done: {warmed} warmed, {skipped} skipped, "
+              f"{time.time() - t0:.1f}s total")

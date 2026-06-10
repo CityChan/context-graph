@@ -136,6 +136,24 @@ def test_sandbox_blocks_shell_and_pip():
     return "test_sandbox_blocks_shell_and_pip"
 
 
+def test_prewarm_idempotent():
+    """prewarm_heavy_imports must run without raising even when packages are
+    absent (they're skipped), and be a no-op on the second call. On this dev
+    box most heavy packages are missing — that's fine, we only assert it does
+    not throw and flips the done-flag."""
+    import envs.scienceagent_sandbox as sb_mod
+
+    # Reset the guard so the test exercises the real import loop once.
+    sb_mod._PREWARM_DONE = False
+    sb_mod.prewarm_heavy_imports(verbose=False)
+    assert sb_mod._PREWARM_DONE is True, "prewarm should set the done flag"
+
+    # Second call is a no-op (must not raise, must not redo work).
+    sb_mod.prewarm_heavy_imports(verbose=False)
+    assert sb_mod._PREWARM_DONE is True
+    return "test_prewarm_idempotent"
+
+
 # ── Test 1b: prompt builders + workflow tool assembly ──
 
 def test_prompt_code_workflow_assembly():
@@ -547,6 +565,7 @@ async def main():
         test_sandbox_timeout,
         test_sandbox_pred_results_dir,
         test_sandbox_blocks_shell_and_pip,
+        test_prewarm_idempotent,
         test_prompt_code_workflow_assembly,
         test_xml_tool_call_parsing,
         test_loader_basic,
