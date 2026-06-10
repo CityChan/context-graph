@@ -78,6 +78,11 @@ class ScienceAgentEnv:
         self.task_id = str(extra.get('task_id', 'unknown'))
         self.instruction = extra.get('instruction') or extra.get('query', '')
         self.input_files = list(extra.get('input_files', []))
+        # Relative paths (e.g. "dkpes/dkpes_train.csv") the task references; the
+        # file MUST be placed at workdir/<rel>, not flattened to its basename,
+        # or the agent's open("dkpes/dkpes_train.csv") fails. Parallel to
+        # input_files; falls back to basename if absent (back-compat).
+        self.input_rel_paths = list(extra.get('input_rel_paths', []) or [])
         self.expected_output = extra.get('expected_output', None)
         self.gold_eval_script = extra.get('gold_eval_script', None)
 
@@ -93,18 +98,30 @@ class ScienceAgentEnv:
         )
         os.makedirs(self.workdir, exist_ok=True)
 
-        # Copy (or symlink, for large files) input files into workdir.
-        for src in self.input_files:
+        # Copy (or symlink, for large files) input files into workdir, PRESERVING
+        # the relative directory structure the task instruction references.
+        missing = 0
+        for i, src in enumerate(self.input_files):
+            rel = (self.input_rel_paths[i]
+                   if i < len(self.input_rel_paths) and self.input_rel_paths[i]
+                   else os.path.basename(src))
             if not os.path.exists(src):
+                missing += 1
+                print(f"[SAB env] WARNING task {self.task_id}: input file missing "
+                      f"on disk, agent will not see it: {src}")
                 continue
-            dst = os.path.join(self.workdir, os.path.basename(src))
+            dst = os.path.join(self.workdir, rel)
             if os.path.exists(dst):
                 continue
+            os.makedirs(os.path.dirname(dst) or self.workdir, exist_ok=True)
             try:
                 # Symlink for speed when possible; fall back to copy on Windows etc.
                 os.symlink(src, dst)
             except (OSError, AttributeError):
                 shutil.copy2(src, dst)
+        if missing:
+            print(f"[SAB env] task {self.task_id}: {missing}/{len(self.input_files)} "
+                  f"declared input files were absent on disk")
 
         self.sandbox = CodeSandbox(self.workdir, per_call_timeout=self.per_call_timeout)
 

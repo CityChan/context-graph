@@ -96,12 +96,17 @@ def _build_instruction(row: dict) -> str:
     return "\n\n".join(parts).strip()
 
 
-def _build_input_files(row: dict, benchmark_dir: Optional[str]) -> list[str]:
-    """Resolve absolute paths to input files referenced by this task.
+def _build_input_files(row: dict, benchmark_dir: Optional[str]) -> list[tuple[str, str]]:
+    """Resolve input files referenced by this task to (abs_path, rel_path) pairs.
 
     Strategy: parse the `dataset_folder_tree` string for `|-- ... |---- foo`
     leaf lines and join them against `benchmark_dir/datasets/`. If
     `benchmark_dir` is None (smoke / pre-download phase), return [].
+
+    The `rel_path` (e.g. "dkpes/dkpes_train.csv") is the path the task
+    instruction's folder tree and gold program reference, so the env MUST
+    place the file at `workdir/rel_path` — NOT flatten it to the basename, or
+    the agent's `open("dkpes/dkpes_train.csv")` fails.
     """
     if not benchmark_dir:
         return []
@@ -111,7 +116,7 @@ def _build_input_files(row: dict, benchmark_dir: Optional[str]) -> list[str]:
         return []
 
     tree = row.get('dataset_folder_tree') or ''
-    files: list[str] = []
+    files: list[tuple[str, str]] = []
     # stack[depth] = subdir name at that depth (1-indexed).
     # '|--' = depth 1, '|----' = depth 2, '|------' = depth 3, etc.
     # Some tasks (e.g., BBBC002 image dir, RGI60 glacier archives) nest 4-5
@@ -145,7 +150,7 @@ def _build_input_files(row: dict, benchmark_dir: Optional[str]) -> list[str]:
         rel = os.path.join(*parts) if parts else name
         abs_path = os.path.join(datasets_dir, rel)
         if os.path.exists(abs_path):
-            files.append(abs_path)
+            files.append((abs_path, rel))
     return files
 
 
@@ -194,13 +199,16 @@ def load_sab_tasks(
                 continue
 
             instruction = _build_instruction(row)
-            input_files = _build_input_files(row, benchmark_dir)
+            pairs = _build_input_files(row, benchmark_dir)
+            input_files = [abs_path for abs_path, _ in pairs]
+            input_rel_paths = [rel for _, rel in pairs]
             expected = (row.get('output_fname') or '').strip() or None
 
             out.append({
                 'task_id': str(iid),
                 'instruction': instruction,
                 'input_files': input_files,
+                'input_rel_paths': input_rel_paths,
                 'expected_output': expected,
                 'workflow': workflow,
                 'domain': (row.get('domain') or '').strip(),

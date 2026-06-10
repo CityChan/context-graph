@@ -52,6 +52,7 @@ def _to_row(task: dict) -> dict:
             "task_id": task['task_id'],
             "instruction": task['instruction'],
             "input_files": task['input_files'],
+            "input_rel_paths": task.get('input_rel_paths', []),
             "expected_output": task['expected_output'],
             "workflow": task['workflow'],
             # Helpful metadata for analysis (logged via env.stats / wandb)

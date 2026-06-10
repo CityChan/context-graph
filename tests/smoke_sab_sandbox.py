@@ -336,10 +336,12 @@ def test_loader_deep_nested_tree():
         assert len(tasks) == 1, f"got {len(tasks)} tasks"
         ifs = tasks[0]['input_files']
         assert len(ifs) == 1, f"deep tree returned {len(ifs)} files: {ifs}"
-        assert ifs[0].endswith(
-            os.path.join("BBBC002", "test", "drosophila_kc167_1_images",
-                         "CPvalid1_340_40x_Tiles_p1175DAPI.TIF")
-        ), f"wrong path: {ifs[0]}"
+        nested = os.path.join("BBBC002", "test", "drosophila_kc167_1_images",
+                              "CPvalid1_340_40x_Tiles_p1175DAPI.TIF")
+        assert ifs[0].endswith(nested), f"wrong abs path: {ifs[0]}"
+        # The rel path (what the env must reproduce under workdir) is carried too.
+        rels = tasks[0]['input_rel_paths']
+        assert rels == [nested], f"wrong rel paths: {rels}"
     return "test_loader_deep_nested_tree"
 
 
@@ -513,6 +515,60 @@ async def test_env_end_to_end():
     return "test_env_end_to_end"
 
 
+async def test_env_preserves_input_subdir():
+    """Regression: the env must place input files at workdir/<rel> preserving
+    subdirs (e.g. dkpes/dkpes_train.csv), NOT flatten to the basename — the
+    first 4-node smoke showed agents doing open('dkpes/dkpes_train.csv') and
+    getting FileNotFound because the env had symlinked it to workdir/
+    dkpes_train.csv."""
+    from envs.scienceagent_env import ScienceAgentEnv
+
+    with tempfile.TemporaryDirectory() as base:
+        # A source data file living under a subdir, like the real benchmark.
+        src = os.path.join(base, "datasets", "dkpes", "dkpes_train.csv")
+        os.makedirs(os.path.dirname(src), exist_ok=True)
+        with open(src, "w") as f:
+            f.write("smiles,label\nCCO,1\n")
+
+        task_dict = {
+            'task_id': 'subdir_001',
+            'instruction': "Read dkpes/dkpes_train.csv and save pred_results/out.csv.",
+            'input_files': [src],
+            'input_rel_paths': [os.path.join("dkpes", "dkpes_train.csv")],
+            'expected_output': 'pred_results/out.csv',
+            'workflow': 'code',
+            'workdir': os.path.join(base, "run"),
+        }
+        config = SimpleNamespace(plugin=SimpleNamespace(sandbox_timeout=10.0))
+        env = ScienceAgentEnv(config, tokenizer=None, ability='ScienceAgentBench')
+        item = _MockDataProto(task_dict, task_dict['instruction'])
+        await env.init_env(item)
+
+        # The file is reachable at the EXACT relative path the agent will use.
+        assert os.path.exists(os.path.join(env.workdir, "dkpes", "dkpes_train.csv")), \
+            f"subdir not preserved; workdir tree: {os.listdir(env.workdir)}"
+
+        # And the agent can actually open it with the relative path.
+        resp = textwrap.dedent("""
+            <function=python_exec>
+            <parameter=code>
+            import pandas as pd, os
+            df = pd.read_csv('dkpes/dkpes_train.csv')
+            os.makedirs('pred_results', exist_ok=True)
+            df.to_csv('pred_results/out.csv', index=False)
+            print('rows', len(df))
+            </parameter>
+            </function>
+        """).strip()
+        out = await env.run_action(resp)
+        assert 'rows 1' in out['observation'], f"obs: {out['observation']!r}"
+
+        score_msg, reward, _ = await env.get_reward(item, [], None)
+        assert reward == 1.0, f"reward {reward}: {score_msg}"
+        env.close()
+    return "test_env_preserves_input_subdir"
+
+
 async def test_env_missing_output():
     """Reward = 0 if agent finishes but expected file is not produced."""
     from envs.scienceagent_env import ScienceAgentEnv
@@ -573,6 +629,7 @@ async def main():
     ]
     async_tests = [
         test_env_end_to_end,
+        test_env_preserves_input_subdir,
         test_env_missing_output,
         test_loader_with_env,
     ]
