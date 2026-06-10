@@ -104,6 +104,38 @@ def test_sandbox_pred_results_dir():
     return "test_sandbox_pred_results_dir"
 
 
+def test_sandbox_blocks_shell_and_pip():
+    """Shell escapes / pip-install / subprocess must be rejected before exec
+    with a corrective message (the first smoke saw an agent run
+    `pip install DeepPurpose` in-sandbox). Legit code must still run."""
+    from envs.scienceagent_sandbox import CodeSandbox
+
+    with tempfile.TemporaryDirectory() as tmp:
+        sb = CodeSandbox(tmp, per_call_timeout=5.0)
+
+        blocked_snippets = [
+            "import subprocess; subprocess.run(['pip', 'install', 'DeepPurpose'])",
+            "import os; os.system('pip install scanpy')",
+            "import sys, subprocess; subprocess.check_call([sys.executable, '-m', 'pip', 'install', 'rdkit'])",
+            "!pip install deepchem",
+            "%pip install torch",
+            "import os; os.popen('ls')",
+        ]
+        for snip in blocked_snippets:
+            r = sb.execute(snip)
+            assert r['success'] is False, f"should be blocked: {snip!r} -> {r!r}"
+            assert 'Blocked' in r['stderr'], f"no block msg for {snip!r}: {r['stderr']!r}"
+            assert r['elapsed'] == 0.0, f"blocked call should not execute: {r!r}"
+
+        # Legit scientific code still runs, and state is untouched by the blocks.
+        r_ok = sb.execute("import math; print(math.sqrt(16))")
+        assert r_ok['success'] is True, f"legit code blocked: {r_ok!r}"
+        assert '4.0' in r_ok['stdout'], f"stdout: {r_ok['stdout']!r}"
+
+        sb.close()
+    return "test_sandbox_blocks_shell_and_pip"
+
+
 # ── Test 1b: prompt builders + workflow tool assembly ──
 
 def test_prompt_code_workflow_assembly():
@@ -514,6 +546,7 @@ async def main():
         test_sandbox_basic,
         test_sandbox_timeout,
         test_sandbox_pred_results_dir,
+        test_sandbox_blocks_shell_and_pip,
         test_prompt_code_workflow_assembly,
         test_xml_tool_call_parsing,
         test_loader_basic,

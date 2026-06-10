@@ -38,7 +38,7 @@ print(df.shape, df.columns.tolist())
 - The sandbox preserves state across calls. You do NOT need to re-import or re-load data.
 - Write output files using normal Python (`df.to_csv(...)`, `plt.savefig(...)`). The harness checks `pred_results/` after you `finish`.
 - If code raises an exception, the traceback comes back in stderr — read it and fix.
-- Do NOT use `os.system`, `subprocess`, or shell escapes; use Python libraries directly.
+- Do NOT use `os.system`, `subprocess`, shell escapes, or `pip`/`conda` install; they are HARD-BLOCKED by the sandbox and waste a turn. Every scientific package you need (numpy, pandas, scikit-learn, scipy, torch, scanpy, anndata, rdkit, deepchem, DeepPurpose, matplotlib, seaborn, xgboost, statsmodels, geopandas, rasterio, ...) is ALREADY installed — just `import` it.
 - Do NOT print the entire dataset — print head/shape/dtypes only.
 - Long-running training is OK but each `python_exec` call has a 60-second timeout. Break long training into smaller calls (epochs, etc.) if needed."""
 

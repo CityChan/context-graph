@@ -1,0 +1,41 @@
+# Packages required by ScienceAgentBench tasks but NOT in the base `cxtgraph`
+# conda env. Because the sandbox now HARD-BLOCKS pip/conda/subprocess
+# (envs/scienceagent_sandbox.py), any package an agent would otherwise
+# pip-install at runtime must be pre-installed here instead — otherwise that
+# task is simply impossible.
+#
+# How this list is built:
+#   1. The first 4-node smoke (2026-06-09) caught an agent running
+#      `pip install DeepPurpose` in-sandbox -> DeepPurpose added below.
+#   2. To find the rest, statically scan all 102 gold programs on Vista for
+#      their top-level imports and diff against what's already installed:
+#
+#        cd /work/09281/chc_1996/vista/context-graph
+#        python - <<'PY'
+#        import ast, glob, importlib.util, os
+#        gold = glob.glob('data/sab_benchmark/gold_programs/**/*.py', recursive=True)
+#        mods = set()
+#        for p in gold:
+#            try:
+#                tree = ast.parse(open(p, encoding='utf-8', errors='ignore').read())
+#            except SyntaxError:
+#                continue
+#            for n in ast.walk(tree):
+#                if isinstance(n, ast.Import):
+#                    mods |= {a.name.split('.')[0] for a in n.names}
+#                elif isinstance(n, ast.ImportFrom) and n.level == 0 and n.module:
+#                    mods.add(n.module.split('.')[0])
+#        missing = sorted(m for m in mods if importlib.util.find_spec(m) is None)
+#        print('MISSING:', missing)
+#        PY
+#
+#   3. Add each missing top-level package's PyPI name below (import name and
+#      PyPI name differ sometimes, e.g. `import cv2` -> opencv-python), then:
+#
+#        conda activate cxtgraph
+#        pip install -r requirements_sab_missing.txt
+#
+#   4. Re-run the 4-node smoke; the "[Sandbox] Blocked: pip install" lines
+#      should disappear and those tasks should produce output files.
+
+DeepPurpose

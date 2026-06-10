@@ -25,12 +25,61 @@ from __future__ import annotations
 
 import io
 import os
+import re
 import sys
 import signal
 import time
 import traceback
 import threading
 from typing import Any
+
+
+# ── Hard guard: shell / network / package-install are disabled ──
+#
+# The system prompt already tells the agent not to shell out or pip-install,
+# but weak (8B) models ignore that — the first smoke saw a task run
+# `pip install DeepPurpose` inside the sandbox (17s wasted, non-deterministic,
+# pollutes the run). We enforce the rule here: code matching any pattern below
+# is rejected BEFORE exec() with a corrective stderr the agent can route
+# around. Every scientific package the 102 tasks need must be pre-installed in
+# the conda env (see requirements_sab_missing.txt for the ones to add).
+#
+# Static string scan (not AST) is deliberate: it runs before exec with zero
+# runtime risk, is deterministic/testable, and a rare false positive just
+# costs one rejected call with a clear message — acceptable for a benchmark.
+_FORBIDDEN_PATTERNS = [
+    (re.compile(r"\bpip\s+install\b"), "pip install"),
+    (re.compile(r"\bpip3\s+install\b"), "pip3 install"),
+    (re.compile(r"-m\s+pip\b"), "python -m pip"),
+    (re.compile(r"!\s*pip\b"), "!pip magic"),
+    (re.compile(r"%\s*pip\b"), "%pip magic"),
+    (re.compile(r"\bconda\s+install\b"), "conda install"),
+    (re.compile(r"\bsubprocess\b"), "subprocess"),
+    (re.compile(r"\bos\.system\s*\("), "os.system(...)"),
+    (re.compile(r"\bos\.popen\s*\("), "os.popen(...)"),
+    (re.compile(r"\bos\.spawn\w*\s*\("), "os.spawn*(...)"),
+    (re.compile(r"\bpty\.spawn\s*\("), "pty.spawn(...)"),
+    (re.compile(r"\bsys\.executable\b"), "sys.executable"),
+    (re.compile(r"\bget_ipython\s*\("), "get_ipython()"),
+]
+
+_BLOCK_MSG = (
+    "[Sandbox] Blocked: detected `{what}`. Shell access, subprocess spawning, "
+    "network, and package installation are DISABLED in this sandbox. Every "
+    "scientific package the tasks need (numpy, pandas, scikit-learn, scipy, "
+    "torch, scanpy, anndata, rdkit, deepchem, DeepPurpose, matplotlib, seaborn, "
+    "xgboost, statsmodels, geopandas, rasterio, ...) is ALREADY installed — "
+    "just `import` what you need directly. Do NOT install anything or call the "
+    "shell."
+)
+
+
+def _scan_forbidden(code: str) -> str | None:
+    """Return the human label of the first forbidden pattern in `code`, or None."""
+    for pat, what in _FORBIDDEN_PATTERNS:
+        if pat.search(code):
+            return what
+    return None
 
 
 class CodeSandbox:
@@ -76,6 +125,18 @@ class CodeSandbox:
         timeout is silently disabled (best-effort).
         """
         self.call_count += 1
+
+        # Hard guard: reject shell / pip / subprocess before running anything.
+        blocked = _scan_forbidden(code)
+        if blocked is not None:
+            return {
+                "stdout": "",
+                "stderr": _BLOCK_MSG.format(what=blocked),
+                "success": False,
+                "elapsed": 0.0,
+                "call_count": self.call_count,
+            }
+
         buf_out = io.StringIO()
         buf_err = io.StringIO()
 
