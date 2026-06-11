@@ -54,7 +54,7 @@ async def process_item(
 
     workflow = _get(item.non_tensor_batch['extra_info']).get('workflow', None) or getattr(
         config.plugin, "workflow", "code")
-    user_prompt = create_chat_code(env.instance_info['problem_statement'], workflow, item)
+    user_prompt = create_chat_code(env.instance_info['problem_statement'], workflow, item, env=env)
     max_turn = getattr(config.plugin, 'max_turn', 32) if config.plugin else 32
 
     llm_client = context.llm_client

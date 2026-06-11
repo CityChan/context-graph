@@ -259,7 +259,7 @@ async def process_item(
         print(f"[Error] during environment init: {str(e)}")
 
     workflow = _get(item.non_tensor_batch['extra_info']).get('workflow', None) or getattr(config.plugin, "workflow", "code_graph")
-    user_prompt = create_chat_code(env.instance_info['problem_statement'], workflow, item)
+    user_prompt = create_chat_code(env.instance_info['problem_statement'], workflow, item, env=env)
 
     branch_prompt = BRANCH_MESSAGE
     summary_prompt = SUMMARY_PROMPT_CODE

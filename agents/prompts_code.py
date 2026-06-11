@@ -69,7 +69,59 @@ Use these to keep the active working set small and well-connected. Variables (da
 """
 
 
-def _build_user_prompt_code(instruction: str, workflow: str) -> str:
+_MANIFEST_CAP = 40
+
+
+def _build_env_block(env) -> str:
+    """Render the agent's actual working environment (cwd, real input file
+    paths, exact output target) so it does NOT have to guess paths.
+
+    The 8B smoke wasted dozens of turns probing wrong relative paths
+    (`atlantic_profiles.nc` -> `ocean_profiles/atlantic_profiles.nc` -> ...)
+    because the prompt only carried the CSV folder-tree, not the literal
+    layout of files placed in the workdir. This block states the truth.
+    """
+    if env is None:
+        return ""
+
+    workdir = getattr(env, "workdir", None)
+    manifest = list(getattr(env, "input_manifest", []) or [])
+    expected = getattr(env, "expected_output_basename", None)
+
+    lines = ["# Your working environment"]
+    if workdir:
+        lines.append(
+            f"Current working directory: `{workdir}`\n"
+            "All relative paths in your code resolve from here."
+        )
+    if manifest:
+        shown = manifest[:_MANIFEST_CAP]
+        lines.append(
+            "Input files available — open these EXACTLY as written "
+            "(paths are relative to the cwd):"
+        )
+        lines.extend(f"  - {p}" for p in shown)
+        if len(manifest) > _MANIFEST_CAP:
+            lines.append(f"  - ... and {len(manifest) - _MANIFEST_CAP} more files")
+        lines.append(
+            "Do NOT guess other paths or probe for files — this list is the "
+            "complete, verified set of inputs on disk."
+        )
+    else:
+        lines.append(
+            "No input data files were placed in the workdir for this task; "
+            "produce the requested output from the instruction alone."
+        )
+    if expected:
+        lines.append(
+            f"Save your final output to: `pred_results/{expected}` "
+            "(the pred_results/ directory already exists). The harness scores "
+            "by checking that this exact file is present."
+        )
+    return "\n".join(lines)
+
+
+def _build_user_prompt_code(instruction: str, workflow: str, env=None) -> str:
     tools = get_tools_for_workflow(workflow)
     tool_desc = convert_tools_to_description(tools)
 
@@ -79,10 +131,14 @@ def _build_user_prompt_code(instruction: str, workflow: str) -> str:
     if workflow == 'code_graph':
         sys_prompt += _CODE_GRAPH_ADDENDUM
 
-    user_msg = (
-        f"# Task\n\n{instruction.strip()}\n\n"
-        "Begin by inspecting the input files, then implement the analysis. "
-        "Save the output to the exact path specified above, then call `finish`."
+    env_block = _build_env_block(env)
+    user_msg = f"# Task\n\n{instruction.strip()}\n\n"
+    if env_block:
+        user_msg += env_block + "\n\n"
+    user_msg += (
+        "Begin by inspecting the input files listed above, then implement the "
+        "analysis. Save the output to the exact path specified, then call "
+        "`finish`."
     )
 
     return [
@@ -91,6 +147,11 @@ def _build_user_prompt_code(instruction: str, workflow: str) -> str:
     ]
 
 
-def create_chat_code(problem_statement: str, workflow: str, item=None):
-    """Entry point matching prompts.create_chat signature."""
-    return _build_user_prompt_code(problem_statement, workflow)
+def create_chat_code(problem_statement: str, workflow: str, item=None, env=None):
+    """Entry point matching prompts.create_chat signature.
+
+    `env` (optional) is the initialized ScienceAgentEnv; when supplied, the
+    user prompt is augmented with the real workdir layout (cwd, input file
+    paths, output target) so the agent does not guess paths.
+    """
+    return _build_user_prompt_code(problem_statement, workflow, env=env)

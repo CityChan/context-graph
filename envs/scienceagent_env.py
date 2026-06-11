@@ -60,6 +60,8 @@ class ScienceAgentEnv:
         self.workdir: str | None = None
         self.sandbox: CodeSandbox | None = None
         self.instance_info: dict = {}
+        self.input_manifest: list[str] = []     # rel paths actually on disk in workdir
+        self.expected_output_basename: str | None = None
         # Single-call time limit (overridable per-task via extra_info)
         self.per_call_timeout = getattr(getattr(config, 'plugin', object()),
                                         "sandbox_timeout", 60.0)
@@ -101,6 +103,7 @@ class ScienceAgentEnv:
         # Copy (or symlink, for large files) input files into workdir, PRESERVING
         # the relative directory structure the task instruction references.
         missing = 0
+        placed_rel: list[str] = []  # rel paths actually present in workdir
         for i, src in enumerate(self.input_files):
             rel = (self.input_rel_paths[i]
                    if i < len(self.input_rel_paths) and self.input_rel_paths[i]
@@ -111,6 +114,7 @@ class ScienceAgentEnv:
                       f"on disk, agent will not see it: {src}")
                 continue
             dst = os.path.join(self.workdir, rel)
+            placed_rel.append(rel)
             if os.path.exists(dst):
                 continue
             os.makedirs(os.path.dirname(dst) or self.workdir, exist_ok=True)
@@ -122,6 +126,17 @@ class ScienceAgentEnv:
         if missing:
             print(f"[SAB env] task {self.task_id}: {missing}/{len(self.input_files)} "
                   f"declared input files were absent on disk")
+
+        # Build a ground-truth file manifest from what is ACTUALLY on disk in
+        # the workdir, so the prompt can tell the agent the exact relative paths
+        # to open() instead of letting it guess (the 8B smoke showed the agent
+        # burning turns probing `atlantic_profiles.nc` -> `ocean_profiles/...`
+        # -> ... because nothing told it the real layout). Cap the list so a
+        # task with hundreds of image tiles can't blow the prompt budget.
+        self.input_manifest = placed_rel
+        self.expected_output_basename = (
+            os.path.basename(self.expected_output) if self.expected_output else None
+        )
 
         self.sandbox = CodeSandbox(self.workdir, per_call_timeout=self.per_call_timeout)
 
