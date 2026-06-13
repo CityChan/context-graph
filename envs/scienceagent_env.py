@@ -56,7 +56,9 @@ class ScienceAgentEnv:
         self.instruction: str | None = None
         self.input_files: list[str] = []        # source paths (read-only)
         self.expected_output: str | None = None  # relative path the task asks for
-        self.gold_eval_script: str | None = None  # optional, for reward
+        self.gold_eval_script: str | None = None  # back-compat alias of eval_script_name
+        self.eval_script_name: str | None = None  # per-task eval script (real scoring)
+        self.benchmark_dir: str | None = None     # unpacked benchmark root
         self.workdir: str | None = None
         self.sandbox: CodeSandbox | None = None
         self.instance_info: dict = {}
@@ -86,7 +88,16 @@ class ScienceAgentEnv:
         # input_files; falls back to basename if absent (back-compat).
         self.input_rel_paths = list(extra.get('input_rel_paths', []) or [])
         self.expected_output = extra.get('expected_output', None)
-        self.gold_eval_script = extra.get('gold_eval_script', None)
+        # NOTE: the loader emits `eval_script_name` (not `gold_eval_script`);
+        # the latter was never set, so real-eval scoring silently no-op'd.
+        # Read the real key, keep the old one as a back-compat fallback.
+        self.eval_script_name = (
+            extra.get('eval_script_name') or extra.get('gold_eval_script') or None
+        )
+        self.gold_eval_script = self.eval_script_name  # back-compat alias
+        # Root of the unpacked benchmark (eval_programs/, datasets/, ...).
+        # Needed at reward time to locate the per-task eval script.
+        self.benchmark_dir = extra.get('benchmark_dir', None)
 
         # The instance_info dict is consumed by create_chat to build the user prompt.
         self.instance_info = copy.deepcopy(extra)
@@ -186,19 +197,54 @@ class ScienceAgentEnv:
         return {'observation': observation.strip()}
 
     async def get_reward(self, item, messages, context):
-        """Score by checking that the expected_output file exists in pred_results/.
+        """Score the finished trajectory.
 
-        Phase D2 scoring is INTENTIONALLY SIMPLE — file-existence-only — so
-        we can validate the end-to-end loop without invoking the full
-        ScienceAgentBench `calculate_metrics.py` (which requires the gold
-        reference outputs + per-task eval scripts).
+        Two modes, selected by the `SAB_REAL_EVAL` env var:
 
-        Phase D3 will replace this with a proper wrapper.
+          SAB_REAL_EVAL=1 -> run the task's per-task eval script
+            (`eval_programs/<eval_script_name>`) against the agent's output
+            and use its [0,1] success score. Requires `benchmark_dir` to be
+            plumbed through extra_info (loader passes it). This is the
+            paper-grade metric.
+
+          unset / 0 (default) -> Phase-D2 file-existence placeholder: 1.0 if
+            the expected_output file name appears in pred_results/, else 0.0.
+            Kept as the harness-validation path; its numbers are NOT real
+            scientific correctness.
         """
         if self.env_fail or self.sandbox is None:
             return "", 0.0, {}
 
         produced = self.sandbox.list_output_files()
+        use_real = os.environ.get("SAB_REAL_EVAL", "").lower() in ("1", "true", "yes")
+
+        if use_real and self.eval_script_name and self.benchmark_dir:
+            from envs.scienceagent_eval import score_task
+            res = score_task(
+                workdir=self.workdir,
+                benchmark_dir=self.benchmark_dir,
+                eval_script_name=self.eval_script_name,
+                output_fname=self.expected_output,
+                timeout=float(getattr(getattr(self.config, 'plugin', object()),
+                                      'eval_timeout', 180.0)),
+            )
+            metrics = {
+                "produced_files": len(produced),
+                "valid_execution": int(res["valid_execution"]),
+                "eval_rule": res["rule"],
+            }
+            return res["detail"], float(res["score"]), metrics
+
+        if use_real:
+            # Asked for real eval but a prerequisite is missing — make the
+            # gap loud rather than silently degrading to placeholder scores
+            # (the exact "fake win" failure mode we must avoid).
+            why = ("no eval_script_name" if not self.eval_script_name
+                   else "no benchmark_dir")
+            print(f"[SAB env] task {self.task_id}: SAB_REAL_EVAL set but {why}; "
+                  f"falling back to file-existence placeholder")
+
+        # ── file-existence placeholder ──
         if not produced:
             return "no output files", 0.0, {"produced_files": 0}
 

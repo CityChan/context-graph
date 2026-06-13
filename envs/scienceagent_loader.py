@@ -211,6 +211,11 @@ def load_sab_tasks(
                 'input_rel_paths': input_rel_paths,
                 'expected_output': expected,
                 'workflow': workflow,
+                # Absolute benchmark root so the env can locate this task's
+                # eval_programs/<eval_script_name> at reward time (real-eval
+                # scoring). None in smoke / pre-download phase.
+                'benchmark_dir': (os.path.abspath(benchmark_dir)
+                                  if benchmark_dir else None),
                 'domain': (row.get('domain') or '').strip(),
                 'eval_script_name': (row.get('eval_script_name') or '').strip(),
                 'gold_program_name': (row.get('gold_program_name') or '').strip(),

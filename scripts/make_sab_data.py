@@ -55,6 +55,9 @@ def _to_row(task: dict) -> dict:
             "input_rel_paths": task.get('input_rel_paths', []),
             "expected_output": task['expected_output'],
             "workflow": task['workflow'],
+            # Absolute benchmark root; the env uses it at reward time to find
+            # eval_programs/<eval_script_name> for SAB_REAL_EVAL scoring.
+            "benchmark_dir": task.get('benchmark_dir'),
             # Helpful metadata for analysis (logged via env.stats / wandb)
             "domain": task['domain'],
             "eval_script_name": task['eval_script_name'],
