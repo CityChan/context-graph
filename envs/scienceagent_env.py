@@ -228,6 +228,13 @@ class ScienceAgentEnv:
                 timeout=float(getattr(getattr(self.config, 'plugin', object()),
                                       'eval_timeout', 180.0)),
             )
+            # Audit line: make the scoring path visible per task so a全0 run
+            # can be diagnosed as real-failure vs eval-infra-breakage (rule
+            # tuple/number = eval ran; eval-crashed/no-eval-script/no-output
+            # = artifact). Without this the reward is an opaque 0.0.
+            print(f"[SAB eval] task={self.task_id} score={res['score']:.3f} "
+                  f"rule={res['rule']} valid_exec={int(res['valid_execution'])} "
+                  f"produced={len(produced)} :: {res['detail'][:200]}")
             metrics = {
                 "produced_files": len(produced),
                 "valid_execution": int(res["valid_execution"]),
