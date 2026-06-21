@@ -45,6 +45,13 @@
 # ─────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
+# ── Self-owned log: line-buffered, written directly to Lustre so early output
+#    survives even if slurmstepd's stdout buffer is lost on a hard kill / node fail.
+#    Also records the submit-dir pwd to catch wrong-WorkDir relative -o failures.
+mkdir -p logs
+exec > >(stdbuf -oL tee -a "logs/${SLURM_JOB_NAME:-sab}.${SLURM_JOB_ID:-local}.self.log") 2>&1
+echo "+++ [self-log] host=$(hostname -s) date=$(date) job=${SLURM_JOB_ID:-NA} submit_pwd=$(pwd)"
+
 # ── Vista cache redirects (avoid NFS flock) ──
 export TRITON_CACHE_DIR=/tmp/triton_cache_$$
 export VLLM_CACHE_ROOT=/tmp/vllm_cache_$$
@@ -63,8 +70,10 @@ fi
 export WANDB_API_KEY=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
 
 # ── Conda + CUDA ──
+set +u  # conda activation scripts reference unbound vars (PS1, _CE_CONDA) -> set -u would kill us silently
 source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
 conda activate cxtgraph
+set -u
 export NCCL_HOSTID="${SLURMD_NODENAME:-$(hostname -s)}"
 export PATH="${CONDA_PREFIX}/bin:${PATH}"
 hash -r
@@ -281,11 +290,11 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   actor_rollout_ref.actor.kl_loss_coef=0.0005 \
   data.train_files=data/sab_test_code.parquet \
   data.val_files=data/sab_test_code.parquet \
-  data.train_batch_size=8 \
+  data.train_batch_size=10 \
   data.max_prompt_length=16384 \
   data.max_response_length=24576 \
   data.return_raw_chat=True \
-  actor_rollout_ref.actor.ppo_mini_batch_size=8 \
+  actor_rollout_ref.actor.ppo_mini_batch_size=10 \
   actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=1 \
   actor_rollout_ref.actor.ppo_max_token_len_per_gpu=40960 \
   actor_rollout_ref.actor.ppo_infer_max_token_len_per_gpu=40960 \

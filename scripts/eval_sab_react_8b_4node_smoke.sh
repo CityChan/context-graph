@@ -62,6 +62,13 @@
 # ─────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
+# ── Self-owned log: line-buffered, written directly to Lustre so early output
+#    survives even if slurmstepd's stdout buffer is lost on a hard kill / node fail.
+#    Also records the submit-dir pwd to catch wrong-WorkDir relative -o failures.
+mkdir -p logs
+exec > >(stdbuf -oL tee -a "logs/${SLURM_JOB_NAME:-sab}.${SLURM_JOB_ID:-local}.self.log") 2>&1
+echo "+++ [self-log] host=$(hostname -s) date=$(date) job=${SLURM_JOB_ID:-NA} submit_pwd=$(pwd)"
+
 # ── Vista cache redirects (avoid NFS flock) ──
 export TRITON_CACHE_DIR=/tmp/triton_cache_$$
 export VLLM_CACHE_ROOT=/tmp/vllm_cache_$$
@@ -87,8 +94,10 @@ fi
 export WANDB_API_KEY=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
 
 # ── Conda + CUDA ──
+set +u  # conda activation scripts reference unbound vars (PS1, _CE_CONDA) -> set -u would kill us silently
 source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
 conda activate cxtgraph
+set -u
 export NCCL_HOSTID="${SLURMD_NODENAME:-$(hostname -s)}"
 export PATH="${CONDA_PREFIX}/bin:${PATH}"
 hash -r
