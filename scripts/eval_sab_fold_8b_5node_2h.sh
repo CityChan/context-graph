@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH -J eval-sab-fold-8b-5n
-#SBATCH -o logs/eval-sab-fold-8b-5n.%j.out
-#SBATCH -e logs/eval-sab-fold-8b-5n.%j.err
+#SBATCH -o /work/09281/chc_1996/vista/context-graph/logs/eval-sab-fold-8b-5n.%j.out
+#SBATCH -e /work/09281/chc_1996/vista/context-graph/logs/eval-sab-fold-8b-5n.%j.err
 #SBATCH -p gh
 #SBATCH -N 5
 #SBATCH --ntasks-per-node=1

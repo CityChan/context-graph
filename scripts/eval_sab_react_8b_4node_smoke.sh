@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH -J eval-sab-react-8b-4n-smoke
-#SBATCH -o logs/eval-sab-react-8b-4n-smoke.%j.out
-#SBATCH -e logs/eval-sab-react-8b-4n-smoke.%j.err
+#SBATCH -o /work/09281/chc_1996/vista/context-graph/logs/eval-sab-react-8b-4n-smoke.%j.out
+#SBATCH -e /work/09281/chc_1996/vista/context-graph/logs/eval-sab-react-8b-4n-smoke.%j.err
 #SBATCH -p gh
 #SBATCH -N 4
 #SBATCH --ntasks-per-node=1
