@@ -711,6 +711,16 @@ async def process_item(
     # graph_rewards dict for consistency with the breakdown.
     env.stats['task_reward'] = float(graph_rewards.get('task_reward', score[1]))
     env.stats['graph_shaping'] = float(graph_rewards.get('graph_shaping', 0.0))
+    # Surface real-eval VER (valid_execution) + produced-file count so they
+    # aggregate into val/* metrics. At 8B zero-shot SR floors to 0, so VER is
+    # the signal that separates the agents. Only present under SAB_REAL_EVAL=1.
+    if isinstance(reward_dict, dict):
+        for _k in ('valid_execution', 'produced_files'):
+            if _k in reward_dict:
+                try:
+                    env.stats[_k] = float(reward_dict[_k])
+                except (TypeError, ValueError):
+                    pass
     # Isolated-variant specific stats: aggregate child subgraph sizes
     env.stats['isolated_n_subgraphs'] = len(branch_subgraph_stats)
     env.stats['isolated_total_subgraph_nodes'] = sum(s.get('n_total', 0) for s in branch_subgraph_stats.values())

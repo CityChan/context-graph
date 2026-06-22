@@ -212,6 +212,9 @@ class AgentLoopRewardManager(AbstractRewardManager):
                       "graph_n_nodes", "graph_n_edges", "graph_n_active",
                       "main_turn", "is_branch", "branch_success",
                       "concise_main", "scope_judge",
+                      # SAB real-eval valid-execution rate (VER) + output count;
+                      # the 8B-zero-shot signal once SR floors to 0
+                      "valid_execution", "produced_files",
                       # v3 consolidation checkpoint stats
                       "consol_attempts", "consol_ops", "consol_pass_valid",
                       "consol_pass_invalid", "consol_invalid",

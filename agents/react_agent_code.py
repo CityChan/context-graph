@@ -93,6 +93,16 @@ async def process_item(
     env.stats['main_turn'] = int(iteration)
     env.stats['is_branch'] = 0
     env.stats['branch_success'] = 0
+    # Surface real-eval VER (valid_execution) + produced-file count so they
+    # aggregate into val/* metrics. At 8B zero-shot SR floors to 0, so VER is
+    # the signal that separates the agents. Only present under SAB_REAL_EVAL=1.
+    if isinstance(reward_dict, dict):
+        for _k in ('valid_execution', 'produced_files'):
+            if _k in reward_dict:
+                try:
+                    env.stats[_k] = float(reward_dict[_k])
+                except (TypeError, ValueError):
+                    pass
 
     # Clean up the sandbox (release the namespace dict so GC can reclaim it).
     try:

@@ -252,6 +252,16 @@ async def process_item(
     # Mirror the field CtxGraph logs so wandb has reward/task_reward on
     # both runs for apples-to-apples task-accuracy comparison.
     env.stats['task_reward'] = float(score[1])
+    # Surface real-eval VER (valid_execution) + produced-file count so they
+    # aggregate into val/* metrics. At 8B zero-shot SR floors to 0, so VER is
+    # the signal that separates the agents. Only present under SAB_REAL_EVAL=1.
+    if isinstance(reward_dict, dict):
+        for _k in ('valid_execution', 'produced_files'):
+            if _k in reward_dict:
+                try:
+                    env.stats[_k] = float(reward_dict[_k])
+                except (TypeError, ValueError):
+                    pass
     env.stats['traj_num'] = len(agent)
     env.stats['main_len'] = min(len(agent['main'].context()) - init_len, config.response_length)
     env.stats['total_token'] = len(tokenizer.encode(print_chat(user_prompt + session_message)))
