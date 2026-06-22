@@ -62,6 +62,12 @@ export TRANSFORMERS_OFFLINE=1
 export RAY_memory_usage_threshold=0.99
 export RAY_memory_monitor_refresh_ms=0
 
+# Real per-task eval (eval_programs/<script> -> [0,1] success) vs the
+# Phase-D2 file-existence placeholder. Default 0 (placeholder). Set
+# SAB_REAL_EVAL=1 at submit time for paper-grade scoring. Exported onto
+# every Ray node below because get_reward reads it inside AgentLoopWorker.
+export SAB_REAL_EVAL=${SAB_REAL_EVAL:-0}
+
 # ── WANDB ──
 if [ -n "${WORK:-}" ] && [ -f "$WORK/.wandb_env" ]; then
   # shellcheck disable=SC1090
@@ -203,6 +209,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" bash -c '
   export HF_HUB_OFFLINE=1
   export TRANSFORMERS_OFFLINE=1
   export SAB_WORKDIR_ROOT='"$SAB_WORKDIR_ROOT"'
+  export SAB_REAL_EVAL='"$SAB_REAL_EVAL"'
   ray start --head --node-ip-address='"$TRAINER_HEAD_IP"' --port=6379 \
     --num-cpus=70 --num-gpus=1 --dashboard-host=0.0.0.0 --block
 ' &
@@ -228,6 +235,7 @@ for i in $(seq 1 $((NUM_NODES - 1))); do
     export HF_HUB_OFFLINE=1
     export TRANSFORMERS_OFFLINE=1
     export SAB_WORKDIR_ROOT='"$SAB_WORKDIR_ROOT"'
+    export SAB_REAL_EVAL='"$SAB_REAL_EVAL"'
     ray start --address='"${TRAINER_HEAD_IP}:6379"' --num-cpus=70 --num-gpus=1 --block
   ' &
   WORKER_PIDS+=("$!")
@@ -258,7 +266,7 @@ probe "launching trainer (model load + vLLM init typically ~3-5 min)"
 
 set +e
 srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_ROOT" \
-  --export=ALL,SAB_WORKDIR_ROOT="$SAB_WORKDIR_ROOT" \
+  --export=ALL,SAB_WORKDIR_ROOT="$SAB_WORKDIR_ROOT",SAB_REAL_EVAL="$SAB_REAL_EVAL" \
   python -m scripts.train_sab \
   algorithm.adv_estimator=foldgrpo \
   algorithm.kl_ctrl.kl_coef=0.005 \
