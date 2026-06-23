@@ -48,8 +48,9 @@ set -euo pipefail
 # ── Self-owned log: line-buffered, written directly to Lustre so early output
 #    survives even if slurmstepd's stdout buffer is lost on a hard kill / node fail.
 #    Also records the submit-dir pwd to catch wrong-WorkDir relative -o failures.
-mkdir -p logs
-exec > >(stdbuf -oL tee -a "logs/${SLURM_JOB_NAME:-sab}.${SLURM_JOB_ID:-local}.self.log") 2>&1
+LOG_ROOT=/work/09281/chc_1996/vista/context-graph/logs
+mkdir -p "$LOG_ROOT"
+exec > >(stdbuf -oL tee -a "$LOG_ROOT/${SLURM_JOB_NAME:-sab}.${SLURM_JOB_ID:-local}.self.log") 2>&1
 echo "+++ [self-log] host=$(hostname -s) date=$(date) job=${SLURM_JOB_ID:-NA} submit_pwd=$(pwd)"
 
 # ── Vista cache redirects (avoid NFS flock) ──
@@ -120,6 +121,17 @@ if [ "$NUM_NODES" -ne 5 ]; then
   exit 1
 fi
 
+TRAIN_BATCH_SIZE=${TRAIN_BATCH_SIZE:-$((NUM_NODES * 2))}
+PPO_MINI_BATCH_SIZE=${PPO_MINI_BATCH_SIZE:-$TRAIN_BATCH_SIZE}
+if (( TRAIN_BATCH_SIZE % NUM_NODES != 0 )); then
+  echo "ERROR: TRAIN_BATCH_SIZE=$TRAIN_BATCH_SIZE must be divisible by NUM_NODES=$NUM_NODES"
+  exit 1
+fi
+if (( PPO_MINI_BATCH_SIZE % NUM_NODES != 0 )); then
+  echo "ERROR: PPO_MINI_BATCH_SIZE=$PPO_MINI_BATCH_SIZE must be divisible by NUM_NODES=$NUM_NODES"
+  exit 1
+fi
+
 if [ -n "${WANDB_API_KEY:-}" ]; then
   TRAINER_LOGGER='["console","wandb"]'
   probe_msg="wandb enabled (key length=${#WANDB_API_KEY})"
@@ -141,6 +153,7 @@ echo "  Trainer model:  $MODEL_PATH"
 echo "  Experiment:     $EXPERIMENT_NAME"
 echo "  Sandbox workdir root: $SAB_WORKDIR_ROOT"
 echo "  Logger: ${probe_msg}"
+echo "  Batch sizes:    train=$TRAIN_BATCH_SIZE ppo_mini=$PPO_MINI_BATCH_SIZE"
 echo "  Started: $(date)"
 echo "=============================================================="
 
@@ -298,11 +311,11 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   actor_rollout_ref.actor.kl_loss_coef=0.0005 \
   data.train_files=data/sab_test_code_branch.parquet \
   data.val_files=data/sab_test_code_branch.parquet \
-  data.train_batch_size=10 \
+  data.train_batch_size=$TRAIN_BATCH_SIZE \
   data.max_prompt_length=16384 \
   data.max_response_length=24576 \
   data.return_raw_chat=True \
-  actor_rollout_ref.actor.ppo_mini_batch_size=10 \
+  actor_rollout_ref.actor.ppo_mini_batch_size=$PPO_MINI_BATCH_SIZE \
   actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=1 \
   actor_rollout_ref.actor.ppo_max_token_len_per_gpu=40960 \
   actor_rollout_ref.actor.ppo_infer_max_token_len_per_gpu=40960 \
