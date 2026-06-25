@@ -477,6 +477,7 @@ async def test_env_end_to_end():
         out1 = await env.run_action(resp1)
         assert 'observation' in out1, f"out1: {out1!r}"
         assert '(3, 2)' in out1['observation'], f"out1 observation: {out1['observation']!r}"
+        assert 'present=no' in out1['observation'], f"out1 observation: {out1['observation']!r}"
 
         # Turn 2: compute + write
         resp2 = textwrap.dedent("""
@@ -492,6 +493,7 @@ async def test_env_end_to_end():
         """).strip()
         out2 = await env.run_action(resp2)
         assert 'mean: 20' in out2['observation']
+        assert 'present=yes' in out2['observation'], f"out2 observation: {out2['observation']!r}"
 
         # Turn 3: finish
         resp3 = textwrap.dedent("""
@@ -570,7 +572,7 @@ async def test_env_preserves_input_subdir():
 
 
 async def test_env_missing_output():
-    """Reward = 0 if agent finishes but expected file is not produced."""
+    """Finish is rejected, and reward remains 0, if expected file is absent."""
     from envs.scienceagent_env import ScienceAgentEnv
 
     with tempfile.TemporaryDirectory() as base:
@@ -597,7 +599,12 @@ async def test_env_missing_output():
             <parameter=message>oops, wrong path</parameter>
             </function>
         """).strip()
-        await env.run_action(resp2)
+        out2 = await env.run_action(resp2)
+        assert 'observation' in out2, f"out2: {out2!r}"
+        assert '[finish rejected]' in out2['observation'], f"obs: {out2['observation']!r}"
+        assert 'present=no' in out2['observation'], f"obs: {out2['observation']!r}"
+        assert env.stats['finish'] == 0
+        assert env.stats['finish_rejected'] == 1
 
         score_msg, reward, info = await env.get_reward(item, messages=[], context=None)
         assert reward == 0.0, f"reward should be 0 (file missing), got {reward}"

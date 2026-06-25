@@ -18,7 +18,8 @@ _CODE_SYSTEM_PROMPT = """You are a data-science agent solving a scientific data-
 2. **Plan** the analytical pipeline mentally before writing code.
 3. **Execute** code in small, verifiable steps via `python_exec`. State persists between calls.
 4. **Save** your output to the exact path specified in the task instruction (under `pred_results/`).
-5. **Finish** when, and ONLY when, the output file is on disk.
+5. **Verify** that the required output file exists in `pred_results/`.
+6. **Finish** when, and ONLY when, the environment reports the output file is present.
 
 # Available tools
 {tool_descriptions}
@@ -37,6 +38,8 @@ print(df.shape, df.columns.tolist())
 # Important rules
 - The sandbox preserves state across calls. You do NOT need to re-import or re-load data.
 - Write output files using normal Python (`df.to_csv(...)`, `plt.savefig(...)`). The harness checks `pred_results/` after you `finish`.
+- The filename matters. A scientifically reasonable result saved under the wrong name or outside `pred_results/` receives zero credit.
+- If the environment says `[output_status] ... present=no`, do not call `finish`; use `python_exec` to create, copy, or rename the required file.
 - If code raises an exception, the traceback comes back in stderr — read it and fix.
 - Do NOT use `os.system`, `subprocess`, shell escapes, or `pip`/`conda` install; they are HARD-BLOCKED by the sandbox and waste a turn. Every scientific package you need (numpy, pandas, scikit-learn, scipy, torch, scanpy, anndata, rdkit, deepchem, DeepPurpose, matplotlib, seaborn, xgboost, statsmodels, geopandas, rasterio, ...) is ALREADY installed — just `import` it.
 - Do NOT print the entire dataset — print head/shape/dtypes only.
@@ -114,9 +117,12 @@ def _build_env_block(env) -> str:
         )
     if expected:
         lines.append(
-            f"Save your final output to: `pred_results/{expected}` "
-            "(the pred_results/ directory already exists). The harness scores "
-            "by checking that this exact file is present."
+            "# Output contract\n"
+            f"Required final output: `pred_results/{expected}`\n"
+            "The pred_results/ directory already exists. The harness scores by "
+            "checking that this exact file is present and then running the task "
+            "evaluator on it. Before `finish`, the environment must report "
+            "`present=yes` for this file."
         )
     return "\n".join(lines)
 
@@ -137,8 +143,10 @@ def _build_user_prompt_code(instruction: str, workflow: str, env=None) -> str:
         user_msg += env_block + "\n\n"
     user_msg += (
         "Begin by inspecting the input files listed above, then implement the "
-        "analysis. Save the output to the exact path specified, then call "
-        "`finish`."
+        "analysis. Save the output to the exact required path. If an "
+        "`[output_status]` message says the required file is absent, fix that "
+        "with `python_exec`. Call `finish` only after the required output is "
+        "present."
     )
 
     return [

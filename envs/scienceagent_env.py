@@ -44,7 +44,8 @@ class ScienceAgentEnv:
         # Stats follow the LocalSearch convention so the existing reward
         # manager / wandb aggregation works out of the box.
         self.stats = collections.Counter()
-        for k in ('action', 'finish', 'python_exec', 'is_finish', 'env_error'):
+        for k in ('action', 'finish', 'finish_rejected', 'python_exec',
+                  'is_finish', 'env_error'):
             self.stats[k] = 0
 
         self.env_fail = False
@@ -173,13 +174,26 @@ class ScienceAgentEnv:
                     continue
                 result = self.sandbox.execute(code)
                 observation += _format_exec_result(result)
+                observation += self._format_output_status()
 
             elif name == 'finish':
+                msg = args.get('message', '(no message)')
+                produced = self.sandbox.list_output_files()
+                expected_name = self.expected_output_basename
+                if expected_name and expected_name not in produced:
+                    self.stats['finish_rejected'] += 1
+                    return {
+                        'observation': (
+                            "[finish rejected] The required output file is not "
+                            f"present: pred_results/{expected_name}. "
+                            "Use python_exec to create, copy, or rename the "
+                            "required file before calling finish.\n"
+                            f"{self._format_output_status().strip()}"
+                        )
+                    }
                 self.stats['finish'] += 1
                 self.stats['is_finish'] = 1
                 self.is_finish = True
-                msg = args.get('message', '(no message)')
-                produced = self.sandbox.list_output_files()
                 self.predicted_answer = (
                     msg,
                     produced,
@@ -296,6 +310,25 @@ class ScienceAgentEnv:
     def close(self) -> None:
         if self.sandbox is not None:
             self.sandbox.close()
+
+    def _format_output_status(self) -> str:
+        """Compact status appended after code execution / rejected finish.
+
+        This gives the model immediate, machine-checkable feedback about the
+        only artifact condition that gates `finish`: whether the exact expected
+        output file exists under pred_results/.
+        """
+        if self.sandbox is None:
+            return "\n[output_status] sandbox unavailable\n"
+        produced = self.sandbox.list_output_files()
+        expected_name = self.expected_output_basename
+        if expected_name:
+            present = "yes" if expected_name in produced else "no"
+            return (
+                f"\n[output_status] expected=pred_results/{expected_name} "
+                f"present={present} produced={produced}\n"
+            )
+        return f"\n[output_status] no expected output declared produced={produced}\n"
 
 
 def _format_exec_result(result: dict) -> str:
