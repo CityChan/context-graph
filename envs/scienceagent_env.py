@@ -20,6 +20,7 @@ from __future__ import annotations
 import collections
 import copy
 import os
+import re
 import shutil
 import tempfile
 from typing import Any
@@ -65,6 +66,7 @@ class ScienceAgentEnv:
         self.instance_info: dict = {}
         self.input_manifest: list[str] = []     # rel paths actually on disk in workdir
         self.expected_output_basename: str | None = None
+        self.eval_contract: str | None = None
         # Single-call time limit (overridable per-task via extra_info)
         self.per_call_timeout = getattr(getattr(config, 'plugin', object()),
                                         "sandbox_timeout", 60.0)
@@ -149,6 +151,7 @@ class ScienceAgentEnv:
         self.expected_output_basename = (
             os.path.basename(self.expected_output) if self.expected_output else None
         )
+        self.eval_contract = self._maybe_build_eval_contract()
 
         self.sandbox = CodeSandbox(self.workdir, per_call_timeout=self.per_call_timeout)
 
@@ -330,6 +333,32 @@ class ScienceAgentEnv:
             )
         return f"\n[output_status] no expected output declared produced={produced}\n"
 
+    def _maybe_build_eval_contract(self) -> str | None:
+        """Optionally expose output-schema hints extracted from the eval script.
+
+        This is intentionally gated because eval scripts are benchmark-side
+        artifacts. Use it for diagnosis / ablations after no-output is fixed;
+        leave it off for paper-faithful runs.
+        """
+        expose = os.environ.get("SAB_EXPOSE_EVAL_CONTRACT", "").lower()
+        expose = expose in ("1", "true", "yes")
+        cfg_expose = bool(getattr(getattr(self.config, 'plugin', object()),
+                                  "expose_eval_contract", False))
+        if not (expose or cfg_expose):
+            return None
+        if not (self.benchmark_dir and self.eval_script_name):
+            return None
+        try:
+            from envs.scienceagent_eval import locate_eval_script
+            eval_path = locate_eval_script(self.benchmark_dir, self.eval_script_name)
+            if not eval_path:
+                return None
+            with open(eval_path, encoding="utf-8", errors="replace") as f:
+                src = f.read()
+        except Exception as e:  # noqa: BLE001 - prompt hint must never break env init
+            return f"Evaluator schema hint unavailable: {type(e).__name__}: {e}"
+        return _extract_eval_contract(src, self.expected_output_basename)
+
 
 def _format_exec_result(result: dict) -> str:
     """Render sandbox dict into a user-facing observation string."""
@@ -344,3 +373,72 @@ def _format_exec_result(result: dict) -> str:
     if not out and not err:
         parts.append("(no output)")
     return "\n".join(parts) + "\n"
+
+
+def _extract_eval_contract(src: str, expected_basename: str | None) -> str | None:
+    """Extract non-gold output-format hints from a SAB eval script.
+
+    We intentionally avoid dumping the full evaluator or gold-result paths.
+    The goal is to surface schema-level details such as "pd.read_csv" and
+    `pred["column"]` references, which explain why many valid-exec files fail
+    with pandas/key/length errors.
+    """
+    if not src:
+        return None
+
+    hints: list[str] = []
+    read_lines: list[str] = []
+    col_names: set[str] = set()
+
+    for raw in src.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        line_no_space = line.replace(" ", "")
+        mentions_pred_file = "pred_results/" in line
+        mentions_expected = bool(expected_basename and expected_basename in line)
+        is_output_read = mentions_pred_file or mentions_expected
+        if is_output_read and any(fn in line for fn in (
+            "read_csv", "read_excel", "read_table", "read_json", "np.load",
+            "numpy.load", "Image.open", "open(", "loadmat", "read_h5ad",
+        )):
+            cleaned = re.sub(r"benchmark/eval_programs/gold_results/[^'\" )]+",
+                             "benchmark/.../gold_results/<hidden>", line)
+            read_lines.append(cleaned)
+        if re.search(r"\b(pred|pred_df|df_pred|y_pred|result)\b", line):
+            for m in re.finditer(
+                r"(?:pred|pred_df|df_pred|result)\s*\[\s*['\"]([^'\"]+)['\"]\s*\]",
+                line,
+            ):
+                col_names.add(m.group(1))
+            for m in re.finditer(
+                r"(?:pred|pred_df|df_pred|result)\s*\.\s*([A-Za-z_][A-Za-z0-9_]*)",
+                line,
+            ):
+                attr = m.group(1)
+                if attr not in {"shape", "values", "columns", "iloc", "loc",
+                                "to_numpy", "astype", "squeeze", "head"}:
+                    col_names.add(attr)
+        # Also catch explicit expected-column lists used in assertions.
+        if "columns" in line_no_space and ("[" in line and "]" in line):
+            for m in re.finditer(r"['\"]([^'\"]+)['\"]", line):
+                val = m.group(1)
+                if "/" not in val and "." not in val and len(val) <= 80:
+                    col_names.add(val)
+
+    if read_lines:
+        hints.append("Evaluator reads the submitted output with:")
+        hints.extend(f"  - {line}" for line in read_lines[:6])
+        if len(read_lines) > 6:
+            hints.append(f"  - ... {len(read_lines) - 6} more read lines omitted")
+    if col_names:
+        hints.append("Column/name hints referenced by evaluator:")
+        hints.append("  - " + ", ".join(sorted(col_names)[:30]))
+
+    if not hints:
+        return None
+    hints.append(
+        "Use these as output-format hints only; still solve the scientific task "
+        "from the input data."
+    )
+    return "\n".join(hints)

@@ -295,6 +295,61 @@ def test_loader_basic():
     return "test_loader_basic"
 
 
+async def test_prompt_eval_contract_is_gated():
+    """Eval-script schema hints are useful diagnostics but must be opt-in."""
+    from agents.prompts_code import create_chat_code
+    from envs.scienceagent_loader import load_sab_tasks
+    from envs.scienceagent_env import ScienceAgentEnv
+
+    with tempfile.TemporaryDirectory() as tmp:
+        csv_path = os.path.join(tmp, "sab.csv")
+        _write_fake_sab_csv(csv_path)
+
+        bench_dir = os.path.join(tmp, "benchmark")
+        os.makedirs(os.path.join(bench_dir, "datasets"), exist_ok=True)
+        os.makedirs(os.path.join(bench_dir, "eval_programs"), exist_ok=True)
+        with open(os.path.join(bench_dir, "datasets", "input.csv"), "w") as f:
+            f.write("name,value\nalice,10\nbob,20\ncarol,30\n")
+        with open(os.path.join(bench_dir, "eval_programs", "eval_smoke.py"), "w") as f:
+            f.write(
+                "import pandas as pd\n"
+                "def eval():\n"
+                "    pred = pd.read_csv('pred_results/result.csv')\n"
+                "    return int(pred['mean_value'].iloc[0] == 20), 'ok'\n"
+            )
+
+        tasks = load_sab_tasks(csv_path, benchmark_dir=bench_dir, workflow='code')
+        task_dict = dict(tasks[0])
+        task_dict['workdir'] = os.path.join(tmp, "run")
+        item = _MockDataProto(task_dict, task_dict['instruction'])
+        config = SimpleNamespace(plugin=SimpleNamespace(sandbox_timeout=10.0))
+
+        env = ScienceAgentEnv(config, tokenizer=None, ability='ScienceAgentBench')
+        old = os.environ.pop("SAB_EXPOSE_EVAL_CONTRACT", None)
+        try:
+            await env.init_env(item)
+            chat = create_chat_code(task_dict['instruction'], 'code', env=env)
+            assert 'Evaluator output-format hints' not in chat[1]['content']
+            env.close()
+
+            os.environ["SAB_EXPOSE_EVAL_CONTRACT"] = "1"
+            env2 = ScienceAgentEnv(config, tokenizer=None, ability='ScienceAgentBench')
+            await env2.init_env(item)
+            chat2 = create_chat_code(task_dict['instruction'], 'code', env=env2)
+            prompt = chat2[1]['content']
+            assert 'Evaluator output-format hints' in prompt, prompt
+            assert "pd.read_csv('pred_results/result.csv')" in prompt, prompt
+            assert "mean_value" in prompt, prompt
+            env2.close()
+        finally:
+            if old is None:
+                os.environ.pop("SAB_EXPOSE_EVAL_CONTRACT", None)
+            else:
+                os.environ["SAB_EXPOSE_EVAL_CONTRACT"] = old
+
+    return "test_prompt_eval_contract_is_gated"
+
+
 def test_loader_deep_nested_tree():
     """SAB has tasks with 4-5 level nested trees (e.g., BBBC002 image
     directories, RGI60 glacier archives). Earlier loader only handled
@@ -635,6 +690,7 @@ async def main():
         test_loader_deep_nested_tree,
     ]
     async_tests = [
+        test_prompt_eval_contract_is_gated,
         test_env_end_to_end,
         test_env_preserves_input_subdir,
         test_env_missing_output,

@@ -90,6 +90,7 @@ def _build_env_block(env) -> str:
     workdir = getattr(env, "workdir", None)
     manifest = list(getattr(env, "input_manifest", []) or [])
     expected = getattr(env, "expected_output_basename", None)
+    eval_contract = getattr(env, "eval_contract", None)
 
     lines = ["# Your working environment"]
     if workdir:
@@ -124,6 +125,8 @@ def _build_env_block(env) -> str:
             "evaluator on it. Before `finish`, the environment must report "
             "`present=yes` for this file."
         )
+    if eval_contract:
+        lines.append("# Evaluator output-format hints\n" + eval_contract)
     return "\n".join(lines)
 
 
