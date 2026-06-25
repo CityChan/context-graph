@@ -66,9 +66,16 @@ set -euo pipefail
 #    survives even if slurmstepd's stdout buffer is lost on a hard kill / node fail.
 #    Also records the submit-dir pwd to catch wrong-WorkDir relative -o failures.
 LOG_ROOT=/work/09281/chc_1996/vista/context-graph/logs
-mkdir -p "$LOG_ROOT"
-exec > >(stdbuf -oL tee -a "$LOG_ROOT/${SLURM_JOB_NAME:-sab}.${SLURM_JOB_ID:-local}.self.log") 2>&1
-echo "+++ [self-log] host=$(hostname -s) date=$(date) job=${SLURM_JOB_ID:-NA} submit_pwd=$(pwd)"
+SUBMIT_LOG_ROOT="${SLURM_SUBMIT_DIR:-$(pwd)}/logs"
+EXTRA_LOG_ROOT="${EXTRA_LOG_ROOT:-}"
+mkdir -p "$LOG_ROOT" "$SUBMIT_LOG_ROOT"
+if [ -n "$EXTRA_LOG_ROOT" ]; then mkdir -p "$EXTRA_LOG_ROOT"; fi
+SELF_LOG_NAME="${SLURM_JOB_NAME:-sab}.${SLURM_JOB_ID:-local}.self.log"
+TEE_TARGETS=("$LOG_ROOT/$SELF_LOG_NAME")
+if [ "$SUBMIT_LOG_ROOT" != "$LOG_ROOT" ]; then TEE_TARGETS+=("$SUBMIT_LOG_ROOT/$SELF_LOG_NAME"); fi
+if [ -n "$EXTRA_LOG_ROOT" ] && [ "$EXTRA_LOG_ROOT" != "$LOG_ROOT" ] && [ "$EXTRA_LOG_ROOT" != "$SUBMIT_LOG_ROOT" ]; then TEE_TARGETS+=("$EXTRA_LOG_ROOT/$SELF_LOG_NAME"); fi
+exec > >(stdbuf -oL tee -a "${TEE_TARGETS[@]}") 2>&1
+echo "+++ [self-log] host=$(hostname -s) date=$(date) job=${SLURM_JOB_ID:-NA} submit_pwd=$(pwd) log_targets=${TEE_TARGETS[*]}"
 
 # ── Vista cache redirects (avoid NFS flock) ──
 export TRITON_CACHE_DIR=/tmp/triton_cache_$$
