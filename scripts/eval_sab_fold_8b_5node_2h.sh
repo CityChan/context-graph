@@ -75,6 +75,8 @@ export RAY_memory_monitor_refresh_ms=0
 # SAB_REAL_EVAL=1 at submit time for paper-grade scoring. Exported onto
 # every Ray node below because get_reward reads it inside AgentLoopWorker.
 export SAB_REAL_EVAL=${SAB_REAL_EVAL:-0}
+export SAB_EXPOSE_EVAL_CONTRACT=${SAB_EXPOSE_EVAL_CONTRACT:-0}
+export SAB_INTERACTIVE_EVAL_FEEDBACK=${SAB_INTERACTIVE_EVAL_FEEDBACK:-0}
 
 # ── WANDB ──
 if [ -n "${WORK:-}" ] && [ -f "$WORK/.wandb_env" ]; then
@@ -230,6 +232,8 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" bash -c '
   export TRANSFORMERS_OFFLINE=1
   export SAB_WORKDIR_ROOT='"$SAB_WORKDIR_ROOT"'
   export SAB_REAL_EVAL='"$SAB_REAL_EVAL"'
+  export SAB_EXPOSE_EVAL_CONTRACT='"$SAB_EXPOSE_EVAL_CONTRACT"'
+  export SAB_INTERACTIVE_EVAL_FEEDBACK='"$SAB_INTERACTIVE_EVAL_FEEDBACK"'
   ray start --head --node-ip-address='"$TRAINER_HEAD_IP"' --port=6379 \
     --num-cpus=70 --num-gpus=1 --dashboard-host=0.0.0.0 --block
 ' &
@@ -256,6 +260,8 @@ for i in $(seq 1 $((NUM_NODES - 1))); do
     export TRANSFORMERS_OFFLINE=1
     export SAB_WORKDIR_ROOT='"$SAB_WORKDIR_ROOT"'
     export SAB_REAL_EVAL='"$SAB_REAL_EVAL"'
+    export SAB_EXPOSE_EVAL_CONTRACT='"$SAB_EXPOSE_EVAL_CONTRACT"'
+    export SAB_INTERACTIVE_EVAL_FEEDBACK='"$SAB_INTERACTIVE_EVAL_FEEDBACK"'
     ray start --address='"${TRAINER_HEAD_IP}:6379"' --num-cpus=70 --num-gpus=1 --block
   ' &
   WORKER_PIDS+=("$!")
@@ -286,7 +292,7 @@ probe "launching trainer (model load + vLLM init typically ~3-5 min)"
 
 set +e
 srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_ROOT" \
-  --export=ALL,SAB_WORKDIR_ROOT="$SAB_WORKDIR_ROOT",SAB_REAL_EVAL="$SAB_REAL_EVAL" \
+  --export=ALL,SAB_WORKDIR_ROOT="$SAB_WORKDIR_ROOT",SAB_REAL_EVAL="$SAB_REAL_EVAL",SAB_EXPOSE_EVAL_CONTRACT="$SAB_EXPOSE_EVAL_CONTRACT",SAB_INTERACTIVE_EVAL_FEEDBACK="$SAB_INTERACTIVE_EVAL_FEEDBACK" \
   python -m scripts.train_sab \
   algorithm.adv_estimator=foldgrpo \
   algorithm.kl_ctrl.kl_coef=0.005 \
