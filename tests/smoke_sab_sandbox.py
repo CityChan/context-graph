@@ -350,6 +350,86 @@ async def test_prompt_eval_contract_is_gated():
     return "test_prompt_eval_contract_is_gated"
 
 
+async def test_interactive_eval_feedback_is_gated():
+    """Interactive evaluator feedback is opt-in and appears after output exists."""
+    from envs.scienceagent_loader import load_sab_tasks
+    from envs.scienceagent_env import ScienceAgentEnv
+
+    with tempfile.TemporaryDirectory() as tmp:
+        csv_path = os.path.join(tmp, "sab.csv")
+        _write_fake_sab_csv(csv_path)
+
+        bench_dir = os.path.join(tmp, "benchmark")
+        os.makedirs(os.path.join(bench_dir, "datasets"), exist_ok=True)
+        os.makedirs(os.path.join(bench_dir, "eval_programs"), exist_ok=True)
+        with open(os.path.join(bench_dir, "datasets", "input.csv"), "w") as f:
+            f.write("name,value\nalice,10\nbob,20\ncarol,30\n")
+        with open(os.path.join(bench_dir, "eval_programs", "eval_smoke.py"), "w") as f:
+            f.write(
+                "import pandas as pd\n"
+                "def eval():\n"
+                "    pred = pd.read_csv('pred_results/result.csv')\n"
+                "    return int(pred['mean_value'].iloc[0] == 20), 'ok'\n"
+                "if __name__ == '__main__':\n"
+                "    print(eval())\n"
+            )
+
+        tasks = load_sab_tasks(csv_path, benchmark_dir=bench_dir, workflow='code')
+        task_dict = dict(tasks[0])
+        task_dict['workdir'] = os.path.join(tmp, "run")
+        item = _MockDataProto(task_dict, task_dict['instruction'])
+        config = SimpleNamespace(plugin=SimpleNamespace(sandbox_timeout=10.0))
+
+        old = os.environ.pop("SAB_INTERACTIVE_EVAL_FEEDBACK", None)
+        try:
+            env = ScienceAgentEnv(config, tokenizer=None, ability='ScienceAgentBench')
+            await env.init_env(item)
+            bad_resp = textwrap.dedent("""
+                <function=python_exec>
+                <parameter=code>
+                import pandas as pd
+                pd.DataFrame({'wrong_col': [20]}).to_csv('pred_results/result.csv', index=False)
+                print('wrote bad schema')
+                </parameter>
+                </function>
+            """).strip()
+            out = await env.run_action(bad_resp)
+            assert '[eval_feedback]' not in out['observation'], out['observation']
+            env.close()
+
+            task_dict['workdir'] = os.path.join(tmp, "run2")
+            item2 = _MockDataProto(task_dict, task_dict['instruction'])
+            os.environ["SAB_INTERACTIVE_EVAL_FEEDBACK"] = "1"
+            env2 = ScienceAgentEnv(config, tokenizer=None, ability='ScienceAgentBench')
+            await env2.init_env(item2)
+            out2 = await env2.run_action(bad_resp)
+            assert '[eval_feedback]' in out2['observation'], out2['observation']
+            assert 'score=0.000' in out2['observation'], out2['observation']
+            assert 'Fix the output file' in out2['observation'], out2['observation']
+
+            fix_resp = textwrap.dedent("""
+                <function=python_exec>
+                <parameter=code>
+                import pandas as pd
+                pd.DataFrame({'mean_value': [20]}).to_csv('pred_results/result.csv', index=False)
+                print('fixed schema')
+                </parameter>
+                </function>
+            """).strip()
+            out3 = await env2.run_action(fix_resp)
+            assert '[eval_feedback]' in out3['observation'], out3['observation']
+            assert 'score=1.000' in out3['observation'], out3['observation']
+            assert 'may call finish' in out3['observation'], out3['observation']
+            env2.close()
+        finally:
+            if old is None:
+                os.environ.pop("SAB_INTERACTIVE_EVAL_FEEDBACK", None)
+            else:
+                os.environ["SAB_INTERACTIVE_EVAL_FEEDBACK"] = old
+
+    return "test_interactive_eval_feedback_is_gated"
+
+
 def test_loader_deep_nested_tree():
     """SAB has tasks with 4-5 level nested trees (e.g., BBBC002 image
     directories, RGI60 glacier archives). Earlier loader only handled
@@ -691,6 +771,7 @@ async def main():
     ]
     async_tests = [
         test_prompt_eval_contract_is_gated,
+        test_interactive_eval_feedback_is_gated,
         test_env_end_to_end,
         test_env_preserves_input_subdir,
         test_env_missing_output,

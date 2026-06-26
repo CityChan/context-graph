@@ -67,6 +67,7 @@ class ScienceAgentEnv:
         self.input_manifest: list[str] = []     # rel paths actually on disk in workdir
         self.expected_output_basename: str | None = None
         self.eval_contract: str | None = None
+        self._last_interactive_eval_signature: tuple[str, int, int] | None = None
         # Single-call time limit (overridable per-task via extra_info)
         self.per_call_timeout = getattr(getattr(config, 'plugin', object()),
                                         "sandbox_timeout", 60.0)
@@ -178,6 +179,7 @@ class ScienceAgentEnv:
                 result = self.sandbox.execute(code)
                 observation += _format_exec_result(result)
                 observation += self._format_output_status()
+                observation += self._maybe_run_interactive_eval_feedback()
 
             elif name == 'finish':
                 msg = args.get('message', '(no message)')
@@ -358,6 +360,76 @@ class ScienceAgentEnv:
         except Exception as e:  # noqa: BLE001 - prompt hint must never break env init
             return f"Evaluator schema hint unavailable: {type(e).__name__}: {e}"
         return _extract_eval_contract(src, self.expected_output_basename)
+
+    def _maybe_run_interactive_eval_feedback(self) -> str:
+        """Optionally run the real evaluator mid-trajectory after output exists.
+
+        This is a diagnostic / trajectory-generation aid, not the paper-faithful
+        setting. It gives the model immediate feedback for the common SAB
+        failure mode where a file exists but evaluator crashes on columns,
+        length, shape, or file type. The final reward path remains unchanged.
+        """
+        expose = os.environ.get("SAB_INTERACTIVE_EVAL_FEEDBACK", "").lower()
+        expose = expose in ("1", "true", "yes")
+        cfg_expose = bool(getattr(getattr(self.config, 'plugin', object()),
+                                  "interactive_eval_feedback", False))
+        if not (expose or cfg_expose):
+            return ""
+        if not (self.sandbox and self.expected_output_basename and
+                self.eval_script_name and self.benchmark_dir and self.workdir):
+            return ""
+
+        out_path = os.path.join(
+            self.workdir, "pred_results", self.expected_output_basename
+        )
+        if not os.path.isfile(out_path):
+            return ""
+
+        try:
+            st = os.stat(out_path)
+            signature = (out_path, int(st.st_mtime_ns), int(st.st_size))
+        except OSError:
+            return ""
+        if signature == self._last_interactive_eval_signature:
+            return ""
+        self._last_interactive_eval_signature = signature
+
+        try:
+            from envs.scienceagent_eval import score_task
+            res = score_task(
+                workdir=self.workdir,
+                benchmark_dir=self.benchmark_dir,
+                eval_script_name=self.eval_script_name,
+                output_fname=self.expected_output,
+                timeout=float(getattr(getattr(self.config, 'plugin', object()),
+                                      'interactive_eval_timeout', 60.0)),
+            )
+        except Exception as e:  # noqa: BLE001 - feedback must never crash rollout
+            return (
+                "\n[eval_feedback] evaluator could not run: "
+                f"{type(e).__name__}: {e}\n"
+            )
+
+        self.stats["interactive_eval_runs"] += 1
+        self.stats["interactive_eval_score"] = float(res.get("score", 0.0))
+        detail = str(res.get("detail", "")).replace("\n", " ")
+        if len(detail) > 800:
+            detail = detail[:800] + "... [truncated]"
+        instruction = (
+            "The evaluator passed. You may call finish."
+            if float(res.get("score", 0.0)) > 0
+            else (
+                "Do not call finish yet. Fix the output file content, columns, "
+                "shape, or format with python_exec, then re-check."
+            )
+        )
+        return (
+            "\n[eval_feedback] "
+            f"score={float(res.get('score', 0.0)):.3f} "
+            f"rule={res.get('rule', 'unknown')} "
+            f"valid_exec={int(bool(res.get('valid_execution', False)))} :: "
+            f"{detail}\n{instruction}\n"
+        )
 
 
 def _format_exec_result(result: dict) -> str:
