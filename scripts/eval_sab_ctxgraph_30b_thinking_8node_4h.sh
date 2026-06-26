@@ -86,6 +86,9 @@ export RAY_memory_monitor_refresh_ms=0
 export SAB_REAL_EVAL=${SAB_REAL_EVAL:-0}
 export SAB_EXPOSE_EVAL_CONTRACT=${SAB_EXPOSE_EVAL_CONTRACT:-0}
 export SAB_INTERACTIVE_EVAL_FEEDBACK=${SAB_INTERACTIVE_EVAL_FEEDBACK:-0}
+# Qwen3 Thinking models default to long <think> traces. For tool-use eval,
+# disable thinking in the chat template unless explicitly overridden.
+export QWEN_ENABLE_THINKING=${QWEN_ENABLE_THINKING:-False}
 
 # ── WANDB ──
 if [ -n "${WORK:-}" ] && [ -f "$WORK/.wandb_env" ]; then
@@ -172,6 +175,7 @@ echo "  Experiment:     $EXPERIMENT_NAME"
 echo "  Sandbox workdir root: $SAB_WORKDIR_ROOT"
 echo "  Logger: ${probe_msg}"
 echo "  Batch sizes:    train=$TRAIN_BATCH_SIZE ppo_mini=$PPO_MINI_BATCH_SIZE"
+echo "  Qwen thinking:  $QWEN_ENABLE_THINKING"
 echo "  Started: $(date)"
 echo "=============================================================="
 
@@ -243,6 +247,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" bash -c '
   export SAB_REAL_EVAL='"$SAB_REAL_EVAL"'
   export SAB_EXPOSE_EVAL_CONTRACT='"$SAB_EXPOSE_EVAL_CONTRACT"'
   export SAB_INTERACTIVE_EVAL_FEEDBACK='"$SAB_INTERACTIVE_EVAL_FEEDBACK"'
+  export QWEN_ENABLE_THINKING='"$QWEN_ENABLE_THINKING"'
   ray start --head --node-ip-address='"$TRAINER_HEAD_IP"' --port=6379 \
     --num-cpus=70 --num-gpus=1 --dashboard-host=0.0.0.0 --block
 ' &
@@ -271,6 +276,7 @@ for i in $(seq 1 $((NUM_NODES - 1))); do
     export SAB_REAL_EVAL='"$SAB_REAL_EVAL"'
     export SAB_EXPOSE_EVAL_CONTRACT='"$SAB_EXPOSE_EVAL_CONTRACT"'
     export SAB_INTERACTIVE_EVAL_FEEDBACK='"$SAB_INTERACTIVE_EVAL_FEEDBACK"'
+  export QWEN_ENABLE_THINKING='"$QWEN_ENABLE_THINKING"'
     ray start --address='"${TRAINER_HEAD_IP}:6379"' --num-cpus=70 --num-gpus=1 --block
   ' &
   WORKER_PIDS+=("$!")
@@ -302,7 +308,7 @@ probe "launching trainer (model load + vLLM init typically ~10-15 min)"
 
 set +e
 srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_ROOT" \
-  --export=ALL,SAB_WORKDIR_ROOT="$SAB_WORKDIR_ROOT",SAB_REAL_EVAL="$SAB_REAL_EVAL",SAB_EXPOSE_EVAL_CONTRACT="$SAB_EXPOSE_EVAL_CONTRACT",SAB_INTERACTIVE_EVAL_FEEDBACK="$SAB_INTERACTIVE_EVAL_FEEDBACK" \
+  --export=ALL,SAB_WORKDIR_ROOT="$SAB_WORKDIR_ROOT",SAB_REAL_EVAL="$SAB_REAL_EVAL",SAB_EXPOSE_EVAL_CONTRACT="$SAB_EXPOSE_EVAL_CONTRACT",SAB_INTERACTIVE_EVAL_FEEDBACK="$SAB_INTERACTIVE_EVAL_FEEDBACK",QWEN_ENABLE_THINKING="$QWEN_ENABLE_THINKING" \
   python -m scripts.train_sab \
   algorithm.adv_estimator=foldgrpo \
   algorithm.kl_ctrl.kl_coef=0.005 \
@@ -339,6 +345,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   data.max_prompt_length=16384 \
   data.max_response_length=24576 \
   data.return_raw_chat=True \
+  data.apply_chat_template_kwargs.enable_thinking=$QWEN_ENABLE_THINKING \
   actor_rollout_ref.actor.ppo_mini_batch_size=$PPO_MINI_BATCH_SIZE \
   actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=1 \
   actor_rollout_ref.actor.ppo_max_token_len_per_gpu=40960 \

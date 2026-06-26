@@ -280,15 +280,48 @@ class CallAPI(LLMClass):  # Call external API (OpenAI)
         return None
 
 
-def truncate_prompt(chat, prompt_length, tokenizer, prompt_turn):
-    exceed_len = len(tokenizer.apply_chat_template(chat[:prompt_turn])) + 8 - prompt_length
+def _chat_template_kwargs(config) -> dict:
+    """Return tokenizer.apply_chat_template kwargs from either config shape."""
+    data_cfg = getattr(config, "data", None)
+    if data_cfg is None and hasattr(config, "actor_rollout_ref"):
+        data_cfg = getattr(config, "data", None)
+    kwargs = {}
+    if data_cfg is not None:
+        raw = getattr(data_cfg, "apply_chat_template_kwargs", None)
+        if raw:
+            kwargs = dict(raw)
+    plugin_cfg = getattr(config, "plugin", None)
+    if plugin_cfg is not None:
+        raw = getattr(plugin_cfg, "apply_chat_template_kwargs", None)
+        if raw:
+            kwargs.update(dict(raw))
+        if hasattr(plugin_cfg, "qwen_enable_thinking"):
+            raw_thinking = getattr(plugin_cfg, "qwen_enable_thinking")
+            if isinstance(raw_thinking, str):
+                kwargs["enable_thinking"] = raw_thinking.lower() in ("1", "true", "yes")
+            else:
+                kwargs["enable_thinking"] = bool(raw_thinking)
+    env_thinking = os.environ.get("QWEN_ENABLE_THINKING")
+    if env_thinking is not None:
+        kwargs["enable_thinking"] = env_thinking.lower() in ("1", "true", "yes")
+    return kwargs
+
+
+def _apply_chat_template(tokenizer, chat, config, **kwargs):
+    template_kwargs = _chat_template_kwargs(config)
+    template_kwargs.update(kwargs)
+    return tokenizer.apply_chat_template(chat, **template_kwargs)
+
+
+def truncate_prompt(chat, prompt_length, tokenizer, prompt_turn, config=None):
+    exceed_len = len(_apply_chat_template(tokenizer, chat[:prompt_turn], config)) + 8 - prompt_length
     _cut_idx = 0
     while exceed_len > 0:  # truncate long user prompt
         print('[PROMPT] now exceed', exceed_len, 'work on cut turn', _cut_idx)
         chat[_cut_idx]['content'] = tokenizer.decode(
             tokenizer.encode(chat[_cut_idx]['content'], add_special_tokens=False)[
                 exceed_len + 4:], add_special_tokens=False)
-        exceed_len = len(tokenizer.apply_chat_template(chat[:prompt_turn])) + 8 - prompt_length
+        exceed_len = len(_apply_chat_template(tokenizer, chat[:prompt_turn], config)) + 8 - prompt_length
         _cut_idx = _cut_idx + 1
         if _cut_idx >= prompt_turn:
             break
@@ -316,7 +349,7 @@ class AgentContext:
         self.context_uid = str(uuid.uuid4())
 
         self.chat = copy.deepcopy([turn for turn in chat])
-        self.chat = truncate_prompt(self.chat, config.prompt_length, tokenizer, prompt_turn)
+        self.chat = truncate_prompt(self.chat, config.prompt_length, tokenizer, prompt_turn, config)
         self.chat_completions = [None for _ in range(len(self.chat))]
         self.chat_ids = [self.get_turn_context(i) for i in range(len(self.chat))]
         self.log_probs = [[0.0] * len(turn) for turn in self.chat_ids]
@@ -327,17 +360,27 @@ class AgentContext:
         self.prompt_ids_len = len(sum(self.chat_ids[:prompt_turn], []))
 
     def get_turn_context(self, i):
-        tokens = self.tokenizer.apply_chat_template(self.chat[:i + 1], add_generation_prompt=False, tokenize=True)
-        prev = self.tokenizer.apply_chat_template(self.chat[:i], add_generation_prompt=False,
-                                                  tokenize=True) if i > 0 else []
+        tokens = _apply_chat_template(
+            self.tokenizer, self.chat[:i + 1], self.config,
+            add_generation_prompt=False, tokenize=True
+        )
+        prev = _apply_chat_template(
+            self.tokenizer, self.chat[:i], self.config,
+            add_generation_prompt=False, tokenize=True
+        ) if i > 0 else []
         turn_tokens = tokens[len(prev):]
         return turn_tokens
 
     def get_generation_prompt(self):
         if self.generation_prompt is None:
-            tokens = self.tokenizer.apply_chat_template(self.chat, add_generation_prompt=False, tokenize=True)
-            add_tokens = self.tokenizer.apply_chat_template(self.chat, add_generation_prompt=True,
-                                                            tokenize=True)
+            tokens = _apply_chat_template(
+                self.tokenizer, self.chat, self.config,
+                add_generation_prompt=False, tokenize=True
+            )
+            add_tokens = _apply_chat_template(
+                self.tokenizer, self.chat, self.config,
+                add_generation_prompt=True, tokenize=True
+            )
             self.generation_prompt = add_tokens[len(tokens):]
         return self.generation_prompt
 
