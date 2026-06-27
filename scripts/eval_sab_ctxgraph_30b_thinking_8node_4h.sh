@@ -345,7 +345,6 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   data.max_prompt_length=16384 \
   data.max_response_length=24576 \
   data.return_raw_chat=True \
-  data.apply_chat_template_kwargs.enable_thinking=$QWEN_ENABLE_THINKING \
   actor_rollout_ref.actor.ppo_mini_batch_size=$PPO_MINI_BATCH_SIZE \
   actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=1 \
   actor_rollout_ref.actor.ppo_max_token_len_per_gpu=40960 \
