@@ -81,12 +81,21 @@ export SAB_INTERACTIVE_EVAL_FEEDBACK=${SAB_INTERACTIVE_EVAL_FEEDBACK:-0}
 # disable thinking in the chat template unless explicitly overridden.
 export QWEN_ENABLE_THINKING=${QWEN_ENABLE_THINKING:-False}
 
-# ── WANDB ──
-if [ -n "${WORK:-}" ] && [ -f "$WORK/.wandb_env" ]; then
-  # shellcheck disable=SC1090
-  source "$WORK/.wandb_env"
+# WANDB: source credentials from explicit env first, then common Vista/project locations.
+WANDB_ENV_SOURCE="env"
+if [ -z "${WANDB_API_KEY:-}" ]; then
+  for wandb_env in "${WORK:-}/.wandb_env" /work/09281/chc_1996/vista/.wandb_env /work/09281/chc_1996/vista/context-graph/.wandb_env "$HOME/.wandb_env"; do
+    if [ -n "$wandb_env" ] && [ -f "$wandb_env" ]; then
+      # shellcheck disable=SC1090
+      source "$wandb_env"
+      WANDB_ENV_SOURCE="$wandb_env"
+      break
+    fi
+  done
 fi
 export WANDB_API_KEY=${WANDB_API_KEY:-}
+export WANDB_DIR=${WANDB_DIR:-/work/09281/chc_1996/vista/context-graph/wandb}
+mkdir -p "$WANDB_DIR"
 
 # ── Conda + CUDA ──
 set +u  # conda activation scripts reference unbound vars (PS1, _CE_CONDA) -> set -u would kill us silently
@@ -145,12 +154,18 @@ if (( PPO_MINI_BATCH_SIZE % NUM_NODES != 0 )); then
   exit 1
 fi
 
-if [ -n "${WANDB_API_KEY:-}" ]; then
+if [ "${SAB_DISABLE_WANDB:-0}" = "1" ]; then
+  TRAINER_LOGGER='["console"]'
+  probe_msg="wandb disabled by SAB_DISABLE_WANDB=1"
+elif [ -n "${WANDB_API_KEY:-}" ]; then
   TRAINER_LOGGER='["console","wandb"]'
-  probe_msg="wandb enabled (key length=${#WANDB_API_KEY})"
+  probe_msg="wandb enabled (key length=${#WANDB_API_KEY}, source=$WANDB_ENV_SOURCE, dir=$WANDB_DIR)"
+elif [ -f "$HOME/.netrc" ]; then
+  TRAINER_LOGGER='["console","wandb"]'
+  probe_msg="wandb enabled via $HOME/.netrc (dir=$WANDB_DIR)"
 else
   TRAINER_LOGGER='["console"]'
-  probe_msg="WARNING: no WANDB_API_KEY in env �?eval will only log to console"
+  probe_msg="WARNING: no WANDB_API_KEY or $HOME/.netrc found; eval will only log to console"
 fi
 
 TS=$(date +%Y%m%d_%H%M%S)
