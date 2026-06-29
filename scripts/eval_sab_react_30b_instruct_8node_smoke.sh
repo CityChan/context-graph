@@ -59,6 +59,7 @@ if [ "$SUBMIT_LOG_ROOT" != "$LOG_ROOT" ]; then TEE_TARGETS+=("$SUBMIT_LOG_ROOT/$
 if [ -n "$EXTRA_LOG_ROOT" ] && [ "$EXTRA_LOG_ROOT" != "$LOG_ROOT" ] && [ "$EXTRA_LOG_ROOT" != "$SUBMIT_LOG_ROOT" ]; then TEE_TARGETS+=("$EXTRA_LOG_ROOT/$SELF_LOG_NAME"); fi
 exec > >(stdbuf -oL tee -a "${TEE_TARGETS[@]}") 2>&1
 echo "+++ [self-log] host=$(hostname -s) date=$(date) job=${SLURM_JOB_ID:-NA} submit_pwd=$(pwd) log_targets=${TEE_TARGETS[*]}"
+export SELF_LOG_PATH="${TEE_TARGETS[0]}"
 
 # ── Vista cache redirects (avoid NFS flock) ──
 export TRITON_CACHE_DIR=/tmp/triton_cache_$$
@@ -170,6 +171,51 @@ fi
 
 TS=$(date +%Y%m%d_%H%M%S)
 EXPERIMENT_NAME="eval_react_sab_30b_instruct_8n_smoke_${TS}"
+
+export EXPERIMENT_NAME
+export WANDB_RUN_ID=${WANDB_RUN_ID:-$EXPERIMENT_NAME}
+export WANDB_NAME=${WANDB_NAME:-$EXPERIMENT_NAME}
+export WANDB_RESUME=${WANDB_RESUME:-allow}
+
+wandb_status() {
+  local phase="$1"
+  local rc="${2:-0}"
+  if [[ "$TRAINER_LOGGER" != *wandb* ]]; then
+    return 0
+  fi
+  WANDB_PHASE="$phase" WANDB_STATUS_RC="$rc" python - <<'PY' || true
+import os
+import time
+
+try:
+    import wandb
+
+    run = wandb.init(
+        project="context-graph",
+        name=os.environ.get("WANDB_NAME") or os.environ.get("EXPERIMENT_NAME"),
+        id=os.environ.get("WANDB_RUN_ID"),
+        resume=os.environ.get("WANDB_RESUME", "allow"),
+        dir=os.environ.get("WANDB_DIR"),
+        reinit=True,
+    )
+    phase = os.environ.get("WANDB_PHASE", "unknown")
+    rc = int(os.environ.get("WANDB_STATUS_RC", "0"))
+    wandb.log({
+        "sab_script/heartbeat": 1,
+        "sab_script/rc": rc,
+        "sab_script/time": time.time(),
+    }, step=0)
+    run.summary["sab_script/phase"] = phase
+    run.summary["sab_script/rc"] = rc
+    run.summary["sab_script/local_self_log"] = os.environ.get("SELF_LOG_PATH", "")
+    log_path = os.environ.get("SELF_LOG_PATH", "")
+    if log_path and os.path.exists(log_path):
+        wandb.save(log_path, policy="now")
+    run.finish()
+except Exception as exc:
+    print(f"WARN: wandb status log failed: {exc}")
+PY
+}
 
 probe() { printf '+++ [%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 
@@ -312,6 +358,7 @@ echo "  vLLM gpu_memory_utilization=0.55 + FP8 rollout + FSDP CPU offload (30B)"
 echo "  val_only=True (one val pass on ${SAB_VAL_MAX_SAMPLES} samples from sab_test_code.parquet then exit; no training)"
 echo "=============================================================="
 probe "launching trainer (model load + vLLM init typically ~10-15 min)"
+wandb_status trainer_launch 0
 
 set +e
 srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_ROOT" \
@@ -379,6 +426,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   trainer.logger="$TRAINER_LOGGER"
 RC=$?
 set -e
+wandb_status trainer_exit "$RC"
 
 echo "=============================================================="
 if [ $RC -eq 0 ]; then
