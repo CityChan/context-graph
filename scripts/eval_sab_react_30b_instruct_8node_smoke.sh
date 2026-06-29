@@ -22,8 +22,8 @@
 #
 # Expected wall clock:
 #   model init        ~3-5 min
-#   greedy val rollout defaults to SAB_VAL_MAX_SAMPLES=16 for smoke testing
-#   override SAB_VAL_MAX_SAMPLES for smaller/larger subsets
+#   greedy val rollout defaults to a short diagnostic subset for smoke testing
+#   override SAB_VAL_MAX_SAMPLES / SAB_RESPONSE_LENGTH / SAB_VAL_MAX_TURN for larger runs
 #   no LLM judge (file-existence scorer in env.get_reward; Phase D2)
 #   total: padded to 2h to leave room for 30B model/vLLM initialization.
 #
@@ -145,7 +145,12 @@ fi
 
 TRAIN_BATCH_SIZE=${TRAIN_BATCH_SIZE:-$NUM_NODES}
 PPO_MINI_BATCH_SIZE=${PPO_MINI_BATCH_SIZE:-$TRAIN_BATCH_SIZE}
-SAB_VAL_MAX_SAMPLES=${SAB_VAL_MAX_SAMPLES:-16}
+SAB_VAL_MAX_SAMPLES=${SAB_VAL_MAX_SAMPLES:-4}
+SAB_PROMPT_LENGTH=${SAB_PROMPT_LENGTH:-16384}
+SAB_RESPONSE_LENGTH=${SAB_RESPONSE_LENGTH:-8192}
+SAB_MAX_TOKEN_LEN_PER_GPU=${SAB_MAX_TOKEN_LEN_PER_GPU:-24576}
+SAB_VAL_MAX_TURN=${SAB_VAL_MAX_TURN:-12}
+SAB_TURN_MAX_NEW_TOKENS=${SAB_TURN_MAX_NEW_TOKENS:-1024}
 if (( TRAIN_BATCH_SIZE % NUM_NODES != 0 )); then
   echo "ERROR: TRAIN_BATCH_SIZE=$TRAIN_BATCH_SIZE must be divisible by NUM_NODES=$NUM_NODES"
   exit 1
@@ -220,7 +225,7 @@ PY
 probe() { printf '+++ [%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 
 echo "=============================================================="
-echo "  SMOKE EVAL: ReAct (code) on ScienceAgentBench (Qwen3-30B-A3B-Instruct-2507, 8 nodes, 32K-resp, val_only=True)"
+echo "  SMOKE EVAL: ReAct (code) on ScienceAgentBench (Qwen3-30B-A3B-Instruct-2507, 8 nodes, short-resp, val_only=True)"
 echo "  Job: ${SLURM_JOB_ID:-<idev>}   Head: $NODE0 ($NODE0_IP)"
 echo "  Workers: ${NODELIST[@]:1}"
 echo "  Trainer model:  $MODEL_PATH"
@@ -229,6 +234,8 @@ echo "  Sandbox workdir root: $SAB_WORKDIR_ROOT"
 echo "  Logger: ${probe_msg}"
 echo "  Batch sizes:    train=$TRAIN_BATCH_SIZE ppo_mini=$PPO_MINI_BATCH_SIZE"
 echo "  Smoke samples:  $SAB_VAL_MAX_SAMPLES"
+echo "  Length caps:    prompt=$SAB_PROMPT_LENGTH response=$SAB_RESPONSE_LENGTH max_tokens_per_gpu=$SAB_MAX_TOKEN_LEN_PER_GPU"
+echo "  Turn caps:      val_max_turn=$SAB_VAL_MAX_TURN turn_max_new_tokens=$SAB_TURN_MAX_NEW_TOKENS"
 echo "  Qwen thinking:  $QWEN_ENABLE_THINKING"
 echo "  Started: $(date)"
 echo "=============================================================="
@@ -352,7 +359,7 @@ probe "querying ray status"
 ray status || echo "WARN: ray status check failed"
 
 echo "=============================================================="
-echo "  Launching ReAct (code) SMOKE eval (8 nodes, 32K resp, ScienceAgentBench smoke subset)"
+echo "  Launching ReAct (code) SMOKE eval (8 nodes, short response cap, ScienceAgentBench smoke subset)"
 echo "  default_agent_loop=react_agent_code  workflow=code  process_reward=[flat]"
 echo "  vLLM gpu_memory_utilization=0.55 + FP8 rollout + FSDP CPU offload (30B)"
 echo "  val_only=True (one val pass on ${SAB_VAL_MAX_SAMPLES} samples from sab_test_code.parquet then exit; no training)"
@@ -374,9 +381,9 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   actor_rollout_ref.rollout.calculate_log_probs=True \
   actor_rollout_ref.rollout.gpu_memory_utilization=0.55 \
   actor_rollout_ref.model.path="$MODEL_PATH" \
-  actor_rollout_ref.rollout.prompt_length=16384 \
-  actor_rollout_ref.rollout.response_length=24576 \
-  actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu=40960 \
+  actor_rollout_ref.rollout.prompt_length=$SAB_PROMPT_LENGTH \
+  actor_rollout_ref.rollout.response_length=$SAB_RESPONSE_LENGTH \
+  actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu=$SAB_MAX_TOKEN_LEN_PER_GPU \
   actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
   actor_rollout_ref.rollout.n=1 \
   actor_rollout_ref.rollout.agent.num_workers=1 \
@@ -398,21 +405,21 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   data.train_batch_size=$TRAIN_BATCH_SIZE \
   data.train_max_samples=$SAB_VAL_MAX_SAMPLES \
   data.val_max_samples=$SAB_VAL_MAX_SAMPLES \
-  data.max_prompt_length=16384 \
-  data.max_response_length=24576 \
+  data.max_prompt_length=$SAB_PROMPT_LENGTH \
+  data.max_response_length=$SAB_RESPONSE_LENGTH \
   data.return_raw_chat=True \
   actor_rollout_ref.actor.ppo_mini_batch_size=$PPO_MINI_BATCH_SIZE \
   actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=1 \
-  actor_rollout_ref.actor.ppo_max_token_len_per_gpu=40960 \
-  actor_rollout_ref.actor.ppo_infer_max_token_len_per_gpu=40960 \
+  actor_rollout_ref.actor.ppo_max_token_len_per_gpu=$SAB_MAX_TOKEN_LEN_PER_GPU \
+  actor_rollout_ref.actor.ppo_infer_max_token_len_per_gpu=$SAB_MAX_TOKEN_LEN_PER_GPU \
   actor_rollout_ref.model.enable_gradient_checkpointing=True \
   +actor_rollout_ref.rollout.plugin.workflow=code \
-  +actor_rollout_ref.rollout.plugin.max_turn=32 \
-  +actor_rollout_ref.rollout.plugin.turn_max_new_tokens=2048 \
+  +actor_rollout_ref.rollout.plugin.max_turn=$SAB_VAL_MAX_TURN \
+  +actor_rollout_ref.rollout.plugin.turn_max_new_tokens=$SAB_TURN_MAX_NEW_TOKENS \
   +actor_rollout_ref.rollout.plugin.sandbox_timeout=60 \
   +actor_rollout_ref.rollout.plugin.process_reward='[flat]' \
-  +actor_rollout_ref.rollout.plugin.val_max_turn=32 \
-  +actor_rollout_ref.rollout.plugin.val_response_length=24576 \
+  +actor_rollout_ref.rollout.plugin.val_max_turn=$SAB_VAL_MAX_TURN \
+  +actor_rollout_ref.rollout.plugin.val_response_length=$SAB_RESPONSE_LENGTH \
   trainer.val_before_train=True \
   trainer.val_only=True \
   trainer.n_gpus_per_node=1 \
