@@ -10,7 +10,7 @@
 #SBATCH -A AST24021
 
 # ─────────────────────────────────────────────────────────────────────
-# 2-hour 8-NODE SMOKE eval for ScienceAgentBench vanilla ReAct
+# 4-hour 8-NODE SMOKE eval for ScienceAgentBench vanilla ReAct
 # @ Qwen3-30B-A3B-Instruct-2507. Paired with eval_sab_{fold,ctxgraph}_8b_8node_2h.sh
 # for a quick 30B Instruct sanity check before attempting a full 102-task run.
 #
@@ -25,7 +25,7 @@
 #   greedy val rollout defaults to a short diagnostic subset for smoke testing
 #   override SAB_VAL_MAX_SAMPLES / SAB_RESPONSE_LENGTH / SAB_VAL_MAX_TURN for larger runs
 #   no LLM judge (file-existence scorer in env.get_reward; Phase D2)
-#   total: padded to 2h to leave room for 30B model/vLLM initialization.
+#   total: padded to 4h to leave room for 30B model/vLLM initialization.
 #
 # Pre-flight (one-time, login node):
 #   # Download HF CSV
@@ -60,6 +60,12 @@ if [ -n "$EXTRA_LOG_ROOT" ] && [ "$EXTRA_LOG_ROOT" != "$LOG_ROOT" ] && [ "$EXTRA
 exec > >(stdbuf -oL tee -a "${TEE_TARGETS[@]}") 2>&1
 echo "+++ [self-log] host=$(hostname -s) date=$(date) job=${SLURM_JOB_ID:-NA} submit_pwd=$(pwd) log_targets=${TEE_TARGETS[*]}"
 export SELF_LOG_PATH="${TEE_TARGETS[0]}"
+echo "+++ [PROGRAM START] eval_sab_react_30b_instruct_8node_smoke.sh"
+echo "+++ [PROGRAM START] script=$0"
+echo "+++ [PROGRAM START] self_log=$SELF_LOG_PATH"
+echo "+++ [PROGRAM START] slurm_job=${SLURM_JOB_ID:-NA} name=${SLURM_JOB_NAME:-NA} nodelist=${SLURM_JOB_NODELIST:-NA}"
+echo "+++ [PROGRAM START] git_head=$(git -C /work/09281/chc_1996/vista/context-graph rev-parse --short HEAD 2>/dev/null || echo unknown)"
+echo "+++ [PROGRAM START] submit_dir=${SLURM_SUBMIT_DIR:-NA} pwd=$(pwd)"
 
 # ── Vista cache redirects (avoid NFS flock) ──
 export TRITON_CACHE_DIR=/tmp/triton_cache_$$
