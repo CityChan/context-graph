@@ -57,6 +57,9 @@ SELF_LOG_NAME="${SLURM_JOB_NAME:-sab}.${SLURM_JOB_ID:-local}.self.log"
 TEE_TARGETS=("$LOG_ROOT/$SELF_LOG_NAME")
 if [ "$SUBMIT_LOG_ROOT" != "$LOG_ROOT" ]; then TEE_TARGETS+=("$SUBMIT_LOG_ROOT/$SELF_LOG_NAME"); fi
 if [ -n "$EXTRA_LOG_ROOT" ] && [ "$EXTRA_LOG_ROOT" != "$LOG_ROOT" ] && [ "$EXTRA_LOG_ROOT" != "$SUBMIT_LOG_ROOT" ]; then TEE_TARGETS+=("$EXTRA_LOG_ROOT/$SELF_LOG_NAME"); fi
+EARLY_LOG_PATH="$LOG_ROOT/${SELF_LOG_NAME}.early"
+printf '+++ [EARLY START] host=%s date=%s job=%s script=%s pwd=%s\n' "$(hostname -s)" "$(date)" "${SLURM_JOB_ID:-NA}" "$0" "$(pwd)" | tee -a "$EARLY_LOG_PATH"
+printf '+++ [EARLY START] early_log=%s stdout_target=%s stderr_target=%s\n' "$EARLY_LOG_PATH" "/work/09281/chc_1996/vista/context-graph/logs/eval-sab-react-30b-inst-smoke.${SLURM_JOB_ID:-local}.out" "/work/09281/chc_1996/vista/context-graph/logs/eval-sab-react-30b-inst-smoke.${SLURM_JOB_ID:-local}.err" | tee -a "$EARLY_LOG_PATH"
 exec > >(stdbuf -oL tee -a "${TEE_TARGETS[@]}") 2>&1
 echo "+++ [self-log] host=$(hostname -s) date=$(date) job=${SLURM_JOB_ID:-NA} submit_pwd=$(pwd) log_targets=${TEE_TARGETS[*]}"
 export SELF_LOG_PATH="${TEE_TARGETS[0]}"
