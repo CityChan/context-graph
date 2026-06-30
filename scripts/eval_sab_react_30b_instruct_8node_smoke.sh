@@ -155,6 +155,7 @@ fi
 TRAIN_BATCH_SIZE=${TRAIN_BATCH_SIZE:-$NUM_NODES}
 PPO_MINI_BATCH_SIZE=${PPO_MINI_BATCH_SIZE:-$TRAIN_BATCH_SIZE}
 SAB_VAL_MAX_SAMPLES=${SAB_VAL_MAX_SAMPLES:-1}
+SAB_TRAIN_MAX_SAMPLES=${SAB_TRAIN_MAX_SAMPLES:-$TRAIN_BATCH_SIZE}
 SAB_PROMPT_LENGTH=${SAB_PROMPT_LENGTH:-16384}
 SAB_RESPONSE_LENGTH=${SAB_RESPONSE_LENGTH:-2048}
 SAB_MAX_TOKEN_LEN_PER_GPU=${SAB_MAX_TOKEN_LEN_PER_GPU:-18432}
@@ -243,6 +244,7 @@ echo "  Sandbox workdir root: $SAB_WORKDIR_ROOT"
 echo "  Logger: ${probe_msg}"
 echo "  Batch sizes:    train=$TRAIN_BATCH_SIZE ppo_mini=$PPO_MINI_BATCH_SIZE"
 echo "  Smoke samples:  $SAB_VAL_MAX_SAMPLES"
+echo "  Train samples:  $SAB_TRAIN_MAX_SAMPLES (trainer init only; val_only=True)"
 echo "  Length caps:    prompt=$SAB_PROMPT_LENGTH response=$SAB_RESPONSE_LENGTH max_tokens_per_gpu=$SAB_MAX_TOKEN_LEN_PER_GPU"
 echo "  Turn caps:      val_max_turn=$SAB_VAL_MAX_TURN turn_max_new_tokens=$SAB_TURN_MAX_NEW_TOKENS"
 echo "  Qwen thinking:  $QWEN_ENABLE_THINKING"
@@ -412,7 +414,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   data.train_files=data/sab_test_code.parquet \
   data.val_files=data/sab_test_code.parquet \
   data.train_batch_size=$TRAIN_BATCH_SIZE \
-  data.train_max_samples=$SAB_VAL_MAX_SAMPLES \
+  data.train_max_samples=$SAB_TRAIN_MAX_SAMPLES \
   data.val_max_samples=$SAB_VAL_MAX_SAMPLES \
   data.max_prompt_length=$SAB_PROMPT_LENGTH \
   data.max_response_length=$SAB_RESPONSE_LENGTH \
