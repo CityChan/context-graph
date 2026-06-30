@@ -6,8 +6,10 @@ __pycache__/
 data/
 wandb/
 logs/
+log_exports/
 outputs/
 paper/
+*.tgz
 *.pt
 *.bin
 *.log
