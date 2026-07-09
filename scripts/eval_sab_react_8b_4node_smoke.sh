@@ -74,7 +74,25 @@ SELF_LOG_NAME="${SLURM_JOB_NAME:-sab}.${SLURM_JOB_ID:-local}.self.log"
 TEE_TARGETS=("$LOG_ROOT/$SELF_LOG_NAME")
 if [ "$SUBMIT_LOG_ROOT" != "$LOG_ROOT" ]; then TEE_TARGETS+=("$SUBMIT_LOG_ROOT/$SELF_LOG_NAME"); fi
 if [ -n "$EXTRA_LOG_ROOT" ] && [ "$EXTRA_LOG_ROOT" != "$LOG_ROOT" ] && [ "$EXTRA_LOG_ROOT" != "$SUBMIT_LOG_ROOT" ]; then TEE_TARGETS+=("$EXTRA_LOG_ROOT/$SELF_LOG_NAME"); fi
-exec > >(stdbuf -oL tee -a "${TEE_TARGETS[@]}") 2>&1
+SAB_FILTER_TEARDOWN_NOISE=${SAB_FILTER_TEARDOWN_NOISE:-1}
+if [ "$SAB_FILTER_TEARDOWN_NOISE" = "1" ]; then
+  exec > >(stdbuf -oL awk '
+    /validation generation end|EVAL RUN COMPLETED|EVAL RUN FAILED/ { post=1; skip=0 }
+    post && /Exception ignored in atexit callback: <function _start_and_connect_service/ { skip=1; next }
+    post && /Exception in thread MPClientEngineMonitor:/ { skip=1; next }
+    post && /BrokenPipeError: \[Errno 32\] Broken pipe/ { next }
+    post && /RuntimeError: There is no current event loop in thread '\''MPClientEngineMonitor'\''/ { next }
+    post && /No running event loop\. zmq\.asyncio should be used from within an asyncio loop\./ { next }
+    post && /Engine core proc EngineCore_0 died unexpectedly, shutting down client\./ { next }
+    skip && /^\([^)]*(TaskRunner|vLLMHttpServer|pid=|WorkerDict)/ {
+      if ($0 ~ /(wandb\/sdk\/lib\/service|wandb\/sdk\/lib\/asyncio_manager|asyncio\/streams\.py|concurrent\/futures\/_base\.py|vllm\/v1\/engine\/core_client\.py|weakref\.py|zmq\/_future\.py|zmq\/asyncio\.py|uvloop\/__init__\.py|threading\.py|Traceback \(most recent call last\)|return info\.func|self\._target|self\.run\(\)|_self\.shutdown\(\)|self\._finalizer\(\)|loop = self\.output_socket|current_loop = self\._default_loop\(\)|return asyncio\.get_event_loop\(\)|raise RuntimeError|await self\._writer\.wait_closed\(\)|await self\._client\.close\(\)|raise self\._exception)/) next
+      skip=0
+    }
+    { print; fflush() }
+  ' | tee -a "${TEE_TARGETS[@]}") 2>&1
+else
+  exec > >(stdbuf -oL tee -a "${TEE_TARGETS[@]}") 2>&1
+fi
 echo "+++ [self-log] host=$(hostname -s) date=$(date) job=${SLURM_JOB_ID:-NA} submit_pwd=$(pwd) log_targets=${TEE_TARGETS[*]}"
 
 # ── Vista cache redirects (avoid NFS flock) ──
@@ -166,7 +184,10 @@ if (( PPO_MINI_BATCH_SIZE % NUM_NODES != 0 )); then
   exit 1
 fi
 
-if [ -n "${WANDB_API_KEY:-}" ]; then
+if [ "${SAB_DISABLE_WANDB:-0}" = "1" ]; then
+  TRAINER_LOGGER='["console"]'
+  probe_msg="wandb disabled by SAB_DISABLE_WANDB=1"
+elif [ -n "${WANDB_API_KEY:-}" ]; then
   TRAINER_LOGGER='["console","wandb"]'
   probe_msg="wandb enabled (key length=${#WANDB_API_KEY})"
 else
