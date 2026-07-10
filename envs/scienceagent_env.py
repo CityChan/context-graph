@@ -107,12 +107,19 @@ class ScienceAgentEnv:
         self.instance_info = copy.deepcopy(extra)
         self.instance_info['problem_statement'] = self.instruction
 
-        # Set up a unique workdir for this trajectory.
-        # If extra['workdir'] is given, USE it (production: caller sets a
-        # per-trajectory dir under SCRATCH). Otherwise mkdtemp (smoke/local).
-        self.workdir = extra.get('workdir') or tempfile.mkdtemp(
-            prefix=f"sab_{self.task_id}_"
-        )
+        # Set up a unique workdir for this trajectory. If SAB_WORKDIR_ROOT is
+        # set by the sbatch/idev script, keep these dirs under scratch so a
+        # failed/no-output trajectory can be inspected after the run.
+        workdir_root = os.environ.get("SAB_WORKDIR_ROOT")
+        if extra.get('workdir'):
+            self.workdir = extra.get('workdir')
+        elif workdir_root:
+            os.makedirs(workdir_root, exist_ok=True)
+            self.workdir = tempfile.mkdtemp(
+                prefix=f"sab_{self.task_id}_", dir=workdir_root
+            )
+        else:
+            self.workdir = tempfile.mkdtemp(prefix=f"sab_{self.task_id}_")
         os.makedirs(self.workdir, exist_ok=True)
 
         # Copy (or symlink, for large files) input files into workdir, PRESERVING
@@ -155,6 +162,13 @@ class ScienceAgentEnv:
         self.eval_contract = self._maybe_build_eval_contract()
 
         self.sandbox = CodeSandbox(self.workdir, per_call_timeout=self.per_call_timeout)
+        if _env_flag("SAB_DEBUG_IO"):
+            print(
+                f"[SAB debug] task={self.task_id} workdir={self.workdir} "
+                f"expected=pred_results/{self.expected_output_basename} "
+                f"inputs={self.input_manifest[:20]} "
+                f"eval_script={self.eval_script_name}"
+            )
 
     async def run_action(self, response: str) -> dict:
         self.stats['action'] += 1
@@ -236,6 +250,12 @@ class ScienceAgentEnv:
 
         produced = self.sandbox.list_output_files()
         use_real = os.environ.get("SAB_REAL_EVAL", "").lower() in ("1", "true", "yes")
+        if _env_flag("SAB_DEBUG_IO"):
+            print(
+                f"[SAB debug] task={self.task_id} reward workdir={self.workdir} "
+                f"expected=pred_results/{self.expected_output_basename} "
+                f"produced={produced}"
+            )
 
         if use_real and self.eval_script_name and self.benchmark_dir:
             from envs.scienceagent_eval import score_task
@@ -445,6 +465,10 @@ def _format_exec_result(result: dict) -> str:
     if not out and not err:
         parts.append("(no output)")
     return "\n".join(parts) + "\n"
+
+
+def _env_flag(name: str) -> bool:
+    return os.environ.get(name, "").lower() in ("1", "true", "yes")
 
 
 def _extract_eval_contract(src: str, expected_basename: str | None) -> str | None:

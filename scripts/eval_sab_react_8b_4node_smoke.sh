@@ -113,6 +113,9 @@ export RAY_memory_monitor_refresh_ms=0
 export SAB_REAL_EVAL=${SAB_REAL_EVAL:-0}
 export SAB_EXPOSE_EVAL_CONTRACT=${SAB_EXPOSE_EVAL_CONTRACT:-0}
 export SAB_INTERACTIVE_EVAL_FEEDBACK=${SAB_INTERACTIVE_EVAL_FEEDBACK:-0}
+export SAB_DEBUG_IO=${SAB_DEBUG_IO:-0}
+SAB_DUMP_VALIDATION=${SAB_DUMP_VALIDATION:-0}
+SAB_LOG_VAL_GENERATIONS=${SAB_LOG_VAL_GENERATIONS:-0}
 
 # ── WANDB ──
 if [ -n "${WORK:-}" ] && [ -f "$WORK/.wandb_env" ]; then
@@ -197,6 +200,15 @@ fi
 
 TS=$(date +%Y%m%d_%H%M%S)
 EXPERIMENT_NAME="eval_react_sab_8b_4n_smoke_${TS}"
+TRAINER_DEBUG_OVERRIDES=()
+if [ "$SAB_DUMP_VALIDATION" = "1" ]; then
+  SAB_VALIDATION_DATA_DIR=${SAB_VALIDATION_DATA_DIR:-${SCRATCH:-/scratch/09281/chc_1996}/sab_validation_generations/$EXPERIMENT_NAME}
+  mkdir -p "$SAB_VALIDATION_DATA_DIR"
+  TRAINER_DEBUG_OVERRIDES+=("trainer.validation_data_dir=$SAB_VALIDATION_DATA_DIR")
+fi
+if [ "$SAB_LOG_VAL_GENERATIONS" != "0" ]; then
+  TRAINER_DEBUG_OVERRIDES+=("trainer.log_val_generations=$SAB_LOG_VAL_GENERATIONS")
+fi
 
 probe() { printf '+++ [%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 
@@ -213,6 +225,7 @@ echo "  Sample caps:    val=$SAB_VAL_MAX_SAMPLES train=$SAB_TRAIN_MAX_SAMPLES"
 echo "  Token caps:     prompt=$SAB_PROMPT_LENGTH response=$SAB_RESPONSE_LENGTH max_token_gpu=$SAB_MAX_TOKEN_LEN_PER_GPU"
 echo "  Turn caps:      val_max_turn=$SAB_VAL_MAX_TURN turn_max_new_tokens=$SAB_TURN_MAX_NEW_TOKENS"
 echo "  SAB_REAL_EVAL:  $SAB_REAL_EVAL"
+echo "  Debug:          SAB_DEBUG_IO=$SAB_DEBUG_IO SAB_DUMP_VALIDATION=$SAB_DUMP_VALIDATION ${SAB_VALIDATION_DATA_DIR:+validation_dir=$SAB_VALIDATION_DATA_DIR}"
 echo "  Started: $(date)"
 echo "=============================================================="
 
@@ -284,6 +297,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" bash -c '
   export SAB_REAL_EVAL='"$SAB_REAL_EVAL"'
   export SAB_EXPOSE_EVAL_CONTRACT='"$SAB_EXPOSE_EVAL_CONTRACT"'
   export SAB_INTERACTIVE_EVAL_FEEDBACK='"$SAB_INTERACTIVE_EVAL_FEEDBACK"'
+  export SAB_DEBUG_IO='"$SAB_DEBUG_IO"'
   ray start --head --node-ip-address='"$TRAINER_HEAD_IP"' --port=6379 \
     --num-cpus=70 --num-gpus=1 --dashboard-host=0.0.0.0 --block
 ' &
@@ -312,6 +326,7 @@ for i in $(seq 1 $((NUM_NODES - 1))); do
     export SAB_REAL_EVAL='"$SAB_REAL_EVAL"'
     export SAB_EXPOSE_EVAL_CONTRACT='"$SAB_EXPOSE_EVAL_CONTRACT"'
     export SAB_INTERACTIVE_EVAL_FEEDBACK='"$SAB_INTERACTIVE_EVAL_FEEDBACK"'
+    export SAB_DEBUG_IO='"$SAB_DEBUG_IO"'
     ray start --address='"${TRAINER_HEAD_IP}:6379"' --num-cpus=70 --num-gpus=1 --block
   ' &
   WORKER_PIDS+=("$!")
@@ -342,8 +357,9 @@ probe "launching trainer (model load + vLLM init typically ~3-5 min)"
 
 set +e
 srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_ROOT" \
-  --export=ALL,SAB_WORKDIR_ROOT="$SAB_WORKDIR_ROOT",SAB_REAL_EVAL="$SAB_REAL_EVAL",SAB_EXPOSE_EVAL_CONTRACT="$SAB_EXPOSE_EVAL_CONTRACT",SAB_INTERACTIVE_EVAL_FEEDBACK="$SAB_INTERACTIVE_EVAL_FEEDBACK" \
+  --export=ALL,SAB_WORKDIR_ROOT="$SAB_WORKDIR_ROOT",SAB_REAL_EVAL="$SAB_REAL_EVAL",SAB_EXPOSE_EVAL_CONTRACT="$SAB_EXPOSE_EVAL_CONTRACT",SAB_INTERACTIVE_EVAL_FEEDBACK="$SAB_INTERACTIVE_EVAL_FEEDBACK",SAB_DEBUG_IO="$SAB_DEBUG_IO" \
   python -m scripts.train_sab \
+  "${TRAINER_DEBUG_OVERRIDES[@]}" \
   algorithm.adv_estimator=foldgrpo \
   algorithm.kl_ctrl.kl_coef=0.005 \
   actor_rollout_ref.rollout.agent.default_agent_loop=react_agent_code \
