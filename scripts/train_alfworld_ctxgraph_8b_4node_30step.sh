@@ -123,8 +123,38 @@ if [ "$ALFWORLD_MODE" != "real" ] && [ "$ALFWORLD_MODE" != "hard" ]; then
   exit 1
 fi
 
+ALFWORLD_VAL_ONLY=${ALFWORLD_VAL_ONLY:-False}
+ALFWORLD_VAL_BEFORE_TRAIN=${ALFWORLD_VAL_BEFORE_TRAIN:-True}
+ALFWORLD_TOTAL_STEPS=${ALFWORLD_TOTAL_STEPS:-30}
+ALFWORLD_TRAIN_BATCH_SIZE=${ALFWORLD_TRAIN_BATCH_SIZE:-16}
+ALFWORLD_PPO_MINI_BATCH_SIZE=${ALFWORLD_PPO_MINI_BATCH_SIZE:-$ALFWORLD_TRAIN_BATCH_SIZE}
+ALFWORLD_ROLLOUT_N=${ALFWORLD_ROLLOUT_N:-4}
+ALFWORLD_PROMPT_LENGTH=${ALFWORLD_PROMPT_LENGTH:-4096}
+ALFWORLD_RESPONSE_LENGTH=${ALFWORLD_RESPONSE_LENGTH:-8192}
+ALFWORLD_MAX_TOKEN_LEN_PER_GPU=${ALFWORLD_MAX_TOKEN_LEN_PER_GPU:-12288}
+ALFWORLD_MAX_TURN=${ALFWORLD_MAX_TURN:-20}
+ALFWORLD_VAL_MAX_TURN=${ALFWORLD_VAL_MAX_TURN:-$ALFWORLD_MAX_TURN}
+ALFWORLD_TURN_MAX_NEW_TOKENS=${ALFWORLD_TURN_MAX_NEW_TOKENS:-512}
+ALFWORLD_BRANCH_LEN=${ALFWORLD_BRANCH_LEN:-2048}
+ALFWORLD_TRAIN_MAX_SAMPLES=${ALFWORLD_TRAIN_MAX_SAMPLES:-}
+ALFWORLD_VAL_MAX_SAMPLES=${ALFWORLD_VAL_MAX_SAMPLES:-}
+ALFWORLD_TEST_FREQ=${ALFWORLD_TEST_FREQ:-999}
+ALFWORLD_SAVE_FREQ=${ALFWORLD_SAVE_FREQ:-15}
+
+EXTRA_DATA_ARGS=()
+if [ -n "$ALFWORLD_TRAIN_MAX_SAMPLES" ]; then
+  EXTRA_DATA_ARGS+=(data.train_max_samples="$ALFWORLD_TRAIN_MAX_SAMPLES")
+fi
+if [ -n "$ALFWORLD_VAL_MAX_SAMPLES" ]; then
+  EXTRA_DATA_ARGS+=(data.val_max_samples="$ALFWORLD_VAL_MAX_SAMPLES")
+fi
+
 TS=$(date +%Y%m%d_%H%M%S)
-EXPERIMENT_NAME="ctxgraph_alfworld_${ALFWORLD_MODE}_8b_4n_p4096_r8192_30step_${TS}"
+RUN_SUFFIX="step${ALFWORLD_TOTAL_STEPS}"
+if [ "$ALFWORLD_VAL_ONLY" = "True" ] || [ "$ALFWORLD_VAL_ONLY" = "true" ]; then
+  RUN_SUFFIX="valonly"
+fi
+EXPERIMENT_NAME="ctxgraph_alfworld_${ALFWORLD_MODE}_8b_4n_p${ALFWORLD_PROMPT_LENGTH}_r${ALFWORLD_RESPONSE_LENGTH}_${RUN_SUFFIX}_${TS}"
 
 probe() { printf '+++ [%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 
@@ -134,6 +164,10 @@ echo "  Job: ${SLURM_JOB_ID:-<idev>}   Head: $NODE0 ($NODE0_IP)"
 echo "  Worker(s): ${NODELIST[@]:1}"
 echo "  Trainer model:  $MODEL_PATH"
 echo "  ALFWORLD_DATA:  $ALFWORLD_DATA"
+echo "  val_only:       $ALFWORLD_VAL_ONLY"
+echo "  steps:          $ALFWORLD_TOTAL_STEPS"
+echo "  samples:        train=${ALFWORLD_TRAIN_MAX_SAMPLES:-all} val=${ALFWORLD_VAL_MAX_SAMPLES:-all}"
+echo "  tokens/turns:   prompt=$ALFWORLD_PROMPT_LENGTH response=$ALFWORLD_RESPONSE_LENGTH max_turn=$ALFWORLD_MAX_TURN val_max_turn=$ALFWORLD_VAL_MAX_TURN"
 echo "  Experiment: $EXPERIMENT_NAME"
 echo "  Started: $(date)"
 echo "=============================================================="
@@ -271,11 +305,11 @@ srun --overlap --nodes=1 --ntasks=1 -w "$NODE0" --chdir="$PROJECT_ROOT" \
   actor_rollout_ref.rollout.calculate_log_probs=True \
   actor_rollout_ref.rollout.gpu_memory_utilization=0.55 \
   actor_rollout_ref.model.path="$MODEL_PATH" \
-  actor_rollout_ref.rollout.prompt_length=4096 \
-  actor_rollout_ref.rollout.response_length=8192 \
-  actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu=12288 \
+  actor_rollout_ref.rollout.prompt_length=${ALFWORLD_PROMPT_LENGTH} \
+  actor_rollout_ref.rollout.response_length=${ALFWORLD_RESPONSE_LENGTH} \
+  actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu=${ALFWORLD_MAX_TOKEN_LEN_PER_GPU} \
   actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
-  actor_rollout_ref.rollout.n=4 \
+  actor_rollout_ref.rollout.n=${ALFWORLD_ROLLOUT_N} \
   actor_rollout_ref.rollout.agent.num_workers=1 \
   actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=1 \
   actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=1 \
@@ -290,24 +324,24 @@ srun --overlap --nodes=1 --ntasks=1 -w "$NODE0" --chdir="$PROJECT_ROOT" \
   actor_rollout_ref.actor.use_kl_loss=True \
   data.train_files=data/alfworld_${ALFWORLD_MODE}_train.parquet \
   data.val_files=data/alfworld_${ALFWORLD_MODE}_test.parquet \
-  data.train_batch_size=16 \
-  data.max_prompt_length=4096 \
-  data.max_response_length=8192 \
+  data.train_batch_size=${ALFWORLD_TRAIN_BATCH_SIZE} \
+  data.max_prompt_length=${ALFWORLD_PROMPT_LENGTH} \
+  data.max_response_length=${ALFWORLD_RESPONSE_LENGTH} \
   data.return_raw_chat=True \
-  actor_rollout_ref.actor.ppo_mini_batch_size=16 \
+  actor_rollout_ref.actor.ppo_mini_batch_size=${ALFWORLD_PPO_MINI_BATCH_SIZE} \
   actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=1 \
-  actor_rollout_ref.actor.ppo_max_token_len_per_gpu=12288 \
-  actor_rollout_ref.actor.ppo_infer_max_token_len_per_gpu=12288 \
+  actor_rollout_ref.actor.ppo_max_token_len_per_gpu=${ALFWORLD_MAX_TOKEN_LEN_PER_GPU} \
+  actor_rollout_ref.actor.ppo_infer_max_token_len_per_gpu=${ALFWORLD_MAX_TOKEN_LEN_PER_GPU} \
   actor_rollout_ref.model.enable_gradient_checkpointing=True \
   +actor_rollout_ref.rollout.plugin.workflow=alfworld_graph \
-  +actor_rollout_ref.rollout.plugin.max_turn=20 \
+  +actor_rollout_ref.rollout.plugin.max_turn=${ALFWORLD_MAX_TURN} \
   +actor_rollout_ref.rollout.plugin.retry_cjk=10 \
-  +actor_rollout_ref.rollout.plugin.turn_max_new_tokens=512 \
+  +actor_rollout_ref.rollout.plugin.turn_max_new_tokens=${ALFWORLD_TURN_MAX_NEW_TOKENS} \
   +actor_rollout_ref.rollout.plugin.max_session=3 \
   +actor_rollout_ref.rollout.plugin.val_max_session=3 \
   +actor_rollout_ref.rollout.plugin.session_timeout=300 \
   +actor_rollout_ref.rollout.plugin.enable_summary=False \
-  +actor_rollout_ref.rollout.plugin.branch_len=2048 \
+  +actor_rollout_ref.rollout.plugin.branch_len=${ALFWORLD_BRANCH_LEN} \
   +actor_rollout_ref.rollout.plugin.process_reward='[flat,scope,graph]' \
   +actor_rollout_ref.rollout.plugin.lambda_compact=0.1 \
   +actor_rollout_ref.rollout.plugin.lambda_cost=0.005 \
@@ -315,19 +349,20 @@ srun --overlap --nodes=1 --ntasks=1 -w "$NODE0" --chdir="$PROJECT_ROOT" \
   +actor_rollout_ref.rollout.plugin.must_finish=False \
   +actor_rollout_ref.rollout.plugin.double_check=False \
   +actor_rollout_ref.rollout.plugin.must_search=False \
-  +actor_rollout_ref.rollout.plugin.val_max_turn=20 \
-  +actor_rollout_ref.rollout.plugin.val_response_length=8192 \
-  trainer.val_before_train=True \
-  trainer.val_only=False \
+  +actor_rollout_ref.rollout.plugin.val_max_turn=${ALFWORLD_VAL_MAX_TURN} \
+  +actor_rollout_ref.rollout.plugin.val_response_length=${ALFWORLD_RESPONSE_LENGTH} \
+  trainer.val_before_train=${ALFWORLD_VAL_BEFORE_TRAIN} \
+  trainer.val_only=${ALFWORLD_VAL_ONLY} \
   trainer.n_gpus_per_node=1 \
   trainer.nnodes=${NUM_NODES} \
-  trainer.total_training_steps=30 \
-  trainer.test_freq=999 \
-  trainer.save_freq=15 \
+  trainer.total_training_steps=${ALFWORLD_TOTAL_STEPS} \
+  trainer.test_freq=${ALFWORLD_TEST_FREQ} \
+  trainer.save_freq=${ALFWORLD_SAVE_FREQ} \
   trainer.default_local_dir=${SCRATCH:-/scratch/09281/chc_1996}/context-graph-ckpts/$EXPERIMENT_NAME \
   trainer.project_name=context-graph \
   trainer.experiment_name="$EXPERIMENT_NAME" \
-  trainer.logger="$TRAINER_LOGGER"
+  trainer.logger="$TRAINER_LOGGER" \
+  "${EXTRA_DATA_ARGS[@]}"
 RC=$?
 set -e
 
