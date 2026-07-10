@@ -60,6 +60,10 @@ export TRANSFORMERS_OFFLINE=1
 export HF_DATASETS_CACHE=/tmp/hf_datasets_cache_$$
 export RAY_memory_usage_threshold=0.99
 export RAY_memory_monitor_refresh_ms=0
+export RAY_raylet_start_wait_time_s=${RAY_raylet_start_wait_time_s:-180}
+RAY_HEAD_SETTLE_SECONDS=${RAY_HEAD_SETTLE_SECONDS:-30}
+RAY_WORKER_STAGGER_SECONDS=${RAY_WORKER_STAGGER_SECONDS:-8}
+RAY_CLUSTER_SETTLE_SECONDS=${RAY_CLUSTER_SETTLE_SECONDS:-30}
 
 # ── WANDB (optional) ──
 if [ -n "${WORK:-}" ] && [ -f "$WORK/.wandb_env" ]; then
@@ -159,7 +163,7 @@ EXPERIMENT_NAME="ctxgraph_alfworld_${ALFWORLD_MODE}_8b_4n_p${ALFWORLD_PROMPT_LEN
 probe() { printf '+++ [%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 
 echo "=============================================================="
-echo "  ContextGraph (isolated) on ALFWorld @${ALFWORLD_MODE} (8B, 4 nodes, 30 steps)"
+echo "  ContextGraph (isolated) on ALFWorld @${ALFWORLD_MODE} (8B, 4 nodes, steps=${ALFWORLD_TOTAL_STEPS})"
 echo "  Job: ${SLURM_JOB_ID:-<idev>}   Head: $NODE0 ($NODE0_IP)"
 echo "  Worker(s): ${NODELIST[@]:1}"
 echo "  Trainer model:  $MODEL_PATH"
@@ -242,11 +246,17 @@ srun --overlap --nodes=1 --ntasks=1 -w "$NODE0" bash -c '
   export FLASHINFER_WORKSPACE_BASE=/tmp
   export HF_HUB_OFFLINE=1
   export TRANSFORMERS_OFFLINE=1
+  export RAY_raylet_start_wait_time_s='"$RAY_raylet_start_wait_time_s"'
   ray start --head --node-ip-address='"$NODE0_IP"' --port=6379 \
-    --num-cpus=70 --num-gpus=1 --dashboard-host=0.0.0.0 --block
+    --num-cpus=70 --num-gpus=1 --include-dashboard=false --disable-usage-stats --block
 ' &
 RAY_HEAD_PID=$!
-sleep 20
+sleep "$RAY_HEAD_SETTLE_SECONDS"
+if ! kill -0 "$RAY_HEAD_PID" 2>/dev/null; then
+  echo "ERROR: Ray head process exited before workers could join."
+  wait "$RAY_HEAD_PID" || true
+  exit 1
+fi
 probe "Ray head sleep done; launching $((NUM_NODES - 1)) workers"
 
 # ── Ray workers ──
@@ -266,12 +276,13 @@ for i in $(seq 1 $((NUM_NODES - 1))); do
     export FLASHINFER_WORKSPACE_BASE=/tmp
     export HF_HUB_OFFLINE=1
     export TRANSFORMERS_OFFLINE=1
+    export RAY_raylet_start_wait_time_s='"$RAY_raylet_start_wait_time_s"'
     ray start --address='"${NODE0_IP}:6379"' --num-cpus=70 --num-gpus=1 --block
   ' &
   WORKER_PIDS+=("$!")
-  sleep 5
+  sleep "$RAY_WORKER_STAGGER_SECONDS"
 done
-sleep 20
+sleep "$RAY_CLUSTER_SETTLE_SECONDS"
 probe "all Ray workers launched, cluster settling"
 
 cleanup() {
@@ -284,7 +295,10 @@ trap cleanup EXIT
 
 export RAY_ADDRESS=${NODE0_IP}:6379
 probe "querying ray status"
-ray status || echo "WARN: ray status check failed"
+if ! ray status; then
+  echo "ERROR: Ray cluster did not start cleanly; aborting before trainer launch."
+  exit 1
+fi
 
 echo "=============================================================="
 echo "  Launching ContextGraph FoldGRPO training on ALFWorld"
