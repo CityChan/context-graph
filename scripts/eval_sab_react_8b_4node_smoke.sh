@@ -104,6 +104,10 @@ export HF_HUB_OFFLINE=1
 export TRANSFORMERS_OFFLINE=1
 export RAY_memory_usage_threshold=0.99
 export RAY_memory_monitor_refresh_ms=0
+export RAY_raylet_start_wait_time_s=${RAY_raylet_start_wait_time_s:-180}
+RAY_HEAD_SETTLE_SECONDS=${RAY_HEAD_SETTLE_SECONDS:-30}
+RAY_WORKER_STAGGER_SECONDS=${RAY_WORKER_STAGGER_SECONDS:-8}
+RAY_CLUSTER_SETTLE_SECONDS=${RAY_CLUSTER_SETTLE_SECONDS:-30}
 
 # Real per-task eval (eval_programs/<script> -> [0,1] success) vs the
 # Phase-D2 file-existence placeholder. Default 0 (placeholder). Set
@@ -298,11 +302,17 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" bash -c '
   export SAB_EXPOSE_EVAL_CONTRACT='"$SAB_EXPOSE_EVAL_CONTRACT"'
   export SAB_INTERACTIVE_EVAL_FEEDBACK='"$SAB_INTERACTIVE_EVAL_FEEDBACK"'
   export SAB_DEBUG_IO='"$SAB_DEBUG_IO"'
+  export RAY_raylet_start_wait_time_s='"$RAY_raylet_start_wait_time_s"'
   ray start --head --node-ip-address='"$TRAINER_HEAD_IP"' --port=6379 \
-    --num-cpus=70 --num-gpus=1 --dashboard-host=0.0.0.0 --block
+    --num-cpus=70 --num-gpus=1 --include-dashboard=false --disable-usage-stats --block
 ' &
 RAY_HEAD_PID=$!
-sleep 20
+sleep "$RAY_HEAD_SETTLE_SECONDS"
+if ! kill -0 "$RAY_HEAD_PID" 2>/dev/null; then
+  echo "ERROR: Ray head process exited before workers could join."
+  wait "$RAY_HEAD_PID" || true
+  exit 1
+fi
 probe "Ray head sleep done; launching $((NUM_NODES - 1)) trainer workers"
 
 # ── Ray workers on NODELIST[1..N-1] ──
@@ -327,12 +337,13 @@ for i in $(seq 1 $((NUM_NODES - 1))); do
     export SAB_EXPOSE_EVAL_CONTRACT='"$SAB_EXPOSE_EVAL_CONTRACT"'
     export SAB_INTERACTIVE_EVAL_FEEDBACK='"$SAB_INTERACTIVE_EVAL_FEEDBACK"'
     export SAB_DEBUG_IO='"$SAB_DEBUG_IO"'
+    export RAY_raylet_start_wait_time_s='"$RAY_raylet_start_wait_time_s"'
     ray start --address='"${TRAINER_HEAD_IP}:6379"' --num-cpus=70 --num-gpus=1 --block
   ' &
   WORKER_PIDS+=("$!")
-  sleep 5
+  sleep "$RAY_WORKER_STAGGER_SECONDS"
 done
-sleep 20
+sleep "$RAY_CLUSTER_SETTLE_SECONDS"
 probe "all $((NUM_NODES - 1)) trainer workers launched, cluster settling"
 
 cleanup() {
@@ -345,7 +356,10 @@ trap cleanup EXIT
 
 export RAY_ADDRESS=${TRAINER_HEAD_IP}:6379
 probe "querying ray status"
-ray status || echo "WARN: ray status check failed"
+if ! ray status; then
+  echo "ERROR: Ray cluster did not start cleanly; aborting before trainer launch."
+  exit 1
+fi
 
 echo "=============================================================="
 echo "  Launching ReAct (code) ZERO-SHOT eval (4 nodes SMOKE, ScienceAgentBench test cap=$SAB_VAL_MAX_SAMPLES)"
