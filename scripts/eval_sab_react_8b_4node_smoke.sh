@@ -108,6 +108,8 @@ export RAY_raylet_start_wait_time_s=${RAY_raylet_start_wait_time_s:-180}
 RAY_HEAD_SETTLE_SECONDS=${RAY_HEAD_SETTLE_SECONDS:-30}
 RAY_WORKER_STAGGER_SECONDS=${RAY_WORKER_STAGGER_SECONDS:-8}
 RAY_CLUSTER_SETTLE_SECONDS=${RAY_CLUSTER_SETTLE_SECONDS:-30}
+RAY_STATUS_TIMEOUT_SECONDS=${RAY_STATUS_TIMEOUT_SECONDS:-300}
+RAY_STATUS_POLL_SECONDS=${RAY_STATUS_POLL_SECONDS:-10}
 
 # Real per-task eval (eval_programs/<script> -> [0,1] success) vs the
 # Phase-D2 file-existence placeholder. Default 0 (placeholder). Set
@@ -215,6 +217,34 @@ if [ "$SAB_LOG_VAL_GENERATIONS" != "0" ]; then
 fi
 
 probe() { printf '+++ [%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
+
+wait_for_ray_cluster() {
+  local expected_nodes=$1
+  local deadline=$((SECONDS + RAY_STATUS_TIMEOUT_SECONDS))
+  local status_out active_nodes
+
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    status_out=$(ray status 2>&1 || true)
+    active_nodes=$(printf '%s\n' "$status_out" | awk '
+      /^Active:/ {active=1; next}
+      /^Pending:/ {active=0}
+      active && /node_/ {count++}
+      END {print count + 0}
+    ')
+    if [ "$active_nodes" -ge "$expected_nodes" ]; then
+      printf '%s\n' "$status_out"
+      return 0
+    fi
+    printf '+++ [%s] waiting for Ray nodes: active=%s expected=%s\n' \
+      "$(date +%H:%M:%S)" "$active_nodes" "$expected_nodes"
+    sleep "$RAY_STATUS_POLL_SECONDS"
+  done
+
+  echo "ERROR: Ray cluster did not reach $expected_nodes active nodes within ${RAY_STATUS_TIMEOUT_SECONDS}s."
+  echo "Last ray status output:"
+  printf '%s\n' "$status_out"
+  return 1
+}
 
 echo "=============================================================="
 echo "  ZERO-SHOT EVAL: ReAct (code) on ScienceAgentBench (Qwen3-8B dense, 4 nodes SMOKE, 32K-resp, val_only=True)"
@@ -355,8 +385,8 @@ cleanup() {
 trap cleanup EXIT
 
 export RAY_ADDRESS=${TRAINER_HEAD_IP}:6379
-probe "querying ray status"
-if ! ray status; then
+probe "waiting for Ray cluster readiness"
+if ! wait_for_ray_cluster "$NUM_NODES"; then
   echo "ERROR: Ray cluster did not start cleanly; aborting before trainer launch."
   exit 1
 fi
