@@ -37,9 +37,14 @@ print(df.shape, df.columns.tolist())
 
 # Important rules
 - The sandbox preserves state across calls. You do NOT need to re-import or re-load data.
+- Each benchmark item is independent. Do NOT reuse code, filenames, paths, variables, or conclusions from another task unless they appear in the current `# Task` or `# Your working environment` block.
+- Every data path in your code must be one of the listed input files, a directory containing listed input files, or a file you created earlier in this sandbox.
 - Write output files using normal Python (`df.to_csv(...)`, `plt.savefig(...)`). The harness checks `pred_results/` after you `finish`.
 - The filename matters. A scientifically reasonable result saved under the wrong name or outside `pred_results/` receives zero credit.
+- Do not spend the whole episode inspecting. Use at most two exploratory `python_exec` calls; by the third `python_exec`, create the required output file even if it is only a best-effort solution.
 - If the environment says `[output_status] ... present=no`, do not call `finish`; use `python_exec` to create, copy, or rename the required file.
+- After creating the final file, run a short verification step that checks `os.path.exists(...)` and prints the file size or directory listing. Call `finish` only after the output status reports the exact required file as present.
+- If you cannot fully solve the science task, still write a minimal valid artifact at the exact required path: CSV for `.csv`, JSON for `.json`, PNG via matplotlib for `.png`, text for `.txt`, or the closest requested format. A weak file is better than no file.
 - If code raises an exception, the traceback comes back in stderr — read it and fix.
 - Do NOT use `os.system`, `subprocess`, shell escapes, or `pip`/`conda` install; they are HARD-BLOCKED by the sandbox and waste a turn. Every scientific package you need (numpy, pandas, scikit-learn, scipy, torch, scanpy, anndata, rdkit, deepchem, DeepPurpose, matplotlib, seaborn, xgboost, statsmodels, geopandas, rasterio, ...) is ALREADY installed — just `import` it.
 - Do NOT print the entire dataset — print head/shape/dtypes only.
@@ -123,7 +128,11 @@ def _build_env_block(env) -> str:
             "The pred_results/ directory already exists. The harness scores by "
             "checking that this exact file is present and then running the task "
             "evaluator on it. Before `finish`, the environment must report "
-            "`present=yes` for this file."
+            "`present=yes` for this file.\n"
+            "Before `finish`, verify with Python:\n"
+            "  import os\n"
+            f"  path = 'pred_results/{expected}'\n"
+            "  print(path, os.path.exists(path), os.path.getsize(path) if os.path.exists(path) else 'missing')"
         )
     if eval_contract:
         lines.append("# Evaluator output-format hints\n" + eval_contract)
@@ -145,8 +154,10 @@ def _build_user_prompt_code(instruction: str, workflow: str, env=None) -> str:
     if env_block:
         user_msg += env_block + "\n\n"
     user_msg += (
-        "Begin by inspecting the input files listed above, then implement the "
-        "analysis. Save the output to the exact required path. If an "
+        "First read this task and the working-environment block carefully, then "
+        "inspect only the input files listed above. Do not carry over paths or "
+        "code from any previous task. Implement the analysis, save the output "
+        "to the exact required path, and verify it exists. If an "
         "`[output_status]` message says the required file is absent, fix that "
         "with `python_exec`. Call `finish` only after the required output is "
         "present."

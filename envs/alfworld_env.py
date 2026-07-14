@@ -179,9 +179,48 @@ class ALFWorldEnv:
         if self._hide_admissible:
             return {'observation': obs_text}
         if self._admissible_commands:
-            cmd_str = ", ".join(self._admissible_commands)
+            commands = self._display_admissible_commands(self._admissible_commands)
+            cmd_str = ", ".join(commands)
             obs_text += f"\n\nAdmissible commands: [{cmd_str}]"
         return {'observation': obs_text}
+
+    def _display_admissible_commands(self, commands: list) -> list:
+        """Compact ALFWorld object ids before they enter the LLM context.
+
+        Real-mode ALFWorld often returns long object ids such as
+        ``drawer_bar__minus_00_dot_19_bar__plus_00_dot_16_bar__minus_...``.
+        TextWorld accepts short object names in these tasks, and showing the
+        full coordinate ids causes trajectory context to hit the response cap.
+        """
+        if os.environ.get("ALFWORLD_COMPACT_ADMISSIBLE", "1") == "0":
+            compacted = list(commands)
+        else:
+            compacted = [self._compact_command(c) for c in commands]
+
+        deduped = []
+        seen = set()
+        for command in compacted:
+            if command and command not in seen:
+                deduped.append(command)
+                seen.add(command)
+
+        max_display = os.environ.get("ALFWORLD_MAX_ADMISSIBLE_DISPLAY", "")
+        if max_display:
+            try:
+                n = int(max_display)
+                if n > 0:
+                    deduped = deduped[:n]
+            except ValueError:
+                pass
+        return deduped
+
+    def _compact_command(self, command: str) -> str:
+        parts = []
+        for token in command.split():
+            if "_bar__" in token:
+                token = token.split("_bar__", 1)[0]
+            parts.append(token)
+        return " ".join(parts)
 
     def _extract_admissible(self, info) -> list:
         """Extract admissible commands from TextWorld info dict."""

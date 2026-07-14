@@ -184,7 +184,20 @@ def test_prompt_code_workflow_assembly():
     assert chat[0]['role'] == 'system' and chat[1]['role'] == 'user'
     assert 'python_exec' in chat[0]['content']
     assert 'persistent sandbox' in chat[0]['content']
+    assert 'Each benchmark item is independent' in chat[0]['content']
     assert 'Compute the mean' in chat[1]['content']
+
+    env = SimpleNamespace(
+        workdir="/tmp/sab-task",
+        input_manifest=["input.csv"],
+        expected_output_basename="result.csv",
+        eval_contract=None,
+    )
+    chat_env = create_chat_code("Compute the mean of column 'value'.", 'code', env=env)
+    prompt = chat_env[1]['content']
+    assert 'Do not carry over paths or code from any previous task' in prompt
+    assert "path = 'pred_results/result.csv'" in prompt
+    assert 'input.csv' in prompt
 
     # code_graph prompt includes the graph addendum
     chat_g = create_chat_code("foo", 'code_graph')
@@ -727,7 +740,12 @@ async def test_env_missing_output():
             </parameter>
             </function>
         """).strip()
+        out1 = await env.run_action(resp1)
+        assert '[progress_hint]' not in out1['observation'], out1['observation']
         await env.run_action(resp1)
+        out_hint = await env.run_action(resp1)
+        assert '[progress_hint]' in out_hint['observation'], out_hint['observation']
+        assert 'write a best-effort output now' in out_hint['observation'], out_hint['observation']
 
         resp2 = textwrap.dedent("""
             <function=finish>

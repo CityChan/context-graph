@@ -349,10 +349,35 @@ class ScienceAgentEnv:
         expected_name = self.expected_output_basename
         if expected_name:
             present = "yes" if expected_name in produced else "no"
-            return (
+            msg = (
                 f"\n[output_status] expected=pred_results/{expected_name} "
                 f"present={present} produced={produced}\n"
             )
+            if present == "no":
+                try:
+                    hint_after = int(os.environ.get("SAB_NO_OUTPUT_HINT_AFTER", "3"))
+                except ValueError:
+                    hint_after = 3
+                if hint_after > 0 and self.stats.get("python_exec", 0) >= hint_after:
+                    ext = os.path.splitext(expected_name)[1].lower()
+                    if ext == ".csv":
+                        fallback = "For CSV, write a pandas DataFrame with the most likely required columns."
+                    elif ext == ".json":
+                        fallback = "For JSON, write a valid dict/list with the requested prediction fields."
+                    elif ext in (".png", ".jpg", ".jpeg", ".pdf"):
+                        fallback = "For figures, create a simple matplotlib plot and save it to the required path."
+                    elif ext in (".txt", ".tsv"):
+                        fallback = "For text/table output, write a concise valid text artifact."
+                    else:
+                        fallback = "Use the closest valid file format requested by the task."
+                    msg += (
+                        "[progress_hint] You have used several python_exec calls "
+                        "without creating the required file. Stop exploring and "
+                        "write a best-effort output now at "
+                        f"pred_results/{expected_name}; then check output_status. "
+                        f"{fallback}\n"
+                    )
+            return msg
         return f"\n[output_status] no expected output declared produced={produced}\n"
 
     def _maybe_build_eval_contract(self) -> str | None:
