@@ -17,10 +17,9 @@
 #   workflow    : alfworld_branch (branch tools but no graph tools)
 #   reward      : flat + scope (no graph shaping channel)
 #
-# Pivot context: HotpotQA 4B saturated (val/task_reward=0.7 zero-shot),
-# AND ALFWorld @hard 4B too cold (0% baseline → all-zero rollouts → no
-# gradient). @real is the Goldilocks zone: 4B baseline ~0.35-0.50 with
-# real RL headroom to push to ~0.6-0.7.
+# Pivot context: ALFWorld @hard is too cold for this setup (0% baseline
+# means all-zero rollouts and no gradient). @real keeps admissible commands
+# visible so the run can provide a useful diagnostic signal.
 #
 # Pre-flight (one-time, before this run):
 #   (login) pip install textworld alfworld

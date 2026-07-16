@@ -43,8 +43,8 @@ CORPUS_EMBEDDING_FILE = "corpus_embeddings.pkl"
 
 # Local-file mode: if set (via env var or CLI flag), the server reads the
 # corpus from a parquet on disk and the embeddings from a pickle on disk
-# instead of pulling from HuggingFace. Used by the HotpotQA pipeline
-# (build_hotpotqa_corpus.py + build_hotpotqa_index.py produce these files).
+# instead of pulling from HuggingFace. This is useful for private or
+# precomputed corpora that follow the same docid/url/text schema.
 LOCAL_CORPUS_PARQUET = os.getenv("LOCAL_CORPUS_PARQUET", "") or None
 LOCAL_EMBEDDINGS_PKL = os.getenv("LOCAL_EMBEDDINGS_PKL", "") or None
 
@@ -153,8 +153,7 @@ def load_corpus():
             url = row.url
             text = row.text or ""
             # Prepend the title (if available) so search snippets are easier
-            # for the agent to identify; mirrors what build_hotpotqa_index.py
-            # encoded the embeddings against.
+            # for the agent to identify.
             if has_title:
                 text = f"{getattr(row, 'title', '')}. {text}"
             docid_to_text[docid] = {

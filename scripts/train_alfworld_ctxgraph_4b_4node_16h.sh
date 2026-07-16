@@ -11,7 +11,7 @@
 
 # ─────────────────────────────────────────────────────────────────────
 # Main run: ContextGraph (isolated) on ALFWorld, 4B / 4 nodes / 16h.
-# Mirrors train_hotpotqa_ctxgraph_4b_4node_16h.sh but for ALFWorld:
+# ALFWorld-specific ContextGraph run:
 #   * NO search server (ALFWorld is a local TextWorld env, no retrieval)
 #   * NO Wikipedia corpus / embeddings
 #   * workflow=alfworld_graph (graph tools enabled in agent prompt)

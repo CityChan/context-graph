@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-TASK_ARG=${1:-both}
+TASK_ARG=${1:-alfworld}
 SBATCH_TIME=${2:-02:00:00}
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 DEFAULT_PROJECT_ROOT=$(cd "${SCRIPT_DIR}/.." && pwd)
@@ -19,10 +19,8 @@ ROLLOUT_N=${ROLLOUT_N:-8}
 
 case "$TASK_ARG" in
   alfworld) TASKS=(alfworld) ;;
-  hotpotqa) TASKS=(hotpotqa) ;;
-  both) TASKS=(alfworld hotpotqa) ;;
   *)
-    echo "Usage: $0 [alfworld|hotpotqa|both] [walltime]"
+    echo "Usage: $0 [alfworld] [walltime]"
     exit 2
     ;;
 esac

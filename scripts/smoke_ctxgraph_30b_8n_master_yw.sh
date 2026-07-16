@@ -12,6 +12,10 @@
 set -euo pipefail
 
 TASK=${TASK:-alfworld}
+if [ "$TASK" != "alfworld" ]; then
+  echo "Unknown TASK=$TASK; expected alfworld"
+  exit 2
+fi
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 DEFAULT_PROJECT_ROOT=${SLURM_SUBMIT_DIR:-$(cd "${SCRIPT_DIR}/.." && pwd)}
 DEFAULT_WORK_BASE=${WORK:-/work/07144/${USER:-$(whoami)}/vista}
@@ -35,11 +39,7 @@ TOTAL_TRAINING_STEPS=${TOTAL_TRAINING_STEPS:-1}
 ROLLOUT_N=${ROLLOUT_N:-8}
 TRAIN_BATCH_SIZE=${TRAIN_BATCH_SIZE:-8}
 PPO_MINI_BATCH_SIZE=${PPO_MINI_BATCH_SIZE:-8}
-if [ "$TASK" = "alfworld" ]; then
-  ROLLOUT_GPU_MEMORY_UTILIZATION=${ROLLOUT_GPU_MEMORY_UTILIZATION:-0.45}
-else
-  ROLLOUT_GPU_MEMORY_UTILIZATION=${ROLLOUT_GPU_MEMORY_UTILIZATION:-0.35}
-fi
+ROLLOUT_GPU_MEMORY_UTILIZATION=${ROLLOUT_GPU_MEMORY_UTILIZATION:-0.45}
 SAVE_FREQ=${SAVE_FREQ:-1}
 CHECKPOINT_BASE=${CHECKPOINT_BASE:-${SCRATCH_BASE}/checkpoints/context-graph-master-smoke}
 MAX_ACTOR_CKPT_TO_KEEP=${MAX_ACTOR_CKPT_TO_KEEP:-1}
@@ -73,11 +73,6 @@ for env_file in "${WORK:-}/.wandb_env" "${DEFAULT_WORK_BASE}/.wandb_env" "${HOME
 done
 export WANDB_API_KEY=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
 export WANDB_ENTITY=${WANDB_ENTITY:-huancheng}
-USE_OPENAI_JUDGE=${USE_OPENAI_JUDGE:-0}
-if [ "$TASK" = "hotpotqa" ] && [ "$USE_OPENAI_JUDGE" != "1" ]; then
-  export OPENAI_API_KEY=dummy
-  unset OPENAI_URL
-fi
 
 source "${CONDA_ROOT}/etc/profile.d/conda.sh"
 conda activate cxtgraph
@@ -115,14 +110,12 @@ TS=$(date +%Y%m%d_%H%M%S)
 EXPERIMENT_NAME=${EXPERIMENT_NAME:-ctxgraph_${TASK}_30b_8n_master_smoke_${TS}}
 CHECKPOINT_ROOT=${CHECKPOINT_ROOT:-${CHECKPOINT_BASE}/${EXPERIMENT_NAME}}
 HF_REPO_ID=${HF_REPO_ID:-${HF_NAMESPACE}/${EXPERIMENT_NAME}}
-SEARCH_PID=""
 RAY_HEAD_PID=""
 WORKER_PIDS=()
 
 probe() { printf '+++ [%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 
 cleanup() {
-  [ -n "$SEARCH_PID" ] && kill "$SEARCH_PID" 2>/dev/null || true
   [ -n "$RAY_HEAD_PID" ] && kill "$RAY_HEAD_PID" 2>/dev/null || true
   for pid in "${WORKER_PIDS[@]}"; do
     kill "$pid" 2>/dev/null || true
@@ -158,11 +151,6 @@ ray_env='
 '
 ray_env=${ray_env#$'\n'}
 ray_env=${ray_env%$'\n'}
-if [ "$TASK" = "hotpotqa" ] && [ "$USE_OPENAI_JUDGE" != "1" ]; then
-  ray_env="${ray_env}
-  export OPENAI_API_KEY=dummy
-  unset OPENAI_URL"
-fi
 
 echo "=============================================================="
 echo "ContextGraph 30B 8-node master smoke"
@@ -176,9 +164,6 @@ echo "Rollout n: $ROLLOUT_N"
 echo "Checkpoint root: $CHECKPOINT_ROOT"
 echo "Save freq: $SAVE_FREQ"
 echo "HF sync: $HF_SYNC_CHECKPOINTS repo=$HF_REPO_ID"
-if [ "$TASK" = "hotpotqa" ]; then
-  echo "OpenAI judge: ${USE_OPENAI_JUDGE}"
-fi
 echo "Started: $(date)"
 echo "=============================================================="
 
@@ -197,48 +182,14 @@ python -c "import torch; print('torch:', torch.__version__, 'cuda:', torch.cuda.
 python -c "import vllm; print('vllm:', vllm.__version__)"
 python -c "import verl; print('verl OK')"
 
-if [ "$TASK" = "alfworld" ]; then
-  probe "generate ALFWorld hard parquet"
-  python scripts/make_alfworld_data.py --hard --n_train 64 --n_val 8
-  python - <<'PY'
+probe "generate ALFWorld hard parquet"
+python scripts/make_alfworld_data.py --hard --n_train 64 --n_val 8
+python - <<'PY'
 import pandas as pd
 df = pd.read_parquet("data/alfworld_graph_train.parquet")
 print("ALFWorld rows:", len(df), "ability:", df["ability"].iloc[0])
 PY
-elif [ "$TASK" = "hotpotqa" ]; then
-  probe "check HotpotQA smoke artifacts"
-  for f in data/hotpotqa_graph_train.parquet data/hotpotqa_graph_test.parquet data/hotpotqa_corpus.parquet; do
-    [ -f "$f" ] || { echo "Missing $f. Run make_hotpotqa_data.py and build_hotpotqa_corpus.py first."; exit 1; }
-  done
 
-  probe "start HotpotQA BM25 search server"
-  "${SRUN_PREFIX[@]}" --nodes=1 --ntasks=1 -w "$NODE0" bash -c "${ray_env}; cd '$PROJECT_ROOT'; export PYTHONPATH='$PROJECT_ROOT':\${PYTHONPATH:-}; exec python -u scripts/hotpotqa_search_server.py --corpus data/hotpotqa_corpus.parquet --port 18999" \
-    >/tmp/hp_bm25_${SLURM_JOB_ID:-$$}.log 2>&1 &
-  SEARCH_PID=$!
-
-  probe "wait for search server"
-  for _ in $(seq 1 120); do
-    if curl -fsS "http://${NODE0_IP}:18999/health" >/dev/null 2>&1; then
-      break
-    fi
-    sleep 2
-  done
-  curl -fsS -X POST -H 'Content-Type: application/json' \
-    -d '{"query":"Eiffel Tower","k":1}' \
-    "http://${NODE0_IP}:18999/search" >/dev/null || {
-      echo "Search server failed. Tail:"
-      tail -80 /tmp/hp_bm25_${SLURM_JOB_ID:-$$}.log || true
-      exit 1
-    }
-  export LOCAL_SEARCH_URL="http://${NODE0_IP}:18999"
-  probe "search server ready at $LOCAL_SEARCH_URL"
-else
-  echo "Unknown TASK=$TASK; expected alfworld or hotpotqa"
-  exit 1
-fi
-
-# Ray workers inherit environment from their `ray start` shells. For HotpotQA,
-# make the search endpoint visible there as well as in the trainer process.
 ray_env="${ray_env}
   export LOCAL_SEARCH_URL='${LOCAL_SEARCH_URL:-}'"
 
@@ -313,61 +264,32 @@ COMMON_ARGS=(
   trainer.logger="$TRAINER_LOGGER"
 )
 
-if [ "$TASK" = "alfworld" ]; then
-  TASK_ARGS=(
-    actor_rollout_ref.rollout.prompt_length=16384
-    actor_rollout_ref.rollout.response_length=16384
-    actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu=32768
-    actor_rollout_ref.rollout.max_num_batched_tokens=8192
-    actor_rollout_ref.rollout.max_num_seqs=64
-    data.train_files=data/alfworld_graph_train.parquet
-    data.val_files=data/alfworld_graph_test.parquet
-    data.train_batch_size=${TRAIN_BATCH_SIZE}
-    data.max_prompt_length=16384
-    data.max_response_length=16384
-    actor_rollout_ref.actor.ppo_mini_batch_size=${PPO_MINI_BATCH_SIZE}
-    actor_rollout_ref.actor.ppo_max_token_len_per_gpu=32768
-    actor_rollout_ref.actor.ppo_infer_max_token_len_per_gpu=32768
-    +actor_rollout_ref.rollout.plugin.workflow=alfworld_graph
-    +actor_rollout_ref.rollout.plugin.max_turn=20
-    +actor_rollout_ref.rollout.plugin.turn_max_new_tokens=512
-    +actor_rollout_ref.rollout.plugin.max_session=4
-    +actor_rollout_ref.rollout.plugin.val_max_session=4
-    +actor_rollout_ref.rollout.plugin.session_timeout=600
-    +actor_rollout_ref.rollout.plugin.branch_len=8192
-    +actor_rollout_ref.rollout.plugin.process_reward='[flat,scope,graph]'
-    +actor_rollout_ref.rollout.plugin.max_traj=6
-    +actor_rollout_ref.rollout.plugin.val_max_turn=20
-    +actor_rollout_ref.rollout.plugin.val_response_length=16384
-  )
-else
-  TASK_ARGS=(
-    actor_rollout_ref.rollout.prompt_length=4096
-    actor_rollout_ref.rollout.response_length=8192
-    actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu=12288
-    actor_rollout_ref.rollout.max_num_batched_tokens=8192
-    actor_rollout_ref.rollout.max_num_seqs=64
-    data.train_files=data/hotpotqa_graph_train.parquet
-    data.val_files=data/hotpotqa_graph_test.parquet
-    data.train_batch_size=${TRAIN_BATCH_SIZE}
-    data.max_prompt_length=4096
-    data.max_response_length=8192
-    actor_rollout_ref.actor.ppo_mini_batch_size=${PPO_MINI_BATCH_SIZE}
-    actor_rollout_ref.actor.ppo_max_token_len_per_gpu=12288
-    actor_rollout_ref.actor.ppo_infer_max_token_len_per_gpu=12288
-    +actor_rollout_ref.rollout.plugin.workflow=search_graph
-    +actor_rollout_ref.rollout.plugin.max_turn=20
-    +actor_rollout_ref.rollout.plugin.turn_max_new_tokens=384
-    +actor_rollout_ref.rollout.plugin.max_session=3
-    +actor_rollout_ref.rollout.plugin.val_max_session=3
-    +actor_rollout_ref.rollout.plugin.session_timeout=300
-    +actor_rollout_ref.rollout.plugin.branch_len=2048
-    +actor_rollout_ref.rollout.plugin.process_reward='[flat,scope,graph]'
-    +actor_rollout_ref.rollout.plugin.max_traj=4
-    +actor_rollout_ref.rollout.plugin.val_max_turn=20
-    +actor_rollout_ref.rollout.plugin.val_response_length=8192
-  )
-fi
+TASK_ARGS=(
+  actor_rollout_ref.rollout.prompt_length=16384
+  actor_rollout_ref.rollout.response_length=16384
+  actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu=32768
+  actor_rollout_ref.rollout.max_num_batched_tokens=8192
+  actor_rollout_ref.rollout.max_num_seqs=64
+  data.train_files=data/alfworld_graph_train.parquet
+  data.val_files=data/alfworld_graph_test.parquet
+  data.train_batch_size=${TRAIN_BATCH_SIZE}
+  data.max_prompt_length=16384
+  data.max_response_length=16384
+  actor_rollout_ref.actor.ppo_mini_batch_size=${PPO_MINI_BATCH_SIZE}
+  actor_rollout_ref.actor.ppo_max_token_len_per_gpu=32768
+  actor_rollout_ref.actor.ppo_infer_max_token_len_per_gpu=32768
+  +actor_rollout_ref.rollout.plugin.workflow=alfworld_graph
+  +actor_rollout_ref.rollout.plugin.max_turn=20
+  +actor_rollout_ref.rollout.plugin.turn_max_new_tokens=512
+  +actor_rollout_ref.rollout.plugin.max_session=4
+  +actor_rollout_ref.rollout.plugin.val_max_session=4
+  +actor_rollout_ref.rollout.plugin.session_timeout=600
+  +actor_rollout_ref.rollout.plugin.branch_len=8192
+  +actor_rollout_ref.rollout.plugin.process_reward='[flat,scope,graph]'
+  +actor_rollout_ref.rollout.plugin.max_traj=6
+  +actor_rollout_ref.rollout.plugin.val_max_turn=20
+  +actor_rollout_ref.rollout.plugin.val_response_length=16384
+)
 
 probe "launch trainer"
 set +e

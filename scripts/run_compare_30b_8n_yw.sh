@@ -11,7 +11,7 @@
 
 set -euo pipefail
 
-# TASK:  alfworld | hotpotqa
+# TASK:  alfworld
 # AGENT: ctxgraph | baseline
 TASK=${TASK:-alfworld}
 AGENT=${AGENT:-ctxgraph}
@@ -38,53 +38,32 @@ CHECKPOINT_BASE=${CHECKPOINT_BASE:-${SCRATCH_BASE}/checkpoints/context-graph-com
 MAX_ACTOR_CKPT_TO_KEEP=${MAX_ACTOR_CKPT_TO_KEEP:-2}
 MAX_CRITIC_CKPT_TO_KEEP=${MAX_CRITIC_CKPT_TO_KEEP:-2}
 
-if [ "$TASK" = "alfworld" ]; then
-  TOTAL_TRAINING_STEPS=${TOTAL_TRAINING_STEPS:-16}
-  SAVE_FREQ=${SAVE_FREQ:-4}
-  ROLLOUT_PROMPT_LENGTH=${ROLLOUT_PROMPT_LENGTH:-16384}
-  ROLLOUT_RESPONSE_LENGTH=${ROLLOUT_RESPONSE_LENGTH:-16384}
-  ROLLOUT_LOG_PROB_MAX_LEN=${ROLLOUT_LOG_PROB_MAX_LEN:-32768}
-  DATA_MAX_PROMPT_LENGTH=${DATA_MAX_PROMPT_LENGTH:-16384}
-  DATA_MAX_RESPONSE_LENGTH=${DATA_MAX_RESPONSE_LENGTH:-16384}
-  TRAIN_BATCH_SIZE=${TRAIN_BATCH_SIZE:-16}
-  PPO_MINI_BATCH_SIZE=${PPO_MINI_BATCH_SIZE:-8}
-  ROLLOUT_N=${ROLLOUT_N:-8}
-  MAX_TURN=${MAX_TURN:-20}
-  TURN_MAX_NEW_TOKENS=${TURN_MAX_NEW_TOKENS:-512}
-  MAX_SESSION=${MAX_SESSION:-4}
-  BRANCH_LEN=${BRANCH_LEN:-8192}
-  MAX_TRAJ=${MAX_TRAJ:-6}
-elif [ "$TASK" = "hotpotqa" ]; then
-  TOTAL_TRAINING_STEPS=${TOTAL_TRAINING_STEPS:-30}
-  SAVE_FREQ=${SAVE_FREQ:-5}
-  ROLLOUT_PROMPT_LENGTH=${ROLLOUT_PROMPT_LENGTH:-4096}
-  ROLLOUT_RESPONSE_LENGTH=${ROLLOUT_RESPONSE_LENGTH:-8192}
-  ROLLOUT_LOG_PROB_MAX_LEN=${ROLLOUT_LOG_PROB_MAX_LEN:-12288}
-  DATA_MAX_PROMPT_LENGTH=${DATA_MAX_PROMPT_LENGTH:-4096}
-  DATA_MAX_RESPONSE_LENGTH=${DATA_MAX_RESPONSE_LENGTH:-8192}
-  TRAIN_BATCH_SIZE=${TRAIN_BATCH_SIZE:-32}
-  PPO_MINI_BATCH_SIZE=${PPO_MINI_BATCH_SIZE:-32}
-  ROLLOUT_N=${ROLLOUT_N:-8}
-  MAX_TURN=${MAX_TURN:-20}
-  TURN_MAX_NEW_TOKENS=${TURN_MAX_NEW_TOKENS:-384}
-  MAX_SESSION=${MAX_SESSION:-5}
-  BRANCH_LEN=${BRANCH_LEN:-2048}
-  MAX_TRAJ=${MAX_TRAJ:-4}
-else
-  echo "Unknown TASK=$TASK; expected alfworld or hotpotqa"
+if [ "$TASK" != "alfworld" ]; then
+  echo "Unknown TASK=$TASK; expected alfworld"
   exit 2
 fi
+TOTAL_TRAINING_STEPS=${TOTAL_TRAINING_STEPS:-16}
+SAVE_FREQ=${SAVE_FREQ:-4}
+ROLLOUT_PROMPT_LENGTH=${ROLLOUT_PROMPT_LENGTH:-16384}
+ROLLOUT_RESPONSE_LENGTH=${ROLLOUT_RESPONSE_LENGTH:-16384}
+ROLLOUT_LOG_PROB_MAX_LEN=${ROLLOUT_LOG_PROB_MAX_LEN:-32768}
+DATA_MAX_PROMPT_LENGTH=${DATA_MAX_PROMPT_LENGTH:-16384}
+DATA_MAX_RESPONSE_LENGTH=${DATA_MAX_RESPONSE_LENGTH:-16384}
+TRAIN_BATCH_SIZE=${TRAIN_BATCH_SIZE:-16}
+PPO_MINI_BATCH_SIZE=${PPO_MINI_BATCH_SIZE:-8}
+ROLLOUT_N=${ROLLOUT_N:-8}
+MAX_TURN=${MAX_TURN:-20}
+TURN_MAX_NEW_TOKENS=${TURN_MAX_NEW_TOKENS:-512}
+MAX_SESSION=${MAX_SESSION:-4}
+BRANCH_LEN=${BRANCH_LEN:-8192}
+MAX_TRAJ=${MAX_TRAJ:-6}
 
 case "$AGENT" in
   ctxgraph|baseline) ;;
   *) echo "Unknown AGENT=$AGENT; expected ctxgraph or baseline"; exit 2 ;;
 esac
 
-if [ "$TASK" = "alfworld" ]; then
-  ROLLOUT_GPU_MEMORY_UTILIZATION=${ROLLOUT_GPU_MEMORY_UTILIZATION:-0.45}
-else
-  ROLLOUT_GPU_MEMORY_UTILIZATION=${ROLLOUT_GPU_MEMORY_UTILIZATION:-0.35}
-fi
+ROLLOUT_GPU_MEMORY_UTILIZATION=${ROLLOUT_GPU_MEMORY_UTILIZATION:-0.45}
 ROLLOUT_MAX_NUM_BATCHED_TOKENS=${ROLLOUT_MAX_NUM_BATCHED_TOKENS:-8192}
 ROLLOUT_MAX_NUM_SEQS=${ROLLOUT_MAX_NUM_SEQS:-64}
 ACTOR_PPO_MAX_TOKEN_LEN=${ACTOR_PPO_MAX_TOKEN_LEN:-${ROLLOUT_LOG_PROB_MAX_LEN}}
@@ -113,11 +92,6 @@ for env_file in "${WORK:-}/.wandb_env" "${DEFAULT_WORK_BASE}/.wandb_env" "${HOME
   fi
 done
 export WANDB_ENTITY=${WANDB_ENTITY:-huancheng}
-USE_OPENAI_JUDGE=${USE_OPENAI_JUDGE:-0}
-if [ "$TASK" = "hotpotqa" ] && [ "$USE_OPENAI_JUDGE" != "1" ]; then
-  export OPENAI_API_KEY=dummy
-  unset OPENAI_URL
-fi
 
 source "${CONDA_ROOT}/etc/profile.d/conda.sh"
 conda activate cxtgraph
@@ -154,14 +128,12 @@ fi
 TS=$(date +%Y%m%d_%H%M%S)
 EXPERIMENT_NAME=${EXPERIMENT_NAME:-${AGENT}_${TASK}_30b_8n_compare_${TS}}
 CHECKPOINT_ROOT=${CHECKPOINT_ROOT:-${CHECKPOINT_BASE}/${EXPERIMENT_NAME}}
-SEARCH_PID=""
 RAY_HEAD_PID=""
 WORKER_PIDS=()
 
 probe() { printf '+++ [%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 
 cleanup() {
-  [ -n "$SEARCH_PID" ] && kill "$SEARCH_PID" 2>/dev/null || true
   [ -n "$RAY_HEAD_PID" ] && kill "$RAY_HEAD_PID" 2>/dev/null || true
   for pid in "${WORKER_PIDS[@]}"; do
     kill "$pid" 2>/dev/null || true
@@ -196,11 +168,6 @@ ray_env='
 '
 ray_env=${ray_env#$'\n'}
 ray_env=${ray_env%$'\n'}
-if [ "$TASK" = "hotpotqa" ] && [ "$USE_OPENAI_JUDGE" != "1" ]; then
-  ray_env="${ray_env}
-  export OPENAI_API_KEY=dummy
-  unset OPENAI_URL"
-fi
 
 echo "=============================================================="
 echo "30B 8-node comparison run"
@@ -213,9 +180,6 @@ echo "Model: $MODEL_PATH"
 echo "Experiment: $EXPERIMENT_NAME"
 echo "Checkpoint root: $CHECKPOINT_ROOT"
 echo "Steps/save_freq: $TOTAL_TRAINING_STEPS/$SAVE_FREQ"
-if [ "$TASK" = "hotpotqa" ]; then
-  echo "OpenAI judge: ${USE_OPENAI_JUDGE}"
-fi
 echo "Started: $(date)"
 echo "=============================================================="
 df -h "$CHECKPOINT_BASE" || true
@@ -232,66 +196,27 @@ python -c "import torch; print('torch:', torch.__version__, 'cuda:', torch.cuda.
 python -c "import vllm; print('vllm:', vllm.__version__)"
 python -c "import verl; print('verl OK')"
 
-if [ "$TASK" = "alfworld" ]; then
-  probe "generate ALFWorld hard parquet"
-  python scripts/make_alfworld_data.py --hard --n_train "${ALFWORLD_N_TRAIN:-1000}" --n_val "${ALFWORLD_N_VAL:-100}"
-  if [ "$AGENT" = "ctxgraph" ]; then
-    DATA_TRAIN=data/alfworld_graph_train.parquet
-    DATA_VAL=data/alfworld_graph_test.parquet
-    WORKFLOW=alfworld_graph
-    DEFAULT_AGENT_LOOP=context_graph_isolated_agent
-    PROCESS_REWARD='[flat,scope,graph]'
-  else
-    DATA_TRAIN=data/alfworld_train.parquet
-    DATA_VAL=data/alfworld_test.parquet
-    WORKFLOW=alfworld_branch
-    DEFAULT_AGENT_LOOP=fold_agent
-    PROCESS_REWARD='[flat,scope]'
-  fi
-  python - <<PY
+probe "generate ALFWorld hard parquet"
+python scripts/make_alfworld_data.py --hard --n_train "${ALFWORLD_N_TRAIN:-1000}" --n_val "${ALFWORLD_N_VAL:-100}"
+if [ "$AGENT" = "ctxgraph" ]; then
+  DATA_TRAIN=data/alfworld_graph_train.parquet
+  DATA_VAL=data/alfworld_graph_test.parquet
+  WORKFLOW=alfworld_graph
+  DEFAULT_AGENT_LOOP=context_graph_isolated_agent
+  PROCESS_REWARD='[flat,scope,graph]'
+else
+  DATA_TRAIN=data/alfworld_train.parquet
+  DATA_VAL=data/alfworld_test.parquet
+  WORKFLOW=alfworld_branch
+  DEFAULT_AGENT_LOOP=fold_agent
+  PROCESS_REWARD='[flat,scope]'
+fi
+python - <<PY
 import pandas as pd
 df = pd.read_parquet("$DATA_TRAIN")
 assert df["ability"].iloc[0] == "ALFWorld@hard", df["ability"].iloc[0]
 print("ALFWorld data ok:", "$DATA_TRAIN", len(df), df["ability"].iloc[0])
 PY
-elif [ "$TASK" = "hotpotqa" ]; then
-  if [ "$AGENT" = "ctxgraph" ]; then
-    DATA_TRAIN=data/hotpotqa_graph_train.parquet
-    DATA_VAL=data/hotpotqa_graph_test.parquet
-    WORKFLOW=search_graph
-    DEFAULT_AGENT_LOOP=context_graph_isolated_agent
-    PROCESS_REWARD='[flat,scope,graph]'
-  else
-    DATA_TRAIN=data/hotpotqa_train.parquet
-    DATA_VAL=data/hotpotqa_test.parquet
-    WORKFLOW=search_branch
-    DEFAULT_AGENT_LOOP=fold_agent
-    PROCESS_REWARD='[flat,scope]'
-  fi
-  probe "check HotpotQA data and BM25 corpus"
-  for f in "$DATA_TRAIN" "$DATA_VAL" data/hotpotqa_corpus.parquet; do
-    [ -f "$f" ] || { echo "Missing $f"; exit 1; }
-  done
-  probe "start HotpotQA BM25 search server"
-  "${SRUN_PREFIX[@]}" --nodes=1 --ntasks=1 -w "$NODE0" bash -c "${ray_env}; cd '$PROJECT_ROOT'; export PYTHONPATH='$PROJECT_ROOT':\${PYTHONPATH:-}; exec python -u scripts/hotpotqa_search_server.py --corpus data/hotpotqa_corpus.parquet --port 18999" \
-    >/tmp/hp_bm25_${SLURM_JOB_ID:-$$}.log 2>&1 &
-  SEARCH_PID=$!
-  for _ in $(seq 1 120); do
-    curl -fsS "http://${NODE0_IP}:18999/health" >/dev/null 2>&1 && break
-    sleep 2
-  done
-  curl -fsS -X POST -H 'Content-Type: application/json' \
-    -d '{"query":"Eiffel Tower","k":1}' \
-    "http://${NODE0_IP}:18999/search" >/dev/null || {
-      echo "Search server failed. Tail:"
-      tail -80 /tmp/hp_bm25_${SLURM_JOB_ID:-$$}.log || true
-      exit 1
-    }
-  export LOCAL_SEARCH_URL="http://${NODE0_IP}:18999"
-  probe "search server ready at $LOCAL_SEARCH_URL"
-  ray_env="${ray_env}
-    export LOCAL_SEARCH_URL='${LOCAL_SEARCH_URL:-}'"
-fi
 
 probe "start Ray head"
 "${SRUN_PREFIX[@]}" --nodes=1 --ntasks=1 -w "$NODE0" bash -c "${ray_env}; ray start --head --node-ip-address='$NODE0_IP' --port=6379 --num-cpus=70 --num-gpus=1 --dashboard-host=0.0.0.0 --block" &

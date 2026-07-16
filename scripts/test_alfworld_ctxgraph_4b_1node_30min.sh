@@ -15,7 +15,7 @@
 #   idev -p gh-dev -N 1 -t 00:30:00 -A AST24021
 #   bash scripts/test_alfworld_ctxgraph_4b_1node_30min.sh
 #
-# Mirrors test_2wikimqa_ctxgraph_4b_1node_30min.sh but for ALFWorld:
+# ALFWorld-specific smoke path:
 #   - NO search server (ALFWorld is a local TextWorld env, no retrieval)
 #   - workflow=alfworld_graph (ContextGraph variant; use alfworld_branch
 #     for FoldAgent baseline, alfworld for ReAct baseline)

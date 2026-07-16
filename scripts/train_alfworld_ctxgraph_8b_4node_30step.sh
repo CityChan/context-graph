@@ -10,18 +10,16 @@
 #SBATCH -A AST24021
 
 # ─────────────────────────────────────────────────────────────────────
-# ContextGraph on ALFWorld @real, 4B / 2 nodes / 4h.
-# Pivot from HotpotQA (4B-Instruct saturated at 0.7) AND from ALFWorld
-# @hard (cold-start at 0%, all rollouts get reward 0, no gradient).
-# @real shows admissible commands so 4B baseline lands ~0.35-0.50 with
+# ContextGraph on ALFWorld @real, 8B / 4 nodes / 4h.
+# Pivot from ALFWorld @hard (cold-start at 0%, all rollouts get reward 0,
+# no gradient).
+# @real shows admissible commands so the baseline has
 # real headroom for RL. Reads data/alfworld_{train,test}.parquet which
 # must have ability=ALFWorld@real (regenerate via
 # `python scripts/make_alfworld_data.py --n_train 300 --n_val 80`).
 #
-# Why 2-node 4h: matches the experimentation cadence used for the
-# HotpotQA 4B variants in this iteration, fits a single idev session.
-# Production headline run is still train_alfworld_ctxgraph_4b_4node_16h.sh
-# (this is the fast-iteration sibling).
+# Why 4-node 4h: fits a short idev diagnostic session while still exercising
+# the distributed training path.
 #
 # K=3 trick already removed from agents/graph_agent_isolated.py
 # (commit f211fbd) — paper-faithful design.

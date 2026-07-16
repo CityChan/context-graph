@@ -11,15 +11,14 @@
 
 # ─────────────────────────────────────────────────────────────────────
 # ContextGraph on ALFWorld @real, 4B / 2 nodes / 4h.
-# Pivot from HotpotQA (4B-Instruct saturated at 0.7) AND from ALFWorld
-# @hard (cold-start at 0%, all rollouts get reward 0, no gradient).
+# Pivot from ALFWorld @hard (cold-start at 0%, all rollouts get reward 0,
+# no gradient).
 # @real shows admissible commands so 4B baseline lands ~0.35-0.50 with
 # real headroom for RL. Reads data/alfworld_{train,test}.parquet which
 # must have ability=ALFWorld@real (regenerate via
 # `python scripts/make_alfworld_data.py --n_train 300 --n_val 80`).
 #
-# Why 2-node 4h: matches the experimentation cadence used for the
-# HotpotQA 4B variants in this iteration, fits a single idev session.
+# Why 2-node 4h: fast-iteration sibling that fits a single idev session.
 # Production headline run is still train_alfworld_ctxgraph_4b_4node_16h.sh
 # (this is the fast-iteration sibling).
 #

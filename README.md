@@ -1,266 +1,129 @@
-# ContextGraph: RL-based Graph Construction for Working Context Management
+# ContextGraph
 
-> Extending [FoldAgent](https://arxiv.org/pdf/2510.11967) (Context-Folding) from tree-structured branching to **graph-structured working context**.
+ContextGraph extends FoldAgent by managing an agent's working context as a graph instead of a tree. Search results, branches, summaries, and selected focus nodes become explicit graph state that can be merged, linked, selected, and pruned during long-horizon agent rollouts.
 
-**Core idea:** Working context is not a sequence to be compressed, but a graph to be constructed, maintained, and transformed.
+The repo is currently scoped to three benchmark tracks:
 
-See [docs/contextgraph_architecture.md](docs/contextgraph_architecture.md) for full architecture details, reward design, and FoldAgent vs ContextGraph comparison.
+| Track | Role | Status |
+| --- | --- | --- |
+| BrowseComp-Plus | Main search/research QA benchmark | Primary track |
+| ScienceAgentBench (SAB) | Code-execution benchmark | Active evaluation track |
+| ALFWorld | Stateful embodied-text benchmark | Experimental/diagnostic |
 
----
+Multi-hop QA wrappers for HotpotQA, MuSiQue, and 2WikiMultiHopQA were removed from the active codebase. Shared search infrastructure remains because BrowseComp-Plus still uses it.
 
-## What's New over FoldAgent
+## Core Files
 
-| Feature | FoldAgent | ContextGraph |
-|---------|-----------|-------------|
-| Context structure | Tree (main → branches) | Full graph (any-to-any edges) |
-| Branch results | Independent, text only | Stored as graph nodes with typed edges |
-| Cross-branch links | Not possible | `add_edge` connects any two nodes |
-| Consolidation | Manual re-reading | `merge` combines nodes into summaries |
-| Context cleanup | Session overflow truncation | `prune` removes dead-end nodes |
-| Focus control | Always on main agent | `select` shifts attention to any node |
-| Search tracking | Not tracked | Auto-added as observation nodes |
-| Rewards | task + scope + cjk | + compactness + structural + merge/prune bonus - cost |
-| Graph decisions | N/A | Two-layer: auto-heuristics + LLM tool calls (learned via RL) |
-
----
-
-## Key Files
-
-```
-context-graph/
-├── agents/
-│   ├── context_graph.py            # Core ContextGraph: nodes, edges, graph ops, rewards
-│   ├── graph_agent.py              # Global ContextGraph agent loop
-│   ├── graph_agent_isolated.py     # Isolated (per-branch subgraph) agent loop
-│   ├── fold_agent.py               # Original FoldAgent (tree-based baseline)
-│   ├── react_agent.py              # ReAct baseline
-│   ├── tool_spec.py                # Tool definitions (search + branch + graph ops)
-│   ├── prompts.py                  # Workflow prompts (search_graph, search_branch, etc.)
-│   ├── verifier.py                 # Reward verifier
-│   └── utils.py                    # Agent/AgentContext classes, LLM client
-├── envs/
-│   ├── local_search.py             # Local search client
-│   ├── search_server.py            # Qwen3-Embedding search service
-│   ├── alfworld_env.py             # ALFWorld environment
-│   └── repo_env.py / repo_server.py # SWE repo environment
-├── scripts/
-│   ├── train_graph.py              # ContextGraph training entry point
-│   ├── train_fold.py               # FoldAgent training entry point (baseline)
-│   ├── eval_bc.py                  # BrowseComp evaluation
-│   ├── test_alfworld_30b_2node_1h.sh           # ALFWorld 30B smoke test (2 nodes, 1h)
-│   ├── train_alfworld_fold_30b_16node_48h.sh   # ALFWorld FoldAgent 30B (16 nodes, 48h)
-│   ├── train_alfworld_ctxgraph_30b_16node_48h.sh # ALFWorld ContextGraph 30B (16 nodes, 48h)
-│   ├── make_alfworld_data.py / make_multihop_data.py # Dataset builders
-│   └── multihop_search_server.py   # Multihop QA search service
-├── verl/                       # Vendored verl framework (with ARM/vllm compat fixes)
-│   ├── experimental/agent_loop/  # Agent loop base + registry
-│   └── trainer/ppo/              # FoldGRPO algorithm
-└── docs/
-    └── contextgraph_architecture.md  # Full architecture documentation
-```
-
----
-
-## Graph-MDP Formulation
-
-**State:** s_t = (observation, graph G_t, active_node)
-
-**Actions:** search, open_page, branch, finish, **merge**, **add_edge**, **select**, **prune**
-
-**Reward:** r = r_task + λ₁ · (compactness + structural + merge_bonus + prune_bonus) − λ₂ · cost
-- Graph shaping rewards only apply when task succeeds (prevents reward hacking)
-- Cost penalty always applies
-
----
+| Path | Purpose |
+| --- | --- |
+| `agents/context_graph.py` | In-memory graph state, graph ops, and graph reward accounting |
+| `agents/graph_agent.py` | Global ContextGraph agent loop |
+| `agents/graph_agent_isolated.py` | Isolated per-branch ContextGraph agent loop |
+| `agents/fold_agent.py` | FoldAgent baseline |
+| `agents/react_agent.py` | ReAct baseline for search-style tasks |
+| `agents/react_agent_code.py` | ReAct baseline for SAB code-execution tasks |
+| `agents/prompts.py` | Search and ALFWorld prompts/tool instructions |
+| `agents/prompts_code.py` | SAB code-agent prompts |
+| `envs/search_server.py` | BrowseComp-Plus embedding search service |
+| `envs/local_search.py` | Local search client used by search agents |
+| `envs/scienceagent_env.py` | SAB environment wrapper |
+| `envs/scienceagent_sandbox.py` | Stateful restricted Python sandbox for SAB |
+| `envs/alfworld_env.py` | ALFWorld TextWorld wrapper |
+| `scripts/train_graph.py` | ContextGraph training entry point |
+| `scripts/train_fold.py` | FoldAgent training entry point |
+| `scripts/train_baseline.py` | ReAct/baseline training entry point |
+| `scripts/eval_bc.py` | BrowseComp-Plus evaluation entry point |
+| `scripts/train_sab.py` | SAB evaluation/training entry point |
 
 ## Setup
-
-**1. Create conda env and install Python deps**
 
 ```bash
 conda create -n cxtgraph python=3.10 -y
 conda activate cxtgraph
-pip install torch  # match your CUDA version
+pip install torch
 pip install -r requirements.txt
-bash scripts/setup_env.sh   # installs extras not pinned in requirements.txt
+bash scripts/setup_env.sh
 ```
 
-**2. Install vLLM** (rollout backend; needs a GPU node with CUDA toolkit)
+On TACC Vista/GH200, use the cluster CUDA/vLLM environment already configured in the sbatch scripts. The scripts assume the `cxtgraph` conda env and project path `/work/09281/chc_1996/vista/context-graph` unless overridden.
+
+## BrowseComp-Plus
+
+Start the embedding search server:
 
 ```bash
-pip install vllm
+cd envs && python search_server.py --model Qwen/Qwen3-Embedding-8B --corpus Tevatron/browsecomp-plus-corpus --corpus-embedding-dataset miaolu3/browsecomp-plus --host 0.0.0.0 --port 8010
 ```
 
-**3. (Optional) Flash Attention** — required for 8B+ models with long sequences
+Point agents at the server:
 
 ```bash
-TORCH_CUDA_ARCH_LIST="9.0a" pip install flash-attn --no-build-isolation
+export LOCAL_SEARCH_URL="http://<search-server-host>:8010"
 ```
 
-On TACC Vista (GH200, aarch64) the above may OOM or miscompile. Use instead:
+Representative zero-shot/eval scripts:
 
 ```bash
-export MAX_JOBS=4
-export TORCH_CUDA_ARCH_LIST="9.0"
-export FLASH_ATTN_CUDA_ARCHS=90
-pip install flash-attn --no-build-isolation
+bash scripts/eval_bc_baseline_8b_4node_zeroshot.sh
+bash scripts/eval_bc_ctxgraph_30b_8node_zeroshot.sh
+bash scripts/eval_bc_foldagent_30b_8node_zeroshot.sh
 ```
 
-**4. Environment variables**
+## ScienceAgentBench
+
+Build SAB parquets after downloading the upstream CSV and benchmark package:
 
 ```bash
-export LOCAL_SEARCH_URL="http://[search-server-host]:8010"  # set after starting a search server (BrowseComp / Multi-hop)
-export OPENAI_API_KEY="..."                                  # for LLM-based grading
-export WANDB_API_KEY="..."                                   # optional, for run logging
+python scripts/make_sab_data.py --csv data/ScienceAgentBench.csv --benchmark-dir data/sab_benchmark --out-dir data
 ```
 
----
-
-## Experiments to Run
-
-We mirror the FoldAgent paper's experimental structure (Sun et al. 2025, [arXiv:2510.11967](https://arxiv.org/abs/2510.11967)), adapted for the ContextGraph extension across our three environments.
-
-### Plan
-
-| Phase | Goal | Script | Status |
-|-------|------|--------|--------|
-| **0** | Smoke test 30B model on ALFWorld (env validation) | [`test_alfworld_30b_2node_1h.sh`](scripts/test_alfworld_30b_2node_1h.sh) | scripted |
-| **1** | FoldAgent baseline: Qwen3-30B-A3B-Thinking-2507 on ALFWorld | [`train_alfworld_fold_30b_16node_48h.sh`](scripts/train_alfworld_fold_30b_16node_48h.sh) | scripted |
-| **2** | ContextGraph (isolated) on ALFWorld at same settings | [`train_alfworld_ctxgraph_30b_16node_48h.sh`](scripts/train_alfworld_ctxgraph_30b_16node_48h.sh) | scripted |
-| **3** | Repeat 1+2 on BrowseComp and Multi-hop QA | — | TBD |
-| **4** | Ablations: auto-merge on/off, isolated vs global, prompt-length matched, FoldGRPO vs vanilla GRPO | — | TBD |
-| **5** | Behavior analysis: Finish rate, Main Len, Scope, # Branch, # graph ops, # cross-edges (mirror paper Table 2 + graph extras) | — | TBD |
-
-All hyperparameters live in the sbatch scripts (see `scripts/train_alfworld_*.sh`) — adapted from paper §5.
-
----
-
-## Training
-
-All runs log to wandb project `context-graph` for direct comparison.
-
-### BrowseComp
-
-**1. Start the search server** (Qwen3-Embedding-8B over the BrowseComp+ corpus)
+Run the 8B ReAct smoke eval:
 
 ```bash
-cd envs && python search_server.py \
-  --model Qwen/Qwen3-Embedding-8B \
-  --corpus Tevatron/browsecomp-plus-corpus \
-  --corpus-embedding-dataset miaolu3/browsecomp-plus \
-  --host 0.0.0.0 --port 8010
+SAB_VAL_MAX_SAMPLES=8 SAB_DEBUG_IO=1 SAB_DUMP_VALIDATION=1 SAB_NO_OUTPUT_HINT_AFTER=2 SAB_RESPONSE_LENGTH=12288 SAB_TURN_MAX_NEW_TOKENS=512 bash scripts/eval_sab_react_8b_4node_smoke.sh
 ```
 
-Then point `LOCAL_SEARCH_URL` at it (see Setup step 4).
+Other SAB entry points live under `scripts/eval_sab_*.sh`.
 
-**2. Download the dataset**
+## ALFWorld
 
-Download and decompress: https://drive.google.com/file/d/1aX5xXAN5R-gLKd8A0AY-troxXJRawyAM/view?usp=sharing
-
-**3. Launch training**
-
-Sbatch scripts TBD — will mirror `scripts/train_alfworld_*_30b_16node_48h.sh` with the BrowseComp data files and `workflow=search_branch` / `search_graph`.
-
----
-
-### ALFWorld
-
-No search server needed — uses local TextWorld game files.
-
-**1. Install ALFWorld and download games**
+Install game dependencies and download game files:
 
 ```bash
 pip install textworld alfworld
-alfworld-download                                  # writes to ~/.cache/alfworld
+alfworld-download
 ```
 
-**2. Generate parquet from real game files**
+Build real/hard parquets:
 
 ```bash
-python scripts/make_alfworld_data.py --n_train 300 --n_val 80
-# add --hard for MemexRL-style (admissible commands hidden from agent)
+python scripts/make_alfworld_data.py --mode real --n_train 300 --n_val 80
+python scripts/make_alfworld_data.py --mode hard --n_train 300 --n_val 80
 ```
 
-**3. Smoke test the environment** (2 nodes, 1 hour, validates 30B model + Ray + 3 RL steps)
+Current 8B diagnostic script:
 
 ```bash
-sbatch scripts/test_alfworld_30b_2node_1h.sh
+bash scripts/train_alfworld_ctxgraph_8b_4node_30step.sh
 ```
 
-On Vista, the Chen-style 8-node idev FP8 reproduction script is `scripts/test_alfworld_30b_8node_2h_chen_fp8.sh`; see `VISTA_NOTES.md` for the exact workflow.
-
-**4. Launch production training** (16 nodes × 1 GH200, 48 hours)
+For an action-only ReAct diagnostic on the same script:
 
 ```bash
-sbatch scripts/train_alfworld_fold_30b_16node_48h.sh        # FoldAgent baseline
-sbatch scripts/train_alfworld_ctxgraph_30b_16node_48h.sh    # ContextGraph (isolated)
+ALFWORLD_TRAIN_MODULE=scripts.train_baseline ALFWORLD_AGENT_LOOP=react_agent ALFWORLD_WORKFLOW=alfworld ALFWORLD_PROCESS_REWARD='[flat]' ALFWORLD_VAL_ONLY=True ALFWORLD_VAL_MAX_SAMPLES=8 ALFWORLD_MAX_TURN=40 ALFWORLD_VAL_MAX_TURN=40 ALFWORLD_TURN_MAX_NEW_TOKENS=128 ALFWORLD_COMPACT_ADMISSIBLE=0 bash scripts/train_alfworld_ctxgraph_8b_4node_30step.sh
 ```
 
----
+## Tests
 
-### Multi-hop QA
-
-Synthetic 2–3 hop benchmark with a built-in knowledge base — no external corpus.
-
-**1. Start the multi-hop search server** (TF-IDF over a small KB, port 18999)
+Local smoke checks:
 
 ```bash
-python scripts/multihop_search_server.py
-export LOCAL_SEARCH_URL="http://localhost:18999"
+python -m tests.smoke_sab_sandbox
+python -m py_compile envs/alfworld_env.py
+bash -n scripts/eval_sab_react_8b_4node_smoke.sh
+bash -n scripts/train_alfworld_ctxgraph_8b_4node_30step.sh
 ```
 
-**2. Generate parquet**
+## Documentation
 
-```bash
-python scripts/make_multihop_data.py --n_train 300 --n_val 80
-```
-
-**3. Launch training**
-
-Use `train_fold.py` / `train_graph.py` directly with `data.train_files=data/multihop_train.parquet` and `data.val_files=data/multihop_test.parquet` (no canned sbatch wrapper — model the args after the BrowseComp scripts).
-
----
-
-## Evaluation
-
-**ContextGraph Agent:** `workflow=search_graph`
-```bash
-python scripts/eval_bc.py \
-  --workflow search_graph \
-  --model_name Qwen/Qwen3-4B-Instruct-2507 \
-  --num_workers 32 \
-  --prompt_length 8192 \
-  --response_length 32768 \
-  --max_turn 200 \
-  --max_session 10 \
-  --output_dir results
-```
-
-**FoldAgent Baseline:** `workflow=search_branch`
-```bash
-python scripts/eval_bc.py --workflow search_branch [...]
-```
-
-**ReAct Agent:** `workflow=search`
-```bash
-python scripts/eval_bc.py --workflow search [...]
-```
-
----
-
-## Cite
-
-```
-@article{sun2025scaling,
-  title   = {Scaling Long-Horizon LLM Agent via Context-Folding},
-  author  = {Sun, Weiwei and Lu, Miao and Ling, Zhan and Liu, Kang and Yao, Xuesong and Yang, Yiming and Chen, Jiecao},
-  journal = {arXiv preprint arXiv:2510.11967},
-  year    = {2025},
-}
-```
-
----
-
-## Acknowledgements
-
-This implementation is based on [FoldAgent](https://github.com/sunnweiwei/FoldAgent) and [verl](https://github.com/volcengine/verl).
+Architecture and reward design are documented in `docs/contextgraph_architecture.md`. SAB-specific design notes are in `docs/design_scienceagentbench_ctxgraph.md`.

@@ -2,8 +2,8 @@
 set -euo pipefail
 
 TASK=${1:-}
-if [ "$TASK" != "alfworld" ] && [ "$TASK" != "hotpotqa" ]; then
-  echo "Usage: $0 <alfworld|hotpotqa> [steps] [walltime]"
+if [ "$TASK" != "alfworld" ]; then
+  echo "Usage: $0 <alfworld> [steps] [walltime]"
   exit 2
 fi
 
