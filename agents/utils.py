@@ -22,7 +22,7 @@ def select_env(ability, config, extra_info=None):
     # Select env
     if 'ALFWorld' in ability:
         EnvClass = ALFWorldEnv
-    elif 'LocalSearch' in ability:
+    elif 'LocalSearch' in ability or 'GAIA' in ability:
         EnvClass = LocalSearch
     elif 'ScienceAgentBench' in ability:
         # Imported lazily so we don't pay the cost on BC-Plus / ALFWorld runs.
@@ -30,7 +30,7 @@ def select_env(ability, config, extra_info=None):
         EnvClass = ScienceAgentEnv
     else:
         raise ValueError(
-            f"Unknown ability: {ability}. Supported: ALFWorld@*, LocalSearch, ScienceAgentBench."
+            f"Unknown ability: {ability}. Supported: ALFWorld@*, LocalSearch, GAIA, ScienceAgentBench."
         )
     return EnvClass
 

@@ -2,11 +2,12 @@
 
 ContextGraph extends FoldAgent by managing an agent's working context as a graph instead of a tree. Search results, branches, summaries, and selected focus nodes become explicit graph state that can be merged, linked, selected, and pruned during long-horizon agent rollouts.
 
-The repo is currently scoped to three benchmark tracks:
+The repo is currently scoped to four benchmark tracks:
 
 | Track | Role | Status |
 | --- | --- | --- |
 | BrowseComp-Plus | Main search/research QA benchmark | Primary track |
+| GAIA | General assistant/search benchmark | Active text-only integration |
 | ScienceAgentBench (SAB) | Code-execution benchmark | Active evaluation track |
 | ALFWorld | Stateful embodied-text benchmark | Experimental/diagnostic |
 
@@ -33,6 +34,8 @@ Multi-hop QA wrappers for HotpotQA, MuSiQue, and 2WikiMultiHopQA were removed fr
 | `scripts/train_fold.py` | FoldAgent training entry point |
 | `scripts/train_baseline.py` | ReAct/baseline training entry point |
 | `scripts/eval_bc.py` | BrowseComp-Plus evaluation entry point |
+| `scripts/make_gaia_data.py` | GAIA parquet builder |
+| `scripts/eval_gaia.py` | GAIA API-based evaluation entry point |
 | `scripts/train_sab.py` | SAB evaluation/training entry point |
 
 ## Setup
@@ -67,6 +70,36 @@ Representative zero-shot/eval scripts:
 bash scripts/eval_bc_baseline_8b_4node_zeroshot.sh
 bash scripts/eval_bc_ctxgraph_30b_8node_zeroshot.sh
 bash scripts/eval_bc_foldagent_30b_8node_zeroshot.sh
+```
+
+## GAIA
+
+GAIA is gated on HuggingFace. Login before building data:
+
+```bash
+huggingface-cli login
+```
+
+Build text-only validation parquets:
+
+```bash
+python scripts/make_gaia_data.py --split validation --out-dir data
+```
+
+This writes:
+
+```text
+data/gaia_validation.parquet
+data/gaia_validation_branch.parquet
+data/gaia_validation_graph.parquet
+```
+
+The first integration skips rows with file attachments by default because the current GAIA agent path exposes search/open-page tools, not image/OCR/spreadsheet/file tools. Use `--include-files` only for debugging metadata flow.
+
+Run a small API-based smoke eval:
+
+```bash
+python scripts/eval_gaia.py --data-path data/gaia_validation_graph.parquet --workflow search_graph --max-samples 8 --num-workers 2 --local-search-url http://localhost:8010
 ```
 
 ## ScienceAgentBench
@@ -119,6 +152,7 @@ Local smoke checks:
 
 ```bash
 python -m tests.smoke_sab_sandbox
+python -m tests.smoke_gaia_data
 python -m py_compile envs/alfworld_env.py
 bash -n scripts/eval_sab_react_8b_4node_smoke.sh
 bash -n scripts/train_alfworld_ctxgraph_8b_4node_30step.sh

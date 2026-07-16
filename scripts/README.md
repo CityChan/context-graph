@@ -11,6 +11,14 @@ This directory keeps runnable entry points for the active benchmark tracks.
 
 BrowseComp-Plus uses `envs/search_server.py` and `LOCAL_SEARCH_URL`.
 
+## GAIA
+
+- `make_gaia_data.py`: builds GAIA ReAct/FoldAgent/ContextGraph parquets.
+- `eval_gaia.py`: API-based evaluator for small GAIA validation subsets.
+
+The initial GAIA integration targets text-only rows and uses the same search
+tools as BrowseComp-Plus. Rows with file attachments are skipped by default.
+
 ## ScienceAgentBench
 
 - `make_sab_data.py`: builds SAB parquets from the upstream CSV and benchmark package.
