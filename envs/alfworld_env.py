@@ -68,6 +68,7 @@ class ALFWorldEnv:
         self._won = False
         self.is_finish = False
         self.finish = False
+        self._look_used = False
 
         self._game_file = extra_info.get('game_file', '')
         if not self._game_file or not os.path.exists(self._game_file):
@@ -114,23 +115,27 @@ class ALFWorldEnv:
 
         fn_call = self._parse_fn_call(response)
         if fn_call is None:
+            self.stats['invalid_xml'] += 1
             return self._obs_with_commands('No valid action detected. Use the "action" tool.')
 
         func = fn_call['function']
         args = fn_call['arguments']
 
         if func == 'finish':
+            self.stats['finish_called'] += 1
             self.is_finish = True
             self.finish = True
             return {'action': 'finish'}
 
         if func == 'think':
+            self.stats['think'] += 1
             return self._obs_with_commands('OK.')
 
         if func == 'action':
             command = args.get('command', '').strip()
             return self._step(command)
 
+        self.stats['unknown_tool'] += 1
         return self._obs_with_commands(f'Unknown tool "{func}". Use "action" tool.')
 
     def _step(self, command: str) -> dict:
@@ -145,6 +150,15 @@ class ALFWorldEnv:
             self._look_used = True
 
         try:
+            if command:
+                self.stats['action_command'] += 1
+                if command in self._admissible_commands:
+                    self.stats['admissible_exact'] += 1
+                elif command in self._display_admissible_commands(self._admissible_commands):
+                    self.stats['admissible_compact'] += 1
+                else:
+                    self.stats['admissible_miss'] += 1
+
             lock_ctx = _TEXTWORLD_LOCK if not os.environ.get("ALFWORLD_NO_LOCK") else _nullcontext()
             with lock_ctx:
                 obs_tuple, rewards, dones, info = self._tw_env.step([command])
@@ -160,10 +174,13 @@ class ALFWorldEnv:
                 self.is_finish = True
                 self.finish = True
                 if self._won:
+                    self.stats['won'] = 1
                     return {'observation': obs_text + '\n\nTask completed successfully!'}
+                self.stats['done_not_won'] += 1
                 return {'observation': obs_text}
 
             if self._step_count >= self._max_steps:
+                self.stats['max_steps'] += 1
                 return self._obs_with_commands(obs_text + '\n\nMax steps reached.')
 
             self.stats[command.split()[0] if command else 'unknown'] += 1
@@ -171,6 +188,7 @@ class ALFWorldEnv:
             return self._obs_with_commands(obs_text)
 
         except Exception as e:
+            self.stats['env_error'] += 1
             print(f'[ALF] Error: {e}')
             return self._obs_with_commands(f'Error executing action: {e}')
 
@@ -281,6 +299,8 @@ class ALFWorldEnv:
         if self.env_fail:
             return ("", 0, {"ans_reward": 0.0})
         reward = 1.0 if self._won else 0.0
+        self.stats['task_reward'] = reward
+        self.stats['won'] = int(self._won)
         return ("", reward, {"ans_reward": reward, "task_complete": int(reward > 0)})
 
     def close(self):

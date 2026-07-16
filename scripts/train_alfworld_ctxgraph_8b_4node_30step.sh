@@ -130,6 +130,10 @@ if [ "$ALFWORLD_MODE" != "real" ] && [ "$ALFWORLD_MODE" != "hard" ]; then
   echo "ERROR: ALFWORLD_MODE must be 'real' or 'hard' (got '$ALFWORLD_MODE')"
   exit 1
 fi
+ALFWORLD_TRAIN_MODULE=${ALFWORLD_TRAIN_MODULE:-scripts.train_graph}
+ALFWORLD_AGENT_LOOP=${ALFWORLD_AGENT_LOOP:-context_graph_isolated_agent}
+ALFWORLD_WORKFLOW=${ALFWORLD_WORKFLOW:-alfworld_graph}
+ALFWORLD_PROCESS_REWARD=${ALFWORLD_PROCESS_REWARD:-[flat,scope,graph]}
 
 ALFWORLD_VAL_ONLY=${ALFWORLD_VAL_ONLY:-False}
 ALFWORLD_VAL_BEFORE_TRAIN=${ALFWORLD_VAL_BEFORE_TRAIN:-True}
@@ -162,7 +166,7 @@ RUN_SUFFIX="step${ALFWORLD_TOTAL_STEPS}"
 if [ "$ALFWORLD_VAL_ONLY" = "True" ] || [ "$ALFWORLD_VAL_ONLY" = "true" ]; then
   RUN_SUFFIX="valonly"
 fi
-EXPERIMENT_NAME="ctxgraph_alfworld_${ALFWORLD_MODE}_8b_4n_p${ALFWORLD_PROMPT_LENGTH}_r${ALFWORLD_RESPONSE_LENGTH}_${RUN_SUFFIX}_${TS}"
+EXPERIMENT_NAME="${ALFWORLD_AGENT_LOOP}_${ALFWORLD_WORKFLOW}_${ALFWORLD_MODE}_8b_4n_p${ALFWORLD_PROMPT_LENGTH}_r${ALFWORLD_RESPONSE_LENGTH}_${RUN_SUFFIX}_${TS}"
 
 probe() { printf '+++ [%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 
@@ -205,6 +209,7 @@ echo "  steps:          $ALFWORLD_TOTAL_STEPS"
 echo "  samples:        train=${ALFWORLD_TRAIN_MAX_SAMPLES:-all} val=${ALFWORLD_VAL_MAX_SAMPLES:-all}"
 echo "  tokens/turns:   prompt=$ALFWORLD_PROMPT_LENGTH response=$ALFWORLD_RESPONSE_LENGTH max_turn=$ALFWORLD_MAX_TURN val_max_turn=$ALFWORLD_VAL_MAX_TURN"
 echo "  admissible:     compact=$ALFWORLD_COMPACT_ADMISSIBLE max_display=$ALFWORLD_MAX_ADMISSIBLE_DISPLAY"
+echo "  agent/workflow: module=$ALFWORLD_TRAIN_MODULE loop=$ALFWORLD_AGENT_LOOP workflow=$ALFWORLD_WORKFLOW process_reward=$ALFWORLD_PROCESS_REWARD"
 echo "  Experiment: $EXPERIMENT_NAME"
 echo "  Started: $(date)"
 echo "=============================================================="
@@ -346,10 +351,10 @@ probe "launching trainer (model load + vLLM init typically ~3-5 min before first
 set +e
 srun --overlap --nodes=1 --ntasks=1 -w "$NODE0" --chdir="$PROJECT_ROOT" \
   --export=ALL,ALFWORLD_DATA="$ALFWORLD_DATA",ALFWORLD_COMPACT_ADMISSIBLE="$ALFWORLD_COMPACT_ADMISSIBLE",ALFWORLD_MAX_ADMISSIBLE_DISPLAY="$ALFWORLD_MAX_ADMISSIBLE_DISPLAY" \
-  python -m scripts.train_graph \
+  python -m "$ALFWORLD_TRAIN_MODULE" \
   algorithm.adv_estimator=foldgrpo \
   algorithm.kl_ctrl.kl_coef=0.005 \
-  actor_rollout_ref.rollout.agent.default_agent_loop=context_graph_isolated_agent \
+  actor_rollout_ref.rollout.agent.default_agent_loop=${ALFWORLD_AGENT_LOOP} \
   actor_rollout_ref.rollout.name=vllm \
   actor_rollout_ref.rollout.mode=async \
   actor_rollout_ref.rollout.dtype=bfloat16 \
@@ -384,7 +389,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$NODE0" --chdir="$PROJECT_ROOT" \
   actor_rollout_ref.actor.ppo_max_token_len_per_gpu=${ALFWORLD_MAX_TOKEN_LEN_PER_GPU} \
   actor_rollout_ref.actor.ppo_infer_max_token_len_per_gpu=${ALFWORLD_MAX_TOKEN_LEN_PER_GPU} \
   actor_rollout_ref.model.enable_gradient_checkpointing=True \
-  +actor_rollout_ref.rollout.plugin.workflow=alfworld_graph \
+  +actor_rollout_ref.rollout.plugin.workflow=${ALFWORLD_WORKFLOW} \
   +actor_rollout_ref.rollout.plugin.max_turn=${ALFWORLD_MAX_TURN} \
   +actor_rollout_ref.rollout.plugin.retry_cjk=10 \
   +actor_rollout_ref.rollout.plugin.turn_max_new_tokens=${ALFWORLD_TURN_MAX_NEW_TOKENS} \
@@ -393,7 +398,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$NODE0" --chdir="$PROJECT_ROOT" \
   +actor_rollout_ref.rollout.plugin.session_timeout=300 \
   +actor_rollout_ref.rollout.plugin.enable_summary=False \
   +actor_rollout_ref.rollout.plugin.branch_len=${ALFWORLD_BRANCH_LEN} \
-  +actor_rollout_ref.rollout.plugin.process_reward='[flat,scope,graph]' \
+  +actor_rollout_ref.rollout.plugin.process_reward="$ALFWORLD_PROCESS_REWARD" \
   +actor_rollout_ref.rollout.plugin.lambda_compact=0.1 \
   +actor_rollout_ref.rollout.plugin.lambda_cost=0.005 \
   +actor_rollout_ref.rollout.plugin.max_traj=4 \
