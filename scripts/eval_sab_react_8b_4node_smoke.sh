@@ -104,12 +104,21 @@ export HF_HUB_OFFLINE=1
 export TRANSFORMERS_OFFLINE=1
 export RAY_memory_usage_threshold=0.99
 export RAY_memory_monitor_refresh_ms=0
-export RAY_raylet_start_wait_time_s=${RAY_raylet_start_wait_time_s:-180}
-RAY_HEAD_SETTLE_SECONDS=${RAY_HEAD_SETTLE_SECONDS:-30}
+export RAY_raylet_start_wait_time_s=${RAY_raylet_start_wait_time_s:-600}
+RAY_HEAD_SETTLE_SECONDS=${RAY_HEAD_SETTLE_SECONDS:-60}
 RAY_WORKER_STAGGER_SECONDS=${RAY_WORKER_STAGGER_SECONDS:-8}
-RAY_CLUSTER_SETTLE_SECONDS=${RAY_CLUSTER_SETTLE_SECONDS:-30}
-RAY_STATUS_TIMEOUT_SECONDS=${RAY_STATUS_TIMEOUT_SECONDS:-300}
+RAY_CLUSTER_SETTLE_SECONDS=${RAY_CLUSTER_SETTLE_SECONDS:-60}
+RAY_STATUS_TIMEOUT_SECONDS=${RAY_STATUS_TIMEOUT_SECONDS:-900}
 RAY_STATUS_POLL_SECONDS=${RAY_STATUS_POLL_SECONDS:-10}
+RAY_PORT=${RAY_PORT:-$((20000 + (${SLURM_JOB_ID:-0} % 20000)))}
+RAY_TMPDIR_ROOT=${RAY_TMPDIR_ROOT:-/tmp/ray_context_graph_${USER:-unknown}_${SLURM_JOB_ID:-local_$$}}
+case "$RAY_TMPDIR_ROOT" in
+  /tmp/ray_context_graph_*) ;;
+  *)
+    echo "ERROR: refusing unsafe RAY_TMPDIR_ROOT=$RAY_TMPDIR_ROOT"
+    exit 1
+    ;;
+esac
 
 # Real per-task eval (eval_programs/<script> -> [0,1] success) vs the
 # Phase-D2 file-existence placeholder. Default 0 (placeholder). Set
@@ -260,6 +269,7 @@ echo "  Sample caps:    val=$SAB_VAL_MAX_SAMPLES train=$SAB_TRAIN_MAX_SAMPLES"
 echo "  Token caps:     prompt=$SAB_PROMPT_LENGTH response=$SAB_RESPONSE_LENGTH max_token_gpu=$SAB_MAX_TOKEN_LEN_PER_GPU"
 echo "  Turn caps:      val_max_turn=$SAB_VAL_MAX_TURN turn_max_new_tokens=$SAB_TURN_MAX_NEW_TOKENS"
 echo "  SAB_REAL_EVAL:  $SAB_REAL_EVAL"
+echo "  Ray bootstrap:  port=$RAY_PORT raylet_wait=${RAY_raylet_start_wait_time_s}s status_timeout=${RAY_STATUS_TIMEOUT_SECONDS}s tmp=$RAY_TMPDIR_ROOT"
 echo "  Debug:          SAB_DEBUG_IO=$SAB_DEBUG_IO SAB_DUMP_VALIDATION=$SAB_DUMP_VALIDATION no_output_hint_after=$SAB_NO_OUTPUT_HINT_AFTER ${SAB_VALIDATION_DATA_DIR:+validation_dir=$SAB_VALIDATION_DATA_DIR}"
 echo "  Started: $(date)"
 echo "=============================================================="
@@ -300,6 +310,8 @@ for node in "${NODELIST[@]}"; do
     source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
     conda activate cxtgraph
     ray stop -f >/dev/null 2>&1 || true
+    case "'"$RAY_TMPDIR_ROOT"'" in /tmp/ray_context_graph_*) rm -rf "'"$RAY_TMPDIR_ROOT"'" || true ;; esac
+    mkdir -p "'"$RAY_TMPDIR_ROOT"'"
   ' || true
 done
 sleep 5
@@ -334,7 +346,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" bash -c '
   export SAB_INTERACTIVE_EVAL_FEEDBACK='"$SAB_INTERACTIVE_EVAL_FEEDBACK"'
   export SAB_DEBUG_IO='"$SAB_DEBUG_IO"'
   export RAY_raylet_start_wait_time_s='"$RAY_raylet_start_wait_time_s"'
-  ray start --head --node-ip-address='"$TRAINER_HEAD_IP"' --port=6379 \
+  ray start --head --node-ip-address='"$TRAINER_HEAD_IP"' --port='"$RAY_PORT"' --temp-dir='"$RAY_TMPDIR_ROOT"' \
     --num-cpus=70 --num-gpus=1 --include-dashboard=false --disable-usage-stats --block
 ' &
 RAY_HEAD_PID=$!
@@ -369,7 +381,7 @@ for i in $(seq 1 $((NUM_NODES - 1))); do
     export SAB_INTERACTIVE_EVAL_FEEDBACK='"$SAB_INTERACTIVE_EVAL_FEEDBACK"'
     export SAB_DEBUG_IO='"$SAB_DEBUG_IO"'
     export RAY_raylet_start_wait_time_s='"$RAY_raylet_start_wait_time_s"'
-    ray start --address='"${TRAINER_HEAD_IP}:6379"' --num-cpus=70 --num-gpus=1 --block
+    ray start --address='"${TRAINER_HEAD_IP}:${RAY_PORT}"' --temp-dir='"$RAY_TMPDIR_ROOT"' --num-cpus=70 --num-gpus=1 --block
   ' &
   WORKER_PIDS+=("$!")
   sleep "$RAY_WORKER_STAGGER_SECONDS"
@@ -385,9 +397,11 @@ cleanup() {
 }
 trap cleanup EXIT
 
-export RAY_ADDRESS=${TRAINER_HEAD_IP}:6379
+export RAY_ADDRESS=${TRAINER_HEAD_IP}:${RAY_PORT}
 probe "waiting for Ray cluster readiness"
 if ! wait_for_ray_cluster "$NUM_NODES"; then
+  echo "Ray temp/session dir: $RAY_TMPDIR_ROOT"
+  find "$RAY_TMPDIR_ROOT" -maxdepth 3 -type f \( -name 'gcs_server*.out' -o -name 'gcs_server*.err' -o -name 'raylet*.out' -o -name 'raylet*.err' -o -name 'dashboard*.log' -o -name 'dashboard*.err' \) -print 2>/dev/null | tail -40 || true
   echo "ERROR: Ray cluster did not start cleanly; aborting before trainer launch."
   exit 1
 fi
