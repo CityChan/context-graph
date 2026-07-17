@@ -569,7 +569,30 @@ class TaskContext:
     tokenizer: PreTrainedTokenizer | AutoTokenizer | None = None
     llm_client: LLMClass = None
 
-from verl.experimental.agent_loop.agent_loop import AgentLoopMetrics, AgentLoopOutput  # noqa: F811
+class AgentLoopMetrics(BaseModel):
+    """Agent loop performance metrics.
+
+    Kept local to avoid importing `verl.experimental.agent_loop`, whose package
+    initializer registers script entry points and can circular-import agents.
+    """
+
+    generate_sequences: float = 0.0
+    tool_calls: float = 0.0
+
+
+class AgentLoopOutput(BaseModel):
+    """Agent loop output compatible with verl's post-processing fields."""
+
+    prompt_ids: list[int]
+    response_ids: list[int]
+    response_mask: list[int]
+    response_logprobs: Optional[list[float]] = None
+    routed_experts: Optional[Any] = None
+    multi_modal_data: Optional[dict[str, Any]] = None
+    reward_score: Optional[float] = None
+    num_turns: int = 0
+    metrics: AgentLoopMetrics
+    extra_fields: dict[str, Any] = {}
 
 
 async def run_action(env, response):
