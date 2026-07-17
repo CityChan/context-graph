@@ -52,6 +52,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--save-messages", action="store_true")
     parser.add_argument("--dry-run", action="store_true",
                         help="Validate parquet/workflow dispatch without calling a model API.")
+    parser.add_argument("--skip-model-preflight", action="store_true",
+                        help="Skip the one-request model API preflight before evaluation.")
     return parser.parse_args()
 
 
@@ -130,6 +132,36 @@ def _require_model_api(args: argparse.Namespace) -> None:
     )
 
 
+async def _preflight_model_api(args: argparse.Namespace) -> None:
+    if args.skip_model_preflight:
+        return
+    from openai import AsyncOpenAI
+
+    client = AsyncOpenAI(
+        api_key=os.environ.get("OPENAI_API_KEY"),
+        base_url=os.environ.get("OPENAI_BASE_URL", None),
+    )
+    try:
+        await client.chat.completions.create(
+            model=args.model_name,
+            messages=[{"role": "user", "content": "Reply with OK."}],
+            max_completion_tokens=4,
+        )
+    except Exception as exc:
+        text = str(exc)
+        if "insufficient_quota" in text or "exceeded your current quota" in text:
+            reason = "insufficient quota for this OpenAI project/key"
+        elif "401" in text or "invalid_api_key" in text:
+            reason = "invalid or unauthorized OpenAI API key"
+        else:
+            reason = "model API request failed"
+        raise SystemExit(
+            f"Model API preflight failed: {reason}. Details: {text}\n"
+            "No GAIA items were evaluated. Use --dry-run for data/workflow checks, "
+            "or set OPENAI_BASE_URL/OPENAI_API_KEY for a working OpenAI-compatible endpoint."
+        ) from exc
+
+
 def _score_from_output(output) -> tuple[float, dict[str, Any]]:
     out = output[0] if isinstance(output, list) else output
     if out is None:
@@ -141,10 +173,6 @@ def _score_from_output(output) -> tuple[float, dict[str, Any]]:
 
 async def eval_one(row: dict[str, Any], args: argparse.Namespace, tokenizer) -> dict[str, Any]:
     workflow = _row_workflow(row, args.workflow)
-    process_item = _process_item_for_workflow(workflow)
-    config = _make_config(args, workflow)
-    llm_client = CallAPI(url=args.model_name, tokenizer=tokenizer, config=config.actor_rollout_ref.rollout)
-    context = TaskContext(config=config, global_step=0, llm_client=llm_client, is_train=False, tokenizer=tokenizer)
     item = _make_dataproto(row, workflow)
     extra = item.non_tensor_batch["extra_info"][0]
     result = {
@@ -155,6 +183,10 @@ async def eval_one(row: dict[str, Any], args: argparse.Namespace, tokenizer) -> 
         "score": 0.0,
     }
     try:
+        process_item = _process_item_for_workflow(workflow)
+        config = _make_config(args, workflow)
+        llm_client = CallAPI(url=args.model_name, tokenizer=tokenizer, config=config.actor_rollout_ref.rollout)
+        context = TaskContext(config=config, global_step=0, llm_client=llm_client, is_train=False, tokenizer=tokenizer)
         output = await process_item(item, context)
         score, extra_fields = _score_from_output(output)
         result.update({
@@ -216,6 +248,7 @@ def main() -> None:
         return
 
     _require_model_api(args)
+    asyncio.run(_preflight_model_api(args))
 
     results = asyncio.run(run_eval(rows, args))
     scores = [r["score"] for r in results]
