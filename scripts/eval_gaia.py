@@ -50,6 +50,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--must-search", action="store_true",
                         help="Reject a correct final answer if the agent never searched.")
     parser.add_argument("--save-messages", action="store_true")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="Validate parquet/workflow dispatch without calling a model API.")
     return parser.parse_args()
 
 
@@ -114,6 +116,18 @@ def _make_dataproto(row: dict[str, Any], workflow: str) -> DataProto:
     }
     item.meta_info = {"generation_kwargs": {}, "max_turn": 0}
     return item
+
+
+def _require_model_api(args: argparse.Namespace) -> None:
+    api_key = os.environ.get("OPENAI_API_KEY", "")
+    if api_key:
+        return
+    raise SystemExit(
+        "OPENAI_API_KEY is required for eval_gaia.py because it uses the "
+        "OpenAI-compatible API client. For an OpenAI-compatible local/proxy "
+        "endpoint, set OPENAI_API_KEY=dummy and OPENAI_BASE_URL=<endpoint>/v1. "
+        "Use --dry-run to validate data/workflow without model calls."
+    )
 
 
 def _score_from_output(output) -> tuple[float, dict[str, Any]]:
@@ -186,6 +200,22 @@ def main() -> None:
     rows = df.to_dict("records")
     if not rows:
         raise SystemExit(f"No rows in {args.data_path}")
+
+    if args.dry_run:
+        workflows = [_row_workflow(row, args.workflow) for row in rows]
+        for row, workflow in zip(rows, workflows):
+            _process_item_for_workflow(workflow)
+            _make_dataproto(row, workflow)
+        print(json.dumps({
+            "status": "dry_run_ok",
+            "data_path": args.data_path,
+            "count": len(rows),
+            "workflows": sorted(set(workflows)),
+            "local_search_url": os.environ.get("LOCAL_SEARCH_URL", ""),
+        }, indent=2))
+        return
+
+    _require_model_api(args)
 
     results = asyncio.run(run_eval(rows, args))
     scores = [r["score"] for r in results]
