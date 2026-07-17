@@ -116,7 +116,7 @@ def _load_dataset(args):
     except ImportError as exc:
         raise SystemExit("Missing dependency `datasets`. Install it or use --input-jsonl/--input-csv.") from exc
 
-    kwargs = {"split": args.split, "trust_remote_code": True}
+    kwargs = {"split": args.split}
     if args.config:
         ds = load_dataset(args.dataset, args.config, **kwargs)
     else:
