@@ -174,13 +174,16 @@ async def _preflight_model_api(args: argparse.Namespace) -> None:
         ) from exc
 
 
-def _score_from_output(output) -> tuple[float, dict[str, Any]]:
+def _metrics_from_output(output) -> tuple[float, float, bool, dict[str, Any]]:
     out = output[0] if isinstance(output, list) else output
     if out is None:
-        return 0.0, {}
-    score = float(getattr(out, "reward_score", 0.0) or 0.0)
+        return 0.0, 0.0, False, {}
+    agent_reward = float(getattr(out, "reward_score", 0.0) or 0.0)
     extra = getattr(out, "extra_fields", {}) or {}
-    return score, extra
+    env_stats = extra.get("env_stats", {}) or {}
+    task_reward = float(env_stats.get("task_reward", agent_reward) or 0.0)
+    is_finish = bool(extra.get("is_finish", env_stats.get("is_finish", False)))
+    return task_reward, agent_reward, is_finish, extra
 
 
 async def eval_one(row: dict[str, Any], args: argparse.Namespace, tokenizer) -> dict[str, Any]:
@@ -193,6 +196,9 @@ async def eval_one(row: dict[str, Any], args: argparse.Namespace, tokenizer) -> 
         "workflow": workflow,
         "status": "failed",
         "score": 0.0,
+        "task_reward": 0.0,
+        "agent_reward": 0.0,
+        "is_finish": False,
     }
     try:
         process_item = _process_item_for_workflow(workflow)
@@ -200,10 +206,15 @@ async def eval_one(row: dict[str, Any], args: argparse.Namespace, tokenizer) -> 
         llm_client = CallAPI(url=args.model_name, tokenizer=tokenizer, config=config.actor_rollout_ref.rollout)
         context = TaskContext(config=config, global_step=0, llm_client=llm_client, is_train=False, tokenizer=tokenizer)
         output = await process_item(item, context)
-        score, extra_fields = _score_from_output(output)
+        task_reward, agent_reward, is_finish, extra_fields = _metrics_from_output(output)
         result.update({
             "status": "success",
-            "score": score,
+            # score is the benchmark score. Keep shaping separate so GAIA
+            # accuracy cannot be inflated by ContextGraph structure rewards.
+            "score": task_reward,
+            "task_reward": task_reward,
+            "agent_reward": agent_reward,
+            "is_finish": is_finish,
             "env_stats": extra_fields.get("env_stats", {}),
         })
         if args.save_messages:
@@ -263,16 +274,21 @@ def main() -> None:
     asyncio.run(_preflight_model_api(args))
 
     results = asyncio.run(run_eval(rows, args))
-    scores = [r["score"] for r in results]
+    task_scores = [float(r["task_reward"]) for r in results]
+    agent_scores = [float(r["agent_reward"]) for r in results]
     by_level: dict[str, list[float]] = {}
     for r in results:
-        by_level.setdefault(str(r.get("level", "")), []).append(float(r["score"]))
+        by_level.setdefault(str(r.get("level", "")), []).append(float(r["task_reward"]))
     summary = {
         "data_path": args.data_path,
         "workflow": args.workflow or "from_parquet",
         "model_name": args.model_name,
         "count": len(results),
-        "avg_score": float(np.mean(scores)) if scores else 0.0,
+        "successful_items": sum(r["status"] == "success" for r in results),
+        "finished_items": sum(bool(r["is_finish"]) for r in results),
+        "avg_score": float(np.mean(task_scores)) if task_scores else 0.0,
+        "avg_task_reward": float(np.mean(task_scores)) if task_scores else 0.0,
+        "avg_agent_reward": float(np.mean(agent_scores)) if agent_scores else 0.0,
         "by_level": {
             level: {"count": len(vals), "avg_score": float(np.mean(vals))}
             for level, vals in sorted(by_level.items())
