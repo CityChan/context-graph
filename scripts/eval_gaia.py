@@ -140,13 +140,19 @@ async def _preflight_model_api(args: argparse.Namespace) -> None:
     client = AsyncOpenAI(
         api_key=os.environ.get("OPENAI_API_KEY"),
         base_url=os.environ.get("OPENAI_BASE_URL", None),
+        timeout=30.0,
     )
     try:
-        await client.chat.completions.create(
+        response = await client.chat.completions.create(
             model=args.model_name,
-            messages=[{"role": "user", "content": "Reply with OK."}],
-            max_completion_tokens=4,
+            messages=[{"role": "user", "content": "Reply with exactly OK."}],
+            max_completion_tokens=64,
         )
+        content = response.choices[0].message.content or ""
+        if not content.strip():
+            raise RuntimeError(
+                "model API returned an empty assistant message during preflight"
+            )
     except Exception as exc:
         text = str(exc)
         if "insufficient_quota" in text or "exceeded your current quota" in text:

@@ -15,6 +15,8 @@ BrowseComp-Plus uses `envs/search_server.py` and `LOCAL_SEARCH_URL`.
 
 - `make_gaia_data.py`: builds GAIA ReAct/FoldAgent/ContextGraph parquets.
 - `eval_gaia.py`: API-based evaluator for small GAIA validation subsets.
+- `eval_gaia_graph_api_smoke.sh`: starts the BrowseComp search server locally,
+  probes it, then runs a small GAIA ContextGraph API smoke.
 
 The initial GAIA integration targets text-only rows and uses the same search
 tools as BrowseComp-Plus. Rows with file attachments are skipped by default.
