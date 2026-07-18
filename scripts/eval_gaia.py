@@ -148,10 +148,16 @@ async def _preflight_model_api(args: argparse.Namespace) -> None:
             messages=[{"role": "user", "content": "Reply with exactly OK."}],
             max_completion_tokens=64,
         )
+        if not response.choices:
+            raise RuntimeError("model API returned no choices during preflight")
         content = response.choices[0].message.content or ""
         if not content.strip():
-            raise RuntimeError(
-                "model API returned an empty assistant message during preflight"
+            finish_reason = getattr(response.choices[0], "finish_reason", "")
+            usage = response.usage.model_dump() if response.usage else {}
+            print(
+                "[GAIA preflight] model API returned an empty assistant "
+                f"message; continuing because the request succeeded "
+                f"(finish_reason={finish_reason}, usage={usage})"
             )
     except Exception as exc:
         text = str(exc)
