@@ -126,8 +126,10 @@ cleanup() {
 trap cleanup EXIT
 
 probe "waiting for search server /health (up to ${SEARCH_TIMEOUT_SECONDS}s)"
+HEALTH_OK=0
 for _ in $(seq 1 "$SEARCH_TIMEOUT_SECONDS"); do
   if curl -fsS "http://127.0.0.1:${SEARCH_PORT}/health" >/dev/null 2>&1; then
+    HEALTH_OK=1
     break
   fi
   if ! kill -0 "$SEARCH_PID" 2>/dev/null; then
@@ -137,10 +139,29 @@ for _ in $(seq 1 "$SEARCH_TIMEOUT_SECONDS"); do
   fi
   sleep 1
 done
+if [ "$HEALTH_OK" != "1" ]; then
+  echo "ERROR: search server did not become healthy within ${SEARCH_TIMEOUT_SECONDS}s. Last 80 lines:"
+  tail -80 "$SEARCH_LOG" || true
+  exit 1
+fi
 
-if ! curl -fsS -X POST -H 'Content-Type: application/json' \
-    -d '{"query":"Eiffel Tower","k":1}' \
-    "http://127.0.0.1:${SEARCH_PORT}/search" >/dev/null; then
+probe "waiting for search server /search probe (up to ${SEARCH_TIMEOUT_SECONDS}s)"
+SEARCH_OK=0
+for _ in $(seq 1 "$SEARCH_TIMEOUT_SECONDS"); do
+  if curl -fsS -X POST -H 'Content-Type: application/json' \
+      -d '{"query":"Eiffel Tower","k":1}' \
+      "http://127.0.0.1:${SEARCH_PORT}/search" >/dev/null 2>&1; then
+    SEARCH_OK=1
+    break
+  fi
+  if ! kill -0 "$SEARCH_PID" 2>/dev/null; then
+    echo "ERROR: search server exited before /search probe succeeded. Last 80 lines:"
+    tail -80 "$SEARCH_LOG" || true
+    exit 1
+  fi
+  sleep 1
+done
+if [ "$SEARCH_OK" != "1" ]; then
   echo "ERROR: search server probe failed. Last 80 lines:"
   tail -80 "$SEARCH_LOG" || true
   exit 1
