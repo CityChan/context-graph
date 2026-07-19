@@ -116,6 +116,15 @@ Run the 8B ReAct smoke eval:
 SAB_VAL_MAX_SAMPLES=8 SAB_DEBUG_IO=1 SAB_DUMP_VALIDATION=1 SAB_NO_OUTPUT_HINT_AFTER=2 SAB_RESPONSE_LENGTH=12288 SAB_TURN_MAX_NEW_TOKENS=512 bash scripts/eval_sab_react_8b_4node_smoke.sh
 ```
 
+The same hardened 4-node harness can run all three SAB methods by setting
+`SAB_METHOD` to `react`, `fold`, or `ctxgraph`. It selects the matching agent
+loop, workflow parquet, and process-reward configuration automatically:
+
+```bash
+SAB_METHOD=fold SAB_REAL_EVAL=1 SAB_VAL_MAX_SAMPLES=1 bash scripts/eval_sab_react_8b_4node_smoke.sh
+SAB_METHOD=ctxgraph SAB_REAL_EVAL=1 SAB_VAL_MAX_SAMPLES=1 bash scripts/eval_sab_react_8b_4node_smoke.sh
+```
+
 Other SAB entry points live under `scripts/eval_sab_*.sh`.
 
 ## ALFWorld
