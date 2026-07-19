@@ -620,6 +620,15 @@ class AgentLoopWorkerBase:
             output.reward_score = result["reward_score"]
             output.extra_fields["reward_extra_info"] = result["reward_extra_info"]
 
+        metrics = output.metrics
+        if not isinstance(metrics, AgentLoopMetrics):
+            # Project agent loops use a structurally identical local model to
+            # avoid an import cycle during loop registration. Pydantic v2 does
+            # not accept a different BaseModel class by structure alone.
+            if isinstance(metrics, BaseModel):
+                metrics = metrics.model_dump()
+            metrics = AgentLoopMetrics.model_validate(metrics)
+
         return _InternalAgentLoopOutput(
             prompt_ids=prompt_output["input_ids"],
             response_ids=response_output["input_ids"],
@@ -633,7 +642,7 @@ class AgentLoopWorkerBase:
             multi_modal_data=output.multi_modal_data,
             reward_score=output.reward_score,
             num_turns=output.num_turns,
-            metrics=output.metrics,
+            metrics=metrics,
             extra_fields=output.extra_fields,
             process_reward_mask=process_reward_mask,
         )
