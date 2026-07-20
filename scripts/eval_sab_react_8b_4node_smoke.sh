@@ -321,6 +321,20 @@ fi
 TRAIN_PARQUET="$VAL_PARQUET"
 probe "SAB parquet: $VAL_PARQUET"
 
+if [ "$SAB_REAL_EVAL" = "1" ]; then
+  if [ ! -f "$PROJECT_ROOT/gpt4_visual_judge.py" ]; then
+    echo "ERROR: missing $PROJECT_ROOT/gpt4_visual_judge.py"
+    echo "       Visual SAB evaluators cannot run without this helper."
+    exit 1
+  fi
+  if [ -z "${OPENAI_API_KEY:-}" ] && [ -z "${AZURE_OPENAI_KEY:-}" ]; then
+    echo "ERROR: SAB_REAL_EVAL=1 requires OPENAI_API_KEY or Azure OpenAI credentials"
+    echo "       because SAB contains GPT-judged visualization tasks."
+    exit 1
+  fi
+  probe "real evaluator helpers + visual judge credentials ok"
+fi
+
 # ── Pre-flight: model weights must be cached (offline) ──
 probe "checking model cache"
 TRAINER_CACHE_DIR="$HF_HUB_CACHE/models--${MODEL_PATH//\//--}"

@@ -53,6 +53,9 @@ import sys
 from typing import Optional
 
 
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
 def locate_eval_script(benchmark_dir: str, eval_script_name: str) -> Optional[str]:
     """Resolve the absolute path of a task's eval script.
 
@@ -219,9 +222,21 @@ def score_task(
                 }
 
     env = dict(os.environ)
-    # Let the eval script import benchmark-relative helpers / gold modules.
+    # Upstream keeps shared evaluator helpers (notably
+    # gpt4_visual_judge.py) at the repository root, outside benchmark/.
+    # Include our project root explicitly because Ray workers execute from
+    # per-task scratch directories and cannot otherwise resolve that module.
+    support_dir = os.environ.get("SAB_EVAL_SUPPORT_DIR", "")
     env["PYTHONPATH"] = os.pathsep.join(
-        p for p in (benchmark_dir, env.get("PYTHONPATH", "")) if p
+        p
+        for p in (
+            os.path.dirname(eval_path),
+            benchmark_dir,
+            support_dir,
+            _PROJECT_ROOT,
+            env.get("PYTHONPATH", ""),
+        )
+        if p
     )
     env["SAB_BENCHMARK_DIR"] = benchmark_dir
 

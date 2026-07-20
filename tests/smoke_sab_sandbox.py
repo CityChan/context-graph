@@ -308,6 +308,36 @@ def test_loader_basic():
     return "test_loader_basic"
 
 
+def test_eval_imports_project_support_module():
+    """Eval subprocesses can import helpers shipped at the project root."""
+    from envs.scienceagent_eval import score_task
+
+    with tempfile.TemporaryDirectory() as tmp:
+        benchmark_dir = os.path.join(tmp, "benchmark")
+        eval_dir = os.path.join(benchmark_dir, "eval_programs")
+        workdir = os.path.join(tmp, "workdir")
+        os.makedirs(eval_dir)
+        os.makedirs(os.path.join(workdir, "pred_results"))
+        with open(os.path.join(workdir, "pred_results", "plot.png"), "wb") as f:
+            f.write(b"not-a-real-png")
+        with open(os.path.join(eval_dir, "eval_visual.py"), "w") as f:
+            f.write(
+                "from gpt4_visual_judge import encode_image\n"
+                "print((int(callable(encode_image)), 'helper imported'))\n"
+            )
+
+        result = score_task(
+            workdir,
+            benchmark_dir,
+            "eval_visual.py",
+            "pred_results/plot.png",
+        )
+        assert result["score"] == 1.0, result
+        assert result["rule"] == "tuple", result
+
+    return "test_eval_imports_project_support_module"
+
+
 async def test_prompt_eval_contract_is_gated():
     """Eval-script schema hints are useful diagnostics but must be opt-in."""
     from agents.prompts_code import create_chat_code
@@ -785,6 +815,7 @@ async def main():
         test_prompt_code_workflow_assembly,
         test_xml_tool_call_parsing,
         test_loader_basic,
+        test_eval_imports_project_support_module,
         test_loader_deep_nested_tree,
     ]
     async_tests = [
