@@ -161,6 +161,12 @@ def score_task(
         score (float 0..1), valid_execution (bool), rule (str),
         detail (str), eval_found (bool).
     """
+    # The evaluator changes cwd to the task workdir. Resolve caller-provided
+    # relative paths first so eval_path cannot accidentally become relative
+    # to that scratch directory.
+    workdir = os.path.abspath(workdir)
+    benchmark_dir = os.path.abspath(benchmark_dir)
+
     # Valid-execution = the expected artifact is actually on disk. This is
     # the same signal the old placeholder used, kept here as a separate axis
     # (VER) alongside the real success score (SR).

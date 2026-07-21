@@ -338,6 +338,33 @@ def test_eval_imports_project_support_module():
     return "test_eval_imports_project_support_module"
 
 
+def test_eval_resolves_relative_benchmark_path():
+    """Changing evaluator cwd must not reinterpret a relative benchmark path."""
+    from envs.scienceagent_eval import score_task
+
+    with tempfile.TemporaryDirectory(dir=os.getcwd()) as tmp:
+        benchmark_dir = os.path.join(tmp, "benchmark")
+        eval_dir = os.path.join(benchmark_dir, "eval_programs")
+        workdir = os.path.join(tmp, "workdir")
+        os.makedirs(eval_dir)
+        os.makedirs(os.path.join(workdir, "pred_results"))
+        with open(os.path.join(workdir, "pred_results", "result.txt"), "w") as f:
+            f.write("ok")
+        with open(os.path.join(eval_dir, "eval_relative.py"), "w") as f:
+            f.write("print((1, 'relative path resolved'))\n")
+
+        result = score_task(
+            os.path.relpath(workdir),
+            os.path.relpath(benchmark_dir),
+            "eval_relative.py",
+            "pred_results/result.txt",
+        )
+        assert result["score"] == 1.0, result
+        assert result["rule"] == "tuple", result
+
+    return "test_eval_resolves_relative_benchmark_path"
+
+
 async def test_prompt_eval_contract_is_gated():
     """Eval-script schema hints are useful diagnostics but must be opt-in."""
     from agents.prompts_code import create_chat_code
@@ -816,6 +843,7 @@ async def main():
         test_xml_tool_call_parsing,
         test_loader_basic,
         test_eval_imports_project_support_module,
+        test_eval_resolves_relative_benchmark_path,
         test_loader_deep_nested_tree,
     ]
     async_tests = [
