@@ -134,6 +134,10 @@ SAB_DUMP_VALIDATION=${SAB_DUMP_VALIDATION:-0}
 SAB_LOG_VAL_GENERATIONS=${SAB_LOG_VAL_GENERATIONS:-0}
 
 # ── WANDB ──
+if [ -n "${WORK:-}" ] && [ -f "$WORK/.openai_env" ]; then
+  # shellcheck disable=SC1090
+  source "$WORK/.openai_env"
+fi
 if [ -n "${WORK:-}" ] && [ -f "$WORK/.wandb_env" ]; then
   # shellcheck disable=SC1090
   source "$WORK/.wandb_env"
