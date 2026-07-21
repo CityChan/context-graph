@@ -132,6 +132,13 @@ export SAB_DEBUG_IO=${SAB_DEBUG_IO:-0}
 export SAB_NO_OUTPUT_HINT_AFTER=${SAB_NO_OUTPUT_HINT_AFTER:-2}
 SAB_DUMP_VALIDATION=${SAB_DUMP_VALIDATION:-0}
 SAB_LOG_VAL_GENERATIONS=${SAB_LOG_VAL_GENERATIONS:-0}
+SAB_RUN_TAG=${SAB_RUN_TAG:-smoke}
+case "$SAB_RUN_TAG" in
+  *[!A-Za-z0-9_-]*)
+    echo "ERROR: SAB_RUN_TAG may contain only letters, numbers, underscores, and hyphens"
+    exit 1
+    ;;
+esac
 
 # ── WANDB ──
 if [ -n "${WORK:-}" ] && [ -f "$WORK/.openai_env" ]; then
@@ -252,7 +259,7 @@ else
 fi
 
 TS=$(date +%Y%m%d_%H%M%S)
-EXPERIMENT_NAME="eval_${SAB_METHOD}_sab_8b_4n_smoke_${TS}"
+EXPERIMENT_NAME="eval_${SAB_METHOD}_sab_8b_4n_${SAB_RUN_TAG}_${TS}"
 TRAINER_DEBUG_OVERRIDES=()
 if [ "$SAB_DUMP_VALIDATION" = "1" ]; then
   SAB_VALIDATION_DATA_DIR=${SAB_VALIDATION_DATA_DIR:-${SCRATCH:-/scratch/09281/chc_1996}/sab_validation_generations/$EXPERIMENT_NAME}
@@ -294,7 +301,7 @@ wait_for_ray_cluster() {
 }
 
 echo "=============================================================="
-echo "  ZERO-SHOT EVAL: $SAB_METHOD_LABEL ($SAB_WORKFLOW) on ScienceAgentBench (Qwen3-8B dense, 4 nodes SMOKE, val_only=True)"
+echo "  ZERO-SHOT EVAL: $SAB_METHOD_LABEL ($SAB_WORKFLOW) on ScienceAgentBench (Qwen3-8B dense, 4 nodes ${SAB_RUN_TAG^^}, val_only=True)"
 echo "  Job: ${SLURM_JOB_ID:-<idev>}   Head: $NODE0 ($NODE0_IP)"
 echo "  Workers: ${NODELIST[@]:1}"
 echo "  Trainer model:  $MODEL_PATH"
@@ -459,7 +466,7 @@ if ! wait_for_ray_cluster "$NUM_NODES"; then
 fi
 
 echo "=============================================================="
-echo "  Launching $SAB_METHOD_LABEL ($SAB_WORKFLOW) ZERO-SHOT eval (4 nodes SMOKE, ScienceAgentBench test cap=$SAB_VAL_MAX_SAMPLES)"
+echo "  Launching $SAB_METHOD_LABEL ($SAB_WORKFLOW) ZERO-SHOT eval (4 nodes ${SAB_RUN_TAG^^}, ScienceAgentBench test cap=$SAB_VAL_MAX_SAMPLES)"
 echo "  default_agent_loop=$SAB_AGENT_LOOP  workflow=$SAB_WORKFLOW  process_reward=$SAB_PROCESS_REWARD"
 echo "  vLLM gpu_memory_utilization=0.6 + FSDP CPU offload (8B fits)"
 echo "  val_only=True (one val pass on $SAB_DATA_FILE then exit; no training)"
