@@ -121,24 +121,31 @@ case "$RAY_TMPDIR_ROOT" in
 esac
 
 # Real per-task eval (eval_programs/<script> -> [0,1] success) vs the
-# Phase-D2 file-existence placeholder. Default 0 (placeholder). Set
-# SAB_REAL_EVAL=1 at submit time for paper-grade scoring. Must be exported
-# onto every Ray node (done in the ray head/worker blocks below) because
-# get_reward reads it inside the AgentLoopWorker process.
-export SAB_REAL_EVAL=${SAB_REAL_EVAL:-0}
+# Phase-D2 file-existence placeholder. Formal runs default to the real
+# evaluator and reject an explicit attempt to disable it.
+SAB_RUN_TAG=${SAB_RUN_TAG:-smoke}
+if [ "$SAB_RUN_TAG" = "formal" ]; then
+  export SAB_REAL_EVAL=${SAB_REAL_EVAL:-1}
+  SAB_DUMP_VALIDATION=${SAB_DUMP_VALIDATION:-1}
+else
+  export SAB_REAL_EVAL=${SAB_REAL_EVAL:-0}
+  SAB_DUMP_VALIDATION=${SAB_DUMP_VALIDATION:-0}
+fi
 export SAB_EXPOSE_EVAL_CONTRACT=${SAB_EXPOSE_EVAL_CONTRACT:-0}
 export SAB_INTERACTIVE_EVAL_FEEDBACK=${SAB_INTERACTIVE_EVAL_FEEDBACK:-0}
 export SAB_DEBUG_IO=${SAB_DEBUG_IO:-0}
 export SAB_NO_OUTPUT_HINT_AFTER=${SAB_NO_OUTPUT_HINT_AFTER:-2}
-SAB_DUMP_VALIDATION=${SAB_DUMP_VALIDATION:-0}
 SAB_LOG_VAL_GENERATIONS=${SAB_LOG_VAL_GENERATIONS:-0}
-SAB_RUN_TAG=${SAB_RUN_TAG:-smoke}
 case "$SAB_RUN_TAG" in
   *[!A-Za-z0-9_-]*)
     echo "ERROR: SAB_RUN_TAG may contain only letters, numbers, underscores, and hyphens"
     exit 1
     ;;
 esac
+if [ "$SAB_RUN_TAG" = "formal" ] && [ "$SAB_REAL_EVAL" != "1" ]; then
+  echo "ERROR: SAB_RUN_TAG=formal requires SAB_REAL_EVAL=1"
+  exit 1
+fi
 
 # ── WANDB ──
 if [ -n "${WORK:-}" ] && [ -f "$WORK/.openai_env" ]; then
@@ -201,10 +208,17 @@ PPO_MINI_BATCH_SIZE=${PPO_MINI_BATCH_SIZE:-$TRAIN_BATCH_SIZE}
 SAB_VAL_MAX_SAMPLES=${SAB_VAL_MAX_SAMPLES:--1}
 SAB_TRAIN_MAX_SAMPLES=${SAB_TRAIN_MAX_SAMPLES:--1}
 SAB_PROMPT_LENGTH=${SAB_PROMPT_LENGTH:-16384}
-SAB_RESPONSE_LENGTH=${SAB_RESPONSE_LENGTH:-12288}
-SAB_MAX_TOKEN_LEN_PER_GPU=${SAB_MAX_TOKEN_LEN_PER_GPU:-$((SAB_PROMPT_LENGTH + SAB_RESPONSE_LENGTH))}
-SAB_VAL_MAX_TURN=${SAB_VAL_MAX_TURN:-24}
-SAB_TURN_MAX_NEW_TOKENS=${SAB_TURN_MAX_NEW_TOKENS:-512}
+if [ "$SAB_RUN_TAG" = "formal" ]; then
+  SAB_RESPONSE_LENGTH=${SAB_RESPONSE_LENGTH:-24576}
+  SAB_MAX_TOKEN_LEN_PER_GPU=${SAB_MAX_TOKEN_LEN_PER_GPU:-40960}
+  SAB_VAL_MAX_TURN=${SAB_VAL_MAX_TURN:-32}
+  SAB_TURN_MAX_NEW_TOKENS=${SAB_TURN_MAX_NEW_TOKENS:-2048}
+else
+  SAB_RESPONSE_LENGTH=${SAB_RESPONSE_LENGTH:-12288}
+  SAB_MAX_TOKEN_LEN_PER_GPU=${SAB_MAX_TOKEN_LEN_PER_GPU:-$((SAB_PROMPT_LENGTH + SAB_RESPONSE_LENGTH))}
+  SAB_VAL_MAX_TURN=${SAB_VAL_MAX_TURN:-24}
+  SAB_TURN_MAX_NEW_TOKENS=${SAB_TURN_MAX_NEW_TOKENS:-512}
+fi
 SAB_METHOD=${SAB_METHOD:-react}
 case "$SAB_METHOD" in
   react)
@@ -237,7 +251,11 @@ case "$SAB_METHOD" in
     ;;
 esac
 SAB_MAX_SESSION=${SAB_MAX_SESSION:-4}
-SAB_BRANCH_LEN=${SAB_BRANCH_LEN:-$SAB_RESPONSE_LENGTH}
+if [ "$SAB_RUN_TAG" = "formal" ]; then
+  SAB_BRANCH_LEN=${SAB_BRANCH_LEN:-32768}
+else
+  SAB_BRANCH_LEN=${SAB_BRANCH_LEN:-$SAB_RESPONSE_LENGTH}
+fi
 if (( TRAIN_BATCH_SIZE % NUM_NODES != 0 )); then
   echo "ERROR: TRAIN_BATCH_SIZE=$TRAIN_BATCH_SIZE must be divisible by NUM_NODES=$NUM_NODES"
   exit 1
