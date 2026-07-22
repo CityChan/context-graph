@@ -467,10 +467,45 @@ sleep "$RAY_CLUSTER_SETTLE_SECONDS"
 probe "all $((NUM_NODES - 1)) trainer workers launched, cluster settling"
 
 cleanup() {
-  kill "$RAY_HEAD_PID" 2>/dev/null || true
-  for pid in "${WORKER_PIDS[@]}"; do
-    kill "$pid" 2>/dev/null || true
+  trap - EXIT INT TERM
+  set +e
+  probe "stopping Ray runtime on all nodes"
+
+  local stop_pids=()
+  local launch_pids=("$RAY_HEAD_PID" "${WORKER_PIDS[@]}")
+  local node pid deadline alive
+  for node in "${NODELIST[@]}"; do
+    srun --overlap --nodes=1 --ntasks=1 -w "$node" bash -c '
+      source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
+      conda activate cxtgraph
+      timeout 20s ray stop -f >/dev/null 2>&1 || true
+    ' &
+    stop_pids+=("$!")
   done
+  for pid in "${stop_pids[@]}"; do
+    wait "$pid" 2>/dev/null || true
+  done
+
+  deadline=$((SECONDS + 15))
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    alive=0
+    for pid in "${launch_pids[@]}"; do
+      if kill -0 "$pid" 2>/dev/null; then
+        alive=1
+        break
+      fi
+    done
+    [ "$alive" -eq 0 ] && break
+    sleep 1
+  done
+
+  for pid in "${launch_pids[@]}"; do
+    if kill -0 "$pid" 2>/dev/null; then
+      kill "$pid" 2>/dev/null || true
+    fi
+    wait "$pid" 2>/dev/null || true
+  done
+  probe "Ray runtime cleanup done"
 }
 trap cleanup EXIT
 
