@@ -129,7 +129,14 @@ else
 fi
 
 TS=$(date +%Y%m%d_%H%M%S)
-EXPERIMENT_NAME="train_baseline_bc_8b_4n_24h_v3_32k_${TS}"
+EXPERIMENT_NAME=${EXPERIMENT_NAME:-"train_baseline_bc_8b_4n_24h_v3_32k_${TS}"}
+TRAIN_DATA_FILE=${TRAIN_DATA_FILE:-data/bc_train.parquet}
+VAL_DATA_FILE=${VAL_DATA_FILE:-data/bc_test.parquet}
+TRAINER_VAL_ONLY=${TRAINER_VAL_ONLY:-False}
+TOTAL_TRAINING_STEPS=${TOTAL_TRAINING_STEPS:-30}
+TEST_FREQ=${TEST_FREQ:-10}
+SAVE_FREQ=${SAVE_FREQ:-10}
+CHECKPOINT_ROOT=${CHECKPOINT_ROOT:-${SCRATCH:-/scratch/09281/chc_1996}/context-graph-ckpts/$EXPERIMENT_NAME}
 
 probe() { printf '+++ [%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 
@@ -146,8 +153,8 @@ echo "=============================================================="
 
 # ── Pre-flight: BrowseComp data parquets + HF datasets must exist ──
 probe "checking BrowseComp artefacts"
-TRAIN_PARQUET="$PROJECT_ROOT/data/bc_train.parquet"
-VAL_PARQUET="$PROJECT_ROOT/data/bc_test.parquet"
+TRAIN_PARQUET="$PROJECT_ROOT/$TRAIN_DATA_FILE"
+VAL_PARQUET="$PROJECT_ROOT/$VAL_DATA_FILE"
 for f in "$TRAIN_PARQUET" "$VAL_PARQUET"; do
   if [ ! -f "$f" ]; then
     echo "ERROR: missing $f"
@@ -171,6 +178,23 @@ if [ ! -d "$EMBED_CACHE_DIR_DS" ]; then
   exit 1
 fi
 probe "BC parquets + HF datasets ok"
+
+RESUME_ARGS=()
+if [ -n "${RESUME_CHECKPOINT_ROOT:-}" ]; then
+  LATEST_FILE="$RESUME_CHECKPOINT_ROOT/latest_checkpointed_iteration.txt"
+  if [ ! -s "$LATEST_FILE" ]; then
+    echo "ERROR: missing latest checkpoint marker: $LATEST_FILE"
+    exit 1
+  fi
+  LATEST_STEP=$(tr -d '[:space:]' < "$LATEST_FILE")
+  RESUME_PATH="$RESUME_CHECKPOINT_ROOT/$LATEST_STEP"
+  if [ ! -d "$RESUME_PATH" ]; then
+    echo "ERROR: checkpoint directory missing: $RESUME_PATH"
+    exit 1
+  fi
+  RESUME_ARGS=(trainer.resume_mode=resume_path "+trainer.resume_from_path=$RESUME_PATH")
+  probe "will resume checkpoint $RESUME_PATH"
+fi
 
 # ── Pre-flight: 8B + embedder weights must be present (offline) ──
 probe "checking model caches"
@@ -358,8 +382,8 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   actor_rollout_ref.actor.use_kl_loss=True \
   actor_rollout_ref.actor.grad_clip=0.5 \
   actor_rollout_ref.actor.kl_loss_coef=0.0005 \
-  data.train_files=data/bc_train.parquet \
-  data.val_files=data/bc_test.parquet \
+  data.train_files="$TRAIN_DATA_FILE" \
+  data.val_files="$VAL_DATA_FILE" \
   data.train_batch_size=12 \
   data.max_prompt_length=8192 \
   data.max_response_length=32768 \
@@ -388,16 +412,17 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   +actor_rollout_ref.rollout.plugin.val_max_turn=100 \
   +actor_rollout_ref.rollout.plugin.val_response_length=32768 \
   trainer.val_before_train=True \
-  trainer.val_only=False \
+  trainer.val_only="$TRAINER_VAL_ONLY" \
   trainer.n_gpus_per_node=1 \
   trainer.nnodes=$((NUM_NODES - 1)) \
-  trainer.total_training_steps=30 \
-  trainer.test_freq=10 \
-  trainer.save_freq=10 \
-  trainer.default_local_dir=${SCRATCH:-/scratch/09281/chc_1996}/context-graph-ckpts/$EXPERIMENT_NAME \
+  trainer.total_training_steps="$TOTAL_TRAINING_STEPS" \
+  trainer.test_freq="$TEST_FREQ" \
+  trainer.save_freq="$SAVE_FREQ" \
+  trainer.default_local_dir="$CHECKPOINT_ROOT" \
   trainer.project_name=context-graph \
   trainer.experiment_name="$EXPERIMENT_NAME" \
-  trainer.logger="$TRAINER_LOGGER"
+  trainer.logger="$TRAINER_LOGGER" \
+  "${RESUME_ARGS[@]}"
 RC=$?
 set -e
 
