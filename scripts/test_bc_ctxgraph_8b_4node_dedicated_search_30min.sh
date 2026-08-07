@@ -116,6 +116,17 @@ if [ "$NUM_NODES" -ne 4 ]; then
   exit 1
 fi
 
+TRAINER_GPUS=$((NUM_NODES - 1))
+REAL_TRAIN_BATCH_SIZE=$((BC_SMOKE_TRAIN_BATCH_SIZE * BC_SMOKE_ROLLOUT_N))
+if [ $((REAL_TRAIN_BATCH_SIZE % TRAINER_GPUS)) -ne 0 ]; then
+  echo "ERROR: train_batch_size*rollout_n=$REAL_TRAIN_BATCH_SIZE must be divisible by trainer_gpus=$TRAINER_GPUS"
+  exit 1
+fi
+if [ "$BC_SMOKE_TRAIN_BATCH_SIZE" -lt "$BC_SMOKE_PPO_MINI_BATCH_SIZE" ]; then
+  echo "ERROR: train_batch_size=$BC_SMOKE_TRAIN_BATCH_SIZE must be >= ppo_mini_batch_size=$BC_SMOKE_PPO_MINI_BATCH_SIZE"
+  exit 1
+fi
+
 if [ -n "${WANDB_API_KEY:-}" ]; then
   TRAINER_LOGGER='["console","wandb"]'
   probe_msg="wandb enabled (key length=${#WANDB_API_KEY})"
