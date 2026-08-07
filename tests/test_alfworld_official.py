@@ -133,10 +133,12 @@ def test_non_environment_turns_do_not_consume_step_budget():
             "<function=think><parameter=reasoning>plan</parameter></function>"
         )
     )
+    asyncio.run(env.run_action("<function=action></function>"))
 
     assert env._step_count == 0
     assert env.stats["invalid_xml"] == 1
     assert env.stats["think"] == 1
+    assert env.stats["empty_command"] == 1
 
 
 def _write_game(root, task_type, trial, solvable=True):

@@ -148,6 +148,12 @@ class ALFWorldEnv:
 
     def _step(self, command: str) -> dict:
         """Execute action in TextWorld environment."""
+        if not command.strip():
+            self.stats['empty_command'] += 1
+            return self._obs_with_commands(
+                'Empty action command. Choose one exact admissible command.'
+            )
+
         # MemexRL: limit "look" to once per episode
         if command.strip().lower() == "look":
             if self._look_used:
