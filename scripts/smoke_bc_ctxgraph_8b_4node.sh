@@ -1,0 +1,18 @@
+#!/bin/bash
+# Lightweight one-step ContextGraph smoke inside an existing four-node idev.
+set -euo pipefail
+
+export WANDB_MODE=${WANDB_MODE:-disabled}
+export JUDGE_MODEL=${JUDGE_MODEL:-gpt-4o-mini}
+export BC_SMOKE_STEPS=${BC_SMOKE_STEPS:-1}
+export BC_SMOKE_TRAIN_BATCH_SIZE=${BC_SMOKE_TRAIN_BATCH_SIZE:-4}
+export BC_SMOKE_TRAIN_MAX_SAMPLES=${BC_SMOKE_TRAIN_MAX_SAMPLES:-4}
+export BC_SMOKE_ROLLOUT_N=${BC_SMOKE_ROLLOUT_N:-2}
+export BC_SMOKE_PPO_MINI_BATCH_SIZE=${BC_SMOKE_PPO_MINI_BATCH_SIZE:-4}
+export BC_SMOKE_RESPONSE_LENGTH=${BC_SMOKE_RESPONSE_LENGTH:-4096}
+export BC_SMOKE_MAX_TOKEN_LEN=${BC_SMOKE_MAX_TOKEN_LEN:-6144}
+export BC_SMOKE_MAX_TURN=${BC_SMOKE_MAX_TURN:-20}
+export BC_SMOKE_TURN_MAX_NEW_TOKENS=${BC_SMOKE_TURN_MAX_NEW_TOKENS:-256}
+export BC_SMOKE_BRANCH_LEN=${BC_SMOKE_BRANCH_LEN:-2048}
+
+exec bash scripts/test_bc_ctxgraph_8b_4node_dedicated_search_30min.sh

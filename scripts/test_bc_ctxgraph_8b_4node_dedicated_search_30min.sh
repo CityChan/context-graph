@@ -53,7 +53,6 @@ if [ -n "${WORK:-}" ] && [ -f "$WORK/.wandb_env" ]; then
   # shellcheck disable=SC1090
   source "$WORK/.wandb_env"
 fi
-export WANDB_API_KEY=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
 
 # ── OpenAI judge (REQUIRED for BrowseComp — no LLM judge = no reward signal) ──
 if [ -n "${WORK:-}" ] && [ -f "$WORK/.openai_env" ]; then
@@ -91,6 +90,16 @@ export NCCL_P2P_LEVEL=NVL
 PROJECT_ROOT=/work/09281/chc_1996/vista/context-graph
 MODEL_PATH=${MODEL_PATH:-Qwen/Qwen3-8B}
 EMBED_MODEL=${EMBED_MODEL:-Qwen/Qwen3-Embedding-8B}
+BC_SMOKE_STEPS=${BC_SMOKE_STEPS:-2}
+BC_SMOKE_TRAIN_BATCH_SIZE=${BC_SMOKE_TRAIN_BATCH_SIZE:-24}
+BC_SMOKE_TRAIN_MAX_SAMPLES=${BC_SMOKE_TRAIN_MAX_SAMPLES:-24}
+BC_SMOKE_ROLLOUT_N=${BC_SMOKE_ROLLOUT_N:-8}
+BC_SMOKE_PPO_MINI_BATCH_SIZE=${BC_SMOKE_PPO_MINI_BATCH_SIZE:-24}
+BC_SMOKE_RESPONSE_LENGTH=${BC_SMOKE_RESPONSE_LENGTH:-16384}
+BC_SMOKE_MAX_TOKEN_LEN=${BC_SMOKE_MAX_TOKEN_LEN:-18432}
+BC_SMOKE_MAX_TURN=${BC_SMOKE_MAX_TURN:-200}
+BC_SMOKE_TURN_MAX_NEW_TOKENS=${BC_SMOKE_TURN_MAX_NEW_TOKENS:-768}
+BC_SMOKE_BRANCH_LEN=${BC_SMOKE_BRANCH_LEN:-8192}
 export HF_HOME=${HF_HOME:-/work/09281/chc_1996/vista/cache}
 export HF_HUB_CACHE=${HF_HUB_CACHE:-$HF_HOME/hub}
 cd "$PROJECT_ROOT"
@@ -121,7 +130,7 @@ EXPERIMENT_NAME="smoke_ctxgraph_bc_8b_4n_ded_search_${TS}"
 probe() { printf '+++ [%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 
 echo "=============================================================="
-echo "  TRAIN: ContextGraph on BrowseComp-Plus (8B, 4 nodes [1 search + 3 trainer], 2 steps, 30min smoke, 16K-resp)"
+echo "  TRAIN: ContextGraph on BrowseComp-Plus (8B, 4 nodes [1 search + 3 trainer], ${BC_SMOKE_STEPS} steps, response=${BC_SMOKE_RESPONSE_LENGTH})"
 echo "  Job: ${SLURM_JOB_ID:-<idev>}   Head: $NODE0 ($NODE0_IP)"
 echo "  Worker(s): ${NODELIST[@]:1}"
 echo "  Trainer model:  $MODEL_PATH"
@@ -206,14 +215,14 @@ srun --overlap --nodes=1 --ntasks=1 -w "$SEARCH_NODE" bash -c "
 " >/tmp/hp_server_$$.log 2>&1 &
 SEARCH_PID=$!
 
-probe "waiting for search server /health (up to 240s)"
-for i in $(seq 1 120); do
+probe "waiting for search server /health (up to 600s)"
+for i in $(seq 1 300); do
   if curl -fsS "http://${SEARCH_NODE_IP}:18999/health" >/dev/null 2>&1; then
     break
   fi
   sleep 2
 done
-if ! curl -fsS -X POST -H 'Content-Type: application/json' \
+if ! curl -fsS --max-time 60 -X POST -H 'Content-Type: application/json' \
         -d '{"query":"Eiffel Tower","k":1}' \
         "http://${SEARCH_NODE_IP}:18999/search" >/dev/null; then
   echo "ERROR: search server not reachable at ${SEARCH_NODE_IP}:18999. Last 80 lines:"
@@ -306,9 +315,10 @@ probe "querying ray status"
 ray status || echo "WARN: ray status check failed"
 
 echo "=============================================================="
-echo "  Launching ContextGraph FoldGRPO smoke (4 nodes [1 search + 3 trainer], 2 steps, 16K resp, BrowseComp-Plus)"
+echo "  Launching ContextGraph FoldGRPO smoke (4 nodes [1 search + 3 trainer], ${BC_SMOKE_STEPS} steps, response=${BC_SMOKE_RESPONSE_LENGTH}, BrowseComp-Plus)"
 echo "  vLLM gpu_memory_utilization=0.7 + FSDP CPU offload"
-echo "  val_before_train=False (smoke), save_freq=-1 (no checkpoint), 2 steps only"
+echo "  batch=${BC_SMOKE_TRAIN_BATCH_SIZE} rollout_n=${BC_SMOKE_ROLLOUT_N} max_turn=${BC_SMOKE_MAX_TURN}"
+echo "  val_before_train=False (smoke), save_freq=-1 (no checkpoint)"
 echo "=============================================================="
 probe "launching trainer (model load + vLLM init typically ~3-5 min)"
 
@@ -326,10 +336,10 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   actor_rollout_ref.rollout.gpu_memory_utilization=0.7 \
   actor_rollout_ref.model.path="$MODEL_PATH" \
   actor_rollout_ref.rollout.prompt_length=4096 \
-  actor_rollout_ref.rollout.response_length=16384 \
-  actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu=18432 \
+  actor_rollout_ref.rollout.response_length="$BC_SMOKE_RESPONSE_LENGTH" \
+  actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu="$BC_SMOKE_MAX_TOKEN_LEN" \
   actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
-  actor_rollout_ref.rollout.n=8 \
+  actor_rollout_ref.rollout.n="$BC_SMOKE_ROLLOUT_N" \
   actor_rollout_ref.rollout.agent.num_workers=1 \
   actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=1 \
   actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=1 \
@@ -346,24 +356,25 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   actor_rollout_ref.actor.kl_loss_coef=0.0005 \
   data.train_files=data/bc_train.parquet \
   data.val_files=data/bc_test.parquet \
-  data.train_batch_size=24 \
+  data.train_batch_size="$BC_SMOKE_TRAIN_BATCH_SIZE" \
+  data.train_max_samples="$BC_SMOKE_TRAIN_MAX_SAMPLES" \
   data.max_prompt_length=4096 \
-  data.max_response_length=16384 \
+  data.max_response_length="$BC_SMOKE_RESPONSE_LENGTH" \
   data.return_raw_chat=True \
-  actor_rollout_ref.actor.ppo_mini_batch_size=24 \
+  actor_rollout_ref.actor.ppo_mini_batch_size="$BC_SMOKE_PPO_MINI_BATCH_SIZE" \
   actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=1 \
-  actor_rollout_ref.actor.ppo_max_token_len_per_gpu=18432 \
-  actor_rollout_ref.actor.ppo_infer_max_token_len_per_gpu=18432 \
+  actor_rollout_ref.actor.ppo_max_token_len_per_gpu="$BC_SMOKE_MAX_TOKEN_LEN" \
+  actor_rollout_ref.actor.ppo_infer_max_token_len_per_gpu="$BC_SMOKE_MAX_TOKEN_LEN" \
   actor_rollout_ref.model.enable_gradient_checkpointing=True \
   +actor_rollout_ref.rollout.plugin.workflow=search_graph \
-  +actor_rollout_ref.rollout.plugin.max_turn=200 \
+  +actor_rollout_ref.rollout.plugin.max_turn="$BC_SMOKE_MAX_TURN" \
   +actor_rollout_ref.rollout.plugin.retry_cjk=10 \
-  +actor_rollout_ref.rollout.plugin.turn_max_new_tokens=768 \
+  +actor_rollout_ref.rollout.plugin.turn_max_new_tokens="$BC_SMOKE_TURN_MAX_NEW_TOKENS" \
   +actor_rollout_ref.rollout.plugin.max_session=3 \
   +actor_rollout_ref.rollout.plugin.val_max_session=3 \
   +actor_rollout_ref.rollout.plugin.session_timeout=600 \
   +actor_rollout_ref.rollout.plugin.enable_summary=False \
-  +actor_rollout_ref.rollout.plugin.branch_len=8192 \
+  +actor_rollout_ref.rollout.plugin.branch_len="$BC_SMOKE_BRANCH_LEN" \
   +actor_rollout_ref.rollout.plugin.process_reward='[flat,scope,graph]' \
   +actor_rollout_ref.rollout.plugin.lambda_compact=0.2 \
   +actor_rollout_ref.rollout.plugin.lambda_cost=0.002 \
@@ -371,13 +382,13 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   +actor_rollout_ref.rollout.plugin.must_finish=False \
   +actor_rollout_ref.rollout.plugin.double_check=False \
   +actor_rollout_ref.rollout.plugin.must_search=True \
-  +actor_rollout_ref.rollout.plugin.val_max_turn=200 \
-  +actor_rollout_ref.rollout.plugin.val_response_length=16384 \
+  +actor_rollout_ref.rollout.plugin.val_max_turn="$BC_SMOKE_MAX_TURN" \
+  +actor_rollout_ref.rollout.plugin.val_response_length="$BC_SMOKE_RESPONSE_LENGTH" \
   trainer.val_before_train=False \
   trainer.val_only=False \
   trainer.n_gpus_per_node=1 \
   trainer.nnodes=$((NUM_NODES - 1)) \
-  trainer.total_training_steps=2 \
+  trainer.total_training_steps="$BC_SMOKE_STEPS" \
   trainer.test_freq=999 \
   trainer.save_freq=-1 \
   trainer.default_local_dir=${SCRATCH:-/scratch/09281/chc_1996}/context-graph-ckpts/$EXPERIMENT_NAME \

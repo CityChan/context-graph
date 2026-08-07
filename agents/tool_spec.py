@@ -288,6 +288,7 @@ def graph_tool():
             'description': (
                 "Merge multiple context nodes into a single summary node. "
                 "The source nodes are folded (compressed) and replaced by the summary. "
+                "Use only distinct ACTIVE IDs listed in the latest Eligible graph-tool node IDs line. "
                 "Use this to consolidate findings from multiple branches or search results."
             ),
             'parameters': {
@@ -295,7 +296,7 @@ def graph_tool():
                 'properties': {
                     'node_ids': {
                         'type': 'string',
-                        'description': 'Comma-separated node IDs to merge (e.g., "n3,n5,n7"). At least 2 required.',
+                        'description': 'Comma-separated distinct ACTIVE node IDs from the latest eligible list (e.g., "n3,n5,n7"). Minimum 2, maximum 6.',
                     },
                     'summary': {
                         'type': 'string',
@@ -312,6 +313,7 @@ def graph_tool():
             'name': 'add_edge',
             'description': (
                 "Create a relationship between two context nodes. "
+                "Both endpoints must be distinct ACTIVE IDs from the latest eligible list. "
                 "Use this to connect related findings across different branches or search results."
             ),
             'parameters': {
@@ -342,6 +344,7 @@ def graph_tool():
             'description': (
                 "Change the active focus to a different context node. "
                 "The active node determines which part of the context graph is prioritized. "
+                "The node must be ACTIVE in the latest eligible list. "
                 "Use this to shift focus between different sub-problems or evidence threads."
             ),
             'parameters': {
@@ -363,6 +366,7 @@ def graph_tool():
             'description': (
                 "Remove a low-value context node from the active graph. "
                 "Pruned nodes are excluded from context construction, freeing token budget. "
+                "The node must be ACTIVE in the latest eligible list. "
                 "Use this to discard irrelevant search results or dead-end investigations."
             ),
             'parameters': {

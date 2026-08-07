@@ -97,6 +97,15 @@ class ContextEdge:
     weight: float = 1.0
 
 
+class GraphOpResult(str):
+    """String-compatible graph-tool result with an explicit success flag."""
+
+    def __new__(cls, message: str, success: bool):
+        result = super().__new__(cls, message)
+        result.success = success
+        return result
+
+
 @dataclass
 class ArchivedEvidence:
     """Immutable evidence retained outside the model's working context."""
@@ -143,6 +152,8 @@ class ContextGraph:
         # tool calls). Auto-heuristic ops (auto_prune, auto_connect, auto_merge, add_node
         # for observations) do NOT count here. cost_penalty uses this, not operation_count.
         self.explicit_op_count: int = 0
+        self.graph_op_attempt_count: int = 0
+        self.invalid_op_count: int = 0
         self.tokenizer = tokenizer
         self._node_counter = 0
         self._archive_counter = 0
@@ -162,6 +173,26 @@ class ContextGraph:
     def _next_id(self, prefix: Optional[str] = None) -> str:
         self._node_counter += 1
         return f"{prefix or self.namespace_prefix}{self._node_counter}"
+
+    def record_graph_op(self, success: bool) -> None:
+        """Record one LLM-requested graph operation attempt."""
+        self.graph_op_attempt_count += 1
+        if success:
+            self.explicit_op_count += 1
+        else:
+            self.invalid_op_count += 1
+
+    def graph_op_budget_error(
+        self,
+        max_valid_ops: int = 10,
+        max_attempts: int = 20,
+    ) -> Optional[str]:
+        """Return a diagnostic when the per-trajectory graph budget is spent."""
+        if self.graph_op_attempt_count >= max_attempts:
+            return f"graph operation attempt budget exhausted ({max_attempts})"
+        if self.explicit_op_count >= max_valid_ops:
+            return f"valid graph operation budget exhausted ({max_valid_ops})"
+        return None
 
     def spawn_child(self, parent_node_id: str, prefix: str) -> ContextGraph:
         """Create an isolated child ContextGraph attached to a SUBTASK node.
@@ -329,26 +360,48 @@ class ContextGraph:
     def add_edge(
         self, source: str, target: str, relation: EdgeRelation, weight: float = 1.0
     ) -> bool:
-        """Add an edge between two existing nodes. Updates weight if duplicate."""
-        if source not in self.nodes or target not in self.nodes:
+        """Add an active-to-active edge; reject self-loops and duplicates."""
+        if source not in self.nodes or target not in self.nodes or source == target:
+            return False
+        if not self.nodes[source].is_active() or not self.nodes[target].is_active():
             return False
         for e in self.edges:
             if e.source == source and e.target == target and e.relation == relation:
-                e.weight = weight
-                return True
+                return False
         self.edges.append(ContextEdge(source, target, relation, weight))
         self.operation_count += 1
         return True
 
-    def merge(self, node_ids: list[str], summary: str) -> Optional[str]:
+    def merge(
+        self,
+        node_ids: list[str],
+        summary: str,
+        max_nodes: int = 6,
+    ) -> Optional[str]:
         """Merge multiple nodes into a single summary node.
 
         Source nodes are marked as FOLDED. The new summary node inherits
         incoming edges from the merged nodes.
         """
-        valid_ids = [nid for nid in node_ids if nid in self.nodes and nid != self.root_id]
-        if len(valid_ids) < 2:
+        unique_ids = list(dict.fromkeys(node_ids))
+        valid_ids = [
+            nid for nid in unique_ids
+            if nid in self.nodes
+            and nid != self.root_id
+            and self.nodes[nid].is_active()
+        ]
+        if len(valid_ids) != len(unique_ids) or not 2 <= len(valid_ids) <= max_nodes:
             return None
+
+        inherited_edges = [
+            (edge.source, edge.relation, edge.weight)
+            for edge in self.edges
+            if edge.target in valid_ids
+            and edge.source not in valid_ids
+            and edge.source in self.nodes
+            and self.nodes[edge.source].is_active()
+            and edge.relation != EdgeRelation.MERGE_SOURCE
+        ]
 
         merged_id = self.add_node(
             content=summary,
@@ -361,12 +414,28 @@ class ContextGraph:
 
         for nid in valid_ids:
             self.add_edge(nid, merged_id, EdgeRelation.MERGE_SOURCE)
-            self.nodes[nid].status = NodeStatus.FOLDED
 
         # Inherit incoming edges from merged nodes
-        for edge in list(self.edges):
-            if edge.target in valid_ids and edge.source not in valid_ids:
-                self.add_edge(edge.source, merged_id, edge.relation, edge.weight)
+        for source, relation, weight in inherited_edges:
+            self.add_edge(source, merged_id, relation, weight)
+
+        for nid in valid_ids:
+            self.nodes[nid].status = NodeStatus.FOLDED
+
+        # Folded history remains recoverable through ``merged_from`` metadata,
+        # but it must not inflate or connect the model-facing working graph.
+        self.edges = [
+            edge for edge in self.edges
+            if (
+                self.nodes[edge.source].is_active()
+                and self.nodes[edge.target].is_active()
+            )
+            or (
+                edge.relation == EdgeRelation.MERGE_SOURCE
+                and edge.source in valid_ids
+                and edge.target == merged_id
+            )
+        ]
 
         if self.active_node_id in valid_ids:
             self.active_node_id = merged_id
@@ -393,7 +462,7 @@ class ContextGraph:
         """Set the active focus to a specific node."""
         if node_id not in self.nodes:
             return False
-        if self.nodes[node_id].status == NodeStatus.PRUNED:
+        if not self.nodes[node_id].is_active():
             return False
         self.active_node_id = node_id
         self.operation_count += 1
@@ -420,7 +489,11 @@ class ContextGraph:
 
     def prune(self, node_id: str) -> bool:
         """Mark a node as pruned (excluded from active context)."""
-        if node_id not in self.nodes or node_id == self.root_id:
+        if (
+            node_id not in self.nodes
+            or node_id == self.root_id
+            or not self.nodes[node_id].is_active()
+        ):
             return False
         self.nodes[node_id].status = NodeStatus.PRUNED
         # Move active focus to parent if pruned node was active
@@ -504,13 +577,16 @@ class ContextGraph:
         by recency (newest first).
         """
         active = self.active_nodes
+        eligible_ids = [node.id for node in active if node.id != self.root_id]
         lines = [
             f"[Graph] {len(active)}/{len(self.nodes)} nodes active, "
-            f"{len(self.edges)} edges, ops={self.operation_count}, "
-            f"focus=[{self.active_node_id}]"
+            f"{len(self.active_edges)} active edges, ops={self.operation_count}, "
+            f"focus=[{self.active_node_id}]",
+            "  Eligible graph-tool node IDs: "
+            + (", ".join(eligible_ids[-max_nodes_shown:]) if eligible_ids else "(none)"),
         ]
 
-        visible = [(nid, n) for nid, n in self.nodes.items() if n.status != NodeStatus.PRUNED]
+        visible = [(nid, n) for nid, n in self.nodes.items() if n.is_active()]
         # Priority order: root → active → newest first
         def sort_key(item):
             nid, node = item
@@ -524,12 +600,11 @@ class ContextGraph:
         truncated_nodes = max(0, len(visible) - max_nodes_shown)
         for nid, node in visible[:max_nodes_shown]:
             status_mark = "*" if nid == self.active_node_id else ""
-            fold_mark = "(folded)" if node.status == NodeStatus.FOLDED else ""
             preview = node.content[:60].replace("\n", " ")
             if len(node.content) > 60:
                 preview += "..."
             lines.append(
-                f"  [{nid}]{status_mark} {node.type.value} {fold_mark}: {preview} [{node.token_count}tok]"
+                f"  [{nid}]{status_mark} {node.type.value}: {preview} [{node.token_count}tok]"
             )
         if truncated_nodes > 0:
             lines.append(f"  ... and {truncated_nodes} more nodes (hidden)")
@@ -539,7 +614,7 @@ class ContextGraph:
             for e in self.edges:
                 src = self.nodes.get(e.source)
                 tgt = self.nodes.get(e.target)
-                if src and tgt and src.status != NodeStatus.PRUNED and tgt.status != NodeStatus.PRUNED:
+                if src and tgt and src.is_active() and tgt.is_active():
                     edge_strs.append(f"{e.source}->{e.target}({e.relation.value})")
             if edge_strs:
                 lines.append("  Edges: " + ", ".join(edge_strs[:max_edges_shown]))
@@ -745,6 +820,16 @@ class ContextGraph:
     def active_nodes(self) -> list[ContextNode]:
         return [n for n in self.nodes.values() if n.is_active()]
 
+    @property
+    def active_edges(self) -> list[ContextEdge]:
+        return [
+            edge for edge in self.edges
+            if edge.source in self.nodes
+            and edge.target in self.nodes
+            and self.nodes[edge.source].is_active()
+            and self.nodes[edge.target].is_active()
+        ]
+
     def is_saturated(
         self,
         max_active: int = 8,
@@ -759,7 +844,7 @@ class ContextGraph:
         """
         if len(self.active_nodes) > max_active:
             return True
-        if len(self.edges) > max_edges:
+        if len(self.active_edges) > max_edges:
             return True
         if self.turns_since_last_node_add >= max_idle_turns:
             return True
@@ -824,6 +909,7 @@ class ContextGraph:
                         children.append(child)
 
             if len(children) >= similarity_threshold:
+                children = children[:6]
                 # Auto-merge: create summary from children content
                 combined = "\n".join(f"[{c.id}]: {c.content[:200]}" for c in children)
                 summary = f"[Auto-merged from {node.id}] {len(children)} findings:\n{combined}"
@@ -933,12 +1019,12 @@ class ContextGraph:
         """Compute graph-aware reward conditioned on task success.
 
         Design principles:
-        1. Graph shaping rewards are ONLY applied when task succeeds (task_reward > 0).
-           Otherwise graph ops should not be rewarded/penalized (avoid credit mis-assignment).
+        1. Positive graph shaping is ONLY applied when task succeeds.
+           Failed tasks can only receive an invalid-operation penalty.
         2. Compactness: reward fewer active nodes (efficient context management).
         3. Structural quality: reward well-connected graphs (meaningful cross-branch links).
         4. Merge utility: reward merges that compress without losing task performance.
-        5. Cost: always penalize excessive operations (prevents reward hacking).
+        5. Valid-op cost is outcome-gated; invalid calls are always penalized.
 
         Returns dict with all reward components for logging.
         """
@@ -946,28 +1032,22 @@ class ContextGraph:
         n_total = max(len(self.nodes), 1)
         n_folded = sum(1 for n in self.nodes.values() if n.status == NodeStatus.FOLDED)
         n_pruned = sum(1 for n in self.nodes.values() if n.status == NodeStatus.PRUNED)
-        n_edges_active = sum(
-            1
-            for e in self.edges
-            if self.nodes.get(e.source, ContextNode("", NodeType.QUERY, "")).status != NodeStatus.PRUNED
-            and self.nodes.get(e.target, ContextNode("", NodeType.QUERY, "")).status != NodeStatus.PRUNED
-        )
+        active_edges = self.active_edges
+        n_edges_active = len(active_edges)
         n_summaries = sum(1 for n in self.nodes.values() if n.type == NodeType.SUMMARY and n.is_active())
         n_cross_edges = sum(
             1
-            for e in self.edges
+            for e in active_edges
             if e.relation in (EdgeRelation.SEMANTIC, EdgeRelation.CAUSAL)
-            and self.nodes.get(e.source, ContextNode("", NodeType.QUERY, "")).status != NodeStatus.PRUNED
         )
 
-        # ── Graph shaping (semi-de-gated) ──
-        # Process-level signals always computed (visible regardless of outcome):
-        # structural = cross-branch connections per active node
-        # usage_bonus = small reward per explicit LLM-initiated graph op
+        # ── Graph shaping (strictly task-gated) ──
+        # Structural diagnostics remain visible regardless of outcome, but only
+        # successful tasks can turn them into positive shaping.
         structural = 0.0
         if n_active > 1:
-            structural = min(n_cross_edges / n_active, 1.0)  # [0, 1]
-        usage_bonus = min(self.explicit_op_count * 0.02, 0.1)
+            structural = min(n_cross_edges / max(n_active - 1, 1), 1.0)
+        usage_bonus = 0.0
 
         # Branch uniqueness (Improvement #1, gated by uniqueness_weight; default 0)
         # Rewards branches that surface info not already in sibling summaries —
@@ -989,33 +1069,30 @@ class ContextGraph:
             # Prune utility: successful task + prunes = agent discarded correctly
             prune_bonus = min(n_pruned * 0.05, 0.15)
 
-            graph_shaping = (
+            raw_graph_shaping = (
                 lambda_compact * (compactness + structural + merge_bonus + prune_bonus)
-                + usage_bonus
                 + uniqueness_bonus
             )
+            graph_shaping = min(max(raw_graph_shaping, 0.0), 0.1)
         else:
-            # Task failed: semi-de-gated. Give partial process-only signals
-            # so policy can learn graph ops have value even on failed paths.
-            # Outcome-derived terms (compactness/merge/prune) still gated.
-            # Uniqueness bonus also applied here (de-rated by same 0.3) — failed
-            # branches that still produced novel content should be partially
-            # rewarded as "useful exploration even if final answer wrong".
+            # Failed answers cannot earn positive graph reward. Tool mechanics
+            # are learned through SFT and invalid-call penalties instead.
             compactness = 0.0
             merge_bonus = 0.0
             prune_bonus = 0.0
-            graph_shaping = 0.3 * (usage_bonus + 0.5 * structural + uniqueness_bonus)
+            graph_shaping = 0.0
 
         # ── Cost penalty (only counts LLM-initiated graph ops) ──
         cost = self.explicit_op_count
-        cost_penalty = lambda_cost * cost
+        cost_penalty = lambda_cost * cost if task_reward > 0 else 0.0
+        invalid_op_penalty = 0.01 * self.invalid_op_count
 
         # Context bloat is now handled by auto-merge (graph_agent_isolated.py),
         # not reward penalty. This avoids punishing the agent for something
         # it can't control (4B can't learn merge/prune from scratch).
         bloat_penalty = 0.0
 
-        r_graph = task_reward + graph_shaping - cost_penalty
+        r_graph = task_reward + graph_shaping - cost_penalty - invalid_op_penalty
 
         return {
             "task_reward": task_reward,
@@ -1029,10 +1106,17 @@ class ContextGraph:
             "uniqueness_bonus": uniqueness_bonus,
             "uniqueness_raw": uniqueness_raw,
             "cost_penalty": cost_penalty,
+            "invalid_op_penalty": invalid_op_penalty,
             "bloat_penalty": bloat_penalty,
             "operation_cost": cost,
             "total_ops": self.operation_count,
             "explicit_ops": self.explicit_op_count,
+            "graph_op_attempts": self.graph_op_attempt_count,
+            "invalid_ops": self.invalid_op_count,
+            "invalid_op_rate": (
+                self.invalid_op_count / self.graph_op_attempt_count
+                if self.graph_op_attempt_count else 0.0
+            ),
             "n_active": n_active,
             "n_total": len(self.nodes),
             "n_folded": n_folded,

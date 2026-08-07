@@ -210,6 +210,8 @@ class AgentLoopRewardManager(AbstractRewardManager):
         if env_stats_arr is not None:
             for k in ("task_reward", "graph_shaping", "graph_reward",
                       "graph_n_nodes", "graph_n_edges", "graph_n_active",
+                      "graph_op_attempts", "graph_explicit_ops",
+                      "graph_invalid_ops", "graph_invalid_op_rate",
                       "main_turn", "is_branch", "branch_success",
                       "concise_main", "scope_judge",
                       # SAB real-eval valid-execution rate (VER) + output count;

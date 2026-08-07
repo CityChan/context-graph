@@ -25,7 +25,7 @@ from verl import DataProto
 from .utils import Agent, select_env, truncate_text, is_weird, TaskContext, run_action, AgentLoopOutput, AgentLoopMetrics
 from .prompts import create_chat, BRANCH_MESSAGE_SEARCH, BRANCH_MESSAGE, SUMMARY_PROMPT_CODE, SUMMARY_PROMPT_SEARCH
 from .verifier import judge_scope
-from .context_graph import ContextGraph, NodeType, NodeStatus, EdgeRelation
+from .context_graph import ContextGraph, GraphOpResult, NodeType, NodeStatus, EdgeRelation
 
 
 def print_chat(chat):
@@ -71,27 +71,31 @@ def clean_response(response):
 
 # ── Graph operation handlers ──
 
-def handle_merge(graph: ContextGraph, fn_call: dict) -> str:
+def handle_merge(graph: ContextGraph, fn_call: dict) -> GraphOpResult:
     """Handle merge tool call: combine nodes into summary."""
     node_ids_str = fn_call['arguments'].get('node_ids', '')
     summary = fn_call['arguments'].get('summary', '')
     node_ids = [nid.strip() for nid in node_ids_str.split(',') if nid.strip()]
 
     if len(node_ids) < 2:
-        return f"[Error] merge requires at least 2 node IDs (got {len(node_ids)}).\n\n{graph.to_state_text()}"
+        return GraphOpResult(f"[Error] merge requires at least 2 node IDs (got {len(node_ids)}).\n\n{graph.to_state_text()}", False)
 
-    invalid = [nid for nid in node_ids if nid not in graph.nodes]
+    invalid = [nid for nid in node_ids if nid not in graph.nodes or not graph.nodes[nid].is_active()]
     if invalid:
-        return f"[Error] Unknown node IDs: {invalid}.\n\n{graph.to_state_text()}"
+        return GraphOpResult(f"[Error] Inactive or unknown node IDs: {invalid}.\n\n{graph.to_state_text()}", False)
+    if len(set(node_ids)) != len(node_ids):
+        return GraphOpResult(f"[Error] merge node IDs must be unique: {node_ids}.\n\n{graph.to_state_text()}", False)
+    if len(node_ids) > 6:
+        return GraphOpResult(f"[Error] merge accepts at most 6 node IDs (got {len(node_ids)}).\n\n{graph.to_state_text()}", False)
 
     merged_id = graph.merge(node_ids, summary)
     if merged_id is None:
-        return f"[Error] Could not merge nodes {node_ids}.\n\n{graph.to_state_text()}"
+        return GraphOpResult(f"[Error] Could not merge nodes {node_ids}.\n\n{graph.to_state_text()}", False)
 
-    return f"Merged {node_ids} into [{merged_id}].\n\n{graph.to_state_text()}"
+    return GraphOpResult(f"Merged {node_ids} into [{merged_id}].\n\n{graph.to_state_text()}", True)
 
 
-def handle_add_edge(graph: ContextGraph, fn_call: dict) -> str:
+def handle_add_edge(graph: ContextGraph, fn_call: dict) -> GraphOpResult:
     """Handle add_edge tool call: create relationship between nodes."""
     source = fn_call['arguments'].get('source', '').strip()
     target = fn_call['arguments'].get('target', '').strip()
@@ -104,41 +108,42 @@ def handle_add_edge(graph: ContextGraph, fn_call: dict) -> str:
     }
     relation = relation_map.get(relation_str, EdgeRelation.SEMANTIC)
 
-    if source not in graph.nodes:
-        return f"[Error] Unknown source node: {source}.\n\n{graph.to_state_text()}"
-    if target not in graph.nodes:
-        return f"[Error] Unknown target node: {target}.\n\n{graph.to_state_text()}"
+    if source not in graph.nodes or not graph.nodes[source].is_active():
+        return GraphOpResult(f"[Error] Inactive or unknown source node: {source}.\n\n{graph.to_state_text()}", False)
+    if target not in graph.nodes or not graph.nodes[target].is_active():
+        return GraphOpResult(f"[Error] Inactive or unknown target node: {target}.\n\n{graph.to_state_text()}", False)
 
-    graph.add_edge(source, target, relation)
-    return f"Added edge {source} --{relation_str}--> {target}.\n\n{graph.to_state_text()}"
+    if not graph.add_edge(source, target, relation):
+        return GraphOpResult(f"[Error] Cannot add self-loop or duplicate edge {source} --{relation_str}--> {target}.\n\n{graph.to_state_text()}", False)
+    return GraphOpResult(f"Added edge {source} --{relation_str}--> {target}.\n\n{graph.to_state_text()}", True)
 
 
-def handle_select(graph: ContextGraph, fn_call: dict) -> str:
+def handle_select(graph: ContextGraph, fn_call: dict) -> GraphOpResult:
     """Handle select tool call: change active focus."""
     node_id = fn_call['arguments'].get('node_id', '').strip()
 
     if node_id not in graph.nodes:
-        return f"[Error] Unknown node: {node_id}.\n\n{graph.to_state_text()}"
+        return GraphOpResult(f"[Error] Unknown node: {node_id}.\n\n{graph.to_state_text()}", False)
 
     if not graph.select(node_id):
-        return f"[Error] Cannot select {node_id} (pruned?).\n\n{graph.to_state_text()}"
+        return GraphOpResult(f"[Error] Cannot select {node_id} (inactive?).\n\n{graph.to_state_text()}", False)
 
     node = graph.nodes[node_id]
     content_preview = node.content[:500]
-    return f"Focus shifted to [{node_id}] ({node.type.value}).\n\nContent:\n{content_preview}\n\n{graph.to_state_text()}"
+    return GraphOpResult(f"Focus shifted to [{node_id}] ({node.type.value}).\n\nContent:\n{content_preview}\n\n{graph.to_state_text()}", True)
 
 
-def handle_prune(graph: ContextGraph, fn_call: dict) -> str:
+def handle_prune(graph: ContextGraph, fn_call: dict) -> GraphOpResult:
     """Handle prune tool call: remove node from active context."""
     node_id = fn_call['arguments'].get('node_id', '').strip()
 
     if node_id not in graph.nodes:
-        return f"[Error] Unknown node: {node_id}.\n\n{graph.to_state_text()}"
+        return GraphOpResult(f"[Error] Unknown node: {node_id}.\n\n{graph.to_state_text()}", False)
 
     if not graph.prune(node_id):
-        return f"[Error] Cannot prune {node_id} (root node?).\n\n{graph.to_state_text()}"
+        return GraphOpResult(f"[Error] Cannot prune {node_id} (root or inactive node?).\n\n{graph.to_state_text()}", False)
 
-    return f"Pruned [{node_id}].\n\n{graph.to_state_text()}"
+    return GraphOpResult(f"Pruned [{node_id}].\n\n{graph.to_state_text()}", True)
 
 
 GRAPH_OPS = {'merge', 'add_edge', 'select', 'prune'}
@@ -277,8 +282,12 @@ async def process_item(
                 'select': handle_select,
                 'prune': handle_prune,
             }[fn_call['function']]
-            observation = handler(graph, fn_call)
-            graph.explicit_op_count += 1
+            budget_error = graph.graph_op_budget_error()
+            observation = (
+                GraphOpResult(f"[Error] {budget_error}.\n\n{graph.to_state_text()}", False)
+                if budget_error else handler(graph, fn_call)
+            )
+            graph.record_graph_op(observation.success)
             print(f'[GRAPH] {fn_call["function"]} -> {observation[:100]}')
 
         # ── Handle branch (creates subtask node in graph) ──
@@ -440,8 +449,15 @@ async def process_item(
     # Graph-specific stats
     env.stats['graph_n_nodes'] = len(graph.nodes)
     env.stats['graph_n_active'] = len(graph.active_nodes)
-    env.stats['graph_n_edges'] = len(graph.edges)
+    env.stats['graph_n_edges'] = len(graph.active_edges)
     env.stats['graph_ops'] = graph.operation_count
+    env.stats['graph_op_attempts'] = graph.graph_op_attempt_count
+    env.stats['graph_explicit_ops'] = graph.explicit_op_count
+    env.stats['graph_invalid_ops'] = graph.invalid_op_count
+    env.stats['graph_invalid_op_rate'] = (
+        graph.invalid_op_count / graph.graph_op_attempt_count
+        if graph.graph_op_attempt_count else 0.0
+    )
     env.stats['graph_n_summaries'] = graph_rewards.get('n_summaries', 0)
     env.stats['graph_reward'] = graph_rewards.get('graph_reward', score[1])
 
@@ -614,7 +630,7 @@ async def process_item(
                 'is_finish': is_finish,
                 'agent_name': name,
                 'message_str': print_chat(session_message),
-                'meta_info': f"N: {len(agent)} | {name} | G:{len(graph.nodes)}n/{len(graph.edges)}e",
+                'meta_info': f"N: {len(agent)} | {name} | G:{len(graph.nodes)}n/{len(graph.active_edges)}e",
                 'process_reward_mask': out['process_reward_mask'],
                 'uid': uid,
                 'gen_uid': gen_uid,
