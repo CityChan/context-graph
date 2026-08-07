@@ -14,8 +14,13 @@ python -m tests.smoke_gaia_data
 export GAIA_WORKFLOW=search
 export GAIA_MAX_SAMPLES=4
 export GAIA_NUM_WORKERS=1
-export GAIA_MODEL_NAME=gpt-5-nano
+export GAIA_MODEL_NAME=gpt-4o-mini
 export GAIA_TOKENIZER_NAME=Qwen/Qwen3-8B
 export GAIA_SEARCH_TIMEOUT_SECONDS=600
+export GAIA_PROMPT_LENGTH=16384
+export GAIA_RESPONSE_LENGTH=16384
+export GAIA_MAX_TURN=12
+export GAIA_TURN_MAX_NEW_TOKENS=512
+export GAIA_SAVE_MESSAGES=1
 
 exec bash scripts/eval_gaia_graph_api_smoke.sh

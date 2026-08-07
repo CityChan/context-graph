@@ -48,6 +48,12 @@ TOKENIZER_NAME=${GAIA_TOKENIZER_NAME:-Qwen/Qwen2.5-7B-Instruct}
 WORKFLOW=${GAIA_WORKFLOW:-search_graph}
 MAX_SAMPLES=${GAIA_MAX_SAMPLES:-1}
 NUM_WORKERS=${GAIA_NUM_WORKERS:-1}
+PROMPT_LENGTH=${GAIA_PROMPT_LENGTH:-16384}
+RESPONSE_LENGTH=${GAIA_RESPONSE_LENGTH:-16384}
+MAX_TURN=${GAIA_MAX_TURN:-12}
+MAX_SESSION=${GAIA_MAX_SESSION:-4}
+BRANCH_LEN=${GAIA_BRANCH_LEN:-8192}
+TURN_MAX_NEW_TOKENS=${GAIA_TURN_MAX_NEW_TOKENS:-512}
 SEARCH_PORT=${GAIA_SEARCH_PORT:-18999}
 SEARCH_TIMEOUT_SECONDS=${GAIA_SEARCH_TIMEOUT_SECONDS:-240}
 export HF_HOME=${HF_HOME:-/work/09281/chc_1996/vista/cache}
@@ -79,6 +85,8 @@ echo "  Data:           $DATA_PATH"
 echo "  Model API:      $MODEL_NAME"
 echo "  Embedder:       $EMBED_MODEL"
 echo "  Search port:    $SEARCH_PORT"
+echo "  Token caps:     prompt=$PROMPT_LENGTH response=$RESPONSE_LENGTH turn=$TURN_MAX_NEW_TOKENS"
+echo "  Agent caps:     max_turn=$MAX_TURN max_session=$MAX_SESSION branch_len=$BRANCH_LEN"
 echo "  Started:        $(date)"
 echo "=============================================================="
 
@@ -170,6 +178,10 @@ export LOCAL_SEARCH_URL="http://127.0.0.1:${SEARCH_PORT}"
 probe "search server up at $LOCAL_SEARCH_URL"
 
 probe "running GAIA eval"
+SAVE_MESSAGE_ARGS=()
+if [ "${GAIA_SAVE_MESSAGES:-0}" = "1" ]; then
+  SAVE_MESSAGE_ARGS+=(--save-messages)
+fi
 python scripts/eval_gaia.py \
   --data-path "$DATA_PATH" \
   --workflow "$WORKFLOW" \
@@ -177,5 +189,12 @@ python scripts/eval_gaia.py \
   --num-workers "$NUM_WORKERS" \
   --local-search-url "$LOCAL_SEARCH_URL" \
   --model-name "$MODEL_NAME" \
-  --tokenizer-name "$TOKENIZER_NAME"
+  --tokenizer-name "$TOKENIZER_NAME" \
+  --prompt-length "$PROMPT_LENGTH" \
+  --response-length "$RESPONSE_LENGTH" \
+  --max-turn "$MAX_TURN" \
+  --max-session "$MAX_SESSION" \
+  --branch-len "$BRANCH_LEN" \
+  --turn-max-new-tokens "$TURN_MAX_NEW_TOKENS" \
+  "${SAVE_MESSAGE_ARGS[@]}"
 probe "GAIA eval done"
