@@ -66,10 +66,10 @@ async def process_item(
             break
         agent.append({'role': 'user', 'content': observation})
 
-    # mask_rollout = True when we hit the turn cap without the env signalling
-    # completion. Used by the reward manager to compute overlong_rate; required
-    # for verl's val metrics aggregation to avoid None-mean crashes.
-    mask_rollout = (iteration >= max_turn) and not natural_finish
+    # Only the environment can establish that the task actually finished.
+    # A None completion commonly means the token/context budget was exhausted;
+    # treating that as a successful finish made GAIA finished_items misleading.
+    is_finish = bool(getattr(env, 'is_finish', False) or getattr(env, 'finish', False))
 
     print('[TASK] Task Finish, Start Reward')
     try:
@@ -80,6 +80,8 @@ async def process_item(
     except Exception as e:
         print(f"[Error] Getting reward: {e}")
         score, reward_dict = ("", 0), {"ans_reward": 0.0, "format_reward": 0.0, "ref_reward": 0.0}
+
+    mask_rollout = not (is_finish or score[1] > 0)
 
     # Populate env.stats with the minimum keys the reward manager lifts so
     # wandb shows reward/task_reward / reward/main_turn / reward/avg_num_turns
@@ -106,7 +108,7 @@ async def process_item(
             'messages': out_data['messages'],
             'env_stats': copy.deepcopy(env.stats),
             'mask_rollout': mask_rollout,
-            'is_finish': natural_finish,
+            'is_finish': is_finish,
             'process_reward_mask': out_data['process_reward_mask'],
             'uid': uid,
             'gen_uid': gen_uid,

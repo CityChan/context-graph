@@ -47,6 +47,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-session", type=int, default=8)
     parser.add_argument("--branch-len", type=int, default=8192)
     parser.add_argument("--turn-max-new-tokens", type=int, default=1024)
+    parser.add_argument("--search-topk-cap", type=int, default=5)
+    parser.add_argument("--search-snippet-words", type=int, default=128)
+    parser.add_argument("--search-snippet-chars", type=int, default=2000)
+    parser.add_argument("--open-page-words", type=int, default=1024)
+    parser.add_argument("--open-page-chars", type=int, default=12000)
     parser.add_argument("--must-search", action="store_true",
                         help="Reject a correct final answer if the agent never searched.")
     parser.add_argument("--save-messages", action="store_true")
@@ -84,6 +89,11 @@ def _make_config(args: argparse.Namespace, workflow: str):
                     "session_timeout": 5400,
                     "branch_len": args.branch_len,
                     "turn_max_new_tokens": args.turn_max_new_tokens,
+                    "search_topk_cap": args.search_topk_cap,
+                    "search_snippet_words": args.search_snippet_words,
+                    "search_snippet_chars": args.search_snippet_chars,
+                    "open_page_words": args.open_page_words,
+                    "open_page_chars": args.open_page_chars,
                     "val_response_length": args.response_length,
                     "process_reward": "[flat,scope,graph]" if workflow == "search_graph" else "[flat,scope]",
                     "max_traj": 4,

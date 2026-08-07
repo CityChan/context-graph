@@ -54,6 +54,11 @@ MAX_TURN=${GAIA_MAX_TURN:-12}
 MAX_SESSION=${GAIA_MAX_SESSION:-4}
 BRANCH_LEN=${GAIA_BRANCH_LEN:-8192}
 TURN_MAX_NEW_TOKENS=${GAIA_TURN_MAX_NEW_TOKENS:-512}
+SEARCH_TOPK_CAP=${GAIA_SEARCH_TOPK_CAP:-5}
+SEARCH_SNIPPET_WORDS=${GAIA_SEARCH_SNIPPET_WORDS:-128}
+SEARCH_SNIPPET_CHARS=${GAIA_SEARCH_SNIPPET_CHARS:-2000}
+OPEN_PAGE_WORDS=${GAIA_OPEN_PAGE_WORDS:-1024}
+OPEN_PAGE_CHARS=${GAIA_OPEN_PAGE_CHARS:-12000}
 SEARCH_PORT=${GAIA_SEARCH_PORT:-18999}
 SEARCH_TIMEOUT_SECONDS=${GAIA_SEARCH_TIMEOUT_SECONDS:-240}
 export HF_HOME=${HF_HOME:-/work/09281/chc_1996/vista/cache}
@@ -87,6 +92,7 @@ echo "  Embedder:       $EMBED_MODEL"
 echo "  Search port:    $SEARCH_PORT"
 echo "  Token caps:     prompt=$PROMPT_LENGTH response=$RESPONSE_LENGTH turn=$TURN_MAX_NEW_TOKENS"
 echo "  Agent caps:     max_turn=$MAX_TURN max_session=$MAX_SESSION branch_len=$BRANCH_LEN"
+echo "  Search bounds:  topk=$SEARCH_TOPK_CAP snippet=${SEARCH_SNIPPET_WORDS}w/${SEARCH_SNIPPET_CHARS}c open=${OPEN_PAGE_WORDS}w/${OPEN_PAGE_CHARS}c"
 echo "  Started:        $(date)"
 echo "=============================================================="
 
@@ -196,5 +202,10 @@ python scripts/eval_gaia.py \
   --max-session "$MAX_SESSION" \
   --branch-len "$BRANCH_LEN" \
   --turn-max-new-tokens "$TURN_MAX_NEW_TOKENS" \
+  --search-topk-cap "$SEARCH_TOPK_CAP" \
+  --search-snippet-words "$SEARCH_SNIPPET_WORDS" \
+  --search-snippet-chars "$SEARCH_SNIPPET_CHARS" \
+  --open-page-words "$OPEN_PAGE_WORDS" \
+  --open-page-chars "$OPEN_PAGE_CHARS" \
   "${SAVE_MESSAGE_ARGS[@]}"
 probe "GAIA eval done"

@@ -75,7 +75,7 @@ async def process_item(
             break
         agent.append({'role': 'user', 'content': observation})
 
-    mask_rollout = (iteration >= max_turn) and not natural_finish
+    is_finish = bool(getattr(env, 'is_finish', False) or getattr(env, 'finish', False))
 
     print('[TASK] Task Finish, Start Reward')
     try:
@@ -86,6 +86,8 @@ async def process_item(
     except Exception as e:
         print(f"[Error] Getting reward: {e}")
         score, reward_dict = ("", 0), {"ans_reward": 0.0, "format_reward": 0.0, "ref_reward": 0.0}
+
+    mask_rollout = not (is_finish or score[1] > 0)
 
     if not hasattr(env, 'stats') or env.stats is None:
         env.stats = {}
@@ -126,7 +128,7 @@ async def process_item(
             'messages': out_data['messages'],
             'env_stats': copy.deepcopy(env.stats),
             'mask_rollout': mask_rollout,
-            'is_finish': natural_finish,
+            'is_finish': is_finish,
             'process_reward_mask': out_data['process_reward_mask'],
             'uid': uid,
             'gen_uid': gen_uid,

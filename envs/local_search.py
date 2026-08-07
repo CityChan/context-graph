@@ -255,15 +255,19 @@ async def judge(question, correct_answer, predicted_answer):
     return score
 
 
-def keep_first_n_words(text: str, n: int = 1000) -> str:
+def keep_first_n_words(text: str, n: int = 1000, max_chars: int | None = None) -> str:
     if not text:
         return ""
+    result = text
     count = 0
     for m in re.finditer(r'\S+', text):
         count += 1
         if count == n:
-            return text[:m.end()] + '\n[Document is truncated.]'
-    return text
+            result = text[:m.end()] + '\n[Document is truncated.]'
+            break
+    if max_chars is not None and max_chars > 0 and len(result) > max_chars:
+        result = result[:max_chars].rstrip() + '\n[Document is truncated.]'
+    return result
 
 
 class AsyncSearchClient:
@@ -393,6 +397,11 @@ class LocalSearch:
         self.double_check = getattr(self.config.plugin, "double_check", False)
         self.donotgiveup = False
         self.must_search = getattr(self.config.plugin, "must_search", True)
+        self.search_topk_cap = max(1, int(getattr(self.config.plugin, "search_topk_cap", 10)))
+        self.search_snippet_words = max(1, int(getattr(self.config.plugin, "search_snippet_words", 512)))
+        self.search_snippet_chars = max(128, int(getattr(self.config.plugin, "search_snippet_chars", 12000)))
+        self.open_page_words = max(1, int(getattr(self.config.plugin, "open_page_words", 4096)))
+        self.open_page_chars = max(256, int(getattr(self.config.plugin, "open_page_chars", 48000)))
         self.visited_pages = set()
         self.is_finish = False
 
@@ -420,6 +429,7 @@ class LocalSearch:
                     self.stats['is_search'] = 1
                     query = fn['arguments'].get('query', '')
                     topk = (lambda v: int(v) if str(v).isdigit() else 10)(fn['arguments'].get('topk', 10))
+                    topk = min(max(topk, 1), self.search_topk_cap)
                     if not query:
                         observation += '[Error] The "search" function requires a "query" argument.'
                     else:
@@ -429,12 +439,15 @@ class LocalSearch:
                         for i, page in enumerate(serp, 1):
                             # Formatted entry for each search result
                             if page['docid'] in self.visited_pages:
-                                page['text'] = "(This page was already seen in a previous search. Here, a shorter snippet is shown. If you find this page relevant, please use the open_page tool to inspect the full content) " + " ".join(page['text'].split()[:128])
+                                page['text'] = "(This page was already seen in a previous search. Here, a shorter snippet is shown. If you find this page relevant, please use the open_page tool to inspect the full content) " + keep_first_n_words(page['text'], 128, self.search_snippet_chars)
                                 show_topk += 0.25
                             else:
                                 self.visited_pages.add(page['docid'])
                                 self.stats['visit_pages'] = len(self.visited_pages)
-                                page['text'] = " ".join(page['text'].split()[:512])  # 512
+                                page['text'] = keep_first_n_words(
+                                    page['text'], self.search_snippet_words,
+                                    self.search_snippet_chars,
+                                )
                                 show_topk += 1
                             observation += (
                                 f"\n--- #{i}: {page['docid']}---\n"
@@ -458,7 +471,10 @@ class LocalSearch:
                         open_pages = await self.client.open(url, docid)
                         for page in open_pages:
                             # Structured format for opened page content
-                            page['text'] = keep_first_n_words(page['text'], 4096)
+                            page['text'] = keep_first_n_words(
+                                page['text'], self.open_page_words,
+                                self.open_page_chars,
+                            )
                             observation += (
                                 f"[Opened Page Content]\n"
                                 f"docid: {page['docid']}\n"
