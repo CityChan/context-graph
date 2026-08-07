@@ -380,7 +380,7 @@ def graph_tool():
     return [merge, add_edge, select_node, prune_node]
 
 
-def alfworld_tool():
+def alfworld_tool(action_only: bool = False):
     """Tools for ALFWorld text-based household tasks."""
     action = {
         'type': 'function',
@@ -440,6 +440,8 @@ def alfworld_tool():
             },
         },
     }
+    if action_only:
+        return [action]
     return [action, think, finish]
 
 

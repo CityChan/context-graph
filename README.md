@@ -152,7 +152,7 @@ bash scripts/train_alfworld_ctxgraph_8b_4node_30step.sh
 For an action-only ReAct diagnostic on the same script:
 
 ```bash
-ALFWORLD_TRAIN_MODULE=scripts.train_baseline ALFWORLD_AGENT_LOOP=react_agent ALFWORLD_WORKFLOW=alfworld ALFWORLD_PROCESS_REWARD='[flat]' ALFWORLD_VAL_ONLY=True ALFWORLD_VAL_MAX_SAMPLES=8 ALFWORLD_MAX_TURN=40 ALFWORLD_VAL_MAX_TURN=40 ALFWORLD_TURN_MAX_NEW_TOKENS=128 ALFWORLD_COMPACT_ADMISSIBLE=0 bash scripts/train_alfworld_ctxgraph_8b_4node_30step.sh
+ALFWORLD_TRAIN_MODULE=scripts.train_baseline ALFWORLD_AGENT_LOOP=react_agent ALFWORLD_WORKFLOW=alfworld ALFWORLD_PROCESS_REWARD='[flat]' ALFWORLD_VAL_ONLY=True ALFWORLD_VAL_MAX_SAMPLES=8 ALFWORLD_MAX_TURN=40 ALFWORLD_VAL_MAX_TURN=40 ALFWORLD_TURN_MAX_NEW_TOKENS=128 bash scripts/train_alfworld_ctxgraph_8b_4node_30step.sh
 ```
 
 ## Tests

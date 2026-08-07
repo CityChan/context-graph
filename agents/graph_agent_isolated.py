@@ -6,20 +6,22 @@ trajectory only ever sees:
 
   * The main (parent) graph: query root, subtask nodes, branch summary nodes,
     and the main agent's own search/open_page observations.
-  * **Not** the internal exploration of any branch.
+  * Only query-relevant branch evidence recovered through a bounded archive
+    retrieval view, never the complete internal exploration trace.
 
 When a branch returns, its child graph is collapsed into a SUMMARY node on
-the parent and then released. This bounds the main agent's training sequence
-length to O(main_turns) instead of O(main_turns x graph_size), eliminating
-the OOM that the global-injection variant runs into on long-horizon tasks.
+the parent and detached into an evidence archive. This bounds the main
+agent's training sequence length to O(main_turns) instead of O(main_turns x
+graph_size), eliminating the OOM that the global-injection variant runs into
+on long-horizon tasks while retaining recoverability.
 
 Trade-offs vs the global variant:
   + Main agent prompt size is bounded (≈ FoldAgent), no quadratic blow-up.
   + Each branch's subgraph is small and self-contained.
   + Cross-branch reasoning still possible at the parent level via add_edge
     between branch SUMMARY nodes.
-  - Main agent cannot directly see branch-internal observations; it must
-    rely on the summary the branch returned.
+  + Main agent normally reasons from summaries and can recover a small number
+    of query-relevant branch observations when needed.
   - Branch agents currently do not invoke graph ops on their child graph
     (they only contribute observation nodes via the wrapped run_action).
     Adding branch-side graph ops is a follow-up.
@@ -178,7 +180,11 @@ def make_graph_aware_run_action(env, child_graph: ContextGraph):
                         NodeType.OBSERVATION,
                         parent_id=child_graph.active_node_id,
                         edge_relation=EdgeRelation.TEMPORAL,
-                        metadata={'tool': 'search', 'query': fn_call['arguments'].get('query', '')},
+                        metadata={
+                            'tool': 'search',
+                            'query': fn_call['arguments'].get('query', ''),
+                            'raw_content': observation,
+                        },
                     )
                 elif fn_call['function'] == 'open_page':
                     child_graph.add_node(
@@ -186,7 +192,7 @@ def make_graph_aware_run_action(env, child_graph: ContextGraph):
                         NodeType.OBSERVATION,
                         parent_id=child_graph.active_node_id,
                         edge_relation=EdgeRelation.CAUSAL,
-                        metadata={'tool': 'open_page'},
+                        metadata={'tool': 'open_page', 'raw_content': observation},
                     )
         except Exception as e:
             print(f'[GRAPH ISOLATED] tracking observation in child graph failed: {e}')
@@ -205,10 +211,9 @@ async def process_item(
          ``parent_graph.spawn_child``. The branch agent's tool calls are
          wrapped to add observation nodes to that child graph only.
       2. When a branch returns, the child graph is collapsed into a SUMMARY
-         node on the parent (and the child is released).
-      3. Main agent's observations carry only the parent graph's state text
-         (which stays small: query + subtask nodes + summary nodes), so
-         per-turn injection is bounded.
+         node and detached into a raw-evidence archive.
+      3. Old payloads leave the working chat; query-conditioned summary and
+         evidence retrieval keeps per-turn injection bounded.
     """
     os.environ["no_proxy"] = ""
     tokenizer = context.tokenizer
@@ -254,6 +259,24 @@ async def process_item(
         process_reward = None
     max_traj = getattr(config.plugin, "max_traj", None)
     enable_summary = getattr(config.plugin, "enable_summary", False)
+    enable_retrieval_memory = getattr(
+        config.plugin, "enable_retrieval_memory", True
+    )
+    retrieval_summary_budget = getattr(
+        config.plugin, "retrieval_summary_budget", 768
+    )
+    retrieval_evidence_budget = getattr(
+        config.plugin, "retrieval_evidence_budget", 1280
+    )
+    retrieval_max_summaries = getattr(
+        config.plugin, "retrieval_max_summaries", 5
+    )
+    retrieval_max_evidence = getattr(
+        config.plugin, "retrieval_max_evidence", 4
+    )
+    working_memory_keep_recent = max(
+        1, int(getattr(config.plugin, "working_memory_keep_recent", 1))
+    )
 
     lambda_compact = getattr(config.plugin, "lambda_compact", 0.1)
     lambda_cost = getattr(config.plugin, "lambda_cost", 0.02)
@@ -305,6 +328,13 @@ async def process_item(
     }
     mask_rollout = True
     session_message = []
+    working_memory_turns = []
+    retrieval_totals = {
+        'calls': 0,
+        'summary_tokens': 0,
+        'evidence_tokens': 0,
+        'max_context_tokens': 0,
+    }
 
     while iteration < max_turn:
         if time.time() - session_start_time > session_timeout:
@@ -349,6 +379,7 @@ async def process_item(
 
         session_message.append({'role': 'assistant', 'content': response})
         fn_call = extract_fn_call(response)
+        new_evidence_node_id = None
 
         # ── Graph operations on parent graph ──
         if fn_call is not None and fn_call['function'] in GRAPH_OPS:
@@ -436,10 +467,13 @@ async def process_item(
 
                 # 4. Collapse child graph into a SUMMARY node on the parent.
                 #    The summary content is the branch's return message; the
-                #    subgraph's stats become metadata. The child graph itself
-                #    is released so it does not get serialized into any future
-                #    parent prompt.
-                child_stats = graph.collapse_child(subtask_id) or {}
+                #    subgraph's stats become metadata. The child is detached
+                #    from active state and optionally retained in the evidence
+                #    archive; it is never serialized wholesale into prompts.
+                child_stats = graph.collapse_child(
+                    subtask_id,
+                    preserve_archive=enable_retrieval_memory,
+                ) or {}
                 branch_subgraph_stats[agent_name] = child_stats
 
                 summary_id = graph.add_node(
@@ -453,6 +487,9 @@ async def process_item(
                         **{f'child_{k}': v for k, v in child_stats.items()},
                     },
                 )
+                archive_id = child_stats.get('archive_id')
+                if archive_id:
+                    graph.attach_archive(summary_id, archive_id)
                 print(f'[BRANCH ISOLATED] Collapsed {agent_name}: child stats={child_stats}')
 
                 # Improvement #3: auto-bind branch summary to most-related EXISTING
@@ -502,28 +539,36 @@ async def process_item(
 
             if fn_call is not None:
                 if fn_call['function'] == 'search':
-                    graph.add_node(
+                    new_evidence_node_id = graph.add_node(
                         observation[:500],
                         NodeType.OBSERVATION,
                         parent_id=graph.active_node_id,
                         edge_relation=EdgeRelation.TEMPORAL,
-                        metadata={'tool': 'search', 'query': fn_call['arguments'].get('query', '')},
+                        metadata={
+                            'tool': 'search',
+                            'query': fn_call['arguments'].get('query', ''),
+                            'raw_content': observation,
+                        },
                     )
                 elif fn_call['function'] == 'open_page':
-                    graph.add_node(
+                    new_evidence_node_id = graph.add_node(
                         observation[:800],
                         NodeType.OBSERVATION,
                         parent_id=graph.active_node_id,
                         edge_relation=EdgeRelation.CAUSAL,
-                        metadata={'tool': 'open_page'},
+                        metadata={'tool': 'open_page', 'raw_content': observation},
                     )
                 elif fn_call['function'] == 'action':
-                    graph.add_node(
+                    new_evidence_node_id = graph.add_node(
                         observation[:300],
                         NodeType.OBSERVATION,
                         parent_id=graph.active_node_id,
                         edge_relation=EdgeRelation.TEMPORAL,
-                        metadata={'tool': 'action', 'command': fn_call['arguments'].get('command', '')[:100]},
+                        metadata={
+                            'tool': 'action',
+                            'command': fn_call['arguments'].get('command', '')[:100],
+                            'raw_content': observation,
+                        },
                     )
 
         # ── Auto graph operations on PARENT graph (only) ──
@@ -550,12 +595,54 @@ async def process_item(
         if process_reward:
             observation = truncate_text(observation, max_lines=100, merge_repeat=True, merge_num=4)
 
-        # Match fold_agent.py: append observation in full (post truncate_text)
-        # to the main chat. The c866e62 additions (graph auto-merge, per-tool
-        # byte truncation, K=3 sliding window) are removed to align with the
-        # paper's design — only branch/return + FoldGRPO should drive context
-        # management, not a hard-coded sliding window.
+        # The newest payload remains verbatim for immediate reasoning. Older
+        # payloads are replaced by archive markers, while query-conditioned
+        # retrieval restores only the evidence needed on this turn.
+        if enable_retrieval_memory:
+            # Remove old payloads from the model-facing cache. Their raw
+            # contents remain recoverable from graph nodes or child archives.
+            while len(working_memory_turns) >= working_memory_keep_recent:
+                old_turn = working_memory_turns.pop(0)
+                if old_turn < len(agent['main'].chat):
+                    agent['main'].replace_user_turn(
+                        old_turn,
+                        "[Archived working-memory payload; recoverable through ContextGraph.]",
+                    )
+
+            excluded = (
+                {new_evidence_node_id} if new_evidence_node_id is not None else set()
+            )
+            retrieved = graph.retrieve_context(
+                query=response,
+                summary_budget=retrieval_summary_budget,
+                evidence_budget=retrieval_evidence_budget,
+                max_summaries=retrieval_max_summaries,
+                max_evidence=retrieval_max_evidence,
+                exclude_node_ids=excluded,
+            )
+            if retrieved:
+                observation = (
+                    f"{observation}\n\n"
+                    "[ContextGraph retrieved working memory]\n"
+                    f"{retrieved}"
+                )
+            retrieval_totals['calls'] += 1
+            retrieval_totals['summary_tokens'] += graph.last_retrieval_stats.get(
+                'summary_tokens', 0
+            )
+            retrieval_totals['evidence_tokens'] += graph.last_retrieval_stats.get(
+                'evidence_tokens', 0
+            )
+            retrieval_totals['max_context_tokens'] = max(
+                retrieval_totals['max_context_tokens'],
+                graph.last_retrieval_stats.get('summary_tokens', 0)
+                + graph.last_retrieval_stats.get('evidence_tokens', 0),
+            )
+
+        observation_turn = len(agent['main'].chat)
         agent['main'].append({'role': 'user', 'content': observation})
+        if enable_retrieval_memory:
+            working_memory_turns.append(observation_turn)
         session_message.append({'role': 'user', 'content': observation})
 
         # ── Forced consolidation checkpoint ──
@@ -695,6 +782,14 @@ async def process_item(
     env.stats['isolated_n_subgraphs'] = len(branch_subgraph_stats)
     env.stats['isolated_total_subgraph_nodes'] = sum(s.get('n_total', 0) for s in branch_subgraph_stats.values())
     env.stats['isolated_total_subgraph_obs'] = sum(s.get('n_observations', 0) for s in branch_subgraph_stats.values())
+    env.stats['memory_n_archives'] = len(graph.archives)
+    env.stats['memory_archived_evidence'] = sum(
+        len(archive.evidence) for archive in graph.archives.values()
+    )
+    env.stats['memory_retrieval_calls'] = retrieval_totals['calls']
+    env.stats['memory_retrieval_summary_tokens'] = retrieval_totals['summary_tokens']
+    env.stats['memory_retrieval_evidence_tokens'] = retrieval_totals['evidence_tokens']
+    env.stats['memory_retrieval_max_context_tokens'] = retrieval_totals['max_context_tokens']
 
     if getattr(env, 'is_finish', False) or getattr(env, 'finish', False):
         mask_rollout = False

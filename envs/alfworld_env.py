@@ -79,18 +79,28 @@ class ALFWorldEnv:
         try:
             import textworld
             import textworld.gym
+            from alfworld.agents.environment.alfred_tw_env import (
+                AlfredDemangler,
+                AlfredInfos,
+            )
 
             lock_ctx = _TEXTWORLD_LOCK if not os.environ.get("ALFWORLD_NO_LOCK") else _nullcontext()
             with lock_ctx:
                 request_infos = textworld.EnvInfos(
                     won=True,
                     admissible_commands=True,
+                    extras=["gamefile"],
                 )
+                # Match ALFWorld's official TextWorld initialization. The
+                # demangler converts internal coordinate-bearing entity IDs
+                # into unique executable names such as "drawer 1".
+                wrappers = [AlfredDemangler(shuffle=False), AlfredInfos]
                 env_id = textworld.gym.register_games(
                     [self._game_file],
                     request_infos,
                     batch_size=1,
                     max_episode_steps=self._max_steps,
+                    wrappers=wrappers,
                 )
                 self._tw_env = textworld.gym.make(env_id)
                 obs_tuple, info = self._tw_env.reset()
@@ -111,8 +121,6 @@ class ALFWorldEnv:
     async def run_action(self, response: str) -> dict:
         """Execute agent's action."""
         self.stats['action'] += 1
-        self._step_count += 1
-
         fn_call = self._parse_fn_call(response)
         if fn_call is None:
             self.stats['invalid_xml'] += 1
@@ -154,13 +162,17 @@ class ALFWorldEnv:
                 self.stats['action_command'] += 1
                 if command in self._admissible_commands:
                     self.stats['admissible_exact'] += 1
-                elif command in self._display_admissible_commands(self._admissible_commands):
-                    self.stats['admissible_compact'] += 1
                 else:
                     self.stats['admissible_miss'] += 1
+                    if not self._hide_admissible:
+                        return self._obs_with_commands(
+                            f'Invalid action "{command}". Choose one of the exact '
+                            "admissible commands shown below."
+                        )
 
             lock_ctx = _TEXTWORLD_LOCK if not os.environ.get("ALFWORLD_NO_LOCK") else _nullcontext()
             with lock_ctx:
+                self._step_count += 1
                 obs_tuple, rewards, dones, info = self._tw_env.step([command])
 
             obs_text = obs_tuple[0] if isinstance(obs_tuple, (tuple, list)) else str(obs_tuple)
@@ -203,21 +215,10 @@ class ALFWorldEnv:
         return {'observation': obs_text}
 
     def _display_admissible_commands(self, commands: list) -> list:
-        """Compact ALFWorld object ids before they enter the LLM context.
-
-        Real-mode ALFWorld often returns long object ids such as
-        ``drawer_bar__minus_00_dot_19_bar__plus_00_dot_16_bar__minus_...``.
-        TextWorld accepts short object names in these tasks, and showing the
-        full coordinate ids causes trajectory context to hit the response cap.
-        """
-        if os.environ.get("ALFWORLD_COMPACT_ADMISSIBLE", "1") == "0":
-            compacted = list(commands)
-        else:
-            compacted = [self._compact_command(c) for c in commands]
-
+        """Return the exact official-demangled commands accepted by TextWorld."""
         deduped = []
         seen = set()
-        for command in compacted:
+        for command in commands:
             if command and command not in seen:
                 deduped.append(command)
                 seen.add(command)
@@ -231,14 +232,6 @@ class ALFWorldEnv:
             except ValueError:
                 pass
         return deduped
-
-    def _compact_command(self, command: str) -> str:
-        parts = []
-        for token in command.split():
-            if "_bar__" in token:
-                token = token.split("_bar__", 1)[0]
-            parts.append(token)
-        return " ".join(parts)
 
     def _extract_admissible(self, info) -> list:
         """Extract admissible commands from TextWorld info dict."""

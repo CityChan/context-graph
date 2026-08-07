@@ -104,7 +104,10 @@ I've uploaded a python code repository in the directory /testbed. Consider the f
         # TODO
         return None
     elif workflow in ('alfworld', 'alfworld_branch', 'alfworld_graph'):
-        tools = alfworld_tool()
+        # ALFWorld episodes terminate from environment state. Exposing think
+        # and finish creates non-environment turns that waste the action
+        # budget and lets the model terminate without winning.
+        tools = alfworld_tool(action_only=True)
         if 'branch' in workflow:
             tools = tools + branch_tool()
         if 'graph' in workflow:

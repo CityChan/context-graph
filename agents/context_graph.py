@@ -17,10 +17,17 @@ import heapq
 import re
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional
+from typing import Any, Optional
 
 
 _SEQ_RE = re.compile(r'(\d+)$')
+_TERM_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:/-]*|[\u4e00-\u9fff]")
+_STOP_TERMS = {
+    "the", "a", "an", "and", "or", "of", "to", "in", "on", "for", "with",
+    "is", "are", "was", "were", "be", "this", "that", "it", "as", "at",
+    "from", "by", "about", "what", "which", "who", "when", "where", "how",
+    "function", "parameter", "search", "open_page", "action",
+}
 
 
 def _seq_key(nid: str) -> int:
@@ -31,6 +38,14 @@ def _seq_key(nid: str) -> int:
     """
     m = _SEQ_RE.search(nid)
     return int(m.group(1)) if m else 0
+
+
+def _lexical_terms(text: str) -> set[str]:
+    return {
+        term.lower()
+        for term in _TERM_RE.findall(text or "")
+        if len(term) > 1 and term.lower() not in _STOP_TERMS
+    }
 
 
 class NodeType(str, Enum):
@@ -82,6 +97,29 @@ class ContextEdge:
     weight: float = 1.0
 
 
+@dataclass
+class ArchivedEvidence:
+    """Immutable evidence retained outside the model's working context."""
+
+    id: str
+    source_node_id: str
+    type: NodeType
+    content: str
+    metadata: dict = field(default_factory=dict)
+    sequence: int = 0
+
+
+@dataclass
+class ArchivedSubgraph:
+    """A detached child graph addressable through a parent summary node."""
+
+    id: str
+    parent_node_id: str
+    evidence: list[ArchivedEvidence] = field(default_factory=list)
+    edges: list[ContextEdge] = field(default_factory=list)
+    summary_node_id: Optional[str] = None
+
+
 class ContextGraph:
     """Dynamic graph for managing agent working context.
 
@@ -107,6 +145,12 @@ class ContextGraph:
         self.explicit_op_count: int = 0
         self.tokenizer = tokenizer
         self._node_counter = 0
+        self._archive_counter = 0
+        # Archived subgraphs are deliberately kept outside ``nodes``. They do
+        # not appear in graph state or working-context traversal, but remain
+        # recoverable through summary -> archive pointers during retrieval.
+        self.archives: dict[str, ArchivedSubgraph] = {}
+        self.last_retrieval_stats: dict[str, Any] = {}
         # Hierarchical fields (used by isolated graph_agent variant)
         self.parent: Optional[ContextGraph] = parent
         self.namespace_prefix: str = namespace_prefix
@@ -140,12 +184,18 @@ class ContextGraph:
         self.nodes[parent_node_id].child_graph = child
         return child
 
-    def collapse_child(self, parent_node_id: str) -> Optional[dict]:
-        """Drop the subgraph attached to a SUBTASK node, returning summary stats.
+    def collapse_child(
+        self,
+        parent_node_id: str,
+        preserve_archive: bool = False,
+    ) -> Optional[dict]:
+        """Detach a child graph and return summary statistics.
 
         Called after a branch returns and its findings have been folded into
-        a SUMMARY node on the parent. Releases the child graph's memory so
-        the parent's training trajectory does not carry the child's nodes.
+        a SUMMARY node on the parent. When ``preserve_archive`` is true, an
+        immutable snapshot is retained outside the active graph. This keeps
+        the model-facing working context small without making compression
+        irreversible.
         """
         node = self.nodes.get(parent_node_id)
         if node is None or node.child_graph is None:
@@ -159,13 +209,82 @@ class ContextGraph:
             'n_edges': len(child.edges),
             'ops': child.operation_count,
         }
+        if preserve_archive:
+            self._archive_counter += 1
+            archive_id = f"a{self._archive_counter}"
+            evidence = []
+            for sequence, child_node in enumerate(
+                sorted(child.nodes.values(), key=lambda n: _seq_key(n.id))
+            ):
+                if child_node.type not in (
+                    NodeType.OBSERVATION,
+                    NodeType.ACTION,
+                    NodeType.SUMMARY,
+                ):
+                    continue
+                raw_content = child_node.metadata.get(
+                    "raw_content", child_node.content
+                )
+                evidence.append(
+                    ArchivedEvidence(
+                        id=f"{archive_id}:{child_node.id}",
+                        source_node_id=child_node.id,
+                        type=child_node.type,
+                        content=raw_content,
+                        metadata={
+                            key: value
+                            for key, value in child_node.metadata.items()
+                            if key != "raw_content"
+                        },
+                        sequence=sequence,
+                    )
+                )
+            self.archives[archive_id] = ArchivedSubgraph(
+                id=archive_id,
+                parent_node_id=parent_node_id,
+                evidence=evidence,
+                edges=[
+                    ContextEdge(e.source, e.target, e.relation, e.weight)
+                    for e in child.edges
+                ],
+            )
+            node.metadata["archive_id"] = archive_id
+            stats["archive_id"] = archive_id
+            stats["n_archived_evidence"] = len(evidence)
         node.child_graph = None
         return stats
+
+    def attach_archive(self, summary_node_id: str, archive_id: str) -> bool:
+        """Create a cross-layer pointer from a summary to archived evidence."""
+        summary = self.nodes.get(summary_node_id)
+        archive = self.archives.get(archive_id)
+        if summary is None or archive is None:
+            return False
+        summary.metadata["archive_id"] = archive_id
+        summary.metadata["evidence_ids"] = [item.id for item in archive.evidence]
+        archive.summary_node_id = summary_node_id
+        return True
 
     def _count_tokens(self, text: str) -> int:
         if self.tokenizer is not None:
             return len(self.tokenizer.encode(text, add_special_tokens=False))
         return len(text.split())
+
+    def _truncate_tokens(self, text: str, max_tokens: int) -> str:
+        if max_tokens <= 0:
+            return ""
+        if self._count_tokens(text) <= max_tokens:
+            return text
+        if self.tokenizer is not None:
+            token_ids = self.tokenizer.encode(text, add_special_tokens=False)
+            try:
+                return self.tokenizer.decode(token_ids[:max_tokens])
+            except Exception:
+                pass
+        words = text.split()
+        if words:
+            return " ".join(words[:max_tokens])
+        return text[: max_tokens * 4]
 
     # ── Core Graph Operations ──
 
@@ -448,6 +567,179 @@ class ContextGraph:
             parts.append("")
 
         return "\n".join(parts)
+
+    def retrieve_context(
+        self,
+        query: str,
+        summary_budget: int = 768,
+        evidence_budget: int = 1280,
+        max_summaries: int = 5,
+        max_evidence: int = 4,
+        exclude_node_ids: Optional[set[str]] = None,
+    ) -> str:
+        """Build a bounded, query-conditioned working-memory view.
+
+        Summaries remain in the active parent graph, while raw observations
+        may live either on the parent or in detached child archives. Retrieval
+        first selects semantic summaries, then gives their linked archives a
+        score boost before choosing raw evidence. The archive never becomes
+        part of ordinary graph serialization, so prompt size is independent
+        of total stored evidence.
+        """
+        exclude_node_ids = exclude_node_ids or set()
+        query_terms = _lexical_terms(query)
+        root_terms = _lexical_terms(
+            self.nodes[self.root_id].content
+            if self.root_id and self.root_id in self.nodes
+            else ""
+        )
+
+        def relevance(
+            content: str,
+            metadata: Optional[dict] = None,
+            recency: int = 0,
+        ) -> float:
+            terms = _lexical_terms(content)
+            metadata_terms = _lexical_terms(
+                " ".join(
+                    str(value)
+                    for key, value in (metadata or {}).items()
+                    if key != "raw_content"
+                )
+            )
+            searchable = terms | metadata_terms
+            current_overlap = len(searchable & query_terms) / max(
+                len(query_terms), 1
+            )
+            root_overlap = len(searchable & root_terms) / max(len(root_terms), 1)
+            # Recency only breaks near-ties; relevance remains query-driven.
+            return 2.0 * current_overlap + 0.5 * root_overlap + recency * 1e-6
+
+        summary_candidates = []
+        for node in self.nodes.values():
+            if (
+                node.id in exclude_node_ids
+                or node.type != NodeType.SUMMARY
+                or node.status == NodeStatus.PRUNED
+            ):
+                continue
+            score = relevance(node.content, node.metadata, _seq_key(node.id))
+            score += max(node.value, 0.0) * 0.1
+            summary_candidates.append((score, _seq_key(node.id), node))
+        summary_candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        selected_summaries = [
+            item[2] for item in summary_candidates[:max_summaries]
+        ]
+        selected_archive_ids = {
+            node.metadata.get("archive_id")
+            for node in selected_summaries
+            if node.metadata.get("archive_id")
+        }
+
+        evidence_candidates = []
+        for node in self.nodes.values():
+            if (
+                node.id in exclude_node_ids
+                or node.type not in (NodeType.OBSERVATION, NodeType.ACTION)
+            ):
+                continue
+            raw = node.metadata.get("raw_content", node.content)
+            score = relevance(raw, node.metadata, _seq_key(node.id))
+            evidence_candidates.append(
+                (score, _seq_key(node.id), node.id, raw, node.metadata)
+            )
+
+        archive_sequence = len(self.nodes)
+        for archive in self.archives.values():
+            linked_bonus = 0.75 if archive.id in selected_archive_ids else 0.0
+            for item in archive.evidence:
+                if item.id in exclude_node_ids:
+                    continue
+                score = relevance(
+                    item.content,
+                    item.metadata,
+                    archive_sequence + item.sequence,
+                )
+                evidence_candidates.append(
+                    (
+                        score + linked_bonus,
+                        archive_sequence + item.sequence,
+                        item.id,
+                        item.content,
+                        item.metadata,
+                    )
+                )
+            archive_sequence += len(archive.evidence) + 1
+
+        evidence_candidates.sort(
+            key=lambda item: (item[0], item[1]), reverse=True
+        )
+        selected_evidence = []
+        seen_content = set()
+        for candidate in evidence_candidates:
+            normalized = " ".join(candidate[3].lower().split())
+            if not normalized or normalized in seen_content:
+                continue
+            seen_content.add(normalized)
+            selected_evidence.append(candidate)
+            if len(selected_evidence) >= max_evidence:
+                break
+
+        def format_blocks(items, budget, block_builder):
+            blocks = []
+            remaining = max(0, int(budget))
+            for item in items:
+                header, content = block_builder(item)
+                header_cost = self._count_tokens(header)
+                if remaining <= header_cost:
+                    break
+                content_budget = remaining - header_cost
+                fitted = self._truncate_tokens(content, content_budget)
+                if not fitted:
+                    continue
+                block = f"{header}\n{fitted}"
+                # Tokenization is not perfectly additive around the newline;
+                # tighten the content until the complete block fits exactly.
+                while fitted and self._count_tokens(block) > remaining:
+                    overflow = self._count_tokens(block) - remaining
+                    content_budget -= max(overflow, 1)
+                    fitted = self._truncate_tokens(content, content_budget)
+                    block = f"{header}\n{fitted}" if fitted else ""
+                if not block:
+                    continue
+                blocks.append(block)
+                remaining -= self._count_tokens(block)
+                if remaining <= 0:
+                    break
+            return blocks
+
+        summary_blocks = format_blocks(
+            selected_summaries,
+            summary_budget,
+            lambda node: (f"[Summary {node.id}]", node.content),
+        )
+        evidence_blocks = format_blocks(
+            selected_evidence,
+            evidence_budget,
+            lambda item: (
+                f"[Evidence {item[2]} tool={item[4].get('tool', 'unknown')}]",
+                item[3],
+            ),
+        )
+
+        self.last_retrieval_stats = {
+            "n_summaries": len(summary_blocks),
+            "n_evidence": len(evidence_blocks),
+            "summary_tokens": sum(self._count_tokens(x) for x in summary_blocks),
+            "evidence_tokens": sum(self._count_tokens(x) for x in evidence_blocks),
+            "n_archives": len(self.archives),
+        }
+        sections = []
+        if summary_blocks:
+            sections.append("Relevant consolidated memory:\n" + "\n\n".join(summary_blocks))
+        if evidence_blocks:
+            sections.append("Recoverable source evidence:\n" + "\n\n".join(evidence_blocks))
+        return "\n\n".join(sections)
 
     @property
     def active_nodes(self) -> list[ContextNode]:

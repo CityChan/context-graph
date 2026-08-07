@@ -97,8 +97,7 @@ PROJECT_ROOT=/work/09281/chc_1996/vista/context-graph
 MODEL_PATH=${MODEL_PATH:-Qwen/Qwen3-8B}
 export HF_HOME=${HF_HOME:-/work/09281/chc_1996/vista/cache}
 export ALFWORLD_DATA=${ALFWORLD_DATA:-$HOME/.cache/alfworld}
-export ALFWORLD_COMPACT_ADMISSIBLE=${ALFWORLD_COMPACT_ADMISSIBLE:-1}
-export ALFWORLD_MAX_ADMISSIBLE_DISPLAY=${ALFWORLD_MAX_ADMISSIBLE_DISPLAY:-120}
+export ALFWORLD_MAX_ADMISSIBLE_DISPLAY=${ALFWORLD_MAX_ADMISSIBLE_DISPLAY:-0}
 cd "$PROJECT_ROOT"
 export PYTHONPATH="$PROJECT_ROOT:${PYTHONPATH:-}"
 
@@ -206,7 +205,7 @@ echo "  val_only:       $ALFWORLD_VAL_ONLY"
 echo "  steps:          $ALFWORLD_TOTAL_STEPS"
 echo "  samples:        train=${ALFWORLD_TRAIN_MAX_SAMPLES:-all} val=${ALFWORLD_VAL_MAX_SAMPLES:-all}"
 echo "  tokens/turns:   prompt=$ALFWORLD_PROMPT_LENGTH response=$ALFWORLD_RESPONSE_LENGTH max_turn=$ALFWORLD_MAX_TURN val_max_turn=$ALFWORLD_VAL_MAX_TURN"
-echo "  admissible:     compact=$ALFWORLD_COMPACT_ADMISSIBLE max_display=$ALFWORLD_MAX_ADMISSIBLE_DISPLAY"
+echo "  admissible:     official demangled commands, max_display=$ALFWORLD_MAX_ADMISSIBLE_DISPLAY"
 echo "  agent/workflow: module=$ALFWORLD_TRAIN_MODULE loop=$ALFWORLD_AGENT_LOOP workflow=$ALFWORLD_WORKFLOW process_reward=$ALFWORLD_PROCESS_REWARD"
 echo "  Experiment: $EXPERIMENT_NAME"
 echo "  Started: $(date)"
@@ -279,7 +278,6 @@ srun --overlap --nodes=1 --ntasks=1 -w "$NODE0" bash -c '
   export LD_LIBRARY_PATH=${CONDA_PREFIX}/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/targets/sbsa-linux/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/lib64:${LD_LIBRARY_PATH}
   export HF_HOME='"$HF_HOME"'
   export ALFWORLD_DATA='"$ALFWORLD_DATA"'
-  export ALFWORLD_COMPACT_ADMISSIBLE='"$ALFWORLD_COMPACT_ADMISSIBLE"'
   export ALFWORLD_MAX_ADMISSIBLE_DISPLAY='"$ALFWORLD_MAX_ADMISSIBLE_DISPLAY"'
   export FLASHINFER_WORKSPACE_BASE=/tmp
   export HF_HUB_OFFLINE=1
@@ -311,7 +309,6 @@ for i in $(seq 1 $((NUM_NODES - 1))); do
     export LD_LIBRARY_PATH=${CONDA_PREFIX}/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/targets/sbsa-linux/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/lib64:${LD_LIBRARY_PATH}
     export HF_HOME='"$HF_HOME"'
     export ALFWORLD_DATA='"$ALFWORLD_DATA"'
-    export ALFWORLD_COMPACT_ADMISSIBLE='"$ALFWORLD_COMPACT_ADMISSIBLE"'
     export ALFWORLD_MAX_ADMISSIBLE_DISPLAY='"$ALFWORLD_MAX_ADMISSIBLE_DISPLAY"'
     export FLASHINFER_WORKSPACE_BASE=/tmp
     export HF_HUB_OFFLINE=1
@@ -348,7 +345,7 @@ probe "launching trainer (model load + vLLM init typically ~3-5 min before first
 
 set +e
 srun --overlap --nodes=1 --ntasks=1 -w "$NODE0" --chdir="$PROJECT_ROOT" \
-  --export=ALL,ALFWORLD_DATA="$ALFWORLD_DATA",ALFWORLD_COMPACT_ADMISSIBLE="$ALFWORLD_COMPACT_ADMISSIBLE",ALFWORLD_MAX_ADMISSIBLE_DISPLAY="$ALFWORLD_MAX_ADMISSIBLE_DISPLAY" \
+  --export=ALL,ALFWORLD_DATA="$ALFWORLD_DATA",ALFWORLD_MAX_ADMISSIBLE_DISPLAY="$ALFWORLD_MAX_ADMISSIBLE_DISPLAY" \
   python -m "$ALFWORLD_TRAIN_MODULE" \
   algorithm.adv_estimator=foldgrpo \
   algorithm.kl_ctrl.kl_coef=0.005 \

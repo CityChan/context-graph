@@ -134,6 +134,12 @@ TRAINER_VAL_ONLY=${TRAINER_VAL_ONLY:-False}
 TOTAL_TRAINING_STEPS=${TOTAL_TRAINING_STEPS:-30}
 TEST_FREQ=${TEST_FREQ:-10}
 SAVE_FREQ=${SAVE_FREQ:-10}
+ENABLE_RETRIEVAL_MEMORY=${ENABLE_RETRIEVAL_MEMORY:-True}
+RETRIEVAL_SUMMARY_BUDGET=${RETRIEVAL_SUMMARY_BUDGET:-768}
+RETRIEVAL_EVIDENCE_BUDGET=${RETRIEVAL_EVIDENCE_BUDGET:-1280}
+RETRIEVAL_MAX_SUMMARIES=${RETRIEVAL_MAX_SUMMARIES:-5}
+RETRIEVAL_MAX_EVIDENCE=${RETRIEVAL_MAX_EVIDENCE:-4}
+WORKING_MEMORY_KEEP_RECENT=${WORKING_MEMORY_KEEP_RECENT:-1}
 CHECKPOINT_ROOT=${CHECKPOINT_ROOT:-${SCRATCH:-/scratch/09281/chc_1996}/context-graph-ckpts/$EXPERIMENT_NAME}
 
 probe() { printf '+++ [%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
@@ -399,6 +405,12 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   +actor_rollout_ref.rollout.plugin.val_max_session=10 \
   +actor_rollout_ref.rollout.plugin.session_timeout=600 \
   +actor_rollout_ref.rollout.plugin.enable_summary=False \
+  +actor_rollout_ref.rollout.plugin.enable_retrieval_memory="$ENABLE_RETRIEVAL_MEMORY" \
+  +actor_rollout_ref.rollout.plugin.retrieval_summary_budget="$RETRIEVAL_SUMMARY_BUDGET" \
+  +actor_rollout_ref.rollout.plugin.retrieval_evidence_budget="$RETRIEVAL_EVIDENCE_BUDGET" \
+  +actor_rollout_ref.rollout.plugin.retrieval_max_summaries="$RETRIEVAL_MAX_SUMMARIES" \
+  +actor_rollout_ref.rollout.plugin.retrieval_max_evidence="$RETRIEVAL_MAX_EVIDENCE" \
+  +actor_rollout_ref.rollout.plugin.working_memory_keep_recent="$WORKING_MEMORY_KEEP_RECENT" \
   +actor_rollout_ref.rollout.plugin.branch_len=32768 \
   +actor_rollout_ref.rollout.plugin.process_reward='[flat,scope,graph]' \
   +actor_rollout_ref.rollout.plugin.lambda_compact=0.2 \

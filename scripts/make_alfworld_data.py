@@ -6,8 +6,10 @@ Scans $ALFWORLD_DATA/json_2.1.1/{train,valid_seen,valid_unseen}/ for
 """
 
 import os
+import json
 import argparse
 import random
+from collections import Counter
 from pathlib import Path
 import pandas as pd
 
@@ -20,6 +22,7 @@ def scan_alfworld_games(alfworld_data_path, max_train=None, max_test=None, seed=
 
     train_tasks = []
     test_tasks = []
+    skipped = Counter()
 
     splits = {"train": train_tasks, "valid_seen": test_tasks, "valid_unseen": test_tasks}
 
@@ -29,10 +32,36 @@ def scan_alfworld_games(alfworld_data_path, max_train=None, max_test=None, seed=
             print(f"Warning: {split_dir} not found")
             continue
 
-        for game_file in sorted(split_dir.rglob("*.tw-pddl")):
+        for game_file in sorted(split_dir.rglob("game.tw-pddl")):
+            game_path = str(game_file)
+            if "movable" in game_path or "Sliced" in game_path:
+                skipped["unsupported"] += 1
+                continue
+
+            traj_file = game_file.parent / "traj_data.json"
+            if not traj_file.exists():
+                skipped["missing_traj_data"] += 1
+                continue
+
+            try:
+                with game_file.open("r", encoding="utf-8") as f:
+                    game_data = json.load(f)
+                with traj_file.open("r", encoding="utf-8") as f:
+                    traj_data = json.load(f)
+            except (OSError, json.JSONDecodeError):
+                skipped["invalid_metadata"] += 1
+                continue
+
+            if not game_data.get("solvable", False):
+                skipped["unsolvable"] += 1
+                continue
+
             relative = game_file.relative_to(split_dir)
             parts = relative.parts
-            task_type = parts[0] if len(parts) >= 2 else "unknown"
+            task_type = traj_data.get(
+                "task_type",
+                parts[0] if len(parts) >= 2 else "unknown",
+            )
             trial_name = parts[1] if len(parts) >= 2 else game_file.stem
 
             task_list.append({
@@ -53,7 +82,10 @@ def scan_alfworld_games(alfworld_data_path, max_train=None, max_test=None, seed=
     if max_test:
         test_tasks = test_tasks[:max_test]
 
-    print(f"ALFWorld: {len(train_tasks)} train, {len(test_tasks)} test")
+    print(
+        f"ALFWorld: {len(train_tasks)} train, {len(test_tasks)} test "
+        f"(official filters skipped={dict(skipped)})"
+    )
     return train_tasks, test_tasks
 
 
@@ -115,7 +147,6 @@ def main():
         alfworld_data, max_train=args.n_train, max_test=args.n_val, seed=args.seed
     )
 
-    from collections import Counter
     type_counts = Counter(t.get("task_type", "?") for t in train_tasks)
     print(f"Type distribution: {dict(type_counts)}")
 
