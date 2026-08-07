@@ -213,8 +213,8 @@ echo "=============================================================="
 
 # ── Pre-flight: ALFWorld artefacts must already exist ──
 probe "checking ALFWorld artefacts (mode=$ALFWORLD_MODE)"
-TRAIN_PARQUET="$PROJECT_ROOT/data/alfworld_${ALFWORLD_MODE}_train.parquet"
-VAL_PARQUET="$PROJECT_ROOT/data/alfworld_${ALFWORLD_MODE}_test.parquet"
+TRAIN_PARQUET="$PROJECT_ROOT/data/alfworld_graph_${ALFWORLD_MODE}_train.parquet"
+VAL_PARQUET="$PROJECT_ROOT/data/alfworld_graph_${ALFWORLD_MODE}_test.parquet"
 JSON_DIR="$ALFWORLD_DATA/json_2.1.1"
 for f in "$TRAIN_PARQUET" "$VAL_PARQUET"; do
   if [ ! -f "$f" ]; then
@@ -373,8 +373,8 @@ srun --overlap --nodes=1 --ntasks=1 -w "$NODE0" --chdir="$PROJECT_ROOT" \
   actor_rollout_ref.actor.optim.lr=2e-6 \
   actor_rollout_ref.actor.optim.weight_decay=0.1 \
   actor_rollout_ref.actor.use_kl_loss=True \
-  data.train_files=data/alfworld_${ALFWORLD_MODE}_train.parquet \
-  data.val_files=data/alfworld_${ALFWORLD_MODE}_test.parquet \
+  data.train_files=data/alfworld_graph_${ALFWORLD_MODE}_train.parquet \
+  data.val_files=data/alfworld_graph_${ALFWORLD_MODE}_test.parquet \
   data.train_batch_size=${ALFWORLD_TRAIN_BATCH_SIZE} \
   data.max_prompt_length=${ALFWORLD_PROMPT_LENGTH} \
   data.max_response_length=${ALFWORLD_RESPONSE_LENGTH} \
