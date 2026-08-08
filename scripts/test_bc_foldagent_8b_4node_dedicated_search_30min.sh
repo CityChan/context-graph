@@ -54,7 +54,6 @@ if [ -n "${WORK:-}" ] && [ -f "$WORK/.wandb_env" ]; then
   # shellcheck disable=SC1090
   source "$WORK/.wandb_env"
 fi
-export WANDB_API_KEY=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
 
 # ── OpenAI judge (REQUIRED for BrowseComp — no LLM judge = no reward signal) ──
 if [ -n "${WORK:-}" ] && [ -f "$WORK/.openai_env" ]; then
@@ -207,16 +206,29 @@ srun --overlap --nodes=1 --ntasks=1 -w "$SEARCH_NODE" bash -c "
 " >/tmp/hp_server_$$.log 2>&1 &
 SEARCH_PID=$!
 
-probe "waiting for search server /health (up to 240s)"
-for i in $(seq 1 120); do
+probe "waiting for search server /health (up to 600s)"
+for i in $(seq 1 300); do
   if curl -fsS "http://${SEARCH_NODE_IP}:18999/health" >/dev/null 2>&1; then
     break
   fi
   sleep 2
 done
-if ! curl -fsS -X POST -H 'Content-Type: application/json' \
-        -d '{"query":"Eiffel Tower","k":1}' \
-        "http://${SEARCH_NODE_IP}:18999/search" >/dev/null; then
+
+# Uvicorn becomes healthy before the embedding worker has necessarily loaded
+# its model. The first /search may therefore hit the server-side 60s timeout;
+# retry it instead of treating that warm-up timeout as a dead server.
+probe "waiting for search server /search probe (up to 600s)"
+SEARCH_READY=0
+for i in $(seq 1 9); do
+  if curl -fsS --max-time 65 -X POST -H 'Content-Type: application/json' \
+          -d '{"query":"Eiffel Tower","k":1}' \
+          "http://${SEARCH_NODE_IP}:18999/search" >/dev/null; then
+    SEARCH_READY=1
+    break
+  fi
+  sleep 2
+done
+if [ "$SEARCH_READY" -ne 1 ]; then
   echo "ERROR: search server not reachable at ${SEARCH_NODE_IP}:18999. Last 80 lines:"
   tail -80 /tmp/hp_server_$$.log || true
   kill "$SEARCH_PID" 2>/dev/null || true
