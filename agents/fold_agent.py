@@ -86,6 +86,7 @@ async def process_item(
         await env.init_env(item)
     except Exception as e:
         print(f"[Error] during environment init: {str(e)}")
+        raise
 
     # Create prompt
     workflow = _get(item.non_tensor_batch['extra_info']).get('workflow', None) or getattr(config.plugin, "workflow", "search")
