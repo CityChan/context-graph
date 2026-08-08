@@ -70,7 +70,6 @@ if [ -n "${WORK:-}" ] && [ -f "$WORK/.wandb_env" ]; then
   # shellcheck disable=SC1090
   source "$WORK/.wandb_env"
 fi
-export WANDB_API_KEY=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
 
 # ── Conda + CUDA ──
 source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
@@ -112,7 +111,9 @@ if [ "$NUM_NODES" -ne 4 ]; then
   exit 1
 fi
 
-if [ -n "${WANDB_API_KEY:-}" ]; then
+if [ "${ALFWORLD_DISABLE_WANDB:-0}" = "1" ]; then
+  TRAINER_LOGGER='["console"]'
+elif [ -n "${WANDB_API_KEY:-}" ]; then
   TRAINER_LOGGER='["console","wandb"]'
 else
   TRAINER_LOGGER='["console"]'
@@ -131,6 +132,16 @@ ALFWORLD_TRAIN_MODULE=${ALFWORLD_TRAIN_MODULE:-scripts.train_graph}
 ALFWORLD_AGENT_LOOP=${ALFWORLD_AGENT_LOOP:-context_graph_isolated_agent}
 ALFWORLD_WORKFLOW=${ALFWORLD_WORKFLOW:-alfworld_graph}
 ALFWORLD_PROCESS_REWARD=${ALFWORLD_PROCESS_REWARD:-[flat,scope,graph]}
+case "$ALFWORLD_WORKFLOW" in
+  alfworld) DEFAULT_DATA_VARIANT=alfworld ;;
+  alfworld_branch) DEFAULT_DATA_VARIANT=alfworld_branch ;;
+  alfworld_graph) DEFAULT_DATA_VARIANT=alfworld_graph ;;
+  *)
+    echo "ERROR: unsupported ALFWORLD_WORKFLOW=$ALFWORLD_WORKFLOW"
+    exit 1
+    ;;
+esac
+ALFWORLD_DATA_VARIANT=${ALFWORLD_DATA_VARIANT:-$DEFAULT_DATA_VARIANT}
 
 ALFWORLD_VAL_ONLY=${ALFWORLD_VAL_ONLY:-False}
 ALFWORLD_VAL_BEFORE_TRAIN=${ALFWORLD_VAL_BEFORE_TRAIN:-True}
@@ -207,14 +218,15 @@ echo "  samples:        train=${ALFWORLD_TRAIN_MAX_SAMPLES:-all} val=${ALFWORLD_
 echo "  tokens/turns:   prompt=$ALFWORLD_PROMPT_LENGTH response=$ALFWORLD_RESPONSE_LENGTH max_turn=$ALFWORLD_MAX_TURN val_max_turn=$ALFWORLD_VAL_MAX_TURN"
 echo "  admissible:     official demangled commands, max_display=$ALFWORLD_MAX_ADMISSIBLE_DISPLAY"
 echo "  agent/workflow: module=$ALFWORLD_TRAIN_MODULE loop=$ALFWORLD_AGENT_LOOP workflow=$ALFWORLD_WORKFLOW process_reward=$ALFWORLD_PROCESS_REWARD"
+echo "  data variant:   $ALFWORLD_DATA_VARIANT"
 echo "  Experiment: $EXPERIMENT_NAME"
 echo "  Started: $(date)"
 echo "=============================================================="
 
 # ── Pre-flight: ALFWorld artefacts must already exist ──
 probe "checking ALFWorld artefacts (mode=$ALFWORLD_MODE)"
-TRAIN_PARQUET="$PROJECT_ROOT/data/alfworld_graph_${ALFWORLD_MODE}_train.parquet"
-VAL_PARQUET="$PROJECT_ROOT/data/alfworld_graph_${ALFWORLD_MODE}_test.parquet"
+TRAIN_PARQUET="$PROJECT_ROOT/data/${ALFWORLD_DATA_VARIANT}_${ALFWORLD_MODE}_train.parquet"
+VAL_PARQUET="$PROJECT_ROOT/data/${ALFWORLD_DATA_VARIANT}_${ALFWORLD_MODE}_test.parquet"
 JSON_DIR="$ALFWORLD_DATA/json_2.1.1"
 for f in "$TRAIN_PARQUET" "$VAL_PARQUET"; do
   if [ ! -f "$f" ]; then
@@ -373,8 +385,8 @@ srun --overlap --nodes=1 --ntasks=1 -w "$NODE0" --chdir="$PROJECT_ROOT" \
   actor_rollout_ref.actor.optim.lr=2e-6 \
   actor_rollout_ref.actor.optim.weight_decay=0.1 \
   actor_rollout_ref.actor.use_kl_loss=True \
-  data.train_files=data/alfworld_graph_${ALFWORLD_MODE}_train.parquet \
-  data.val_files=data/alfworld_graph_${ALFWORLD_MODE}_test.parquet \
+  data.train_files=data/${ALFWORLD_DATA_VARIANT}_${ALFWORLD_MODE}_train.parquet \
+  data.val_files=data/${ALFWORLD_DATA_VARIANT}_${ALFWORLD_MODE}_test.parquet \
   data.train_batch_size=${ALFWORLD_TRAIN_BATCH_SIZE} \
   data.max_prompt_length=${ALFWORLD_PROMPT_LENGTH} \
   data.max_response_length=${ALFWORLD_RESPONSE_LENGTH} \

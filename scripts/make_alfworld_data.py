@@ -154,7 +154,7 @@ def main():
         ability = f"ALFWorld@{mode}"
         is_legacy = (mode == args.legacy)
 
-        # FoldAgent version
+        # ReAct version
         train_rows = [to_row(t, "alfworld", ability) for t in train_tasks]
         val_rows = [to_row(t, "alfworld", ability) for t in val_tasks]
         pd.DataFrame(train_rows).to_parquet(
@@ -163,6 +163,17 @@ def main():
             f"{args.out_dir}/alfworld_{mode}_test.parquet", index=False)
         print(f"Wrote alfworld_{mode}_{{train,test}}.parquet "
               f"({len(train_rows)} / {len(val_rows)} rows, ability={ability})")
+
+        # FoldAgent version. Keep this separate from the ReAct parquet because
+        # the per-row workflow takes precedence over the trainer config.
+        train_rows_b = [to_row(t, "alfworld_branch", ability) for t in train_tasks]
+        val_rows_b = [to_row(t, "alfworld_branch", ability) for t in val_tasks]
+        pd.DataFrame(train_rows_b).to_parquet(
+            f"{args.out_dir}/alfworld_branch_{mode}_train.parquet", index=False)
+        pd.DataFrame(val_rows_b).to_parquet(
+            f"{args.out_dir}/alfworld_branch_{mode}_test.parquet", index=False)
+        print(f"Wrote alfworld_branch_{mode}_{{train,test}}.parquet "
+              f"({len(train_rows_b)} / {len(val_rows_b)} rows, ability={ability})")
 
         # ContextGraph version
         train_rows_g = [to_row(t, "alfworld_graph", ability) for t in train_tasks]
@@ -181,6 +192,10 @@ def main():
                 f"{args.out_dir}/alfworld_train.parquet", index=False)
             pd.DataFrame(val_rows).to_parquet(
                 f"{args.out_dir}/alfworld_test.parquet", index=False)
+            pd.DataFrame(train_rows_b).to_parquet(
+                f"{args.out_dir}/alfworld_branch_train.parquet", index=False)
+            pd.DataFrame(val_rows_b).to_parquet(
+                f"{args.out_dir}/alfworld_branch_test.parquet", index=False)
             pd.DataFrame(train_rows_g).to_parquet(
                 f"{args.out_dir}/alfworld_graph_train.parquet", index=False)
             pd.DataFrame(val_rows_g).to_parquet(

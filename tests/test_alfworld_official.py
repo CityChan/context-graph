@@ -7,7 +7,7 @@ import numpy as np
 
 from agents.tool_spec import alfworld_tool
 from envs.alfworld_env import ALFWorldEnv
-from scripts.make_alfworld_data import scan_alfworld_games
+from scripts.make_alfworld_data import scan_alfworld_games, to_row
 
 
 class _Item:
@@ -171,6 +171,19 @@ def test_data_scan_matches_official_solvable_filters(tmp_path):
     assert len(train_tasks) == 1
     assert train_tasks[0]["task_id"].endswith("_valid")
     assert test_tasks == []
+
+
+def test_foldagent_data_row_uses_branch_workflow():
+    task = {
+        "task_desc": "ALFWorld task: pick and place simple",
+        "answer": "success",
+        "task_type": "pick_and_place_simple",
+        "game_file": "/tmp/game.tw-pddl",
+    }
+
+    row = to_row(task, "alfworld_branch", "ALFWorld@real")
+
+    assert row["extra_info"]["workflow"] == "alfworld_branch"
 
 
 def test_alfworld_prompt_can_expose_action_only_toolset():
