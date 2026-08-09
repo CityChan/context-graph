@@ -131,27 +131,81 @@ fi
 
 BC_VAL_MAX_SAMPLES=${BC_VAL_MAX_SAMPLES:--1}
 BC_PROMPT_LENGTH=${BC_PROMPT_LENGTH:-8192}
-BC_RESPONSE_LENGTH=${BC_RESPONSE_LENGTH:-32768}
+BC_CONTEXT_LENGTH=${BC_CONTEXT_LENGTH:-40960}
+BC_RESPONSE_LENGTH=${BC_RESPONSE_LENGTH:-$((BC_CONTEXT_LENGTH - BC_PROMPT_LENGTH))}
 BC_MAX_TOKEN_LEN_PER_GPU=${BC_MAX_TOKEN_LEN_PER_GPU:-$((BC_PROMPT_LENGTH + BC_RESPONSE_LENGTH))}
 BC_MAX_TURN=${BC_MAX_TURN:-100}
 BC_TURN_MAX_NEW_TOKENS=${BC_TURN_MAX_NEW_TOKENS:-768}
 BC_MAX_SESSION=${BC_MAX_SESSION:-10}
 BC_SEARCH_TIMEOUT_SECONDS=${BC_SEARCH_TIMEOUT_SECONDS:-600}
+BC_METHOD=${BC_METHOD:-baseline}
+
+if [ "$BC_RESPONSE_LENGTH" -le 0 ]; then
+  echo "ERROR: BC_RESPONSE_LENGTH must be positive (context=$BC_CONTEXT_LENGTH prompt=$BC_PROMPT_LENGTH)"
+  exit 1
+fi
+
+case "$BC_METHOD" in
+  baseline)
+    TRAIN_MODULE=scripts.train_baseline
+    AGENT_LOOP=react_agent
+    WORKFLOW=search_base
+    PROCESS_REWARD='[flat]'
+    LAMBDA_COST=0.002
+    CONSOLIDATION_INTERVAL=0
+    ;;
+  foldagent)
+    TRAIN_MODULE=scripts.train_fold
+    AGENT_LOOP=fold_agent
+    WORKFLOW=search_branch
+    PROCESS_REWARD='[flat,scope]'
+    LAMBDA_COST=0.002
+    CONSOLIDATION_INTERVAL=0
+    ;;
+  contextgraph)
+    TRAIN_MODULE=scripts.train_graph
+    AGENT_LOOP=context_graph_isolated_agent
+    WORKFLOW=search_graph
+    PROCESS_REWARD='[flat,scope,graph]'
+    LAMBDA_COST=0.02
+    CONSOLIDATION_INTERVAL=5
+    ;;
+  *)
+    echo "ERROR: BC_METHOD must be one of: baseline, foldagent, contextgraph (got '$BC_METHOD')"
+    exit 1
+    ;;
+esac
+
+# Qwen3-8B's config advertises 40,960 positions.  Longer runs must override
+# both the HF actor config and vLLM's independently loaded HF config.
+LONG_CONTEXT_ARGS=()
+if [ "$BC_MAX_TOKEN_LEN_PER_GPU" -gt 40960 ]; then
+  BC_YARN_FACTOR=${BC_YARN_FACTOR:-2.0}
+  BC_YARN_ORIGINAL_LENGTH=${BC_YARN_ORIGINAL_LENGTH:-32768}
+  LONG_CONTEXT_OVERRIDE="{max_position_embeddings:${BC_MAX_TOKEN_LEN_PER_GPU},rope_scaling:{rope_type:yarn,factor:${BC_YARN_FACTOR},original_max_position_embeddings:${BC_YARN_ORIGINAL_LENGTH}}}"
+  LONG_CONTEXT_ARGS+=(
+    "actor_rollout_ref.model.override_config=${LONG_CONTEXT_OVERRIDE}"
+    "+actor_rollout_ref.rollout.engine_kwargs.vllm.hf_overrides=${LONG_CONTEXT_OVERRIDE}"
+  )
+fi
 
 TS=$(date +%Y%m%d_%H%M%S)
-EXPERIMENT_NAME="eval_baseline_bc_8b_4n_zeroshot_${TS}"
+EXPERIMENT_NAME="eval_${BC_METHOD}_bc_8b_4n_zeroshot_${BC_MAX_TOKEN_LEN_PER_GPU}ctx_${TS}"
 
 probe() { printf '+++ [%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 
 echo "=============================================================="
-echo "  ZERO-SHOT EVAL: Vanilla ReAct on BrowseComp-Plus test split (8B, 4 nodes, val_only=True)"
+echo "  ZERO-SHOT EVAL: $BC_METHOD on BrowseComp-Plus test split (8B, 4 nodes, val_only=True)"
 echo "  Job: ${SLURM_JOB_ID:-<idev>}   Head: $NODE0 ($NODE0_IP)"
 echo "  Worker(s): ${NODELIST[@]:1}"
 echo "  Trainer model:  $MODEL_PATH"
 echo "  Embedder model: $EMBED_MODEL"
 echo "  Experiment: $EXPERIMENT_NAME"
 echo "  Logger: ${probe_msg}"
-echo "  Smoke caps: val_samples=$BC_VAL_MAX_SAMPLES prompt=$BC_PROMPT_LENGTH response=$BC_RESPONSE_LENGTH max_turn=$BC_MAX_TURN"
+echo "  Caps: val_samples=$BC_VAL_MAX_SAMPLES prompt=$BC_PROMPT_LENGTH response=$BC_RESPONSE_LENGTH total_context=$BC_MAX_TOKEN_LEN_PER_GPU max_turn=$BC_MAX_TURN"
+if [ ${#LONG_CONTEXT_ARGS[@]} -gt 0 ]; then
+  echo "  Long context: YaRN factor=$BC_YARN_FACTOR original=$BC_YARN_ORIGINAL_LENGTH (HF actor + vLLM)"
+fi
 echo "  Started: $(date)"
 echo "=============================================================="
 
@@ -358,8 +412,8 @@ probe "querying ray status"
 ray status || echo "WARN: ray status check failed"
 
 echo "=============================================================="
-echo "  Launching Vanilla ReAct ZERO-SHOT eval (4 nodes, response=$BC_RESPONSE_LENGTH, val_samples=$BC_VAL_MAX_SAMPLES)"
-echo "  workflow=search_base, no branch/graph/consolidation, process_reward=[flat]"
+echo "  Launching $BC_METHOD ZERO-SHOT eval (4 nodes, total_context=$BC_MAX_TOKEN_LEN_PER_GPU, val_samples=$BC_VAL_MAX_SAMPLES)"
+echo "  agent_loop=$AGENT_LOOP workflow=$WORKFLOW process_reward=$PROCESS_REWARD"
 echo "  vLLM gpu_memory_utilization=0.6 + FSDP CPU offload"
 echo "  val_only=True (one val pass on bc_test.parquet then exit; no training)"
 echo "=============================================================="
@@ -368,16 +422,17 @@ probe "launching trainer (model load + vLLM init typically ~3-5 min)"
 set +e
 srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_ROOT" \
   --export=ALL,LOCAL_SEARCH_URL="$LOCAL_SEARCH_URL",OPENAI_API_KEY="$OPENAI_API_KEY",JUDGE_MODEL="$JUDGE_MODEL" \
-  python -m scripts.train_baseline \
+  python -m "$TRAIN_MODULE" \
   algorithm.adv_estimator=foldgrpo \
   algorithm.kl_ctrl.kl_coef=0.005 \
-  actor_rollout_ref.rollout.agent.default_agent_loop=react_agent \
+  actor_rollout_ref.rollout.agent.default_agent_loop="$AGENT_LOOP" \
   actor_rollout_ref.rollout.name=vllm \
   actor_rollout_ref.rollout.mode=async \
   actor_rollout_ref.rollout.dtype=bfloat16 \
   actor_rollout_ref.rollout.calculate_log_probs=True \
   actor_rollout_ref.rollout.gpu_memory_utilization=0.6 \
   actor_rollout_ref.model.path="$MODEL_PATH" \
+  "${LONG_CONTEXT_ARGS[@]}" \
   actor_rollout_ref.rollout.prompt_length=${BC_PROMPT_LENGTH} \
   actor_rollout_ref.rollout.response_length=${BC_RESPONSE_LENGTH} \
   actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu=${BC_MAX_TOKEN_LEN_PER_GPU} \
@@ -409,7 +464,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   actor_rollout_ref.actor.ppo_max_token_len_per_gpu=${BC_MAX_TOKEN_LEN_PER_GPU} \
   actor_rollout_ref.actor.ppo_infer_max_token_len_per_gpu=${BC_MAX_TOKEN_LEN_PER_GPU} \
   actor_rollout_ref.model.enable_gradient_checkpointing=True \
-  +actor_rollout_ref.rollout.plugin.workflow=search_base \
+  +actor_rollout_ref.rollout.plugin.workflow="$WORKFLOW" \
   +actor_rollout_ref.rollout.plugin.max_turn=${BC_MAX_TURN} \
   +actor_rollout_ref.rollout.plugin.retry_cjk=10 \
   +actor_rollout_ref.rollout.plugin.turn_max_new_tokens=${BC_TURN_MAX_NEW_TOKENS} \
@@ -418,9 +473,10 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   +actor_rollout_ref.rollout.plugin.session_timeout=600 \
   +actor_rollout_ref.rollout.plugin.enable_summary=False \
   +actor_rollout_ref.rollout.plugin.branch_len=${BC_RESPONSE_LENGTH} \
-  +actor_rollout_ref.rollout.plugin.process_reward='[flat]' \
+  +actor_rollout_ref.rollout.plugin.process_reward="$PROCESS_REWARD" \
   +actor_rollout_ref.rollout.plugin.lambda_compact=0.2 \
-  +actor_rollout_ref.rollout.plugin.lambda_cost=0.002 \
+  +actor_rollout_ref.rollout.plugin.lambda_cost="$LAMBDA_COST" \
+  +actor_rollout_ref.rollout.plugin.consolidation_interval="$CONSOLIDATION_INTERVAL" \
   +actor_rollout_ref.rollout.plugin.max_traj=4 \
   +actor_rollout_ref.rollout.plugin.must_finish=False \
   +actor_rollout_ref.rollout.plugin.double_check=False \
