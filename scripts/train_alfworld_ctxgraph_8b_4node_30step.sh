@@ -132,6 +132,13 @@ ALFWORLD_TRAIN_MODULE=${ALFWORLD_TRAIN_MODULE:-scripts.train_graph}
 ALFWORLD_AGENT_LOOP=${ALFWORLD_AGENT_LOOP:-context_graph_isolated_agent}
 ALFWORLD_WORKFLOW=${ALFWORLD_WORKFLOW:-alfworld_graph}
 ALFWORLD_PROCESS_REWARD=${ALFWORLD_PROCESS_REWARD:-[flat,scope,graph]}
+case "$ALFWORLD_AGENT_LOOP" in
+  react_agent) DEFAULT_METHOD_LABEL=ReAct ;;
+  fold_agent) DEFAULT_METHOD_LABEL=FoldAgent ;;
+  context_graph_isolated_agent) DEFAULT_METHOD_LABEL="ContextGraph (isolated)" ;;
+  *) DEFAULT_METHOD_LABEL=$ALFWORLD_AGENT_LOOP ;;
+esac
+ALFWORLD_METHOD_LABEL=${ALFWORLD_METHOD_LABEL:-$DEFAULT_METHOD_LABEL}
 case "$ALFWORLD_WORKFLOW" in
   alfworld) DEFAULT_DATA_VARIANT=alfworld ;;
   alfworld_branch) DEFAULT_DATA_VARIANT=alfworld_branch ;;
@@ -207,7 +214,7 @@ wait_for_ray_cluster() {
 }
 
 echo "=============================================================="
-echo "  ContextGraph (isolated) on ALFWorld @${ALFWORLD_MODE} (8B, 4 nodes, steps=${ALFWORLD_TOTAL_STEPS})"
+echo "  ${ALFWORLD_METHOD_LABEL} on ALFWorld @${ALFWORLD_MODE} (8B, 4 nodes, steps=${ALFWORLD_TOTAL_STEPS})"
 echo "  Job: ${SLURM_JOB_ID:-<idev>}   Head: $NODE0 ($NODE0_IP)"
 echo "  Worker(s): ${NODELIST[@]:1}"
 echo "  Trainer model:  $MODEL_PATH"
@@ -350,7 +357,7 @@ if ! wait_for_ray_cluster "$NUM_NODES"; then
 fi
 
 echo "=============================================================="
-echo "  Launching ContextGraph FoldGRPO training on ALFWorld"
+echo "  Launching ${ALFWORLD_METHOD_LABEL} FoldGRPO run on ALFWorld"
 echo "  vLLM gpu_memory_utilization=0.55 (no embedder co-located, all GPU mem available)"
 echo "=============================================================="
 probe "launching trainer (model load + vLLM init typically ~3-5 min before first wandb log)"

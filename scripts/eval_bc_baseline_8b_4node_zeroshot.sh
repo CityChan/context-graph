@@ -65,7 +65,6 @@ if [ -n "${WORK:-}" ] && [ -f "$WORK/.wandb_env" ]; then
   # shellcheck disable=SC1090
   source "$WORK/.wandb_env"
 fi
-export WANDB_API_KEY=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
 
 # ── OpenAI judge (REQUIRED for BrowseComp — no LLM judge = no reward signal) ──
 if [ -n "${WORK:-}" ] && [ -f "$WORK/.openai_env" ]; then
@@ -119,7 +118,10 @@ if [ "$NUM_NODES" -ne 4 ]; then
   exit 1
 fi
 
-if [ -n "${WANDB_API_KEY:-}" ]; then
+if [ "${BC_DISABLE_WANDB:-0}" = "1" ]; then
+  TRAINER_LOGGER='["console"]'
+  probe_msg="wandb disabled by BC_DISABLE_WANDB=1"
+elif [ -n "${WANDB_API_KEY:-}" ]; then
   TRAINER_LOGGER='["console","wandb"]'
   probe_msg="wandb enabled (key length=${#WANDB_API_KEY})"
 else
@@ -127,19 +129,29 @@ else
   probe_msg="WARNING: no WANDB_API_KEY in env — training will only log to console"
 fi
 
+BC_VAL_MAX_SAMPLES=${BC_VAL_MAX_SAMPLES:--1}
+BC_PROMPT_LENGTH=${BC_PROMPT_LENGTH:-8192}
+BC_RESPONSE_LENGTH=${BC_RESPONSE_LENGTH:-32768}
+BC_MAX_TOKEN_LEN_PER_GPU=${BC_MAX_TOKEN_LEN_PER_GPU:-$((BC_PROMPT_LENGTH + BC_RESPONSE_LENGTH))}
+BC_MAX_TURN=${BC_MAX_TURN:-100}
+BC_TURN_MAX_NEW_TOKENS=${BC_TURN_MAX_NEW_TOKENS:-768}
+BC_MAX_SESSION=${BC_MAX_SESSION:-10}
+BC_SEARCH_TIMEOUT_SECONDS=${BC_SEARCH_TIMEOUT_SECONDS:-600}
+
 TS=$(date +%Y%m%d_%H%M%S)
 EXPERIMENT_NAME="eval_baseline_bc_8b_4n_zeroshot_${TS}"
 
 probe() { printf '+++ [%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 
 echo "=============================================================="
-echo "  ZERO-SHOT EVAL: Vanilla ReAct on BrowseComp-Plus test split (8B, 4 nodes, 32K-resp, val_only=True)"
+echo "  ZERO-SHOT EVAL: Vanilla ReAct on BrowseComp-Plus test split (8B, 4 nodes, val_only=True)"
 echo "  Job: ${SLURM_JOB_ID:-<idev>}   Head: $NODE0 ($NODE0_IP)"
 echo "  Worker(s): ${NODELIST[@]:1}"
 echo "  Trainer model:  $MODEL_PATH"
 echo "  Embedder model: $EMBED_MODEL"
 echo "  Experiment: $EXPERIMENT_NAME"
 echo "  Logger: ${probe_msg}"
+echo "  Smoke caps: val_samples=$BC_VAL_MAX_SAMPLES prompt=$BC_PROMPT_LENGTH response=$BC_RESPONSE_LENGTH max_turn=$BC_MAX_TURN"
 echo "  Started: $(date)"
 echo "=============================================================="
 
@@ -218,16 +230,44 @@ srun --overlap --nodes=1 --ntasks=1 -w "$SEARCH_NODE" bash -c "
 " >/tmp/hp_server_$$.log 2>&1 &
 SEARCH_PID=$!
 
-probe "waiting for search server /health (up to 240s)"
-for i in $(seq 1 120); do
+probe "waiting for search server /health (up to ${BC_SEARCH_TIMEOUT_SECONDS}s)"
+HEALTH_OK=0
+for _ in $(seq 1 "$BC_SEARCH_TIMEOUT_SECONDS"); do
   if curl -fsS "http://${SEARCH_NODE_IP}:18999/health" >/dev/null 2>&1; then
+    HEALTH_OK=1
     break
   fi
-  sleep 2
+  if ! kill -0 "$SEARCH_PID" 2>/dev/null; then
+    echo "ERROR: search server exited before becoming healthy. Last 80 lines:"
+    tail -80 /tmp/hp_server_$$.log || true
+    exit 1
+  fi
+  sleep 1
 done
-if ! curl -fsS -X POST -H 'Content-Type: application/json' \
-        -d '{"query":"Eiffel Tower","k":1}' \
-        "http://${SEARCH_NODE_IP}:18999/search" >/dev/null; then
+if [ "$HEALTH_OK" != "1" ]; then
+  echo "ERROR: search server did not become healthy within ${BC_SEARCH_TIMEOUT_SECONDS}s. Last 80 lines:"
+  tail -80 /tmp/hp_server_$$.log || true
+  kill "$SEARCH_PID" 2>/dev/null || true
+  exit 1
+fi
+
+probe "waiting for search server /search probe (up to ${BC_SEARCH_TIMEOUT_SECONDS}s)"
+SEARCH_OK=0
+for _ in $(seq 1 "$BC_SEARCH_TIMEOUT_SECONDS"); do
+  if curl -fsS -X POST -H 'Content-Type: application/json' \
+      -d '{"query":"Eiffel Tower","k":1}' \
+      "http://${SEARCH_NODE_IP}:18999/search" >/dev/null 2>&1; then
+    SEARCH_OK=1
+    break
+  fi
+  if ! kill -0 "$SEARCH_PID" 2>/dev/null; then
+    echo "ERROR: search server exited before /search probe succeeded. Last 80 lines:"
+    tail -80 /tmp/hp_server_$$.log || true
+    exit 1
+  fi
+  sleep 1
+done
+if [ "$SEARCH_OK" != "1" ]; then
   echo "ERROR: search server not reachable at ${SEARCH_NODE_IP}:18999. Last 80 lines:"
   tail -80 /tmp/hp_server_$$.log || true
   kill "$SEARCH_PID" 2>/dev/null || true
@@ -318,7 +358,7 @@ probe "querying ray status"
 ray status || echo "WARN: ray status check failed"
 
 echo "=============================================================="
-echo "  Launching Vanilla ReAct ZERO-SHOT eval (4 nodes, 32K resp, BrowseComp-Plus test=150)"
+echo "  Launching Vanilla ReAct ZERO-SHOT eval (4 nodes, response=$BC_RESPONSE_LENGTH, val_samples=$BC_VAL_MAX_SAMPLES)"
 echo "  workflow=search_base, no branch/graph/consolidation, process_reward=[flat]"
 echo "  vLLM gpu_memory_utilization=0.6 + FSDP CPU offload"
 echo "  val_only=True (one val pass on bc_test.parquet then exit; no training)"
@@ -338,9 +378,9 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   actor_rollout_ref.rollout.calculate_log_probs=True \
   actor_rollout_ref.rollout.gpu_memory_utilization=0.6 \
   actor_rollout_ref.model.path="$MODEL_PATH" \
-  actor_rollout_ref.rollout.prompt_length=8192 \
-  actor_rollout_ref.rollout.response_length=32768 \
-  actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu=40960 \
+  actor_rollout_ref.rollout.prompt_length=${BC_PROMPT_LENGTH} \
+  actor_rollout_ref.rollout.response_length=${BC_RESPONSE_LENGTH} \
+  actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu=${BC_MAX_TOKEN_LEN_PER_GPU} \
   actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
   actor_rollout_ref.rollout.n=8 \
   actor_rollout_ref.rollout.agent.num_workers=1 \
@@ -360,23 +400,24 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   data.train_files=data/bc_train.parquet \
   data.val_files=data/bc_test.parquet \
   data.train_batch_size=12 \
-  data.max_prompt_length=8192 \
-  data.max_response_length=32768 \
+  data.max_prompt_length=${BC_PROMPT_LENGTH} \
+  data.max_response_length=${BC_RESPONSE_LENGTH} \
+  data.val_max_samples=${BC_VAL_MAX_SAMPLES} \
   data.return_raw_chat=True \
   actor_rollout_ref.actor.ppo_mini_batch_size=12 \
   actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=1 \
-  actor_rollout_ref.actor.ppo_max_token_len_per_gpu=40960 \
-  actor_rollout_ref.actor.ppo_infer_max_token_len_per_gpu=40960 \
+  actor_rollout_ref.actor.ppo_max_token_len_per_gpu=${BC_MAX_TOKEN_LEN_PER_GPU} \
+  actor_rollout_ref.actor.ppo_infer_max_token_len_per_gpu=${BC_MAX_TOKEN_LEN_PER_GPU} \
   actor_rollout_ref.model.enable_gradient_checkpointing=True \
   +actor_rollout_ref.rollout.plugin.workflow=search_base \
-  +actor_rollout_ref.rollout.plugin.max_turn=100 \
+  +actor_rollout_ref.rollout.plugin.max_turn=${BC_MAX_TURN} \
   +actor_rollout_ref.rollout.plugin.retry_cjk=10 \
-  +actor_rollout_ref.rollout.plugin.turn_max_new_tokens=768 \
-  +actor_rollout_ref.rollout.plugin.max_session=10 \
-  +actor_rollout_ref.rollout.plugin.val_max_session=10 \
+  +actor_rollout_ref.rollout.plugin.turn_max_new_tokens=${BC_TURN_MAX_NEW_TOKENS} \
+  +actor_rollout_ref.rollout.plugin.max_session=${BC_MAX_SESSION} \
+  +actor_rollout_ref.rollout.plugin.val_max_session=${BC_MAX_SESSION} \
   +actor_rollout_ref.rollout.plugin.session_timeout=600 \
   +actor_rollout_ref.rollout.plugin.enable_summary=False \
-  +actor_rollout_ref.rollout.plugin.branch_len=32768 \
+  +actor_rollout_ref.rollout.plugin.branch_len=${BC_RESPONSE_LENGTH} \
   +actor_rollout_ref.rollout.plugin.process_reward='[flat]' \
   +actor_rollout_ref.rollout.plugin.lambda_compact=0.2 \
   +actor_rollout_ref.rollout.plugin.lambda_cost=0.002 \
@@ -384,8 +425,8 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   +actor_rollout_ref.rollout.plugin.must_finish=False \
   +actor_rollout_ref.rollout.plugin.double_check=False \
   +actor_rollout_ref.rollout.plugin.must_search=True \
-  +actor_rollout_ref.rollout.plugin.val_max_turn=100 \
-  +actor_rollout_ref.rollout.plugin.val_response_length=32768 \
+  +actor_rollout_ref.rollout.plugin.val_max_turn=${BC_MAX_TURN} \
+  +actor_rollout_ref.rollout.plugin.val_response_length=${BC_RESPONSE_LENGTH} \
   trainer.val_before_train=True \
   trainer.val_only=True \
   trainer.n_gpus_per_node=1 \
