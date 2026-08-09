@@ -184,7 +184,7 @@ if [ "$BC_MAX_TOKEN_LEN_PER_GPU" -gt 40960 ]; then
   BC_YARN_ORIGINAL_LENGTH=${BC_YARN_ORIGINAL_LENGTH:-32768}
   LONG_CONTEXT_OVERRIDE="{max_position_embeddings:${BC_MAX_TOKEN_LEN_PER_GPU},rope_scaling:{rope_type:yarn,factor:${BC_YARN_FACTOR},original_max_position_embeddings:${BC_YARN_ORIGINAL_LENGTH}}}"
   LONG_CONTEXT_ARGS+=(
-    "actor_rollout_ref.model.override_config=${LONG_CONTEXT_OVERRIDE}"
+    "+actor_rollout_ref.model.override_config=${LONG_CONTEXT_OVERRIDE}"
     "+actor_rollout_ref.rollout.engine_kwargs.vllm.hf_overrides=${LONG_CONTEXT_OVERRIDE}"
   )
 fi
