@@ -1,0 +1,78 @@
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def _read(relative_path: str) -> str:
+    return (ROOT / relative_path).read_text(encoding="utf-8")
+
+
+def _paper_reward_section(relative_path: str) -> str:
+    source = _read(relative_path)
+    start = source.index("paper process rewards")
+    end = source.index("if score[1] <= 0:", start)
+    return source[start:end]
+
+
+def test_fractional_process_rewards_are_not_truncated():
+    source = _read("verl/experimental/agent_loop/agent_loop.py")
+
+    assert "dtype=torch.float32" in source
+    assert "process_reward_mask = prm * response_mask.to(torch.float32)" in source
+    assert "process_reward_mask.to(torch.float32)" in source
+
+
+def test_foldagent_uses_paper_process_rewards_on_all_outcomes():
+    section = _paper_reward_section("agents/fold_agent.py")
+
+    assert "if score[1] > 0" not in section
+    assert "set_process_reward(bad_turn, -1)" in section
+    assert "set_process_reward([i for i in range(len(agent[name].chat) - 1)], -0.2)" in section
+    assert "elif is_focus > 0" not in section
+    assert "set_cache('reward'" not in section
+    assert "for name in agent:" in section
+
+
+def test_contextgraph_inherits_the_same_paper_base_signal():
+    section = _paper_reward_section("agents/graph_agent_isolated.py")
+
+    assert "if score[1] > 0" not in section
+    assert "set_process_reward(bad_turn, -1)" in section
+    assert "set_process_reward([i for i in range(len(agent[name].chat) - 1)], -0.2)" in section
+    assert "elif is_focus > 0" not in section
+    assert "set_cache('reward'" not in section
+    assert "for name in agent:" in section
+
+
+def test_production_wrappers_use_global_128_minibatch_arithmetic():
+    for script in (
+        "scripts/train_bc_foldagent_8b_5node_50step_32k_active.sh",
+        "scripts/train_bc_ctxgraph_8b_5node_50step_32k_active.sh",
+    ):
+        source = _read(script)
+        assert "export PPO_MINI_BATCH_SIZE=32" in source
+        assert "32 per rank x 4 trainer ranks = paper-scale global 128" in source
+
+
+def test_foldagent_entrypoint_and_one_step_smokes_use_production_paths():
+    fold_base = _read("scripts/train_bc_foldagent_8b_paperfaithful_5node_48h.sh")
+    assert "python -m scripts.train_fold" in fold_base
+    assert "python -m scripts.train_graph" not in fold_base
+
+    for script, base in (
+        (
+            "scripts/smoke_train_bc_foldagent_8b_5node_1step_32k_active.sh",
+            "scripts/train_bc_foldagent_8b_paperfaithful_5node_48h.sh",
+        ),
+        (
+            "scripts/smoke_train_bc_ctxgraph_8b_5node_1step_32k_active.sh",
+            "scripts/train_bc_ctxgraph_8b_paperfaithful_5node_48h.sh",
+        ),
+    ):
+        source = _read(script)
+        assert "export TOTAL_TRAINING_STEPS=1" in source
+        assert "export TRAIN_BATCH_SIZE=4" in source
+        assert "export ROLLOUT_N=2" in source
+        assert "export PPO_MINI_BATCH_SIZE=2" in source
+        assert f"exec bash {base}" in source

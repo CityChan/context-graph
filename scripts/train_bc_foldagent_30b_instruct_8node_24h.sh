@@ -328,7 +328,7 @@ ray status || echo "WARN: ray status check failed"
 
 echo "=============================================================="
 echo "  Launching FoldAgent FoldGRPO v3 (30B-A3B Instruct, 8 nodes [1 search + 7 trainer], 50 steps, 32K resp [24h], FP8 rollout, BrowseComp-Plus)"
-echo "  v2 fix: continuous concise_main penalty (paired with ctxgraph_v3)"
+echo "  paper fix: fixed Q=-1 concise_main penalty (paired with ctxgraph_v3)"
 echo "  vLLM gpu_memory_utilization=0.55 + FP8 rollout + FSDP CPU offload"
 echo "  val_before_train=True, save_freq=10 (6 ckpts: steps 10/20/.../60), val every 10 steps"
 echo "=============================================================="

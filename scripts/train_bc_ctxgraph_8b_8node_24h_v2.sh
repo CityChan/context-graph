@@ -318,7 +318,7 @@ ray status || echo "WARN: ray status check failed"
 
 echo "=============================================================="
 echo "  Launching ContextGraph FoldGRPO v2 (8 nodes [1 search + 7 trainer], 80 steps, 16K resp [24h], BrowseComp-Plus)"
-echo "  v2 fixes: continuous concise_main penalty, semi-de-gated graph_shaping, 10x lambda_cost"
+echo "  v2 fixes: fixed Q=-1 concise_main penalty, semi-de-gated graph_shaping, 10x lambda_cost"
 echo "  vLLM gpu_memory_utilization=0.7 + FSDP CPU offload"
 echo "  val_before_train=True, save_freq=10 (8 ckpts: steps 10/20/.../80), val every 10 steps"
 echo "=============================================================="

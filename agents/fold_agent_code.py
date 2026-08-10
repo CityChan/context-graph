@@ -299,13 +299,7 @@ async def process_item(
             if len(agent['main'].context()) - init_len > config.response_length * 0.5:
                 bad_turn = [i for i, turn in enumerate(agent['main'].messages()) if
                             '<function=branch>' not in str(turn) and '<function=finish>' not in str(turn)]
-                if bad_turn:
-                    main_msgs = list(agent['main'].messages())
-                    bad_lens = [len(str(main_msgs[i])) for i in bad_turn]
-                    mean_bad_len = max(1.0, sum(bad_lens) / len(bad_lens))
-                    for i, turn_len in zip(bad_turn, bad_lens):
-                        penalty = -max(0.5, min(2.0, turn_len / mean_bad_len))
-                        agent['main'].set_process_reward(i, penalty)
+                agent['main'].set_process_reward(bad_turn, -1)
 
             if len(agent) == 1:
                 agent['main'].set_process_reward('all', -1)

@@ -267,56 +267,43 @@ async def process_item(
                         agent[name].set_process_reward(i, -1)
                         if 'flat' in process_reward:
                             agent[name].set_cache('reward', 0)
-        if score[1] > 0:
-            # Check main
-            if len(agent['main'].context()) - init_len > config.response_length * 0.5:
-                bad_turn = [i for i, turn in enumerate(agent['main'].messages()) if
-                            '<function=branch>' not in str(turn) and '<function=finish>' not in str(turn)]
-                if bad_turn:
-                    main_msgs = list(agent['main'].messages())
-                    bad_lens = [len(str(main_msgs[i])) for i in bad_turn]
-                    mean_bad_len = max(1.0, sum(bad_lens) / len(bad_lens))
-                    for i, turn_len in zip(bad_turn, bad_lens):
-                        penalty = -max(0.5, min(2.0, turn_len / mean_bad_len))
-                        agent['main'].set_process_reward(i, penalty)
+        # FoldAgent paper process rewards are behavior-level signals. They apply
+        # to both successful and failed trajectories, while the terminal reward
+        # remains the binary task outcome.
+        if len(agent['main'].context()) - init_len > config.response_length * 0.5:
+            bad_turn = [i for i, turn in enumerate(agent['main'].messages()) if
+                        '<function=branch>' not in str(turn) and '<function=finish>' not in str(turn)]
+            agent['main'].set_process_reward(bad_turn, -1)
 
-            if len(agent) == 1:
-                agent['main'].set_process_reward('all', -1)
-                if 'flat' in process_reward:
-                    agent['main'].set_cache('reward', 1 - 1)
-
-            # Scope check
-            if 'scope' in process_reward:
-                env.stats['scope_judge'] = 1
-                for name in branches:
-                    assigned_task = branch_tasks[name]
-                    return_message = branch_return[name]
-                    is_focus, justification = await judge_scope(assigned_task, return_message)
-                    if is_focus < 0:  # scope check, skip summary turn
-                        print(f'[FOCUS] Branch beyond focus: //{name}//. {justification}')
-                        agent[name].set_process_reward([i for i in range(len(agent[name].chat) - 1)], -0.2)
-                        if 'flat' in process_reward:
-                            agent[name].set_cache('reward', 1 - 0.2)
-                        env.stats['scope_judge'] = 0
-                    elif is_focus > 0:
-                        agent[name].set_process_reward([i for i in range(len(agent[name].chat) - 1)], 0.2)
-                        if 'flat' in process_reward:
-                            agent[name].set_cache('reward', 1 + 0.2)
-            # Tool call error
+        # The paper defines only an out-of-scope penalty (-0.2), not a positive
+        # reward for in-scope branches.
+        if 'scope' in process_reward:
+            env.stats['scope_judge'] = 1
             for name in branches:
-                for i, turn in enumerate(agent[name].chat):
-                    ERR_MARKERS = (
-                        'Failed to validate tool call',
-                        'Failed to parse tool call',
-                        'You are in branch mode and cannot branch task or finish the task.',
-                        'No function call was detected in the model response',
-                        '[Error] The "search" function requires a "query" argument',
-                        '[Error] The "open_page" function requires either a "docid" or a "url".',
-                        '[Error] The function',
-                    )
-                    if any(m in str(turn) for m in ERR_MARKERS):
-                        agent[name].set_process_reward(i - 1, -1)
-        else:
+                assigned_task = branch_tasks[name]
+                return_message = branch_return.get(name, '')
+                is_focus, justification = await judge_scope(assigned_task, return_message)
+                if is_focus < 0:  # skip the final branch-summary turn
+                    print(f'[FOCUS] Branch beyond focus: //{name}//. {justification}')
+                    agent[name].set_process_reward([i for i in range(len(agent[name].chat) - 1)], -0.2)
+                    env.stats['scope_judge'] = 0
+
+        # Failed tool calls are penalized in both main and branch trajectories.
+        ERR_MARKERS = (
+            'Failed to validate tool call',
+            'Failed to parse tool call',
+            'You are in branch mode and cannot branch task or finish the task.',
+            'No function call was detected in the model response',
+            '[Error] The "search" function requires a "query" argument',
+            '[Error] The "open_page" function requires either a "docid" or a "url".',
+            '[Error] The function',
+        )
+        for name in agent:
+            for i, turn in enumerate(agent[name].chat):
+                if any(m in str(turn) for m in ERR_MARKERS):
+                    agent[name].set_process_reward(max(i - 1, 0), -1)
+
+        if score[1] <= 0:
             is_finish = getattr(env, 'is_finish', False) or getattr(env, 'finish', False)
             if 'drop_fail' in process_reward:
                 if not is_finish:
@@ -334,7 +321,7 @@ async def process_item(
                         else:
                             agent.pop(name)  # drop all branch if not finish (overlong mask)
             # Scope check + reward
-            if 'reward_scope' in process_reward:
+            if 'reward_scope' in process_reward and 'scope' not in process_reward:
                 env.stats['scope_judge'] = 1
                 for name in branches:
                     assigned_task = branch_tasks[name]

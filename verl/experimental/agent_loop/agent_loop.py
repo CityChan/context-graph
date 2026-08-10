@@ -532,8 +532,11 @@ class AgentLoopWorkerBase:
         prm_list = output.extra_fields.get("process_reward_mask", None)
         if prm_list is not None:
             pad_size = self.config.actor_rollout_ref.rollout.response_length - len(prm_list)
-            prm = torch.tensor(prm_list + [0] * max(pad_size, 0), dtype=torch.int8).unsqueeze(0)
-            process_reward_mask = prm * response_mask.to(torch.int8)
+            # Process rewards are fractional (for example, the FoldGRPO
+            # out-of-scope penalty is -0.2), so an integer tensor would
+            # silently truncate the signal to zero.
+            prm = torch.tensor(prm_list + [0] * max(pad_size, 0), dtype=torch.float32).unsqueeze(0)
+            process_reward_mask = prm * response_mask.to(torch.float32)
 
 
         routed_experts = None
@@ -684,7 +687,7 @@ class AgentLoopWorkerBase:
             batch_size=len(inputs),
         )
         if process_reward_mask is not None:
-            batch["process_reward_mask"] = process_reward_mask.to(torch.int8)
+            batch["process_reward_mask"] = process_reward_mask.to(torch.float32)
         if mask_rollout is not None:
             batch["mask_rollout"] = mask_rollout
 
