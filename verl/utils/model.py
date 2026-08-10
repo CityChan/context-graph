@@ -67,7 +67,14 @@ def update_model_config(module_config, override_config_kwargs):
     """
     for key, val in override_config_kwargs.items():
         if isinstance(val, dict):
-            update_model_config(getattr(module_config, key), val)
+            current = getattr(module_config, key, None)
+            if current is None:
+                # Some HF configs declare optional nested settings (for
+                # example ``rope_scaling``) as None.  In that case there is
+                # no object to recurse into; install the complete mapping.
+                setattr(module_config, key, val)
+            else:
+                update_model_config(current, val)
         else:
             setattr(module_config, key, val)
 
