@@ -125,12 +125,24 @@ else
 fi
 
 TS=$(date +%Y%m%d_%H%M%S)
-EXPERIMENT_NAME="train_foldagent_bc_8b_paperfaithful_5n_48h_${TS}"
+RUN_TAG=${RUN_TAG:-paperfaithful_5n_48h}
+PROMPT_LENGTH=${PROMPT_LENGTH:-8192}
+RESPONSE_LENGTH=${RESPONSE_LENGTH:-32768}
+CONTEXT_LENGTH=${CONTEXT_LENGTH:-40960}
+PPO_MINI_BATCH_SIZE=${PPO_MINI_BATCH_SIZE:-16}
+TRAIN_LR=${TRAIN_LR:-2e-6}
+USE_KL_LOSS=${USE_KL_LOSS:-True}
+ACTOR_KL_LOSS_COEF=${ACTOR_KL_LOSS_COEF:-0.0005}
+ALGORITHM_KL_COEF=${ALGORITHM_KL_COEF:-0.005}
+CLIP_RATIO_LOW=${CLIP_RATIO_LOW:-0.2}
+CLIP_RATIO_HIGH=${CLIP_RATIO_HIGH:-0.2}
+EXPERIMENT_NAME="train_foldagent_bc_8b_${RUN_TAG}_${TS}"
 
 probe() { printf '+++ [%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 
 echo "=============================================================="
-echo "  TRAIN: FoldAgent paper-faithful on BrowseComp-Plus (Qwen3-8B dense, 5 nodes [1 search + 4 trainer], 50 steps, 48h training, 32K-resp)"
+echo "  TRAIN: FoldAgent on BrowseComp-Plus (Qwen3-8B dense, 5 nodes [1 search + 4 trainer], 50 steps, 48h)"
+echo "  Token budget: prompt=$PROMPT_LENGTH response=$RESPONSE_LENGTH active_context=$CONTEXT_LENGTH"
 echo "  Job: ${SLURM_JOB_ID:-<idev>}   Head: $NODE0 ($NODE0_IP)"
 echo "  Worker(s): ${NODELIST[@]:1}"
 echo "  Trainer model:  $MODEL_PATH"
@@ -315,12 +327,12 @@ probe "querying ray status"
 ray status || echo "WARN: ray status check failed"
 
 echo "=============================================================="
-echo "  Launching FoldAgent FoldGRPO paper-faithful (Qwen3-8B dense, 5 nodes [1 search + 4 trainer], 50 steps, BS=32, ppo_mini=128, 32K resp [48h], BrowseComp-Plus)"
-echo "  Paper-faithful knobs: batch=32 (EXACT paper), ppo_mini=128 (EXACT paper, 2 PPO updates/step), turn_max_new_tokens=2048 (paper), session_timeout=3600 (paper), max_traj=11 (paper)"
+echo "  Launching FoldAgent FoldGRPO (Qwen3-8B dense, 5 nodes [1 search + 4 trainer], 50 steps, BS=32, ppo_mini=$PPO_MINI_BATCH_SIZE, context=$CONTEXT_LENGTH [48h], BrowseComp-Plus)"
+echo "  Optimization: lr=$TRAIN_LR use_kl_loss=$USE_KL_LOSS clip=[$CLIP_RATIO_LOW,$CLIP_RATIO_HIGH]"
 echo "  process_reward=[flat,scope] (paper), NO lambda_compact/lambda_cost (paper's 8B script omits these), NO DAPO knobs (paper 8B uses verl defaults)"
 echo "  v2 fix: continuous concise_main penalty (paired with ctxgraph_v3)"
 echo "  vLLM gpu_memory_utilization=0.6 + FSDP CPU offload"
-echo "  val_before_train=True, save_freq=10 (6 ckpts: steps 10/20/.../60), val every 10 steps"
+echo "  val_before_train=True, save_freq=10 (5 ckpts: steps 10/20/.../50), val every 10 steps"
 echo "=============================================================="
 probe "launching trainer (model load + vLLM init typically ~3-5 min)"
 
@@ -329,7 +341,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   --export=ALL,LOCAL_SEARCH_URL="$LOCAL_SEARCH_URL",OPENAI_API_KEY="$OPENAI_API_KEY",JUDGE_MODEL="$JUDGE_MODEL" \
   python -m scripts.train_graph \
   algorithm.adv_estimator=foldgrpo \
-  algorithm.kl_ctrl.kl_coef=0.005 \
+  algorithm.kl_ctrl.kl_coef="$ALGORITHM_KL_COEF" \
   actor_rollout_ref.rollout.agent.default_agent_loop=fold_agent \
   actor_rollout_ref.rollout.name=vllm \
   actor_rollout_ref.rollout.mode=async \
@@ -337,9 +349,9 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   actor_rollout_ref.rollout.calculate_log_probs=True \
   actor_rollout_ref.rollout.gpu_memory_utilization=0.6 \
   actor_rollout_ref.model.path="$MODEL_PATH" \
-  actor_rollout_ref.rollout.prompt_length=8192 \
-  actor_rollout_ref.rollout.response_length=32768 \
-  actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu=40960 \
+  actor_rollout_ref.rollout.prompt_length="$PROMPT_LENGTH" \
+  actor_rollout_ref.rollout.response_length="$RESPONSE_LENGTH" \
+  actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu="$CONTEXT_LENGTH" \
   actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
   actor_rollout_ref.rollout.n=8 \
   actor_rollout_ref.rollout.agent.num_workers=1 \
@@ -351,21 +363,23 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   actor_rollout_ref.ref.fsdp_config.model_dtype=bfloat16 \
   actor_rollout_ref.actor.fsdp_config.param_offload=True \
   actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
-  actor_rollout_ref.actor.optim.lr=2e-6 \
+  actor_rollout_ref.actor.optim.lr="$TRAIN_LR" \
   actor_rollout_ref.actor.optim.weight_decay=0.1 \
-  actor_rollout_ref.actor.use_kl_loss=True \
+  actor_rollout_ref.actor.use_kl_loss="$USE_KL_LOSS" \
+  actor_rollout_ref.actor.clip_ratio_low="$CLIP_RATIO_LOW" \
+  actor_rollout_ref.actor.clip_ratio_high="$CLIP_RATIO_HIGH" \
   actor_rollout_ref.actor.grad_clip=0.5 \
-  actor_rollout_ref.actor.kl_loss_coef=0.0005 \
+  actor_rollout_ref.actor.kl_loss_coef="$ACTOR_KL_LOSS_COEF" \
   data.train_files=data/bc_train.parquet \
   data.val_files=data/bc_test.parquet \
   data.train_batch_size=32 \
-  data.max_prompt_length=8192 \
-  data.max_response_length=32768 \
+  data.max_prompt_length="$PROMPT_LENGTH" \
+  data.max_response_length="$RESPONSE_LENGTH" \
   data.return_raw_chat=True \
-  actor_rollout_ref.actor.ppo_mini_batch_size=16 \
+  actor_rollout_ref.actor.ppo_mini_batch_size="$PPO_MINI_BATCH_SIZE" \
   actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=1 \
-  actor_rollout_ref.actor.ppo_max_token_len_per_gpu=40960 \
-  actor_rollout_ref.actor.ppo_infer_max_token_len_per_gpu=40960 \
+  actor_rollout_ref.actor.ppo_max_token_len_per_gpu="$CONTEXT_LENGTH" \
+  actor_rollout_ref.actor.ppo_infer_max_token_len_per_gpu="$CONTEXT_LENGTH" \
   actor_rollout_ref.model.enable_gradient_checkpointing=True \
   +actor_rollout_ref.rollout.plugin.workflow=search_branch \
   +actor_rollout_ref.rollout.plugin.max_turn=100 \
@@ -375,14 +389,14 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   +actor_rollout_ref.rollout.plugin.val_max_session=10 \
   +actor_rollout_ref.rollout.plugin.session_timeout=3600 \
   +actor_rollout_ref.rollout.plugin.enable_summary=False \
-  +actor_rollout_ref.rollout.plugin.branch_len=32768 \
+  +actor_rollout_ref.rollout.plugin.branch_len="$RESPONSE_LENGTH" \
   +actor_rollout_ref.rollout.plugin.process_reward='[flat,scope]' \
   +actor_rollout_ref.rollout.plugin.max_traj=11 \
   +actor_rollout_ref.rollout.plugin.must_finish=False \
   +actor_rollout_ref.rollout.plugin.double_check=False \
   +actor_rollout_ref.rollout.plugin.must_search=True \
   +actor_rollout_ref.rollout.plugin.val_max_turn=100 \
-  +actor_rollout_ref.rollout.plugin.val_response_length=32768 \
+  +actor_rollout_ref.rollout.plugin.val_response_length="$RESPONSE_LENGTH" \
   trainer.val_before_train=True \
   trainer.val_only=False \
   trainer.n_gpus_per_node=1 \

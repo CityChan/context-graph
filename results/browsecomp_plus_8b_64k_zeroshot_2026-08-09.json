@@ -1,0 +1,55 @@
+{
+  "date": "2026-08-09",
+  "benchmark": "BrowseComp-Plus",
+  "split": "test",
+  "samples": 150,
+  "model": "Qwen/Qwen3-8B",
+  "repository_head": "5b6a07b",
+  "configuration": {
+    "nodes": 4,
+    "trainer_gpus": 3,
+    "prompt_length": 8192,
+    "response_length": 57344,
+    "active_context_length": 65536,
+    "rope_scaling": {
+      "type": "yarn",
+      "factor": 2.0,
+      "original_max_position_embeddings": 32768
+    },
+    "max_sessions": 10,
+    "max_turns": 100,
+    "session_timeout_seconds": 600,
+    "trajectories_per_sample": 1
+  },
+  "results": {
+    "baseline": {
+      "slurm_job": 899659,
+      "correct": 45,
+      "task_accuracy": 0.3,
+      "overlong_count": 40,
+      "overlong_rate": 0.26666666666666666,
+      "average_turns": 16.266666666666666,
+      "reward": 0.3
+    },
+    "foldagent": {
+      "slurm_job": 899660,
+      "correct": 14,
+      "task_accuracy": 0.09333333333333334,
+      "overlong_count": 127,
+      "overlong_rate": 0.8466666666666667,
+      "average_turns": 12.02,
+      "reward": 0.09333333333333334
+    },
+    "contextgraph": {
+      "slurm_job": 899661,
+      "correct": 47,
+      "task_accuracy": 0.31333333333333335,
+      "overlong_count": 11,
+      "overlong_rate": 0.07333333333333333,
+      "average_turns": 24.793333333333333,
+      "reward": 0.2992444477727016,
+      "graph_invalid_op_rate": 0.5555707490677212
+    }
+  }
+}
+

@@ -1,0 +1,30 @@
+#!/bin/bash
+#SBATCH -J train-bc-8b-fa-32k-5n-50s
+#SBATCH -o logs/train-bc-8b-fa-32k-5n-50s.%j.out
+#SBATCH -e logs/train-bc-8b-fa-32k-5n-50s.%j.err
+#SBATCH -p gh
+#SBATCH -N 5
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=72
+#SBATCH -t 48:00:00
+#SBATCH -A AST24021
+
+set -euo pipefail
+
+# Paper-scale optimization and active-context budget. The base script keeps its
+# historical defaults when invoked directly; this entry point supplies the
+# explicit settings for the controlled FoldAgent/ContextGraph comparison.
+export RUN_TAG=foldgrpo_5n_50step_32k_active
+export PROMPT_LENGTH=8192
+export RESPONSE_LENGTH=24576
+export CONTEXT_LENGTH=32768
+export PPO_MINI_BATCH_SIZE=128
+export TRAIN_LR=1e-6
+export USE_KL_LOSS=False
+export ACTOR_KL_LOSS_COEF=0.0
+export ALGORITHM_KL_COEF=0.0
+export CLIP_RATIO_LOW=0.2
+export CLIP_RATIO_HIGH=0.28
+
+exec bash scripts/train_bc_foldagent_8b_paperfaithful_5node_48h.sh
+
