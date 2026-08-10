@@ -17,7 +17,9 @@ export RUN_TAG=foldgrpo_5n_50step_32k_active
 export PROMPT_LENGTH=8192
 export RESPONSE_LENGTH=24576
 export CONTEXT_LENGTH=32768
-export PPO_MINI_BATCH_SIZE=128
+# This fork interprets ppo_mini_batch_size per trainer rank when padding the
+# global batch: 32 per rank x 4 trainer ranks = paper-scale global 128.
+export PPO_MINI_BATCH_SIZE=32
 export TRAIN_LR=1e-6
 export USE_KL_LOSS=False
 export ACTOR_KL_LOSS_COEF=0.0
@@ -26,4 +28,3 @@ export CLIP_RATIO_LOW=0.2
 export CLIP_RATIO_HIGH=0.28
 
 exec bash scripts/train_bc_ctxgraph_8b_paperfaithful_5node_48h.sh
-

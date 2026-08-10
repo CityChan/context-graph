@@ -364,7 +364,7 @@ ray status || echo "WARN: ray status check failed"
 
 echo "=============================================================="
 echo "  Launching FoldAgent FoldGRPO v4 DAPO (30B-A3B Instruct, 8 nodes [1 search + 7 trainer], 50 steps, BS=14, 32K resp [48h], FP8 rollout, BrowseComp-Plus)"
-echo "  v2 fix: continuous concise_main penalty (paired with ctxgraph_v3)"
+echo "  paper fix: fixed Q=-1 concise_main penalty (paired with ctxgraph_v3)"
 echo "  v4 DAPO knobs: clip_high=0.28 (asymmetric), filter_groups=True (dynamic sampling, metric=seq_reward, max_gen=3), kl_coef=0, kl_loss_coef=0"
 echo "  vLLM gpu_memory_utilization=0.55 + FP8 rollout + FSDP CPU offload, BS=14"
 echo "  val_before_train=True, save_freq=10 (6 ckpts: steps 10/20/.../60), val every 10 steps"

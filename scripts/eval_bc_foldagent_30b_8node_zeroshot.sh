@@ -319,7 +319,7 @@ ray status || echo "WARN: ray status check failed"
 
 echo "=============================================================="
 echo "  Launching FoldAgent ZERO-SHOT eval (30B-A3B Thinking, 8 nodes, 32K resp, FP8 rollout, BrowseComp-Plus test=150)"
-echo "  v2 fix: continuous concise_main penalty (paired with ctxgraph_v3)"
+echo "  paper fix: fixed Q=-1 concise_main penalty (paired with ctxgraph_v3)"
 echo "  vLLM gpu_memory_utilization=0.55 + FP8 rollout + FSDP CPU offload"
 echo "  val_before_train=True, save_freq=10 (6 ckpts: steps 10/20/.../60), val every 10 steps"
 echo "=============================================================="

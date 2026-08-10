@@ -848,62 +848,43 @@ async def process_item(
                         if 'flat' in process_reward:
                             agent[name].set_cache('reward', 0)
 
-        if score[1] > 0:
-            GRAPH_OP_MARKERS = ('<function=merge>', '<function=prune>', '<function=select>', '<function=add_edge>')
-            if len(agent['main'].context()) - init_len > config.response_length * 0.5:
-                bad_turn = [i for i, turn in enumerate(agent['main'].messages()) if
-                            '<function=branch>' not in str(turn) and '<function=finish>' not in str(turn)
-                            and not any(m in str(turn) for m in GRAPH_OP_MARKERS)]
-                if bad_turn:
-                    main_msgs = list(agent['main'].messages())
-                    bad_lens = [len(str(main_msgs[i])) for i in bad_turn]
-                    mean_bad_len = max(1.0, sum(bad_lens) / len(bad_lens))
-                    for i, turn_len in zip(bad_turn, bad_lens):
-                        penalty = -max(0.5, min(2.0, turn_len / mean_bad_len))
-                        agent['main'].set_process_reward(i, penalty)
+        # Keep FoldAgent's paper process rewards as the shared base signal for
+        # ContextGraph. Graph-specific outcome shaping is applied separately.
+        GRAPH_OP_MARKERS = ('<function=merge>', '<function=prune>', '<function=select>', '<function=add_edge>')
+        if len(agent['main'].context()) - init_len > config.response_length * 0.5:
+            bad_turn = [i for i, turn in enumerate(agent['main'].messages()) if
+                        '<function=branch>' not in str(turn) and '<function=finish>' not in str(turn)
+                        and not any(m in str(turn) for m in GRAPH_OP_MARKERS)]
+            agent['main'].set_process_reward(bad_turn, -1)
 
-            # In isolated variant, do NOT penalize successful trajectories that
-            # skip graph ops. This lets the agent degenerate to FoldAgent behavior
-            # on simple tasks (no graph ops needed → no penalty → same reward as fold).
-            # Graph ops are encouraged via positive per-turn rewards (merge=+0.2 etc.)
-            # rather than penalizing their absence.
-
-            # Graph reward is now outcome-only (via compute_graph_reward).
-            # Per-turn token-level rewards removed: they caused tiny group std
-            # in GRPO → advantage explosion (±15000) → gradient explosion.
-            # See: usage_bonus in context_graph.py compute_graph_reward().
-
-            if 'scope' in process_reward:
-                env.stats['scope_judge'] = 1
-                for name in branches:
-                    assigned_task = branch_tasks[name]
-                    return_message = branch_return[name]
-                    is_focus, justification = await judge_scope(assigned_task, return_message)
-                    if is_focus < 0:
-                        print(f'[FOCUS] Branch beyond focus: //{name}//. {justification}')
-                        agent[name].set_process_reward([i for i in range(len(agent[name].chat) - 1)], -0.2)
-                        if 'flat' in process_reward:
-                            agent[name].set_cache('reward', 1 - 0.2)
-                        env.stats['scope_judge'] = 0
-                    elif is_focus > 0:
-                        agent[name].set_process_reward([i for i in range(len(agent[name].chat) - 1)], 0.2)
-                        if 'flat' in process_reward:
-                            agent[name].set_cache('reward', 1 + 0.2)
-
+        # In the isolated variant, trajectories that skip graph ops are not
+        # penalized. Graph reward is outcome-only via compute_graph_reward().
+        if 'scope' in process_reward:
+            env.stats['scope_judge'] = 1
             for name in branches:
-                for i, turn in enumerate(agent[name].chat):
-                    ERR_MARKERS = (
-                        'Failed to validate tool call',
-                        'Failed to parse tool call',
-                        'You are in branch mode and cannot branch task or finish the task.',
-                        'No function call was detected in the model response',
-                        '[Error] The "search" function requires a "query" argument',
-                        '[Error] The "open_page" function requires either a "docid" or a "url".',
-                        '[Error] The function',
-                    )
-                    if any(m in str(turn) for m in ERR_MARKERS):
-                        agent[name].set_process_reward(i - 1, -1)
-        else:
+                assigned_task = branch_tasks[name]
+                return_message = branch_return.get(name, '')
+                is_focus, justification = await judge_scope(assigned_task, return_message)
+                if is_focus < 0:
+                    print(f'[FOCUS] Branch beyond focus: //{name}//. {justification}')
+                    agent[name].set_process_reward([i for i in range(len(agent[name].chat) - 1)], -0.2)
+                    env.stats['scope_judge'] = 0
+
+        ERR_MARKERS = (
+            'Failed to validate tool call',
+            'Failed to parse tool call',
+            'You are in branch mode and cannot branch task or finish the task.',
+            'No function call was detected in the model response',
+            '[Error] The "search" function requires a "query" argument',
+            '[Error] The "open_page" function requires either a "docid" or a "url".',
+            '[Error] The function',
+        )
+        for name in agent:
+            for i, turn in enumerate(agent[name].chat):
+                if any(m in str(turn) for m in ERR_MARKERS):
+                    agent[name].set_process_reward(max(i - 1, 0), -1)
+
+        if score[1] <= 0:
             is_finish = getattr(env, 'is_finish', False) or getattr(env, 'finish', False)
             if 'drop_fail' in process_reward:
                 if not is_finish:
@@ -921,7 +902,7 @@ async def process_item(
                         else:
                             agent.pop(name)
 
-            if 'reward_scope' in process_reward:
+            if 'reward_scope' in process_reward and 'scope' not in process_reward:
                 env.stats['scope_judge'] = 1
                 for name in branches:
                     if name not in agent:

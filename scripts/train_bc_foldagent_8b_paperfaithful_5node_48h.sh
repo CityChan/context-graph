@@ -130,6 +130,12 @@ PROMPT_LENGTH=${PROMPT_LENGTH:-8192}
 RESPONSE_LENGTH=${RESPONSE_LENGTH:-32768}
 CONTEXT_LENGTH=${CONTEXT_LENGTH:-40960}
 PPO_MINI_BATCH_SIZE=${PPO_MINI_BATCH_SIZE:-16}
+TRAIN_BATCH_SIZE=${TRAIN_BATCH_SIZE:-32}
+ROLLOUT_N=${ROLLOUT_N:-8}
+TOTAL_TRAINING_STEPS=${TOTAL_TRAINING_STEPS:-50}
+VAL_BEFORE_TRAIN=${VAL_BEFORE_TRAIN:-True}
+TEST_FREQ=${TEST_FREQ:-10}
+SAVE_FREQ=${SAVE_FREQ:-10}
 TRAIN_LR=${TRAIN_LR:-2e-6}
 USE_KL_LOSS=${USE_KL_LOSS:-True}
 ACTOR_KL_LOSS_COEF=${ACTOR_KL_LOSS_COEF:-0.0005}
@@ -141,7 +147,7 @@ EXPERIMENT_NAME="train_foldagent_bc_8b_${RUN_TAG}_${TS}"
 probe() { printf '+++ [%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 
 echo "=============================================================="
-echo "  TRAIN: FoldAgent on BrowseComp-Plus (Qwen3-8B dense, 5 nodes [1 search + 4 trainer], 50 steps, 48h)"
+echo "  TRAIN: FoldAgent on BrowseComp-Plus (Qwen3-8B dense, 5 nodes [1 search + 4 trainer], $TOTAL_TRAINING_STEPS steps, 48h)"
 echo "  Token budget: prompt=$PROMPT_LENGTH response=$RESPONSE_LENGTH active_context=$CONTEXT_LENGTH"
 echo "  Job: ${SLURM_JOB_ID:-<idev>}   Head: $NODE0 ($NODE0_IP)"
 echo "  Worker(s): ${NODELIST[@]:1}"
@@ -327,19 +333,19 @@ probe "querying ray status"
 ray status || echo "WARN: ray status check failed"
 
 echo "=============================================================="
-echo "  Launching FoldAgent FoldGRPO (Qwen3-8B dense, 5 nodes [1 search + 4 trainer], 50 steps, BS=32, ppo_mini=$PPO_MINI_BATCH_SIZE, context=$CONTEXT_LENGTH [48h], BrowseComp-Plus)"
+echo "  Launching FoldAgent FoldGRPO (Qwen3-8B dense, 5 nodes [1 search + 4 trainer], $TOTAL_TRAINING_STEPS steps, BS=$TRAIN_BATCH_SIZE, rollout_n=$ROLLOUT_N, ppo_mini/rank=$PPO_MINI_BATCH_SIZE, context=$CONTEXT_LENGTH [48h], BrowseComp-Plus)"
 echo "  Optimization: lr=$TRAIN_LR use_kl_loss=$USE_KL_LOSS clip=[$CLIP_RATIO_LOW,$CLIP_RATIO_HIGH]"
 echo "  process_reward=[flat,scope] (paper), NO lambda_compact/lambda_cost (paper's 8B script omits these), NO DAPO knobs (paper 8B uses verl defaults)"
-echo "  v2 fix: continuous concise_main penalty (paired with ctxgraph_v3)"
+echo "  FoldAgent process rewards: binary terminal R; Q=-1 overlong/tool error, Q=-0.2 out-of-scope"
 echo "  vLLM gpu_memory_utilization=0.6 + FSDP CPU offload"
-echo "  val_before_train=True, save_freq=10 (5 ckpts: steps 10/20/.../50), val every 10 steps"
+echo "  val_before_train=$VAL_BEFORE_TRAIN, save_freq=$SAVE_FREQ, val every $TEST_FREQ steps"
 echo "=============================================================="
 probe "launching trainer (model load + vLLM init typically ~3-5 min)"
 
 set +e
 srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_ROOT" \
   --export=ALL,LOCAL_SEARCH_URL="$LOCAL_SEARCH_URL",OPENAI_API_KEY="$OPENAI_API_KEY",JUDGE_MODEL="$JUDGE_MODEL" \
-  python -m scripts.train_graph \
+  python -m scripts.train_fold \
   algorithm.adv_estimator=foldgrpo \
   algorithm.kl_ctrl.kl_coef="$ALGORITHM_KL_COEF" \
   actor_rollout_ref.rollout.agent.default_agent_loop=fold_agent \
@@ -353,7 +359,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   actor_rollout_ref.rollout.response_length="$RESPONSE_LENGTH" \
   actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu="$CONTEXT_LENGTH" \
   actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
-  actor_rollout_ref.rollout.n=8 \
+  actor_rollout_ref.rollout.n="$ROLLOUT_N" \
   actor_rollout_ref.rollout.agent.num_workers=1 \
   actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=1 \
   actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=1 \
@@ -372,7 +378,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   actor_rollout_ref.actor.kl_loss_coef="$ACTOR_KL_LOSS_COEF" \
   data.train_files=data/bc_train.parquet \
   data.val_files=data/bc_test.parquet \
-  data.train_batch_size=32 \
+  data.train_batch_size="$TRAIN_BATCH_SIZE" \
   data.max_prompt_length="$PROMPT_LENGTH" \
   data.max_response_length="$RESPONSE_LENGTH" \
   data.return_raw_chat=True \
@@ -397,13 +403,13 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   +actor_rollout_ref.rollout.plugin.must_search=True \
   +actor_rollout_ref.rollout.plugin.val_max_turn=100 \
   +actor_rollout_ref.rollout.plugin.val_response_length="$RESPONSE_LENGTH" \
-  trainer.val_before_train=True \
+  trainer.val_before_train="$VAL_BEFORE_TRAIN" \
   trainer.val_only=False \
   trainer.n_gpus_per_node=1 \
   trainer.nnodes=$((NUM_NODES - 1)) \
-  trainer.total_training_steps=50 \
-  trainer.test_freq=10 \
-  trainer.save_freq=10 \
+  trainer.total_training_steps="$TOTAL_TRAINING_STEPS" \
+  trainer.test_freq="$TEST_FREQ" \
+  trainer.save_freq="$SAVE_FREQ" \
   trainer.default_local_dir=${SCRATCH:-/scratch/09281/chc_1996}/context-graph-ckpts/$EXPERIMENT_NAME \
   trainer.project_name=context-graph \
   trainer.experiment_name="$EXPERIMENT_NAME" \

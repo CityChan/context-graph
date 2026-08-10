@@ -494,13 +494,7 @@ async def process_item(
                 bad_turn = [i for i, turn in enumerate(agent['main'].messages()) if
                             '<function=branch>' not in str(turn) and '<function=finish>' not in str(turn)
                             and not any(m in str(turn) for m in GRAPH_OP_MARKERS)]
-                if bad_turn:
-                    main_msgs = list(agent['main'].messages())
-                    bad_lens = [len(str(main_msgs[i])) for i in bad_turn]
-                    mean_bad_len = max(1.0, sum(bad_lens) / len(bad_lens))
-                    for i, turn_len in zip(bad_turn, bad_lens):
-                        penalty = -max(0.5, min(2.0, turn_len / mean_bad_len))
-                        agent['main'].set_process_reward(i, penalty)
+                agent['main'].set_process_reward(bad_turn, -1)
 
             # Penalize no branching AND no graph ops (should use structure)
             has_graph_ops = graph.operation_count > len(graph.nodes)  # More ops than auto-adds
