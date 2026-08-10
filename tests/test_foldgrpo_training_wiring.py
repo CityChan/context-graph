@@ -76,3 +76,17 @@ def test_foldagent_entrypoint_and_one_step_smokes_use_production_paths():
         assert "export ROLLOUT_N=2" in source
         assert "export PPO_MINI_BATCH_SIZE=2" in source
         assert f"exec bash {base}" in source
+
+
+def test_training_waits_until_search_is_actually_ready():
+    for script in (
+        "scripts/train_bc_foldagent_8b_paperfaithful_5node_48h.sh",
+        "scripts/train_bc_ctxgraph_8b_paperfaithful_5node_48h.sh",
+    ):
+        source = _read(script)
+        assert "BC_SEARCH_TIMEOUT_SECONDS=${BC_SEARCH_TIMEOUT_SECONDS:-600}" in source
+        assert 'probe "waiting for search server /search probe' in source
+        assert 'for _ in $(seq 1 "$BC_SEARCH_TIMEOUT_SECONDS"); do' in source
+        assert "SEARCH_OK=1" in source
+        assert 'if [ "$SEARCH_OK" != "1" ]; then' in source
+        assert 'kill -0 "$SEARCH_PID"' in source

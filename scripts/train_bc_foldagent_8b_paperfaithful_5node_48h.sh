@@ -136,6 +136,7 @@ TOTAL_TRAINING_STEPS=${TOTAL_TRAINING_STEPS:-50}
 VAL_BEFORE_TRAIN=${VAL_BEFORE_TRAIN:-True}
 TEST_FREQ=${TEST_FREQ:-10}
 SAVE_FREQ=${SAVE_FREQ:-10}
+BC_SEARCH_TIMEOUT_SECONDS=${BC_SEARCH_TIMEOUT_SECONDS:-600}
 TRAIN_LR=${TRAIN_LR:-2e-6}
 USE_KL_LOSS=${USE_KL_LOSS:-True}
 ACTOR_KL_LOSS_COEF=${ACTOR_KL_LOSS_COEF:-0.0005}
@@ -233,16 +234,44 @@ srun --overlap --nodes=1 --ntasks=1 -w "$SEARCH_NODE" bash -c "
 " >/tmp/hp_server_$$.log 2>&1 &
 SEARCH_PID=$!
 
-probe "waiting for search server /health (up to 240s)"
-for i in $(seq 1 120); do
+probe "waiting for search server /health (up to ${BC_SEARCH_TIMEOUT_SECONDS}s)"
+HEALTH_OK=0
+for _ in $(seq 1 "$BC_SEARCH_TIMEOUT_SECONDS"); do
   if curl -fsS "http://${SEARCH_NODE_IP}:18999/health" >/dev/null 2>&1; then
+    HEALTH_OK=1
     break
   fi
-  sleep 2
+  if ! kill -0 "$SEARCH_PID" 2>/dev/null; then
+    echo "ERROR: search server exited before becoming healthy. Last 80 lines:"
+    tail -80 /tmp/hp_server_$$.log || true
+    exit 1
+  fi
+  sleep 1
 done
-if ! curl -fsS -X POST -H 'Content-Type: application/json' \
-        -d '{"query":"Eiffel Tower","k":1}' \
-        "http://${SEARCH_NODE_IP}:18999/search" >/dev/null; then
+if [ "$HEALTH_OK" != "1" ]; then
+  echo "ERROR: search server did not become healthy within ${BC_SEARCH_TIMEOUT_SECONDS}s. Last 80 lines:"
+  tail -80 /tmp/hp_server_$$.log || true
+  kill "$SEARCH_PID" 2>/dev/null || true
+  exit 1
+fi
+
+probe "waiting for search server /search probe (up to ${BC_SEARCH_TIMEOUT_SECONDS}s)"
+SEARCH_OK=0
+for _ in $(seq 1 "$BC_SEARCH_TIMEOUT_SECONDS"); do
+  if curl -fsS -X POST -H 'Content-Type: application/json' \
+      -d '{"query":"Eiffel Tower","k":1}' \
+      "http://${SEARCH_NODE_IP}:18999/search" >/dev/null 2>&1; then
+    SEARCH_OK=1
+    break
+  fi
+  if ! kill -0 "$SEARCH_PID" 2>/dev/null; then
+    echo "ERROR: search server exited before /search probe succeeded. Last 80 lines:"
+    tail -80 /tmp/hp_server_$$.log || true
+    exit 1
+  fi
+  sleep 1
+done
+if [ "$SEARCH_OK" != "1" ]; then
   echo "ERROR: search server not reachable at ${SEARCH_NODE_IP}:18999. Last 80 lines:"
   tail -80 /tmp/hp_server_$$.log || true
   kill "$SEARCH_PID" 2>/dev/null || true
