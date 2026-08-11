@@ -157,3 +157,9 @@ def test_sab_eval_agents_emit_explicit_termination_metrics():
             "termination_reason",
         ):
             assert f"'{field}': rollout_status['{field}']" in source
+
+
+def test_sab_method_comparison_uses_a_fixed_sample_seed():
+    source = _read("scripts/eval_sab_react_8b_4node_smoke.sh")
+    assert "SAB_DATA_SEED=${SAB_DATA_SEED:-42}" in source
+    assert "data.seed=$SAB_DATA_SEED" in source

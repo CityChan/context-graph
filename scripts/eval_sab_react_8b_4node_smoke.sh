@@ -206,6 +206,7 @@ TRAIN_BATCH_SIZE=${TRAIN_BATCH_SIZE:-$NUM_NODES}
 PPO_MINI_BATCH_SIZE=${PPO_MINI_BATCH_SIZE:-$TRAIN_BATCH_SIZE}
 SAB_VAL_MAX_SAMPLES=${SAB_VAL_MAX_SAMPLES:--1}
 SAB_TRAIN_MAX_SAMPLES=${SAB_TRAIN_MAX_SAMPLES:--1}
+SAB_DATA_SEED=${SAB_DATA_SEED:-42}
 SAB_PROMPT_LENGTH=${SAB_PROMPT_LENGTH:-16384}
 if [ "$SAB_RUN_TAG" = "formal" ]; then
   SAB_RESPONSE_LENGTH=${SAB_RESPONSE_LENGTH:-24576}
@@ -326,7 +327,7 @@ echo "  Experiment:     $EXPERIMENT_NAME"
 echo "  Sandbox workdir root: $SAB_WORKDIR_ROOT"
 echo "  Logger: ${probe_msg}"
 echo "  Batch sizes:    train=$TRAIN_BATCH_SIZE ppo_mini=$PPO_MINI_BATCH_SIZE"
-echo "  Sample caps:    val=$SAB_VAL_MAX_SAMPLES train=$SAB_TRAIN_MAX_SAMPLES"
+echo "  Sample caps:    val=$SAB_VAL_MAX_SAMPLES train=$SAB_TRAIN_MAX_SAMPLES seed=$SAB_DATA_SEED"
 echo "  Token caps:     prompt=$SAB_PROMPT_LENGTH response=$SAB_RESPONSE_LENGTH max_token_gpu=$SAB_MAX_TOKEN_LEN_PER_GPU"
 echo "  Turn caps:      val_max_turn=$SAB_VAL_MAX_TURN turn_max_new_tokens=$SAB_TURN_MAX_NEW_TOKENS"
 echo "  Method config:  agent_loop=$SAB_AGENT_LOOP workflow=$SAB_WORKFLOW process_reward=$SAB_PROCESS_REWARD"
@@ -561,6 +562,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   data.train_files=$SAB_DATA_FILE \
   data.val_files=$SAB_DATA_FILE \
   data.train_batch_size=$TRAIN_BATCH_SIZE \
+  data.seed=$SAB_DATA_SEED \
   data.train_max_samples=$SAB_TRAIN_MAX_SAMPLES \
   data.val_max_samples=$SAB_VAL_MAX_SAMPLES \
   data.max_prompt_length=$SAB_PROMPT_LENGTH \
