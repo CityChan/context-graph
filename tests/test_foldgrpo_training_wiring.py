@@ -32,6 +32,22 @@ def test_foldagent_uses_paper_process_rewards_on_all_outcomes():
     assert "elif is_focus > 0" not in section
     assert "set_cache('reward'" not in section
     assert "for name in agent:" in section
+    assert "'<function=finish>' not in str(turn)" not in section
+
+
+def test_foldagent_training_selects_paper_advantage_formula():
+    source = _read("scripts/train_bc_foldagent_8b_paperfaithful_5node_48h.sh")
+    assert "algorithm.foldgrpo_process_reward_mode=paper" in source
+
+    trainer = _read("verl/trainer/ppo/ray_trainer.py")
+    assert "config=config" in trainer
+
+    reward_manager = _read("verl/workers/reward_manager/agent.py")
+    assert 'data.non_tensor_batch.get("mask_rollout"' not in reward_manager
+
+    trainer = _read("verl/trainer/ppo/ray_trainer.py")
+    assert "'overlong_masked'" not in trainer
+    assert "'optimization_masked_rollouts'" in trainer
 
 
 def test_contextgraph_inherits_the_same_paper_base_signal():

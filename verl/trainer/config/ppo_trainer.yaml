@@ -122,6 +122,9 @@ algorithm:
   # Overlong mask 
   mask_overlong: True
 
+  # FoldGRPO process reward: paper | relative_extrema
+  foldgrpo_process_reward_mode: relative_extrema
+
   # Whether to fix bad positive advantages
   fix_bad_positive_adv: False
 

@@ -385,7 +385,8 @@ def compute_foldgrpo_advantage(
             shape is (bs, response_length)
     """
     response_length = token_level_rewards.shape[-1]
-    scores = token_level_rewards.sum(dim=-1)
+    terminal_scores = token_level_rewards.sum(dim=-1)
+    scores = terminal_scores.clone()
     metrics = {}
     id2score = defaultdict(list)
     id2gen_uid = defaultdict(list)
@@ -424,8 +425,8 @@ def compute_foldgrpo_advantage(
         degenerate_idxs = set()
         for idx in id2score:
             if len(id2score[idx]) == 1:
-                id2mean[idx] = torch.tensor(0.0)
-                id2std[idx] = torch.tensor(1.0)
+                id2mean[idx] = id2score[idx][0]
+                id2std[idx] = torch.zeros_like(id2score[idx][0])
                 degenerate_idxs.add(idx)  # single-sample group: no group signal
             elif len(id2score[idx]) > 1:
                 scores_tensor = torch.stack(id2score[idx])
@@ -437,6 +438,55 @@ def compute_foldgrpo_advantage(
                 raise ValueError(f"no score in prompt index: {idx}")
         if degenerate_idxs:
             print(f"[FOLDGRPO] degenerate groups (std≈0): {len(degenerate_idxs)} / {len(id2score)}")
+
+        process_reward_mode = (
+            config.get("foldgrpo_process_reward_mode", "relative_extrema")
+            if config is not None else "relative_extrema"
+        )
+        if process_reward_mode not in {"paper", "relative_extrema"}:
+            raise ValueError(
+                "foldgrpo_process_reward_mode must be 'paper' or "
+                f"'relative_extrema', got {process_reward_mode!r}"
+            )
+
+        if process_reward_mode == "paper":
+            # FoldAgent Eq. (3): terminal task reward R_i stays binary and
+            # token process reward Q_{i,t} modifies the token target before
+            # group normalization. Degenerate groups use a unit denominator:
+            # Q=0 tokens remain zero advantage while an explicit process
+            # penalty still supplies a finite learning signal.
+            q = (
+                torch.zeros_like(token_level_rewards, dtype=torch.float32)
+                if process_reward_mask is None
+                else process_reward_mask.to(torch.float32)
+            )
+            group_means = torch.stack([id2mean[k] for k in index]).to(terminal_scores.device)
+            group_stds = torch.stack([id2std[k] for k in index]).to(terminal_scores.device)
+            if norm_adv_by_std_in_grpo:
+                denom = torch.where(
+                    torch.isfinite(group_stds) & (group_stds >= STD_DEGEN_THRESHOLD),
+                    group_stds + epsilon,
+                    torch.ones_like(group_stds),
+                )
+            else:
+                denom = torch.ones_like(group_stds)
+
+            adjusted = torch.clamp(terminal_scores.unsqueeze(1) + q, 0.0, 1.0)
+            token_advantages = (
+                adjusted - group_means.unsqueeze(1)
+            ) / denom.unsqueeze(1)
+            if fix_bad_positive_adv:
+                bad_positive = (raw_scores < 0).unsqueeze(1) & (token_advantages > 0)
+                token_advantages = torch.where(
+                    bad_positive, torch.zeros_like(token_advantages), token_advantages
+                )
+            token_advantages = torch.clamp(token_advantages, -5.0, 5.0)
+            token_advantages = torch.nan_to_num(
+                token_advantages, nan=0.0, posinf=5.0, neginf=-5.0
+            )
+            scores = token_advantages * response_mask
+            return scores, scores
+
         for i in range(bsz):
             if index[i] in degenerate_idxs:
                 # Zero-out advantage for degenerate groups so they contribute no

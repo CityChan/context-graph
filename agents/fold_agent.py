@@ -10,6 +10,7 @@ from typing import Any, Union
 
 from verl import DataProto
 from .utils import Agent, select_env, truncate_text, is_weird, TaskContext, run_action, AgentLoopOutput, AgentLoopMetrics
+from .rollout_status import classify_rollout_status
 from .prompts import create_chat, BRANCH_MESSAGE_SEARCH, BRANCH_MESSAGE, SUMMARY_PROMPT_CODE, SUMMARY_PROMPT_SEARCH
 from .verifier import judge_scope
 
@@ -119,10 +120,12 @@ async def process_item(
     session_start_time = time.time()
     iteration = 0
     mask_rollout = True  # If True then no grad update on this traj
+    timed_out = False
     session_message = []
     while iteration < max_turn:
         if time.time() - session_start_time > session_timeout:
             print('[SESSION] Session Timeout')
+            timed_out = True
             break
 
         iteration += 1
@@ -236,7 +239,12 @@ async def process_item(
     # both runs for apples-to-apples task-accuracy comparison.
     env.stats['task_reward'] = float(score[1])
     env.stats['traj_num'] = len(agent)
-    env.stats['main_len'] = min(len(agent['main'].context()) - init_len, config.response_length)
+    main_response_tokens = max(len(agent['main'].context()) - init_len, 0)
+    main_context_tokens = len(agent['main'].context())
+    working_context_limit = config.prompt_length + config.response_length
+    env.stats['main_len'] = min(main_response_tokens, config.response_length)
+    env.stats['main_context_tokens'] = main_context_tokens
+    env.stats['working_context_limit'] = working_context_limit
     env.stats['total_token'] = len(tokenizer.encode(print_chat(user_prompt + session_message)))
     env.stats['main_turn'] = len(agent['main'].messages())
     env.stats['is_branch'] = int(len(agent) > 1)
@@ -249,13 +257,24 @@ async def process_item(
         mask_rollout = False
 
     is_finish = getattr(env, 'is_finish', False) or getattr(env, 'finish', False)
+    rollout_status = classify_rollout_status(
+        response_tokens=main_response_tokens,
+        response_limit=config.response_length,
+        main_context_tokens=main_context_tokens,
+        working_context_limit=working_context_limit,
+        is_finish=is_finish,
+        iteration=iteration,
+        max_turn=max_turn,
+        timed_out=timed_out,
+    )
+    env.stats.update({k: v for k, v in rollout_status.items() if k != 'termination_reason'})
+    env.stats['concise_main'] = 1 - rollout_status['unfolded_main']
     if getattr(config.plugin, "must_finish", None):
         if not is_finish:
             score = ('', 0)
 
     if process_reward and is_train:
         mask_rollout = False
-        env.stats['concise_main'] = int(len(agent['main'].context()) - init_len <= config.response_length * 0.5)
         if 'cjk' in process_reward:
             env.stats['is_cjk'] = 0
             for name in agent:
@@ -270,9 +289,9 @@ async def process_item(
         # FoldAgent paper process rewards are behavior-level signals. They apply
         # to both successful and failed trajectories, while the terminal reward
         # remains the binary task outcome.
-        if len(agent['main'].context()) - init_len > config.response_length * 0.5:
+        if rollout_status['unfolded_main']:
             bad_turn = [i for i, turn in enumerate(agent['main'].messages()) if
-                        '<function=branch>' not in str(turn) and '<function=finish>' not in str(turn)]
+                        '<function=branch>' not in str(turn)]
             agent['main'].set_process_reward(bad_turn, -1)
 
         # The paper defines only an out-of-scope penalty (-0.2), not a positive
@@ -362,6 +381,13 @@ async def process_item(
                 'num_branches': len(branches),
                 'branch_names': branches,
                 'mask_rollout': mask_rollout,
+                'overlong': rollout_status['overlong'],
+                'no_finish': rollout_status['no_finish'],
+                'hit_token_limit': rollout_status['hit_token_limit'],
+                'hit_max_turn': rollout_status['hit_max_turn'],
+                'hit_timeout': rollout_status['hit_timeout'],
+                'unfolded_main': rollout_status['unfolded_main'],
+                'termination_reason': rollout_status['termination_reason'],
                 'is_finish': is_finish,
                 'agent_name': name,
                 'message_str': print_chat(session_message),

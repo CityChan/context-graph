@@ -255,6 +255,7 @@ def compute_advantage(
             fix_bad_positive_adv=fix_bad_positive_adv,
             process_reward_mask=data.batch["process_reward_mask"],
             raw_token_level_scores=token_level_rewards if fix_bad_positive_adv else None,
+            config=config,
         )
         data.batch["advantages"] = advantages
         data.batch["returns"] = returns
@@ -1139,11 +1140,14 @@ class RayPPOTrainer:
                     if "response_mask" not in batch.batch.keys():
                         batch.batch["response_mask"] = compute_response_mask(batch)
 
-                    # TODO@Miao[DONE]: set overlong mask (batch.barch) according to mask_rollout (batch,non_tensor_batch)
-                    # TODO@Miao[Done]: Add mask_overlong config
+                    # mask_rollout is an optimization decision supplied by the
+                    # agent loop. It is independent from explicit termination
+                    # metrics such as overlong/token_limit/no_finish.
                     if self.config.algorithm.mask_overlong:
                         batch.batch["overlong_mask"] = (~(batch.batch["mask_rollout"]).bool()).int()
-                        metrics.update({'overlong_masked': batch.batch["mask_rollout"].sum().item()})
+                        metrics.update({
+                            'optimization_masked_rollouts': batch.batch["mask_rollout"].sum().item()
+                        })
 
                     # TODO@Miao[DONE]: pad batch size to muliplicative of mini_batch_size
                     if len(batch) % (self.config.actor_rollout_ref.actor.ppo_mini_batch_size * self.config.trainer.nnodes) != 0:

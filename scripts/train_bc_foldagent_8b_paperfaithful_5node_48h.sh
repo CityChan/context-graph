@@ -419,6 +419,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   actor_rollout_ref.actor.clip_ratio_high="$CLIP_RATIO_HIGH" \
   actor_rollout_ref.actor.grad_clip=0.5 \
   actor_rollout_ref.actor.kl_loss_coef="$ACTOR_KL_LOSS_COEF" \
+  algorithm.foldgrpo_process_reward_mode=paper \
   data.train_files=data/bc_train.parquet \
   data.val_files=data/bc_test.parquet \
   data.train_batch_size="$TRAIN_BATCH_SIZE" \

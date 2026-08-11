@@ -463,6 +463,10 @@ class AlgoConfig(BaseConfig):
     rollout_correction: Optional[RolloutCorrectionConfig] = None
     # Overlong mask 
     mask_overlong: bool = True
+    # FoldGRPO token process-reward rule. ``paper`` implements
+    # A_{i,t} = (clip(R_i + Q_{i,t}, 0, 1) - mean_g(R)) / std_g(R).
+    # ``relative_extrema`` preserves the project-specific mapping used by
+    # ContextGraph's non-binary composite reward.
+    foldgrpo_process_reward_mode: str = "relative_extrema"
     # Whether to fix bad positive advantages
     fix_bad_positive_adv: bool = False
-

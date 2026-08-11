@@ -118,7 +118,7 @@ class AgentLoopRewardManager(AbstractRewardManager):
         - Std/min/max
         - Number of unique gen_uids
         - Average trajectories per gen_uid
-        - Overlong rate across unique gen_uids (any trajectory masked)
+        - Explicit termination rates across unique gen_uids
         - Average num turns (mean over per-gen_uid max of num_turns)
         """
         gen_uid_list = data.non_tensor_batch.get("gen_uid")
@@ -130,6 +130,7 @@ class AgentLoopRewardManager(AbstractRewardManager):
             x.item() if isinstance(x, np.ndarray) and x.ndim == 0 else x
             for x in gen_uid_list
         ]
+        keep_indices = list(range(len(gen_uid_list)))
 
         # Exclude dummy trajectories by exact gen_uid match (single UUID)
         gen_uid_dummy = data.meta_info.get("gen_uid_dummy", None)
@@ -142,6 +143,13 @@ class AgentLoopRewardManager(AbstractRewardManager):
             gen_uid_list = [gen_uid_list[i] for i in keep_indices]
             per_sample_scores = [per_sample_scores[i] for i in keep_indices]
             print("exclude dummy gen_uid", gen_uid_dummy, "num of kept trajectories", len(keep_indices))
+
+        def _kept_values(key: str) -> list[Any] | None:
+            raw = data.non_tensor_batch.get(key, None)
+            if raw is None:
+                return None
+            values = raw.tolist() if hasattr(raw, "tolist") else list(raw)
+            return [values[i] for i in keep_indices if i < len(values)]
 
         gen_uid_to_scores: dict[Any, list[float]] = defaultdict(list)
         for gen_uid, score in zip(gen_uid_list, per_sample_scores):
@@ -164,20 +172,34 @@ class AgentLoopRewardManager(AbstractRewardManager):
         num_unique_gen_uids = len(gen_uid_to_scores)
         avg_trajs_per_gen_uid = _safe_mean([len(v) for v in gen_uid_to_scores.values()]) if gen_uid_to_scores else 0.0
 
-        overlong = data.non_tensor_batch.get("mask_rollout", None)
-        overlong_rate = None
-        if overlong is not None:
-            overlong_list = overlong.tolist() if hasattr(overlong, "tolist") else list(overlong)
-            gen_uid_to_overlong_any: dict[Any, bool] = defaultdict(lambda: False)
-            for gen_uid, flag in zip(gen_uid_list, overlong_list):
-                gen_uid_to_overlong_any[gen_uid] = bool(gen_uid_to_overlong_any[gen_uid] or flag)
-            overlong_rate = _safe_mean([float(v) for v in gen_uid_to_overlong_any.values()])
+        # Termination metrics must come from explicit agent-loop flags.  In
+        # particular, mask_rollout is an optimization keep/drop decision and
+        # must never be reported as overlong.
+        termination_rates: dict[str, float | None] = {}
+        for source_key, metric_key in (
+            ("overlong", "overlong_rate"),
+            ("no_finish", "no_finish_rate"),
+            ("hit_token_limit", "token_limit_rate"),
+            ("hit_max_turn", "max_turn_rate"),
+            ("hit_timeout", "timeout_rate"),
+            ("unfolded_main", "unfolded_main_rate"),
+            ("is_finish", "finish_rate"),
+        ):
+            values = _kept_values(source_key)
+            if values is None:
+                termination_rates[metric_key] = None
+                continue
+            gen_uid_to_any: dict[Any, bool] = defaultdict(lambda: False)
+            for gen_uid, flag in zip(gen_uid_list, values):
+                gen_uid_to_any[gen_uid] = bool(gen_uid_to_any[gen_uid] or flag)
+            termination_rates[metric_key] = _safe_mean(
+                [float(v) for v in gen_uid_to_any.values()]
+            )
 
         # Num turns: sum across trajectories per gen_uid
-        num_turns_list = data.non_tensor_batch.get("__num_turns__", None)
+        num_turns_list = _kept_values("__num_turns__")
         avg_num_turns = None
         if num_turns_list is not None:
-            num_turns_list = num_turns_list.tolist() if hasattr(num_turns_list, "tolist") else list(num_turns_list)
             gen_uid_to_num_turns: dict[Any, list[float]] = defaultdict(list)
             for gen_uid, nt in zip(gen_uid_list, num_turns_list):
                 gen_uid_to_num_turns[gen_uid].append(float(nt))
@@ -193,9 +215,9 @@ class AgentLoopRewardManager(AbstractRewardManager):
             "max_score": repeat(max_score),
             "num_unique_gen_uids": repeat(float(num_unique_gen_uids)),
             "avg_trajs_per_gen_uid": repeat(avg_trajs_per_gen_uid),
-            "overlong_rate": repeat(overlong_rate),
             "avg_num_turns": repeat(avg_num_turns),
         }
+        reward_extra_info.update({k: repeat(v) for k, v in termination_rates.items()})
 
         # Lift selected env_stats fields (set by the agent loop, packaged into
         # non_tensor_batch by agent_loop.py:720) into reward_extra_info so they
@@ -213,7 +235,10 @@ class AgentLoopRewardManager(AbstractRewardManager):
                       "graph_op_attempts", "graph_explicit_ops",
                       "graph_invalid_ops", "graph_invalid_op_rate",
                       "main_turn", "is_branch", "branch_success",
-                      "concise_main", "scope_judge",
+                      "main_context_tokens", "working_context_limit",
+                      "concise_main", "scope_judge", "overlong", "no_finish",
+                      "hit_token_limit", "hit_max_turn", "hit_timeout",
+                      "unfolded_main",
                       # SAB real-eval valid-execution rate (VER) + output count;
                       # the 8B-zero-shot signal once SR floors to 0
                       "valid_execution", "produced_files",
