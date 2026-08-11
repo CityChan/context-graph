@@ -17,6 +17,7 @@ from uuid import uuid4
 
 from verl import DataProto
 from .utils import Agent, select_env, TaskContext, run_action, AgentLoopOutput, AgentLoopMetrics
+from .rollout_status import classify_rollout_status
 from .prompts_code import create_chat_code
 
 
@@ -61,6 +62,7 @@ async def process_item(
     prompt_turn = len(user_prompt)
 
     agent = Agent(llm_client, user_prompt, tokenizer, config, prompt_turn=prompt_turn)
+    init_len = len(agent.context())
     iteration = 0
     natural_finish = False
     while iteration < max_turn:
@@ -91,10 +93,28 @@ async def process_item(
 
     if not hasattr(env, 'stats') or env.stats is None:
         env.stats = {}
+    main_response_tokens = max(len(agent.context()) - init_len, 0)
+    main_context_tokens = len(agent.context())
+    working_context_limit = config.prompt_length + config.response_length
+    rollout_status = classify_rollout_status(
+        response_tokens=main_response_tokens,
+        response_limit=config.response_length,
+        main_context_tokens=main_context_tokens,
+        working_context_limit=working_context_limit,
+        is_finish=is_finish,
+        iteration=iteration,
+        max_turn=max_turn,
+        timed_out=False,
+    )
     env.stats['task_reward'] = float(score[1])
     env.stats['main_turn'] = int(iteration)
+    env.stats['main_len'] = min(main_response_tokens, config.response_length)
+    env.stats['main_context_tokens'] = main_context_tokens
+    env.stats['working_context_limit'] = working_context_limit
     env.stats['is_branch'] = 0
     env.stats['branch_success'] = 0
+    env.stats.update({k: v for k, v in rollout_status.items() if k != 'termination_reason'})
+    env.stats['concise_main'] = 1 - rollout_status['unfolded_main']
     # Surface real-eval VER (valid_execution) + produced-file count so they
     # aggregate into val/* metrics. At 8B zero-shot SR floors to 0, so VER is
     # the signal that separates the agents. Only present under SAB_REAL_EVAL=1.
@@ -128,6 +148,13 @@ async def process_item(
             'messages': out_data['messages'],
             'env_stats': copy.deepcopy(env.stats),
             'mask_rollout': mask_rollout,
+            'overlong': rollout_status['overlong'],
+            'no_finish': rollout_status['no_finish'],
+            'hit_token_limit': rollout_status['hit_token_limit'],
+            'hit_max_turn': rollout_status['hit_max_turn'],
+            'hit_timeout': rollout_status['hit_timeout'],
+            'unfolded_main': rollout_status['unfolded_main'],
+            'termination_reason': rollout_status['termination_reason'],
             'is_finish': is_finish,
             'process_reward_mask': out_data['process_reward_mask'],
             'uid': uid,

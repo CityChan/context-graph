@@ -136,3 +136,24 @@ def test_training_waits_until_search_is_actually_ready():
         assert "SEARCH_OK=1" in source
         assert 'if [ "$SEARCH_OK" != "1" ]; then' in source
         assert 'kill -0 "$SEARCH_PID"' in source
+
+
+def test_sab_eval_agents_emit_explicit_termination_metrics():
+    for agent_path in (
+        "agents/react_agent_code.py",
+        "agents/fold_agent_code.py",
+        "agents/graph_agent_code_isolated.py",
+    ):
+        source = _read(agent_path)
+        assert "from .rollout_status import classify_rollout_status" in source
+        assert "rollout_status = classify_rollout_status(" in source
+        for field in (
+            "overlong",
+            "no_finish",
+            "hit_token_limit",
+            "hit_max_turn",
+            "hit_timeout",
+            "unfolded_main",
+            "termination_reason",
+        ):
+            assert f"'{field}': rollout_status['{field}']" in source
