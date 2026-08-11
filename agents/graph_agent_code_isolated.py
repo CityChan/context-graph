@@ -5,7 +5,7 @@ runs on its own private ContextGraph (a subgraph), so the main agent's
 trajectory only ever sees:
 
   * The main (parent) graph: query root, subtask nodes, branch summary nodes,
-    and the main agent's own search/open_page observations.
+    and the main agent's own tool observations.
   * **Not** the internal exploration of any branch.
 
 When a branch returns, its child graph is collapsed into a SUMMARY node on
@@ -63,6 +63,7 @@ from .prompts import BRANCH_MESSAGE, SUMMARY_PROMPT_CODE
 from .prompts_code import create_chat_code
 from .verifier import judge_scope
 from .context_graph import ContextGraph, GraphOpResult, NodeType, NodeStatus, EdgeRelation
+from .graph_observation import record_tool_observation
 
 
 def print_chat(chat):
@@ -183,8 +184,8 @@ GRAPH_OPS = {'merge', 'add_edge', 'select', 'prune'}
 
 
 def make_graph_aware_run_action(env, child_graph: ContextGraph):
-    """Wrap run_action so a branch's search/open_page results also become
-    OBSERVATION nodes in its private subgraph.
+    """Wrap run_action so a branch's tool results also become OBSERVATION
+    nodes in its private subgraph.
 
     The branch agent's conversation history is unchanged; the wrapper only
     sniffs the response to figure out which tool was called and adds the
@@ -197,23 +198,7 @@ def make_graph_aware_run_action(env, child_graph: ContextGraph):
             return None
         try:
             fn_call = extract_fn_call(response)
-            if fn_call is not None:
-                if fn_call['function'] == 'search':
-                    child_graph.add_node(
-                        observation[:500],
-                        NodeType.OBSERVATION,
-                        parent_id=child_graph.active_node_id,
-                        edge_relation=EdgeRelation.TEMPORAL,
-                        metadata={'tool': 'search', 'query': fn_call['arguments'].get('query', '')},
-                    )
-                elif fn_call['function'] == 'open_page':
-                    child_graph.add_node(
-                        observation[:800],
-                        NodeType.OBSERVATION,
-                        parent_id=child_graph.active_node_id,
-                        edge_relation=EdgeRelation.CAUSAL,
-                        metadata={'tool': 'open_page'},
-                    )
+            record_tool_observation(child_graph, fn_call, observation)
         except Exception as e:
             print(f'[GRAPH ISOLATED] tracking observation in child graph failed: {e}')
         return observation
@@ -533,31 +518,7 @@ async def process_item(
                 mask_rollout = False
                 break
 
-            if fn_call is not None:
-                if fn_call['function'] == 'search':
-                    graph.add_node(
-                        observation[:500],
-                        NodeType.OBSERVATION,
-                        parent_id=graph.active_node_id,
-                        edge_relation=EdgeRelation.TEMPORAL,
-                        metadata={'tool': 'search', 'query': fn_call['arguments'].get('query', '')},
-                    )
-                elif fn_call['function'] == 'open_page':
-                    graph.add_node(
-                        observation[:800],
-                        NodeType.OBSERVATION,
-                        parent_id=graph.active_node_id,
-                        edge_relation=EdgeRelation.CAUSAL,
-                        metadata={'tool': 'open_page'},
-                    )
-                elif fn_call['function'] == 'action':
-                    graph.add_node(
-                        observation[:300],
-                        NodeType.OBSERVATION,
-                        parent_id=graph.active_node_id,
-                        edge_relation=EdgeRelation.TEMPORAL,
-                        metadata={'tool': 'action', 'command': fn_call['arguments'].get('command', '')[:100]},
-                    )
+            record_tool_observation(graph, fn_call, observation)
 
         # ── Auto graph operations on PARENT graph (only) ──
         # Parent graph stays small (subtask + summary + main observations),

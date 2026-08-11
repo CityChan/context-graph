@@ -54,12 +54,21 @@ print(df.shape, df.columns.tolist())
 _CODE_BRANCH_ADDENDUM = """
 
 # Branching (sub-task delegation)
-You may delegate a focused sub-task to a child agent via `branch`. Useful when:
-- You want to explore data without polluting main context.
-- You want to test a hypothesis (e.g., "does featurizer X work?") in isolation.
-The child returns a short summary message; its own intermediate stdout is collapsed.
+You operate as MAIN: plan, delegate, synthesize, and verify. Child agents execute
+focused sub-tasks in the same persistent sandbox and return compact reports; their
+intermediate stdout is collapsed out of MAIN's context.
 
-DO NOT branch for trivial sub-steps; the overhead outweighs the benefit. Branch only when the sub-task has clear scope and would generate >5 turns of execution.
+- Before MAIN calls `python_exec`, delegate one focused initial branch. Normally
+  ask it to inspect the listed inputs, identify schemas/constraints, and propose
+  a concrete analysis pipeline. Include the exact output target in its prompt.
+- After the branch returns, synthesize its report and continue from MAIN. State
+  created by the branch persists, so reuse useful variables and files when safe.
+- Use another branch for an independent hypothesis or final verification when it
+  materially reduces uncertainty. Branch one task at a time.
+- Keep every branch single-purpose and require it to report findings, state
+  changes, output paths, failures, and recommended next steps via `return`.
+- Do not delegate tiny mechanical steps after the required initial branch; MAIN
+  should perform final integration, artifact verification, and `finish`.
 """
 
 
@@ -162,6 +171,12 @@ def _build_user_prompt_code(instruction: str, workflow: str, env=None) -> str:
         "with `python_exec`. Call `finish` only after the required output is "
         "present."
     )
+    if workflow in ("code_branch", "code_graph"):
+        user_msg += (
+            "\n\nYou are MAIN. Your first tool call must be `branch`, not "
+            "`python_exec`. Delegate a focused input-inspection and analysis-plan "
+            "task, then synthesize the returned report before continuing."
+        )
 
     return [
         {"role": "system", "content": sys_prompt},
