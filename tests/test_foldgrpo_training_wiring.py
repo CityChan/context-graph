@@ -163,3 +163,14 @@ def test_sab_method_comparison_uses_a_fixed_sample_seed():
     source = _read("scripts/eval_sab_react_8b_4node_smoke.sh")
     assert "SAB_DATA_SEED=${SAB_DATA_SEED:-42}" in source
     assert "data.seed=$SAB_DATA_SEED" in source
+
+
+def test_sab_formal_wrapper_submits_all_three_methods_with_real_eval():
+    source = _read("scripts/submit_eval_sab_8b_4node_formal.sh")
+    assert 'if [ -n "${SLURM_JOB_ID:-}" ]; then' in source
+    assert "for method in react fold ctxgraph; do" in source
+    assert "SAB_RUN_TAG=formal" in source
+    assert "SAB_REAL_EVAL=1" in source
+    assert "SAB_VAL_MAX_SAMPLES=${SAB_VAL_MAX_SAMPLES:--1}" in source
+    assert '--nodes=4' in source
+    assert 'JOB_TIME=${JOB_TIME:-04:00:00}' in source
