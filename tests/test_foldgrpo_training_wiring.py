@@ -49,10 +49,40 @@ def test_production_wrappers_use_global_128_minibatch_arithmetic():
     for script in (
         "scripts/train_bc_foldagent_8b_5node_50step_32k_active.sh",
         "scripts/train_bc_ctxgraph_8b_5node_50step_32k_active.sh",
+        "scripts/train_bc_foldagent_8b_5node_50step_64k_active.sh",
+        "scripts/train_bc_ctxgraph_8b_5node_50step_64k_active.sh",
     ):
         source = _read(script)
         assert "export PPO_MINI_BATCH_SIZE=32" in source
         assert "32 per rank x 4 trainer ranks = paper-scale global 128" in source
+
+
+def test_64k_training_wrappers_and_long_context_overrides_are_wired():
+    wrappers = (
+        "scripts/train_bc_foldagent_8b_5node_50step_64k_active.sh",
+        "scripts/train_bc_ctxgraph_8b_5node_50step_64k_active.sh",
+    )
+    for script in wrappers:
+        source = _read(script)
+        assert "export PROMPT_LENGTH=8192" in source
+        assert "export RESPONSE_LENGTH=57344" in source
+        assert "export CONTEXT_LENGTH=65536" in source
+        assert "export BC_YARN_FACTOR=2.0" in source
+        assert "export BC_YARN_ORIGINAL_LENGTH=32768" in source
+
+    for script in (
+        "scripts/train_bc_foldagent_8b_paperfaithful_5node_48h.sh",
+        "scripts/train_bc_ctxgraph_8b_paperfaithful_5node_48h.sh",
+    ):
+        source = _read(script)
+        assert 'if [ "$CONTEXT_LENGTH" -gt 40960 ]; then' in source
+        assert "+actor_rollout_ref.model.override_config=" in source
+        assert "+actor_rollout_ref.rollout.engine_kwargs.vllm.hf_overrides=" in source
+        assert '"${LONG_CONTEXT_ARGS[@]}"' in source
+
+    submit = _read("scripts/submit_train_bc_fa_cg_8b_5node_50step_64k_active.sh")
+    for script in wrappers:
+        assert script in submit
 
 
 def test_foldagent_entrypoint_and_one_step_smokes_use_production_paths():
