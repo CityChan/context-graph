@@ -186,6 +186,37 @@ def test_five_node_idev_runner_executes_both_training_smokes():
     assert "idev_smoke_$(date +%Y%m%d_%H%M%S)" in source
 
 
+def test_four_node_idev_smokes_use_three_trainer_ranks():
+    for script, base in (
+        (
+            "scripts/smoke_train_bc_foldagent_8b_4node_1step_32k_active.sh",
+            "scripts/train_bc_foldagent_8b_paperfaithful_5node_48h.sh",
+        ),
+        (
+            "scripts/smoke_train_bc_ctxgraph_8b_4node_1step_32k_active.sh",
+            "scripts/train_bc_ctxgraph_8b_paperfaithful_5node_48h.sh",
+        ),
+    ):
+        source = _read(script)
+        assert "export EXPECTED_NUM_NODES=4" in source
+        assert "export TOTAL_TRAINING_STEPS=1" in source
+        assert "export TRAIN_BATCH_SIZE=3" in source
+        assert "export ROLLOUT_N=2" in source
+        assert "export PPO_MINI_BATCH_SIZE=2" in source
+        assert f"exec bash {base}" in source
+
+        base_source = _read(base)
+        assert "EXPECTED_NUM_NODES=${EXPECTED_NUM_NODES:-5}" in base_source
+        assert 'if [ "$NUM_NODES" -ne "$EXPECTED_NUM_NODES" ]; then' in base_source
+
+    pair_source = _read("scripts/smoke_train_bc_pair_8b_4node_1step_32k_active.sh")
+    assert 'if [ "${#IDEV_NODES[@]}" -ne 4 ]; then' in pair_source
+    assert "smoke_train_bc_foldagent_8b_4node_1step_32k_active.sh" in pair_source
+    assert "smoke_train_bc_ctxgraph_8b_4node_1step_32k_active.sh" in pair_source
+    assert "FOLD_RC=${PIPESTATUS[0]}" in pair_source
+    assert "CTXGRAPH_RC=${PIPESTATUS[0]}" in pair_source
+
+
 def test_training_waits_until_search_is_actually_ready():
     for script in (
         "scripts/train_bc_foldagent_8b_paperfaithful_5node_48h.sh",

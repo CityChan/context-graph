@@ -110,9 +110,10 @@ mapfile -t NODELIST < <(scontrol show hostnames "$SLURM_JOB_NODELIST")
 NODE0=${NODELIST[0]}
 NODE0_IP=$(getent hosts "$NODE0" | awk '{print $1}')
 NUM_NODES=${#NODELIST[@]}
+EXPECTED_NUM_NODES=${EXPECTED_NUM_NODES:-5}
 
-if [ "$NUM_NODES" -ne 5 ]; then
-  echo "Expected 5 nodes (set #SBATCH -N 5 or use idev -N 5), got $NUM_NODES"
+if [ "$NUM_NODES" -ne "$EXPECTED_NUM_NODES" ]; then
+  echo "Expected $EXPECTED_NUM_NODES nodes, got $NUM_NODES"
   exit 1
 fi
 
@@ -161,7 +162,7 @@ fi
 probe() { printf '+++ [%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 
 echo "=============================================================="
-echo "  TRAIN: FoldAgent on BrowseComp-Plus (Qwen3-8B dense, 5 nodes [1 search + 4 trainer], $TOTAL_TRAINING_STEPS steps, 48h)"
+echo "  TRAIN: FoldAgent on BrowseComp-Plus (Qwen3-8B dense, $NUM_NODES nodes [1 search + $((NUM_NODES - 1)) trainer], $TOTAL_TRAINING_STEPS steps)"
 echo "  Token budget: prompt=$PROMPT_LENGTH response=$RESPONSE_LENGTH active_context=$CONTEXT_LENGTH"
 echo "  Job: ${SLURM_JOB_ID:-<idev>}   Head: $NODE0 ($NODE0_IP)"
 echo "  Worker(s): ${NODELIST[@]:1}"

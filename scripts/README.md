@@ -10,6 +10,8 @@ This directory keeps runnable entry points for the active benchmark tracks.
 - `smoke_train_bc_*.sh`: short training smoke runs.
 - `smoke_train_bc_pair_8b_5node_1step_32k_active.sh`: runs the FoldAgent and
   ContextGraph production one-step smokes serially in one five-node idev.
+- `smoke_train_bc_pair_8b_4node_1step_32k_active.sh`: four-node idev variant
+  using one search node and three trainer ranks.
 
 BrowseComp-Plus uses `envs/search_server.py` and `LOCAL_SEARCH_URL`.
 
