@@ -313,6 +313,9 @@ async def process_item(
     consolidation_invalid_penalty = getattr(
         config.plugin, "consolidation_invalid_penalty", -0.3
     )
+    graph_invalid_penalty = getattr(
+        config.plugin, "graph_invalid_penalty", -0.3
+    )
 
     llm_client = context.llm_client
 
@@ -408,7 +411,32 @@ async def process_item(
                 if budget_error else handler(graph, fn_call)
             )
             graph.record_graph_op(observation.success)
+            if not observation.success and process_reward and is_train:
+                graph_turn_idx = len(agent['main'].chat) - 1
+                agent['main'].set_process_reward(
+                    graph_turn_idx, graph_invalid_penalty
+                )
             print(f'[GRAPH ISOLATED] {fn_call["function"]} -> {observation[:100]}')
+
+        # ``pass`` is only useful when the graph has no productive operation.
+        # Exposing and handling it explicitly keeps consolidation checkpoints
+        # inside the same XML tool protocol as every other graph action.
+        elif fn_call is not None and fn_call['function'] == 'pass':
+            if graph.is_saturated():
+                observation = GraphOpResult(
+                    f"[Graph] pass accepted; no consolidation needed.\n\n{graph.to_state_text()}",
+                    True,
+                )
+            else:
+                observation = GraphOpResult(
+                    f"[Error] pass rejected; graph still has productive operations.\n\n{graph.to_state_text()}",
+                    False,
+                )
+                if process_reward and is_train:
+                    pass_turn_idx = len(agent['main'].chat) - 1
+                    agent['main'].set_process_reward(
+                        pass_turn_idx, consolidation_pass_invalid_penalty
+                    )
 
         # ── Branch: spawn isolated child subgraph ──
         elif fn_call is not None and fn_call['function'] == 'branch':
@@ -655,6 +683,16 @@ async def process_item(
                 + graph.last_retrieval_stats.get('evidence_tokens', 0),
             )
 
+        # The prompt promises an updated graph after every action. Previously
+        # only graph-tool responses (and some multi-branch responses) included
+        # it, so search/open_page created nodes the model never saw and later
+        # operations referenced stale or invented IDs.
+        observation = (
+            f"{observation}\n\n"
+            "[Latest ContextGraph state]\n"
+            f"{graph.to_state_text()}"
+        )
+
         observation_turn = len(agent['main'].chat)
         agent['main'].append({'role': 'user', 'content': observation})
         if enable_retrieval_memory:
@@ -676,7 +714,7 @@ async def process_item(
             n_nodes = len(graph.nodes)
             pass_clause = (
                 "If no obvious merge/prune/edge improvement helps, emit "
-                "<function=pass>{}</function>."
+                "exactly <function=pass></function>."
                 if is_sat else
                 "You MUST emit a real operation; <function=pass> is NOT valid here "
                 "and will be penalized."
@@ -747,6 +785,7 @@ async def process_item(
                 print('[CONSOL INVALID]', str(consol_response)[:120])
                 ack = "[CONSOLIDATION ACK] invalid response, continuing."
 
+            ack = f"{ack}\n\n[Latest ContextGraph state]\n{graph.to_state_text()}"
             agent['main'].append({'role': 'user', 'content': ack})
             session_message.append({'role': 'user', 'content': ack})
 
@@ -876,6 +915,17 @@ async def process_item(
                         and not any(m in str(turn) for m in GRAPH_OP_MARKERS)]
             agent['main'].set_process_reward(bad_turn, -1)
 
+        if rollout_status['no_finish']:
+            last_completion = next(
+                (
+                    i for i in range(len(agent['main'].chat_completions) - 1, 0, -1)
+                    if agent['main'].chat_completions[i] is not None
+                ),
+                None,
+            )
+            if last_completion is not None:
+                agent['main'].set_process_reward(last_completion, -1)
+
         # In the isolated variant, trajectories that skip graph ops are not
         # penalized. Graph reward is outcome-only via compute_graph_reward().
         if 'scope' in process_reward:
@@ -946,7 +996,10 @@ async def process_item(
         out = await agent[name].get_data()
         agent_reward = score[1]
 
-        if use_graph_reward and name == 'main':
+        # Every trajectory emitted from one gen_uid is another view of the
+        # same episode. Give main and branches the same terminal graph reward;
+        # branch-specific quality remains represented by token process rewards.
+        if use_graph_reward:
             agent_reward = graph_rewards.get('graph_reward', agent_reward)
         elif process_reward is not None and 'flat' in process_reward and 'reward' in agent[name].info_cache:
             agent_reward = agent[name].info_cache['reward']

@@ -381,7 +381,23 @@ def graph_tool():
             },
         },
     }
-    return [merge, add_edge, select_node, prune_node]
+    pass_graph = {
+        'type': 'function',
+        'function': {
+            'name': 'pass',
+            'description': (
+                "Decline a graph operation only when a consolidation checkpoint "
+                "explicitly permits pass because the graph is already saturated. "
+                "Do not use pass during ordinary research turns."
+            ),
+            'parameters': {
+                'type': 'object',
+                'properties': {},
+                'required': [],
+            },
+        },
+    }
+    return [merge, add_edge, select_node, prune_node, pass_graph]
 
 
 def alfworld_tool(action_only: bool = False):

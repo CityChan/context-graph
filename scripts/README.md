@@ -8,6 +8,8 @@ This directory keeps runnable entry points for the active benchmark tracks.
 - `eval_bc_*.sh`: zero-shot evaluation wrappers.
 - `train_bc_*.sh`: training wrappers for ContextGraph, FoldAgent, and ReAct/baseline variants.
 - `smoke_train_bc_*.sh`: short training smoke runs.
+- `smoke_train_bc_pair_8b_5node_1step_32k_active.sh`: runs the FoldAgent and
+  ContextGraph production one-step smokes serially in one five-node idev.
 
 BrowseComp-Plus uses `envs/search_server.py` and `LOCAL_SEARCH_URL`.
 

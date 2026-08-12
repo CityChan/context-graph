@@ -421,6 +421,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   actor_rollout_ref.actor.clip_ratio_high="$CLIP_RATIO_HIGH" \
   actor_rollout_ref.actor.grad_clip=0.5 \
   actor_rollout_ref.actor.kl_loss_coef="$ACTOR_KL_LOSS_COEF" \
+  algorithm.foldgrpo_process_reward_mode=relative_extrema \
   data.train_files=data/bc_train.parquet \
   data.val_files=data/bc_test.parquet \
   data.train_batch_size="$TRAIN_BATCH_SIZE" \
@@ -445,6 +446,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   +actor_rollout_ref.rollout.plugin.lambda_compact=0.2 \
   +actor_rollout_ref.rollout.plugin.lambda_cost=0.02 \
   +actor_rollout_ref.rollout.plugin.consolidation_interval=5 \
+  +actor_rollout_ref.rollout.plugin.graph_invalid_penalty=-0.3 \
   +actor_rollout_ref.rollout.plugin.max_traj=11 \
   +actor_rollout_ref.rollout.plugin.uniqueness_weight=0.10 \
   +actor_rollout_ref.rollout.plugin.auto_bind_branch_edges=True \

@@ -14,7 +14,7 @@ set -euo pipefail
 # One real FoldGRPO optimizer step through the production FoldAgent entrypoint.
 # Four training samples x two rollouts = eight trajectories; ppo_mini=2 per
 # trainer rank x four ranks = the same global batch of eight.
-export RUN_TAG=smoke_1step_32k_active
+export RUN_TAG=${RUN_TAG:-smoke_1step_32k_active}
 export PROMPT_LENGTH=8192
 export RESPONSE_LENGTH=24576
 export CONTEXT_LENGTH=32768

@@ -13,7 +13,7 @@ set -euo pipefail
 
 # One real FoldGRPO optimizer step through the production ContextGraph entrypoint.
 # Keep the batch arithmetic identical to the FoldAgent smoke comparison.
-export RUN_TAG=smoke_1step_32k_active
+export RUN_TAG=${RUN_TAG:-smoke_1step_32k_active}
 export PROMPT_LENGTH=8192
 export RESPONSE_LENGTH=24576
 export CONTEXT_LENGTH=32768

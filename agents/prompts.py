@@ -1030,6 +1030,7 @@ You have access to graph manipulation tools alongside search and branch tools:
 | `add_edge` | Connect related nodes | Linking causally related findings, or cross-referencing evidence |
 | `select` | Change active focus | Shifting attention to a different sub-problem |
 | `prune` | Remove irrelevant node | Discarding dead-end searches or irrelevant results |
+| `pass` | Skip consolidation | Only when a consolidation checkpoint explicitly permits it |
 
 ---
 
@@ -1072,9 +1073,8 @@ You have access to graph manipulation tools alongside search and branch tools:
 2. **Execute Research:** Use `search` and `open_page` iteratively. 5-15 tool calls typical.
 3. **Report:** Use `return` to deliver concise, factual findings with source citations.
 
-Branches can also use graph tools:
-* `add_edge` to connect your findings to known nodes from the main context
-* `prune` to discard irrelevant results within your scope
+Branch agents must use only search/open_page and `return`. The parent graph is
+private to MAIN, so graph operations from BRANCH are invalid.
 '''
 
 
@@ -1107,6 +1107,7 @@ Question: {Question}
 * Connect nodes: `<function=add_edge><parameter=source>n3</parameter><parameter=target>n5</parameter><parameter=relation>causal</parameter></function>`
 * Focus shift: `<function=select><parameter=node_id>n3</parameter></function>`
 * Remove dead end: `<function=prune><parameter=node_id>n4</parameter></function>`
+* Skip a permitted consolidation: `<function=pass></function>`
 
 **Final answer format:**
 Exact Answer: {{your succinct, final answer}}
@@ -1124,6 +1125,6 @@ Use the finish tool to submit. The answer field should be your best-effort answe
 Now you are MAIN. `MODE: MAIN`. Read the system prompt's MAIN workflow, then:
 1. Construct your research plan
 2. Branch sub-tasks to explore different angles
-3. Use merge/prune/add_edge to manage your context graph
+3. Use merge/prune/add_edge to manage your context graph; use pass only when a consolidation checkpoint permits it
 4. Synthesize and report your final answer
 '''

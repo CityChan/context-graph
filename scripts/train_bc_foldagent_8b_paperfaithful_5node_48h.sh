@@ -377,8 +377,8 @@ ray status || echo "WARN: ray status check failed"
 echo "=============================================================="
 echo "  Launching FoldAgent FoldGRPO (Qwen3-8B dense, 5 nodes [1 search + 4 trainer], $TOTAL_TRAINING_STEPS steps, BS=$TRAIN_BATCH_SIZE, rollout_n=$ROLLOUT_N, ppo_mini/rank=$PPO_MINI_BATCH_SIZE, context=$CONTEXT_LENGTH [48h], BrowseComp-Plus)"
 echo "  Optimization: lr=$TRAIN_LR use_kl_loss=$USE_KL_LOSS clip=[$CLIP_RATIO_LOW,$CLIP_RATIO_HIGH]"
-echo "  process_reward=[flat,scope] (paper), NO lambda_compact/lambda_cost (paper's 8B script omits these), NO DAPO knobs (paper 8B uses verl defaults)"
-echo "  FoldAgent process rewards: binary terminal R; Q=-1 overlong/tool error, Q=-0.2 out-of-scope"
+echo "  process_reward=[flat,scope], NO lambda_compact/lambda_cost, NO DAPO knobs"
+echo "  FoldAgent signed process rewards: binary terminal R; Q=-1 no-finish/overlong/tool error, Q=-0.2 out-of-scope"
 echo "  vLLM gpu_memory_utilization=0.6 + FSDP CPU offload"
 echo "  val_before_train=$VAL_BEFORE_TRAIN, save_freq=$SAVE_FREQ, val every $TEST_FREQ steps"
 echo "=============================================================="
@@ -419,7 +419,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   actor_rollout_ref.actor.clip_ratio_high="$CLIP_RATIO_HIGH" \
   actor_rollout_ref.actor.grad_clip=0.5 \
   actor_rollout_ref.actor.kl_loss_coef="$ACTOR_KL_LOSS_COEF" \
-  algorithm.foldgrpo_process_reward_mode=paper \
+  algorithm.foldgrpo_process_reward_mode=paper_signed \
   data.train_files=data/bc_train.parquet \
   data.val_files=data/bc_test.parquet \
   data.train_batch_size="$TRAIN_BATCH_SIZE" \

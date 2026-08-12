@@ -294,6 +294,20 @@ async def process_item(
                         '<function=branch>' not in str(turn)]
             agent['main'].set_process_reward(bad_turn, -1)
 
+        # A rollout that never calls finish must always expose at least one
+        # actionable negative token target. This matters most in all-failure
+        # binary-reward groups, where terminal GRPO advantage is otherwise 0.
+        if rollout_status['no_finish']:
+            last_completion = next(
+                (
+                    i for i in range(len(agent['main'].chat_completions) - 1, 0, -1)
+                    if agent['main'].chat_completions[i] is not None
+                ),
+                None,
+            )
+            if last_completion is not None:
+                agent['main'].set_process_reward(last_completion, -1)
+
         # The paper defines only an out-of-scope penalty (-0.2), not a positive
         # reward for in-scope branches.
         if 'scope' in process_reward:

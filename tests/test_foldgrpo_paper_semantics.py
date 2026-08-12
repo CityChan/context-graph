@@ -14,9 +14,9 @@ def _terminal_rewards(values: list[float], width: int = 3):
 
 
 def _paper_advantages(
-    terminal_rewards: list[float], process_rewards
+    terminal_rewards: list[float], process_rewards, mode: str = "paper"
 ):
-    pytest.importorskip("torch")
+    torch = pytest.importorskip("torch")
     from verl.trainer.ppo.core_algos import compute_foldgrpo_advantage
 
     batch_size, width = process_rewards.shape
@@ -26,7 +26,7 @@ def _paper_advantages(
         index=np.array(["prompt"] * batch_size, dtype=object),
         gen_uid=np.array([f"generation-{i}" for i in range(batch_size)], dtype=object),
         process_reward_mask=process_rewards,
-        config={"foldgrpo_process_reward_mode": "paper"},
+        config={"foldgrpo_process_reward_mode": mode},
     )
     return advantages
 
@@ -55,6 +55,38 @@ def test_paper_process_reward_remains_finite_in_degenerate_groups():
     assert advantages[0, 0].item() == pytest.approx(-0.2)
     assert advantages[0, 1].item() == pytest.approx(0.0)
     assert advantages[1].abs().sum().item() == pytest.approx(0.0)
+
+
+def test_signed_process_reward_survives_on_failed_degenerate_group():
+    torch = pytest.importorskip("torch")
+    q = torch.zeros((2, 3), dtype=torch.float32)
+    q[0, 1] = -1.0
+
+    advantages = _paper_advantages([0.0, 0.0], q, mode="paper_signed")
+
+    assert torch.isfinite(advantages).all()
+    assert advantages[0, 1].item() == pytest.approx(-1.0)
+    assert advantages[0, 0].item() == pytest.approx(0.0)
+    assert advantages[1].abs().sum().item() == pytest.approx(0.0)
+
+
+@pytest.mark.parametrize(
+    "loss_agg_mode", ["token-mean", "seq-mean-token-sum", "seq-mean-token-mean"]
+)
+def test_aggregate_loss_is_zero_for_fully_masked_microbatch(loss_agg_mode):
+    torch = pytest.importorskip("torch")
+    from verl.trainer.ppo.core_algos import agg_loss
+
+    loss = agg_loss(
+        loss_mat=torch.full((1, 3), torch.nan, dtype=torch.float32, requires_grad=True),
+        loss_mask=torch.zeros((1, 3), dtype=torch.float32),
+        loss_agg_mode=loss_agg_mode,
+        batch_num_tokens=0,
+        global_batch_size=0,
+    )
+
+    assert torch.isfinite(loss)
+    assert loss.item() == pytest.approx(0.0)
 
 
 def test_rollout_status_separates_length_turn_timeout_and_finish():

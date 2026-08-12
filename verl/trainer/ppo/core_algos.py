@@ -443,13 +443,13 @@ def compute_foldgrpo_advantage(
             config.get("foldgrpo_process_reward_mode", "relative_extrema")
             if config is not None else "relative_extrema"
         )
-        if process_reward_mode not in {"paper", "relative_extrema"}:
+        if process_reward_mode not in {"paper", "paper_signed", "relative_extrema"}:
             raise ValueError(
-                "foldgrpo_process_reward_mode must be 'paper' or "
-                f"'relative_extrema', got {process_reward_mode!r}"
+                "foldgrpo_process_reward_mode must be 'paper', 'paper_signed', "
+                f"or 'relative_extrema', got {process_reward_mode!r}"
             )
 
-        if process_reward_mode == "paper":
+        if process_reward_mode in {"paper", "paper_signed"}:
             # FoldAgent Eq. (3): terminal task reward R_i stays binary and
             # token process reward Q_{i,t} modifies the token target before
             # group normalization. Degenerate groups use a unit denominator:
@@ -471,7 +471,16 @@ def compute_foldgrpo_advantage(
             else:
                 denom = torch.ones_like(group_stds)
 
-            adjusted = torch.clamp(terminal_scores.unsqueeze(1) + q, 0.0, 1.0)
+            adjusted = terminal_scores.unsqueeze(1) + q
+            if process_reward_mode == "paper":
+                adjusted = torch.clamp(adjusted, 0.0, 1.0)
+            else:
+                # The literal clip(R + Q, 0, 1) erases every negative Q on a
+                # failed trajectory (R=0). Binary-reward groups that all fail
+                # then have neither terminal nor process learning signal. The
+                # signed variant retains the upper task-reward bound but lets
+                # negative process feedback survive below zero.
+                adjusted = torch.clamp(adjusted, max=1.0)
             token_advantages = (
                 adjusted - group_means.unsqueeze(1)
             ) / denom.unsqueeze(1)
@@ -1010,25 +1019,36 @@ def agg_loss(
         loss: `a scalar torch.Tensor`
             aggregated loss
     """
+    def _positive_divisor(value):
+        """Return a device-local divisor that cannot produce a 0/0 loss."""
+        if isinstance(value, torch.Tensor):
+            return value.to(device=loss_mat.device, dtype=loss_mat.dtype).clamp_min(1.0)
+        return max(float(value), 1.0)
+
+    # torch.sum(loss_mat * loss_mask) is unsafe when a masked element is NaN,
+    # because NaN * 0 is still NaN. Select valid values before multiplying by
+    # numeric masks so dummy/padded sequences cannot contaminate the scalar.
+    masked_loss_mat = torch.where(loss_mask.bool(), loss_mat, torch.zeros_like(loss_mat))
+
     if loss_agg_mode == "token-mean":
         if batch_num_tokens is None:
             batch_num_tokens = loss_mask.sum()
-        loss = verl_F.masked_sum(loss_mat, loss_mask) / batch_num_tokens * dp_size
+        loss = verl_F.masked_sum(masked_loss_mat, loss_mask) / _positive_divisor(batch_num_tokens) * dp_size
     elif loss_agg_mode == "seq-mean-token-sum":
-        seq_losses = torch.sum(loss_mat * loss_mask, dim=-1)  # token-sum
+        seq_losses = torch.sum(masked_loss_mat * loss_mask, dim=-1)  # token-sum
         seq_mask = (torch.sum(loss_mask, dim=-1) > 0).float()  # exclude fully masked sequences
         if global_batch_size is None:
             global_batch_size = seq_mask.sum()
-        loss = verl_F.masked_sum(seq_losses, seq_mask) / global_batch_size * dp_size  # seq-mean
+        loss = verl_F.masked_sum(seq_losses, seq_mask) / _positive_divisor(global_batch_size) * dp_size  # seq-mean
     elif loss_agg_mode == "seq-mean-token-mean":
         seq_mask = torch.sum(loss_mask, dim=-1)  # per-sequence token count
-        seq_losses = torch.sum(loss_mat * loss_mask, dim=-1) / (seq_mask + 1e-8)  # token-mean
+        seq_losses = torch.sum(masked_loss_mat * loss_mask, dim=-1) / (seq_mask + 1e-8)  # token-mean
         seq_mask = (seq_mask > 0).float()  # exclude fully masked sequences
         if global_batch_size is None:
             global_batch_size = seq_mask.sum()
-        loss = verl_F.masked_sum(seq_losses, seq_mask) / global_batch_size * dp_size  # seq-mean
+        loss = verl_F.masked_sum(seq_losses, seq_mask) / _positive_divisor(global_batch_size) * dp_size  # seq-mean
     elif loss_agg_mode == "seq-mean-token-sum-norm":
-        seq_losses = torch.sum(loss_mat * loss_mask, dim=-1)
+        seq_losses = torch.sum(masked_loss_mat * loss_mask, dim=-1)
         if loss_scale_factor is None:
             loss_scale_factor = loss_mask.shape[-1]
         loss = torch.sum(seq_losses) / loss_scale_factor

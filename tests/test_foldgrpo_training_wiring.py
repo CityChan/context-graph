@@ -37,7 +37,7 @@ def test_foldagent_uses_paper_process_rewards_on_all_outcomes():
 
 def test_foldagent_training_selects_paper_advantage_formula():
     source = _read("scripts/train_bc_foldagent_8b_paperfaithful_5node_48h.sh")
-    assert "algorithm.foldgrpo_process_reward_mode=paper" in source
+    assert "algorithm.foldgrpo_process_reward_mode=paper_signed \\" in source
 
     trainer = _read("verl/trainer/ppo/ray_trainer.py")
     assert "config=config" in trainer
@@ -50,6 +50,23 @@ def test_foldagent_training_selects_paper_advantage_formula():
     assert "'optimization_masked_rollouts'" in trainer
 
 
+def test_nonfinite_actor_microbatches_are_skipped_instead_of_multiplied_by_zero():
+    source = _read("verl/workers/actor/dp_actor.py")
+
+    assert "pg_loss = pg_loss * 0.0" not in source
+    assert "kl_loss = kl_loss * 0.0" not in source
+    assert '"actor/skipped_nonfinite_micro_batch"' in source
+    assert "did_backward" in source
+
+
+def test_foldagent_penalizes_the_last_action_when_finish_is_missing():
+    section = _paper_reward_section("agents/fold_agent.py")
+
+    assert "if rollout_status['no_finish']:" in section
+    assert "agent['main'].chat_completions" in section
+    assert "agent['main'].set_process_reward(last_completion, -1)" in section
+
+
 def test_contextgraph_inherits_the_same_paper_base_signal():
     section = _paper_reward_section("agents/graph_agent_isolated.py")
 
@@ -59,6 +76,40 @@ def test_contextgraph_inherits_the_same_paper_base_signal():
     assert "elif is_focus > 0" not in section
     assert "set_cache('reward'" not in section
     assert "for name in agent:" in section
+
+
+def test_contextgraph_receives_fresh_graph_state_and_actionable_invalid_penalties():
+    source = _read("agents/graph_agent_isolated.py")
+
+    assert '"[Latest ContextGraph state]\\n"' in source
+    assert "graph_turn_idx = len(agent['main'].chat) - 1" in source
+    assert "graph_turn_idx, graph_invalid_penalty" in source
+    assert "if rollout_status['no_finish']:" in source
+    assert "agent['main'].set_process_reward(last_completion, -1)" in source
+
+
+def test_contextgraph_uses_one_terminal_reward_per_episode():
+    source = _read("agents/graph_agent_isolated.py")
+
+    assert "if use_graph_reward:" in source
+    assert "if use_graph_reward and name == 'main':" not in source
+
+
+def test_contextgraph_prompt_matches_isolated_graph_capabilities():
+    prompt = _read("agents/prompts.py")
+    tools = _read("agents/tool_spec.py")
+
+    assert "graph operations from BRANCH are invalid" in prompt
+    assert "Branches can also use graph tools" not in prompt
+    assert "'name': 'pass'" in tools
+    assert "<function=pass></function>" in prompt
+
+
+def test_contextgraph_training_selects_composite_reward_advantages_explicitly():
+    source = _read("scripts/train_bc_ctxgraph_8b_paperfaithful_5node_48h.sh")
+
+    assert "algorithm.foldgrpo_process_reward_mode=relative_extrema \\" in source
+    assert "+actor_rollout_ref.rollout.plugin.graph_invalid_penalty=-0.3 \\" in source
 
 
 def test_production_wrappers_use_global_128_minibatch_arithmetic():
@@ -122,6 +173,17 @@ def test_foldagent_entrypoint_and_one_step_smokes_use_production_paths():
         assert "export ROLLOUT_N=2" in source
         assert "export PPO_MINI_BATCH_SIZE=2" in source
         assert f"exec bash {base}" in source
+
+
+def test_five_node_idev_runner_executes_both_training_smokes():
+    source = _read("scripts/smoke_train_bc_pair_8b_5node_1step_32k_active.sh")
+
+    assert 'if [ "${#IDEV_NODES[@]}" -ne 5 ]; then' in source
+    assert "smoke_train_bc_foldagent_8b_5node_1step_32k_active.sh" in source
+    assert "smoke_train_bc_ctxgraph_8b_5node_1step_32k_active.sh" in source
+    assert "FOLD_RC=${PIPESTATUS[0]}" in source
+    assert "CTXGRAPH_RC=${PIPESTATUS[0]}" in source
+    assert "idev_smoke_$(date +%Y%m%d_%H%M%S)" in source
 
 
 def test_training_waits_until_search_is_actually_ready():

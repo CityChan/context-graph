@@ -465,6 +465,8 @@ class AlgoConfig(BaseConfig):
     mask_overlong: bool = True
     # FoldGRPO token process-reward rule. ``paper`` implements
     # A_{i,t} = (clip(R_i + Q_{i,t}, 0, 1) - mean_g(R)) / std_g(R).
+    # ``paper_signed`` keeps negative Q below zero so failed trajectories do
+    # not lose all process supervision at the lower clipping boundary.
     # ``relative_extrema`` preserves the project-specific mapping used by
     # ContextGraph's non-binary composite reward.
     foldgrpo_process_reward_mode: str = "relative_extrema"
