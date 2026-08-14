@@ -253,7 +253,7 @@ def high_speed_batcher(request_queue: mp.Queue, batch_queue: mp.Queue,
 
 
 def optimized_worker(gpu_id: int, batch_queue: mp.Queue, result_queue: mp.Queue,
-                     corpus_data: Dict):
+                     corpus_data: Dict, ready_event: Any):
     """Optimized worker for maximum throughput"""
     try:
         # Set GPU device
@@ -271,7 +271,8 @@ def optimized_worker(gpu_id: int, batch_queue: mp.Queue, result_queue: mp.Queue,
         corpus_docids = corpus_data['docids']
         task_description = 'Given a web search query, retrieve relevant passages that answer the query'
 
-        print(f"Worker {gpu_id}: Ready")
+        ready_event.set()
+        print(f"Worker {gpu_id}: Ready", flush=True)
 
         while True:
             try:
@@ -292,7 +293,7 @@ def optimized_worker(gpu_id: int, batch_queue: mp.Queue, result_queue: mp.Queue,
                 print(f"Worker {gpu_id} error: {e}")
 
     except Exception as e:
-        print(f"Worker {gpu_id} init error: {e}")
+        print(f"Worker {gpu_id} init error: {e}", flush=True)
 
 
 def fast_process_batch(batch: SearchBatch, tokenizer, model, device,
@@ -362,11 +363,15 @@ class HighThroughputSearchServer:
 
         # Start optimized workers
         self.workers = []
+        self.worker_ready_events = []
         for gpu_id in range(num_gpus):
+            ready_event = mp.Event()
             worker = mp.Process(target=optimized_worker,
-                                args=(gpu_id, self.batch_queue, self.result_queue, self.corpus_data))
+                                args=(gpu_id, self.batch_queue, self.result_queue,
+                                      self.corpus_data, ready_event))
             worker.start()
             self.workers.append(worker)
+            self.worker_ready_events.append(ready_event)
 
         print(f"🚀 Started {num_gpus} workers with max_batch_size={max_batch_size}")
 
@@ -377,6 +382,18 @@ class HighThroughputSearchServer:
         # Simple metrics logger
         self.metrics_thread = threading.Thread(target=self._simple_metrics, daemon=True)
         self.metrics_thread.start()
+
+    @property
+    def ready_worker_count(self) -> int:
+        return sum(event.is_set() for event in self.worker_ready_events)
+
+    @property
+    def is_ready(self) -> bool:
+        return (
+            bool(self.workers)
+            and all(worker.is_alive() for worker in self.workers)
+            and self.ready_worker_count == len(self.workers)
+        )
 
     def _fast_collect_results(self):
         """Optimized result collection"""
@@ -543,7 +560,22 @@ async def open_page(request: OpenRequest):
 
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy", "workers": len(search_server.workers) if search_server else 0}
+    if search_server is None:
+        raise HTTPException(status_code=503, detail="Search server is initializing")
+
+    ready_workers = search_server.ready_worker_count
+    total_workers = len(search_server.workers)
+    if not search_server.is_ready:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Search workers are initializing ({ready_workers}/{total_workers} ready)",
+        )
+
+    return {
+        "status": "healthy",
+        "workers": total_workers,
+        "ready_workers": ready_workers,
+    }
 
 
 @app.get("/stats")

@@ -140,6 +140,29 @@ def test_contextgraph_training_history_is_immutable():
     assert "'memory_history_replacement'" in source
 
 
+def test_browsecomp_search_waits_for_ready_offline_workers_and_keeps_logs():
+    server = _read("envs/search_server.py")
+
+    assert "ready_event.set()" in server
+    assert "self.worker_ready_events" in server
+    assert "all(worker.is_alive() for worker in self.workers)" in server
+    assert 'status_code=503' in server
+    assert '"ready_workers": ready_workers' in server
+
+    for script in (
+        "scripts/train_bc_foldagent_8b_paperfaithful_5node_48h.sh",
+        "scripts/train_bc_ctxgraph_8b_paperfaithful_5node_48h.sh",
+    ):
+        source = _read(script)
+        assert "unset HF_HUB_OFFLINE TRANSFORMERS_OFFLINE" not in source
+        assert "export HF_HUB_OFFLINE=1" in source
+        assert "export HF_DATASETS_OFFLINE=1" in source
+        assert "export TRANSFORMERS_OFFLINE=1" in source
+        assert 'SEARCH_LOG="$PROJECT_ROOT/logs/search-' in source
+        assert 'tail -80 "$SEARCH_LOG"' in source
+        assert "hp_server_$$.log" not in source
+
+
 def test_production_wrappers_use_global_128_minibatch_arithmetic():
     for script in (
         "scripts/train_bc_foldagent_8b_5node_50step_32k_active.sh",

@@ -231,6 +231,9 @@ echo "  Trainer workers:       ${NODELIST[@]:2}"
 
 # ── Start envs/search_server.py on dedicated SEARCH_NODE ──
 probe "starting envs/search_server.py with $EMBED_MODEL on dedicated $SEARCH_NODE:18999"
+mkdir -p "$PROJECT_ROOT/logs"
+SEARCH_LOG="$PROJECT_ROOT/logs/search-${SLURM_JOB_ID:-idev}-${RUN_TAG}-ctxgraph.log"
+probe "search server log: $SEARCH_LOG"
 srun --overlap --nodes=1 --ntasks=1 -w "$SEARCH_NODE" bash -c "
   source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
   conda activate cxtgraph
@@ -238,7 +241,10 @@ srun --overlap --nodes=1 --ntasks=1 -w "$SEARCH_NODE" bash -c "
   export PYTHONPATH=$PROJECT_ROOT:\${PYTHONPATH:-}
   export HF_HOME=$HF_HOME
   export HF_HUB_CACHE=$HF_HUB_CACHE
-  unset HF_HUB_OFFLINE TRANSFORMERS_OFFLINE  # search server needs HF Hub for BC load_dataset (cache still preferred)
+  export HF_HUB_OFFLINE=1
+  export HF_DATASETS_OFFLINE=1
+  export TRANSFORMERS_OFFLINE=1
+  export PYTHONUNBUFFERED=1
   export NUM_GPUS=1
   export MAX_BATCH_SIZE=128
   unset LOCAL_CORPUS_PARQUET LOCAL_EMBEDDINGS_PKL  # use HF dataset mode for BC
@@ -247,7 +253,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$SEARCH_NODE" bash -c "
     --port 18999 \
     --corpus Tevatron/browsecomp-plus-corpus \
     --corpus-embedding-dataset miaolu3/browsecomp-plus
-" >/tmp/hp_server_$$.log 2>&1 &
+" >"$SEARCH_LOG" 2>&1 &
 SEARCH_PID=$!
 
 probe "waiting for search server /health (up to ${BC_SEARCH_TIMEOUT_SECONDS}s)"
@@ -259,14 +265,14 @@ for _ in $(seq 1 "$BC_SEARCH_TIMEOUT_SECONDS"); do
   fi
   if ! kill -0 "$SEARCH_PID" 2>/dev/null; then
     echo "ERROR: search server exited before becoming healthy. Last 80 lines:"
-    tail -80 /tmp/hp_server_$$.log || true
+    tail -80 "$SEARCH_LOG" || true
     exit 1
   fi
   sleep 1
 done
 if [ "$HEALTH_OK" != "1" ]; then
   echo "ERROR: search server did not become healthy within ${BC_SEARCH_TIMEOUT_SECONDS}s. Last 80 lines:"
-  tail -80 /tmp/hp_server_$$.log || true
+  tail -80 "$SEARCH_LOG" || true
   kill "$SEARCH_PID" 2>/dev/null || true
   exit 1
 fi
@@ -282,14 +288,14 @@ for _ in $(seq 1 "$BC_SEARCH_TIMEOUT_SECONDS"); do
   fi
   if ! kill -0 "$SEARCH_PID" 2>/dev/null; then
     echo "ERROR: search server exited before /search probe succeeded. Last 80 lines:"
-    tail -80 /tmp/hp_server_$$.log || true
+    tail -80 "$SEARCH_LOG" || true
     exit 1
   fi
   sleep 1
 done
 if [ "$SEARCH_OK" != "1" ]; then
   echo "ERROR: search server not reachable at ${SEARCH_NODE_IP}:18999. Last 80 lines:"
-  tail -80 /tmp/hp_server_$$.log || true
+  tail -80 "$SEARCH_LOG" || true
   kill "$SEARCH_PID" 2>/dev/null || true
   exit 1
 fi
