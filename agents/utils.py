@@ -149,12 +149,24 @@ class LLMClass:
         raise NotImplemented
 
 class CallLLM(LLMClass):  # Call LLM in Verl RL env
-    def __init__(self, url, tokenizer, config, loop, **kwargs):
+    def __init__(
+        self,
+        url,
+        tokenizer,
+        config,
+        loop,
+        sampling_params=None,
+        **kwargs,
+    ):
         self.server_manager = url
         self.tokenizer = tokenizer
         self.config = config
         self.loop = loop
         self.call_openai = getattr(config.plugin, "call_openai", None)
+        # AgentLoopWorker already resolves train-vs-validation sampling here
+        # (notably validation temperature=0 and calculate_log_probs). Keep an
+        # immutable copy so concurrent turns cannot mutate the shared dict.
+        self.sampling_params = dict(sampling_params or {})
 
     async def _create_completion(self, input_ids, **kwargs):
         from uuid import uuid4
@@ -180,12 +192,14 @@ class CallLLM(LLMClass):  # Call LLM in Verl RL env
 
         uid = kwargs.pop('uid', None) or uuid4().hex
 
-        sampling_params = kwargs.pop('sampling_params', None) or {}
-        sampling_params = {
-            'temperature': sampling_params.get('temperature', 1.0),
-            'top_p': sampling_params.get('top_p', 1.0),
-            'max_tokens': max_new_tokens,
-        }
+        sampling_params = dict(self.sampling_params)
+        sampling_params.update(kwargs.pop('sampling_params', None) or {})
+        sampling_params.setdefault('temperature', 1.0)
+        sampling_params.setdefault('top_p', 1.0)
+        sampling_params['max_tokens'] = min(
+            int(sampling_params.get('max_tokens', max_new_tokens)),
+            max_new_tokens,
+        )
 
         output = await self.server_manager.generate(
             request_id=uid,
@@ -197,6 +211,18 @@ class CallLLM(LLMClass):  # Call LLM in Verl RL env
         if output is None or len(output.token_ids) == 0:
             return None
 
+        if sampling_params.get('logprobs', False):
+            if getattr(output, 'log_probs', None) is None:
+                raise RuntimeError(
+                    "Rollout log-probs were requested but the rollout server "
+                    "returned none. Refusing to replace them with zeros."
+                )
+            if len(output.log_probs) != len(output.token_ids):
+                raise RuntimeError(
+                    "Rollout log-prob/token length mismatch: "
+                    f"{len(output.log_probs)} != {len(output.token_ids)}"
+                )
+
         response_text = await self.loop.run_in_executor( None, lambda: self.tokenizer.decode(output.token_ids, skip_special_tokens=True))
 
         return {
@@ -204,8 +230,11 @@ class CallLLM(LLMClass):  # Call LLM in Verl RL env
                 "message": {
                     "content": response_text,
                     "raw_output_ids": output.token_ids,
-                    "response_log_probs": output.log_probs if getattr(output, 'log_probs', None) is not None else [0.0] * len(
-                        output.token_ids),
+                    "response_log_probs": (
+                        output.log_probs
+                        if getattr(output, 'log_probs', None) is not None
+                        else [0.0] * len(output.token_ids)
+                    ),
                     "extra_data": {"input_ids": input_ids},
                     "metrics": {}
                 }

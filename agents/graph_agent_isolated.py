@@ -221,8 +221,9 @@ async def process_item(
          wrapped to add observation nodes to that child graph only.
       2. When a branch returns, the child graph is collapsed into a SUMMARY
          node and detached into a raw-evidence archive.
-      3. Old payloads leave the working chat; query-conditioned summary and
-         evidence retrieval keeps per-turn injection bounded.
+      3. During evaluation, old payloads leave the working chat and bounded
+         retrieval restores relevant evidence. During training, chat history
+         stays immutable so generated and optimized prompts remain identical.
     """
     os.environ["no_proxy"] = ""
     tokenizer = context.tokenizer
@@ -271,6 +272,12 @@ async def process_item(
     enable_retrieval_memory = getattr(
         config.plugin, "enable_retrieval_memory", True
     )
+    # Rewriting a user turn after a later assistant turn has been generated
+    # changes that assistant turn's conditioning context when VERL reconstructs
+    # the training sequence. Keep training trajectories immutable. Evaluation
+    # can still use in-place replacement because no log-prob is recomputed from
+    # the completed transcript there.
+    enable_history_replacement = enable_retrieval_memory and not is_train
     retrieval_summary_budget = getattr(
         config.plugin, "retrieval_summary_budget", 768
     )
@@ -642,7 +649,7 @@ async def process_item(
         # The newest payload remains verbatim for immediate reasoning. Older
         # payloads are replaced by archive markers, while query-conditioned
         # retrieval restores only the evidence needed on this turn.
-        if enable_retrieval_memory:
+        if enable_history_replacement:
             # Remove old payloads from the model-facing cache. Their raw
             # contents remain recoverable from graph nodes or child archives.
             while len(working_memory_turns) >= working_memory_keep_recent:
@@ -695,7 +702,7 @@ async def process_item(
 
         observation_turn = len(agent['main'].chat)
         agent['main'].append({'role': 'user', 'content': observation})
-        if enable_retrieval_memory:
+        if enable_history_replacement:
             working_memory_turns.append(observation_turn)
         session_message.append({'role': 'user', 'content': observation})
 
@@ -861,6 +868,7 @@ async def process_item(
     env.stats['isolated_total_subgraph_nodes'] = sum(s.get('n_total', 0) for s in branch_subgraph_stats.values())
     env.stats['isolated_total_subgraph_obs'] = sum(s.get('n_observations', 0) for s in branch_subgraph_stats.values())
     env.stats['memory_n_archives'] = len(graph.archives)
+    env.stats['memory_history_replacement'] = float(enable_history_replacement)
     env.stats['memory_archived_evidence'] = sum(
         len(archive.evidence) for archive in graph.archives.values()
     )

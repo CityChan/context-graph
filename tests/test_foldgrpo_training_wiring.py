@@ -112,6 +112,34 @@ def test_contextgraph_training_selects_composite_reward_advantages_explicitly():
     assert "+actor_rollout_ref.rollout.plugin.graph_invalid_penalty=-0.3 \\" in source
 
 
+def test_custom_agent_loops_forward_verl_sampling_parameters():
+    for script in (
+        "scripts/train_baseline.py",
+        "scripts/train_fold.py",
+        "scripts/train_graph.py",
+        "scripts/train_sab.py",
+    ):
+        source = _read(script)
+        call_count = source.count("CallLLM(")
+        assert call_count > 0
+        assert source.count("sampling_params=sampling_params") == call_count
+
+    utils = _read("agents/utils.py")
+    assert "self.sampling_params = dict(sampling_params or {})" in utils
+    assert "sampling_params = dict(self.sampling_params)" in utils
+    assert "sampling_params.update(kwargs.pop('sampling_params', None) or {})" in utils
+    assert "Rollout log-probs were requested" in utils
+
+
+def test_contextgraph_training_history_is_immutable():
+    source = _read("agents/graph_agent_isolated.py")
+
+    assert "enable_history_replacement = enable_retrieval_memory and not is_train" in source
+    assert "if enable_history_replacement:" in source
+    assert "if enable_retrieval_memory:\n            working_memory_turns.append" not in source
+    assert "'memory_history_replacement'" in source
+
+
 def test_production_wrappers_use_global_128_minibatch_arithmetic():
     for script in (
         "scripts/train_bc_foldagent_8b_5node_50step_32k_active.sh",

@@ -57,6 +57,7 @@ class ReactAgentLoop(AgentLoopBase):
             tokenizer=self.tokenizer,
             config=self.config.actor_rollout_ref.rollout,
             loop=self.loop,
+            sampling_params=sampling_params,
         )
         is_validate = kwargs.get('validate', False)
         context = TaskContext(

@@ -39,6 +39,7 @@ class FoldAgentLoop(AgentLoopBase):
             tokenizer=self.tokenizer,
             config=self.config.actor_rollout_ref.rollout,
             loop=self.loop,
+            sampling_params=sampling_params,
         )
         # verl passes 'validate=True' for eval rollouts, not 'is_train'
         is_validate = kwargs.get('validate', False)
