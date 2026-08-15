@@ -135,6 +135,7 @@ EXPERIMENT_NAME=${EXPERIMENT_NAME:-"train_baseline_bc_8b_${RUN_TAG}_${TS}"}
 TRAIN_DATA_FILE=${TRAIN_DATA_FILE:-data/bc_train.parquet}
 VAL_DATA_FILE=${VAL_DATA_FILE:-data/bc_test.parquet}
 TRAINER_VAL_ONLY=${TRAINER_VAL_ONLY:-False}
+VAL_BEFORE_TRAIN=${VAL_BEFORE_TRAIN:-True}
 TOTAL_TRAINING_STEPS=${TOTAL_TRAINING_STEPS:-30}
 TEST_FREQ=${TEST_FREQ:-10}
 SAVE_FREQ=${SAVE_FREQ:-10}
@@ -424,7 +425,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   +actor_rollout_ref.rollout.plugin.must_search=True \
   +actor_rollout_ref.rollout.plugin.val_max_turn=100 \
   +actor_rollout_ref.rollout.plugin.val_response_length="$RESPONSE_LENGTH" \
-  trainer.val_before_train=True \
+  trainer.val_before_train="$VAL_BEFORE_TRAIN" \
   trainer.val_only="$TRAINER_VAL_ONLY" \
   trainer.n_gpus_per_node=1 \
   trainer.nnodes=$((NUM_NODES - 1)) \
