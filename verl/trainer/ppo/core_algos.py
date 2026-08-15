@@ -311,8 +311,6 @@ def compute_grpo_outcome_advantage(
         import numpy as np
         if isinstance(index, np.ndarray):
             index = [x.item() if hasattr(x, 'item') else x for x in index]
-        if isinstance(gen_uid, np.ndarray):
-            gen_uid = [x.item() if hasattr(x, 'item') else x for x in gen_uid]
         bsz = scores.shape[0]
         for i in range(bsz):
             id2score[index[i]].append(scores[i])

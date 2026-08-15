@@ -112,9 +112,10 @@ mapfile -t NODELIST < <(scontrol show hostnames "$SLURM_JOB_NODELIST")
 NODE0=${NODELIST[0]}
 NODE0_IP=$(getent hosts "$NODE0" | awk '{print $1}')
 NUM_NODES=${#NODELIST[@]}
+EXPECTED_NUM_NODES=${EXPECTED_NUM_NODES:-4}
 
-if [ "$NUM_NODES" -ne 4 ]; then
-  echo "Expected 4 nodes (set #SBATCH -N 4 or use idev -N 4), got $NUM_NODES"
+if [ "$NUM_NODES" -ne "$EXPECTED_NUM_NODES" ]; then
+  echo "Expected $EXPECTED_NUM_NODES nodes, got $NUM_NODES"
   exit 1
 fi
 
@@ -135,6 +136,7 @@ BC_CONTEXT_LENGTH=${BC_CONTEXT_LENGTH:-40960}
 BC_RESPONSE_LENGTH=${BC_RESPONSE_LENGTH:-$((BC_CONTEXT_LENGTH - BC_PROMPT_LENGTH))}
 BC_MAX_TOKEN_LEN_PER_GPU=${BC_MAX_TOKEN_LEN_PER_GPU:-$((BC_PROMPT_LENGTH + BC_RESPONSE_LENGTH))}
 BC_MAX_TURN=${BC_MAX_TURN:-100}
+BC_SESSION_TIMEOUT=${BC_SESSION_TIMEOUT:-600}
 BC_TURN_MAX_NEW_TOKENS=${BC_TURN_MAX_NEW_TOKENS:-768}
 BC_MAX_SESSION=${BC_MAX_SESSION:-10}
 BC_SEARCH_TIMEOUT_SECONDS=${BC_SEARCH_TIMEOUT_SECONDS:-600}
@@ -470,7 +472,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   +actor_rollout_ref.rollout.plugin.turn_max_new_tokens=${BC_TURN_MAX_NEW_TOKENS} \
   +actor_rollout_ref.rollout.plugin.max_session=${BC_MAX_SESSION} \
   +actor_rollout_ref.rollout.plugin.val_max_session=${BC_MAX_SESSION} \
-  +actor_rollout_ref.rollout.plugin.session_timeout=600 \
+  +actor_rollout_ref.rollout.plugin.session_timeout=${BC_SESSION_TIMEOUT} \
   +actor_rollout_ref.rollout.plugin.enable_summary=False \
   +actor_rollout_ref.rollout.plugin.branch_len=${BC_RESPONSE_LENGTH} \
   +actor_rollout_ref.rollout.plugin.process_reward="$PROCESS_REWARD" \

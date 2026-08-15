@@ -114,9 +114,10 @@ mapfile -t NODELIST < <(scontrol show hostnames "$SLURM_JOB_NODELIST")
 NODE0=${NODELIST[0]}
 NODE0_IP=$(getent hosts "$NODE0" | awk '{print $1}')
 NUM_NODES=${#NODELIST[@]}
+EXPECTED_NUM_NODES=${EXPECTED_NUM_NODES:-4}
 
-if [ "$NUM_NODES" -ne 4 ]; then
-  echo "Expected 4 nodes (set #SBATCH -N 4 or use idev -N 4), got $NUM_NODES"
+if [ "$NUM_NODES" -ne "$EXPECTED_NUM_NODES" ]; then
+  echo "Expected $EXPECTED_NUM_NODES nodes, got $NUM_NODES"
   exit 1
 fi
 
@@ -129,13 +130,25 @@ else
 fi
 
 TS=$(date +%Y%m%d_%H%M%S)
-EXPERIMENT_NAME=${EXPERIMENT_NAME:-"train_baseline_bc_8b_4n_24h_v3_32k_${TS}"}
+RUN_TAG=${RUN_TAG:-4n_24h_v3_32k}
+EXPERIMENT_NAME=${EXPERIMENT_NAME:-"train_baseline_bc_8b_${RUN_TAG}_${TS}"}
 TRAIN_DATA_FILE=${TRAIN_DATA_FILE:-data/bc_train.parquet}
 VAL_DATA_FILE=${VAL_DATA_FILE:-data/bc_test.parquet}
 TRAINER_VAL_ONLY=${TRAINER_VAL_ONLY:-False}
 TOTAL_TRAINING_STEPS=${TOTAL_TRAINING_STEPS:-30}
 TEST_FREQ=${TEST_FREQ:-10}
 SAVE_FREQ=${SAVE_FREQ:-10}
+ADV_ESTIMATOR=${ADV_ESTIMATOR:-foldgrpo}
+PROMPT_LENGTH=${PROMPT_LENGTH:-8192}
+RESPONSE_LENGTH=${RESPONSE_LENGTH:-32768}
+CONTEXT_LENGTH=${CONTEXT_LENGTH:-40960}
+TRAIN_BATCH_SIZE=${TRAIN_BATCH_SIZE:-12}
+PPO_MINI_BATCH_SIZE=${PPO_MINI_BATCH_SIZE:-12}
+ROLLOUT_N=${ROLLOUT_N:-8}
+TRAIN_LR=${TRAIN_LR:-2e-6}
+ALGORITHM_KL_COEF=${ALGORITHM_KL_COEF:-0.005}
+ACTOR_KL_LOSS_COEF=${ACTOR_KL_LOSS_COEF:-0.0005}
+SESSION_TIMEOUT=${SESSION_TIMEOUT:-600}
 CHECKPOINT_ROOT=${CHECKPOINT_ROOT:-${SCRATCH:-/scratch/09281/chc_1996}/context-graph-ckpts/$EXPERIMENT_NAME}
 
 probe() { printf '+++ [%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
@@ -354,8 +367,8 @@ set +e
 srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_ROOT" \
   --export=ALL,LOCAL_SEARCH_URL="$LOCAL_SEARCH_URL",OPENAI_API_KEY="$OPENAI_API_KEY",JUDGE_MODEL="$JUDGE_MODEL" \
   python -m scripts.train_baseline \
-  algorithm.adv_estimator=foldgrpo \
-  algorithm.kl_ctrl.kl_coef=0.005 \
+  algorithm.adv_estimator="$ADV_ESTIMATOR" \
+  algorithm.kl_ctrl.kl_coef="$ALGORITHM_KL_COEF" \
   actor_rollout_ref.rollout.agent.default_agent_loop=react_agent \
   actor_rollout_ref.rollout.name=vllm \
   actor_rollout_ref.rollout.mode=async \
@@ -363,11 +376,11 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   actor_rollout_ref.rollout.calculate_log_probs=True \
   actor_rollout_ref.rollout.gpu_memory_utilization=0.6 \
   actor_rollout_ref.model.path="$MODEL_PATH" \
-  actor_rollout_ref.rollout.prompt_length=8192 \
-  actor_rollout_ref.rollout.response_length=32768 \
-  actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu=40960 \
+  actor_rollout_ref.rollout.prompt_length="$PROMPT_LENGTH" \
+  actor_rollout_ref.rollout.response_length="$RESPONSE_LENGTH" \
+  actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu="$CONTEXT_LENGTH" \
   actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
-  actor_rollout_ref.rollout.n=8 \
+  actor_rollout_ref.rollout.n="$ROLLOUT_N" \
   actor_rollout_ref.rollout.agent.num_workers=1 \
   actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=1 \
   actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=1 \
@@ -377,21 +390,21 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   actor_rollout_ref.ref.fsdp_config.model_dtype=bfloat16 \
   actor_rollout_ref.actor.fsdp_config.param_offload=True \
   actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
-  actor_rollout_ref.actor.optim.lr=2e-6 \
+  actor_rollout_ref.actor.optim.lr="$TRAIN_LR" \
   actor_rollout_ref.actor.optim.weight_decay=0.1 \
   actor_rollout_ref.actor.use_kl_loss=True \
   actor_rollout_ref.actor.grad_clip=0.5 \
-  actor_rollout_ref.actor.kl_loss_coef=0.0005 \
+  actor_rollout_ref.actor.kl_loss_coef="$ACTOR_KL_LOSS_COEF" \
   data.train_files="$TRAIN_DATA_FILE" \
   data.val_files="$VAL_DATA_FILE" \
-  data.train_batch_size=12 \
-  data.max_prompt_length=8192 \
-  data.max_response_length=32768 \
+  data.train_batch_size="$TRAIN_BATCH_SIZE" \
+  data.max_prompt_length="$PROMPT_LENGTH" \
+  data.max_response_length="$RESPONSE_LENGTH" \
   data.return_raw_chat=True \
-  actor_rollout_ref.actor.ppo_mini_batch_size=12 \
+  actor_rollout_ref.actor.ppo_mini_batch_size="$PPO_MINI_BATCH_SIZE" \
   actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=1 \
-  actor_rollout_ref.actor.ppo_max_token_len_per_gpu=40960 \
-  actor_rollout_ref.actor.ppo_infer_max_token_len_per_gpu=40960 \
+  actor_rollout_ref.actor.ppo_max_token_len_per_gpu="$CONTEXT_LENGTH" \
+  actor_rollout_ref.actor.ppo_infer_max_token_len_per_gpu="$CONTEXT_LENGTH" \
   actor_rollout_ref.model.enable_gradient_checkpointing=True \
   +actor_rollout_ref.rollout.plugin.workflow=search_base \
   +actor_rollout_ref.rollout.plugin.max_turn=100 \
@@ -399,9 +412,9 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   +actor_rollout_ref.rollout.plugin.turn_max_new_tokens=768 \
   +actor_rollout_ref.rollout.plugin.max_session=10 \
   +actor_rollout_ref.rollout.plugin.val_max_session=10 \
-  +actor_rollout_ref.rollout.plugin.session_timeout=600 \
+  +actor_rollout_ref.rollout.plugin.session_timeout="$SESSION_TIMEOUT" \
   +actor_rollout_ref.rollout.plugin.enable_summary=False \
-  +actor_rollout_ref.rollout.plugin.branch_len=32768 \
+  +actor_rollout_ref.rollout.plugin.branch_len="$RESPONSE_LENGTH" \
   +actor_rollout_ref.rollout.plugin.process_reward='[flat]' \
   +actor_rollout_ref.rollout.plugin.lambda_compact=0.2 \
   +actor_rollout_ref.rollout.plugin.lambda_cost=0.002 \
@@ -410,7 +423,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   +actor_rollout_ref.rollout.plugin.double_check=False \
   +actor_rollout_ref.rollout.plugin.must_search=True \
   +actor_rollout_ref.rollout.plugin.val_max_turn=100 \
-  +actor_rollout_ref.rollout.plugin.val_response_length=32768 \
+  +actor_rollout_ref.rollout.plugin.val_response_length="$RESPONSE_LENGTH" \
   trainer.val_before_train=True \
   trainer.val_only="$TRAINER_VAL_ONLY" \
   trainer.n_gpus_per_node=1 \
