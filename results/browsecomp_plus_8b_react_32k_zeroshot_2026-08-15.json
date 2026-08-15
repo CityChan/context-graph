@@ -1,0 +1,43 @@
+{
+  "date": "2026-08-15",
+  "benchmark": "BrowseComp-Plus",
+  "split": "test",
+  "samples": 150,
+  "method": "ReAct baseline",
+  "model": "Qwen/Qwen3-8B",
+  "headline_run": {
+    "slurm_job": 913769,
+    "repository_head": "50fccdb",
+    "correct": 25,
+    "task_accuracy": 0.16666666666666666,
+    "session_timeout_seconds": 600,
+    "generation_complete": true,
+    "metrics_aggregation_complete": false
+  },
+  "configuration": {
+    "nodes": 4,
+    "trainer_gpus": 3,
+    "prompt_length": 8192,
+    "response_length": 32768,
+    "active_context_length": 40960,
+    "max_sessions": 10,
+    "max_turns": 100,
+    "trajectories_per_sample": 1,
+    "sampling": "greedy"
+  },
+  "diagnostic_runs": [
+    {
+      "slurm_job": 913501,
+      "correct": 27,
+      "task_accuracy": 0.18,
+      "session_timeout_seconds": 3600,
+      "generation_complete": true,
+      "metrics_aggregation_complete": false,
+      "comparable_as_strict_replicate": false
+    }
+  ],
+  "aggregation_fix_commits": [
+    "f47dadc",
+    "98367e5"
+  ]
+}
