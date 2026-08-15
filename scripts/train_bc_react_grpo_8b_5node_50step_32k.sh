@@ -29,5 +29,14 @@ export TOTAL_TRAINING_STEPS=50
 export TEST_FREQ=10
 export SAVE_FREQ=10
 
-SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-exec bash "$SCRIPT_DIR/train_bc_baseline_8b_4node_24h_v3_32k.sh"
+SUBMIT_DIR=${SLURM_SUBMIT_DIR:-$PWD}
+if [[ -f "$SUBMIT_DIR/scripts/train_bc_baseline_8b_4node_24h_v3_32k.sh" ]]; then
+  BASE_SCRIPT="$SUBMIT_DIR/scripts/train_bc_baseline_8b_4node_24h_v3_32k.sh"
+elif [[ -f "$SUBMIT_DIR/train_bc_baseline_8b_4node_24h_v3_32k.sh" ]]; then
+  BASE_SCRIPT="$SUBMIT_DIR/train_bc_baseline_8b_4node_24h_v3_32k.sh"
+else
+  echo "ERROR: cannot find train_bc_baseline_8b_4node_24h_v3_32k.sh under SLURM_SUBMIT_DIR=$SUBMIT_DIR" >&2
+  exit 1
+fi
+
+exec bash "$BASE_SCRIPT"
