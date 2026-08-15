@@ -61,6 +61,33 @@ from verl.utils.torch_functional import masked_mean
 from verl.utils.tracking import ValidationGenerationsLogger
 
 
+_BATCH_LEVEL_REWARD_METRICS = {
+    "avg_score",
+    "std_score",
+    "min_score",
+    "max_score",
+    "num_unique_gen_uids",
+    "avg_trajs_per_gen_uid",
+    "overlong_rate",
+    "avg_num_turns",
+}
+
+
+def _scalarize_reward_extra_info(name, values):
+    """Convert optional per-sample reward metadata to a scalar log value."""
+    arr = np.asarray(values, dtype=object).reshape(-1)
+    valid_values = [value for value in arr if value is not None]
+    if not valid_values:
+        return None
+
+    try:
+        if name in _BATCH_LEVEL_REWARD_METRICS:
+            return float(valid_values[0])
+        return float(np.asarray(valid_values, dtype=float).mean())
+    except (TypeError, ValueError):
+        return None
+
+
 @dataclass
 class ResourcePoolManager:
     """
@@ -678,25 +705,8 @@ class RayPPOTrainer:
 
         # Add scalarized reward_extra_info metrics with val/ prefix (aligned with fit())
         if reward_extra_infos_dict:
-            def _scalarize(name, values):
-                # values are per-sample arrays; some are repeated batch-level metrics (e.g., avg_score),
-                # others are per-sample metrics (e.g., reward_score)
-                arr = np.array(values)
-                if arr.size == 0:
-                    return None
-                # If this is a batch-level metric repeated across samples, take the first element
-                if name in {"avg_score", "std_score", "min_score", "max_score",
-                            "num_unique_gen_uids", "avg_trajs_per_gen_uid",
-                            "overlong_rate", "avg_num_turns"}:
-                    return float(arr[0])
-                # Otherwise use mean over samples
-                try:
-                    return float(arr.astype(float).mean())
-                except Exception:
-                    return None
-
             for key, val in reward_extra_infos_dict.items():
-                scalar_val = _scalarize(key, val)
+                scalar_val = _scalarize_reward_extra_info(key, val)
                 if scalar_val is not None:
                     metric_dict[f"val/{key}"] = scalar_val
 
@@ -1369,27 +1379,8 @@ class RayPPOTrainer:
 
                 # TODO@Miao[Done]: update metrics from reward_extra_infos_dict (where we calculated metrics deduplicated by gen_uid)
                 if reward_extra_infos_dict:
-                    import numpy as np
-
-                    def _scalarize(name, values):
-                        # values are per-sample arrays; some are repeated batch-level metrics (e.g., avg_score),
-                        # others are per-sample metrics (e.g., reward_score)
-                        arr = np.array(values)
-                        if arr.size == 0:
-                            return None
-                        # If this is a batch-level metric repeated across samples, take the first element
-                        if name in {"avg_score", "std_score", "min_score", "max_score",
-                                    "num_unique_gen_uids", "avg_trajs_per_gen_uid",
-                                    "overlong_rate", "avg_num_turns"}:
-                            return float(arr[0])
-                        # Otherwise use mean over samples
-                        try:
-                            return float(arr.astype(float).mean())
-                        except Exception:
-                            return None
-
                     for key, val in reward_extra_infos_dict.items():
-                        scalar_val = _scalarize(key, val)
+                        scalar_val = _scalarize_reward_extra_info(key, val)
                         if scalar_val is not None:
                             metrics[f"reward/{key}"] = scalar_val
                             
