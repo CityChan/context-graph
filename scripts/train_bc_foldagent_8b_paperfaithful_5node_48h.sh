@@ -127,6 +127,10 @@ fi
 
 TS=$(date +%Y%m%d_%H%M%S)
 RUN_TAG=${RUN_TAG:-paperfaithful_5n_48h}
+EXPERIMENT_NAME=${EXPERIMENT_NAME:-"train_foldagent_bc_8b_${RUN_TAG}_${TS}"}
+TRAIN_DATA_FILE=${TRAIN_DATA_FILE:-data/bc_train.parquet}
+VAL_DATA_FILE=${VAL_DATA_FILE:-data/bc_test.parquet}
+TRAINER_VAL_ONLY=${TRAINER_VAL_ONLY:-False}
 PROMPT_LENGTH=${PROMPT_LENGTH:-8192}
 RESPONSE_LENGTH=${RESPONSE_LENGTH:-32768}
 CONTEXT_LENGTH=${CONTEXT_LENGTH:-40960}
@@ -138,13 +142,18 @@ VAL_BEFORE_TRAIN=${VAL_BEFORE_TRAIN:-True}
 TEST_FREQ=${TEST_FREQ:-10}
 SAVE_FREQ=${SAVE_FREQ:-10}
 BC_SEARCH_TIMEOUT_SECONDS=${BC_SEARCH_TIMEOUT_SECONDS:-600}
+SESSION_TIMEOUT=${SESSION_TIMEOUT:-3600}
+MAX_TURN=${MAX_TURN:-100}
+MAX_SESSION=${MAX_SESSION:-10}
+VAL_MAX_SESSION=${VAL_MAX_SESSION:-10}
+TURN_MAX_NEW_TOKENS=${TURN_MAX_NEW_TOKENS:-2048}
 TRAIN_LR=${TRAIN_LR:-2e-6}
 USE_KL_LOSS=${USE_KL_LOSS:-True}
 ACTOR_KL_LOSS_COEF=${ACTOR_KL_LOSS_COEF:-0.0005}
 ALGORITHM_KL_COEF=${ALGORITHM_KL_COEF:-0.005}
 CLIP_RATIO_LOW=${CLIP_RATIO_LOW:-0.2}
 CLIP_RATIO_HIGH=${CLIP_RATIO_HIGH:-0.2}
-EXPERIMENT_NAME="train_foldagent_bc_8b_${RUN_TAG}_${TS}"
+CHECKPOINT_ROOT=${CHECKPOINT_ROOT:-${SCRATCH:-/scratch/09281/chc_1996}/context-graph-ckpts/$EXPERIMENT_NAME}
 
 # Qwen3-8B advertises 40,960 positions. Longer runs must override both the
 # actor/reference HF config and vLLM's independently loaded HF config.
@@ -174,9 +183,9 @@ echo "  Started: $(date)"
 echo "=============================================================="
 
 # ── Pre-flight: BrowseComp data parquets + HF datasets must exist ──
-probe "checking BrowseComp artefacts"
-TRAIN_PARQUET="$PROJECT_ROOT/data/bc_train.parquet"
-VAL_PARQUET="$PROJECT_ROOT/data/bc_test.parquet"
+probe "checking training/evaluation parquets"
+TRAIN_PARQUET="$PROJECT_ROOT/$TRAIN_DATA_FILE"
+VAL_PARQUET="$PROJECT_ROOT/$VAL_DATA_FILE"
 for f in "$TRAIN_PARQUET" "$VAL_PARQUET"; do
   if [ ! -f "$f" ]; then
     echo "ERROR: missing $f"
@@ -184,6 +193,32 @@ for f in "$TRAIN_PARQUET" "$VAL_PARQUET"; do
     exit 1
   fi
 done
+probe "data parquets ok: train=$TRAIN_DATA_FILE val=$VAL_DATA_FILE"
+
+RESUME_ARGS=()
+if [ -n "${RESUME_CHECKPOINT_PATH:-}" ]; then
+  RESUME_PATH=$RESUME_CHECKPOINT_PATH
+  if [ ! -d "$RESUME_PATH" ]; then
+    echo "ERROR: checkpoint directory missing: $RESUME_PATH"
+    exit 1
+  fi
+  RESUME_ARGS=(trainer.resume_mode=resume_path "+trainer.resume_from_path=$RESUME_PATH")
+  probe "will load exact checkpoint $RESUME_PATH"
+elif [ -n "${RESUME_CHECKPOINT_ROOT:-}" ]; then
+  LATEST_FILE="$RESUME_CHECKPOINT_ROOT/latest_checkpointed_iteration.txt"
+  if [ ! -s "$LATEST_FILE" ]; then
+    echo "ERROR: missing latest checkpoint marker: $LATEST_FILE"
+    exit 1
+  fi
+  LATEST_STEP=$(tr -d '[:space:]' < "$LATEST_FILE")
+  RESUME_PATH="$RESUME_CHECKPOINT_ROOT/$LATEST_STEP"
+  if [ ! -d "$RESUME_PATH" ]; then
+    echo "ERROR: checkpoint directory missing: $RESUME_PATH"
+    exit 1
+  fi
+  RESUME_ARGS=(trainer.resume_mode=resume_path "+trainer.resume_from_path=$RESUME_PATH")
+  probe "will load latest checkpoint $RESUME_PATH"
+fi
 # HF corpus + embedding datasets (will use HF cache from \$HF_HOME/hub)
 CORPUS_DATASET="Tevatron/browsecomp-plus-corpus"
 CORPUS_EMBEDDING_DATASET="miaolu3/browsecomp-plus"
@@ -427,8 +462,8 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   actor_rollout_ref.actor.grad_clip=0.5 \
   actor_rollout_ref.actor.kl_loss_coef="$ACTOR_KL_LOSS_COEF" \
   algorithm.foldgrpo_process_reward_mode=paper_signed \
-  data.train_files=data/bc_train.parquet \
-  data.val_files=data/bc_test.parquet \
+  data.train_files="$TRAIN_DATA_FILE" \
+  data.val_files="$VAL_DATA_FILE" \
   data.train_batch_size="$TRAIN_BATCH_SIZE" \
   data.max_prompt_length="$PROMPT_LENGTH" \
   data.max_response_length="$RESPONSE_LENGTH" \
@@ -439,12 +474,12 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   actor_rollout_ref.actor.ppo_infer_max_token_len_per_gpu="$CONTEXT_LENGTH" \
   actor_rollout_ref.model.enable_gradient_checkpointing=True \
   +actor_rollout_ref.rollout.plugin.workflow=search_branch \
-  +actor_rollout_ref.rollout.plugin.max_turn=100 \
+  +actor_rollout_ref.rollout.plugin.max_turn="$MAX_TURN" \
   +actor_rollout_ref.rollout.plugin.retry_cjk=10 \
-  +actor_rollout_ref.rollout.plugin.turn_max_new_tokens=2048 \
-  +actor_rollout_ref.rollout.plugin.max_session=10 \
-  +actor_rollout_ref.rollout.plugin.val_max_session=10 \
-  +actor_rollout_ref.rollout.plugin.session_timeout=3600 \
+  +actor_rollout_ref.rollout.plugin.turn_max_new_tokens="$TURN_MAX_NEW_TOKENS" \
+  +actor_rollout_ref.rollout.plugin.max_session="$MAX_SESSION" \
+  +actor_rollout_ref.rollout.plugin.val_max_session="$VAL_MAX_SESSION" \
+  +actor_rollout_ref.rollout.plugin.session_timeout="$SESSION_TIMEOUT" \
   +actor_rollout_ref.rollout.plugin.enable_summary=False \
   +actor_rollout_ref.rollout.plugin.branch_len="$RESPONSE_LENGTH" \
   +actor_rollout_ref.rollout.plugin.process_reward='[flat,scope]' \
@@ -452,19 +487,20 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   +actor_rollout_ref.rollout.plugin.must_finish=False \
   +actor_rollout_ref.rollout.plugin.double_check=False \
   +actor_rollout_ref.rollout.plugin.must_search=True \
-  +actor_rollout_ref.rollout.plugin.val_max_turn=100 \
+  +actor_rollout_ref.rollout.plugin.val_max_turn="$MAX_TURN" \
   +actor_rollout_ref.rollout.plugin.val_response_length="$RESPONSE_LENGTH" \
   trainer.val_before_train="$VAL_BEFORE_TRAIN" \
-  trainer.val_only=False \
+  trainer.val_only="$TRAINER_VAL_ONLY" \
   trainer.n_gpus_per_node=1 \
   trainer.nnodes=$((NUM_NODES - 1)) \
   trainer.total_training_steps="$TOTAL_TRAINING_STEPS" \
   trainer.test_freq="$TEST_FREQ" \
   trainer.save_freq="$SAVE_FREQ" \
-  trainer.default_local_dir=${SCRATCH:-/scratch/09281/chc_1996}/context-graph-ckpts/$EXPERIMENT_NAME \
+  trainer.default_local_dir="$CHECKPOINT_ROOT" \
   trainer.project_name=context-graph \
   trainer.experiment_name="$EXPERIMENT_NAME" \
-  trainer.logger="$TRAINER_LOGGER"
+  trainer.logger="$TRAINER_LOGGER" \
+  "${RESUME_ARGS[@]}"
 RC=$?
 set -e
 

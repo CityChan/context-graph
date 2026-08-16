@@ -150,6 +150,10 @@ TRAIN_LR=${TRAIN_LR:-2e-6}
 ALGORITHM_KL_COEF=${ALGORITHM_KL_COEF:-0.005}
 ACTOR_KL_LOSS_COEF=${ACTOR_KL_LOSS_COEF:-0.0005}
 SESSION_TIMEOUT=${SESSION_TIMEOUT:-600}
+MAX_TURN=${MAX_TURN:-100}
+MAX_SESSION=${MAX_SESSION:-10}
+VAL_MAX_SESSION=${VAL_MAX_SESSION:-10}
+TURN_MAX_NEW_TOKENS=${TURN_MAX_NEW_TOKENS:-768}
 CHECKPOINT_ROOT=${CHECKPOINT_ROOT:-${SCRATCH:-/scratch/09281/chc_1996}/context-graph-ckpts/$EXPERIMENT_NAME}
 
 probe() { printf '+++ [%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
@@ -194,7 +198,15 @@ fi
 probe "BC parquets + HF datasets ok"
 
 RESUME_ARGS=()
-if [ -n "${RESUME_CHECKPOINT_ROOT:-}" ]; then
+if [ -n "${RESUME_CHECKPOINT_PATH:-}" ]; then
+  RESUME_PATH=$RESUME_CHECKPOINT_PATH
+  if [ ! -d "$RESUME_PATH" ]; then
+    echo "ERROR: checkpoint directory missing: $RESUME_PATH"
+    exit 1
+  fi
+  RESUME_ARGS=(trainer.resume_mode=resume_path "+trainer.resume_from_path=$RESUME_PATH")
+  probe "will load exact checkpoint $RESUME_PATH"
+elif [ -n "${RESUME_CHECKPOINT_ROOT:-}" ]; then
   LATEST_FILE="$RESUME_CHECKPOINT_ROOT/latest_checkpointed_iteration.txt"
   if [ ! -s "$LATEST_FILE" ]; then
     echo "ERROR: missing latest checkpoint marker: $LATEST_FILE"
@@ -408,11 +420,11 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   actor_rollout_ref.actor.ppo_infer_max_token_len_per_gpu="$CONTEXT_LENGTH" \
   actor_rollout_ref.model.enable_gradient_checkpointing=True \
   +actor_rollout_ref.rollout.plugin.workflow=search_base \
-  +actor_rollout_ref.rollout.plugin.max_turn=100 \
+  +actor_rollout_ref.rollout.plugin.max_turn="$MAX_TURN" \
   +actor_rollout_ref.rollout.plugin.retry_cjk=10 \
-  +actor_rollout_ref.rollout.plugin.turn_max_new_tokens=768 \
-  +actor_rollout_ref.rollout.plugin.max_session=10 \
-  +actor_rollout_ref.rollout.plugin.val_max_session=10 \
+  +actor_rollout_ref.rollout.plugin.turn_max_new_tokens="$TURN_MAX_NEW_TOKENS" \
+  +actor_rollout_ref.rollout.plugin.max_session="$MAX_SESSION" \
+  +actor_rollout_ref.rollout.plugin.val_max_session="$VAL_MAX_SESSION" \
   +actor_rollout_ref.rollout.plugin.session_timeout="$SESSION_TIMEOUT" \
   +actor_rollout_ref.rollout.plugin.enable_summary=False \
   +actor_rollout_ref.rollout.plugin.branch_len="$RESPONSE_LENGTH" \
@@ -423,7 +435,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   +actor_rollout_ref.rollout.plugin.must_finish=False \
   +actor_rollout_ref.rollout.plugin.double_check=False \
   +actor_rollout_ref.rollout.plugin.must_search=True \
-  +actor_rollout_ref.rollout.plugin.val_max_turn=100 \
+  +actor_rollout_ref.rollout.plugin.val_max_turn="$MAX_TURN" \
   +actor_rollout_ref.rollout.plugin.val_response_length="$RESPONSE_LENGTH" \
   trainer.val_before_train="$VAL_BEFORE_TRAIN" \
   trainer.val_only="$TRAINER_VAL_ONLY" \
