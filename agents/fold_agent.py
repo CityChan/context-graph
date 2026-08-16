@@ -9,7 +9,21 @@ from uuid import uuid4
 from typing import Any, Union
 
 from verl import DataProto
-from .utils import Agent, select_env, truncate_text, is_weird, TaskContext, run_action, AgentLoopOutput, AgentLoopMetrics
+from .utils import (
+    Agent,
+    select_env,
+    truncate_text,
+    is_weird,
+    TaskContext,
+    run_action,
+    AgentLoopOutput,
+    AgentLoopMetrics,
+)
+from .finalizer import (
+    remaining_generation_tokens,
+    step_preserving_final_answer,
+    submit_emergency_final_answer,
+)
 from .rollout_status import classify_rollout_status
 from .prompts import create_chat, BRANCH_MESSAGE_SEARCH, BRANCH_MESSAGE, SUMMARY_PROMPT_CODE, SUMMARY_PROMPT_SEARCH
 from .verifier import judge_scope
@@ -97,6 +111,7 @@ async def process_item(
     summary_prompt = SUMMARY_PROMPT_SEARCH if 'search' in workflow else SUMMARY_PROMPT_CODE
 
     max_turn = getattr(config.plugin, 'max_turn', 64) if config.plugin else 64
+    final_answer_reserve = max(int(getattr(config.plugin, 'final_answer_reserve', 0) or 0), 0)
     max_session = getattr(config.plugin, "max_session", 5)
     if not is_train:
         max_session = getattr(config.plugin, "val_max_session", max_session)
@@ -121,6 +136,8 @@ async def process_item(
     iteration = 0
     mask_rollout = True  # If True then no grad update on this traj
     timed_out = False
+    natural_finish = False
+    pre_finalize_token_limit = False
     session_message = []
     while iteration < max_turn:
         if time.time() - session_start_time > session_timeout:
@@ -152,10 +169,14 @@ async def process_item(
             agent[current].append({'role': 'user', 'content': next_session_prompt})
             session_message.append({'role': 'user', 'content': next_session_prompt})
 
-        response = await agent['main'].step()
+        response = await step_preserving_final_answer(agent['main'], final_answer_reserve)
         # print(response)
 
         if response is None:
+            pre_finalize_token_limit = bool(
+                final_answer_reserve
+                and remaining_generation_tokens(agent['main']) <= final_answer_reserve + 9
+            )
             break
 
         session_message.append({'role': 'assistant', 'content': response})
@@ -208,6 +229,7 @@ async def process_item(
             observation = await run_action(env, response)
             if observation is None:
                 mask_rollout = False
+                natural_finish = True
                 break
 
         if agent['main'].chat[-1]['role'] == 'user':
@@ -220,6 +242,20 @@ async def process_item(
         # print(observation)
         agent['main'].append({'role': 'user', 'content': observation})
         session_message.append({'role': 'user', 'content': observation})
+
+    finalizer_attempted = bool(
+        final_answer_reserve
+        and not (getattr(env, 'is_finish', False) or getattr(env, 'finish', False))
+    )
+    forced_finish = False
+    if finalizer_attempted:
+        finalizer_message_start = len(agent['main'].messages())
+        forced_finish = await submit_emergency_final_answer(
+            agent['main'], env, final_answer_reserve, run_action
+        )
+        session_message.extend(agent['main'].messages()[finalizer_message_start:])
+        if forced_finish:
+            mask_rollout = False
 
     env.stats['session_time'] = time.time() - session_start_time
 
@@ -250,6 +286,10 @@ async def process_item(
     env.stats['is_branch'] = int(len(agent) > 1)
     env.stats['branch_success'] = int(int(len(agent) > 1) * score[1])
     env.stats['use_all_branch'] = int(len(branches) + 1 > max_session)
+    env.stats['natural_finish'] = int(natural_finish)
+    env.stats['finalizer_attempted'] = int(finalizer_attempted)
+    env.stats['forced_finish'] = int(forced_finish)
+    env.stats['pre_finalize_token_limit'] = int(pre_finalize_token_limit)
 
     if getattr(env, 'is_finish', False) or getattr(env, 'finish', False):
         mask_rollout = False

@@ -4,7 +4,20 @@ import copy
 from uuid import uuid4
 
 from verl import DataProto
-from .utils import Agent, select_env, TaskContext, run_action, AgentLoopOutput, AgentLoopMetrics
+from .utils import (
+    Agent,
+    select_env,
+    TaskContext,
+    run_action,
+    AgentLoopOutput,
+    AgentLoopMetrics,
+)
+from .finalizer import (
+    remaining_generation_tokens,
+    step_preserving_final_answer,
+    submit_emergency_final_answer,
+)
+from .rollout_status import classify_rollout_status
 from .prompts import create_chat
 
 
@@ -47,6 +60,7 @@ async def process_item(
                                                                                           "search")
     user_prompt = create_chat(env.instance_info['problem_statement'], workflow, item)
     max_turn = getattr(config.plugin, 'max_turn', 64) if config.plugin else 64
+    final_answer_reserve = max(int(getattr(config.plugin, 'final_answer_reserve', 0) or 0), 0)
 
     llm_client = context.llm_client
     prompt_turn = len(user_prompt)
@@ -54,17 +68,31 @@ async def process_item(
     agent = Agent(llm_client, user_prompt, tokenizer, config, prompt_turn=prompt_turn)
     iteration = 0
     natural_finish = False
+    pre_finalize_token_limit = False
     while iteration < max_turn:
         iteration += 1
-        response = await agent.step()
+        response = await step_preserving_final_answer(agent, final_answer_reserve)
         if response is None:
-            natural_finish = True
+            pre_finalize_token_limit = bool(
+                final_answer_reserve
+                and remaining_generation_tokens(agent) <= final_answer_reserve + 9
+            )
             break
         observation = await run_action(env, response)
         if observation is None:
             natural_finish = True
             break
         agent.append({'role': 'user', 'content': observation})
+
+    finalizer_attempted = bool(
+        final_answer_reserve
+        and not (getattr(env, 'is_finish', False) or getattr(env, 'finish', False))
+    )
+    forced_finish = False
+    if finalizer_attempted:
+        forced_finish = await submit_emergency_final_answer(
+            agent, env, final_answer_reserve, run_action
+        )
 
     # Only the environment can establish that the task actually finished.
     # A None completion commonly means the token/context budget was exhausted;
@@ -92,6 +120,27 @@ async def process_item(
     env.stats['main_turn'] = int(iteration)
     env.stats['is_branch'] = 0
     env.stats['branch_success'] = 0
+    env.stats['natural_finish'] = int(natural_finish)
+    env.stats['finalizer_attempted'] = int(finalizer_attempted)
+    env.stats['forced_finish'] = int(forced_finish)
+    env.stats['pre_finalize_token_limit'] = int(pre_finalize_token_limit)
+
+    main_response_tokens = max(len(agent.context()) - agent.prompt_ids_len, 0)
+    main_context_tokens = len(agent.context())
+    working_context_limit = config.prompt_length + config.response_length
+    rollout_status = classify_rollout_status(
+        response_tokens=main_response_tokens,
+        response_limit=config.response_length,
+        main_context_tokens=main_context_tokens,
+        working_context_limit=working_context_limit,
+        is_finish=is_finish,
+        iteration=iteration,
+        max_turn=max_turn,
+        timed_out=False,
+    )
+    env.stats.update({k: v for k, v in rollout_status.items() if k != 'termination_reason'})
+    env.stats['main_context_tokens'] = main_context_tokens
+    env.stats['working_context_limit'] = working_context_limit
 
     out_data = await agent.get_data()
     agent_reward = score[1]
@@ -109,6 +158,7 @@ async def process_item(
             'env_stats': copy.deepcopy(env.stats),
             'mask_rollout': mask_rollout,
             'is_finish': is_finish,
+            'termination_reason': rollout_status['termination_reason'],
             'process_reward_mask': out_data['process_reward_mask'],
             'uid': uid,
             'gen_uid': gen_uid,

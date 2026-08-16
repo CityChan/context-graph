@@ -147,6 +147,7 @@ MAX_TURN=${MAX_TURN:-100}
 MAX_SESSION=${MAX_SESSION:-10}
 VAL_MAX_SESSION=${VAL_MAX_SESSION:-10}
 TURN_MAX_NEW_TOKENS=${TURN_MAX_NEW_TOKENS:-2048}
+FINAL_ANSWER_RESERVE=${FINAL_ANSWER_RESERVE:-0}
 TRAIN_LR=${TRAIN_LR:-2e-6}
 USE_KL_LOSS=${USE_KL_LOSS:-True}
 ACTOR_KL_LOSS_COEF=${ACTOR_KL_LOSS_COEF:-0.0005}
@@ -477,6 +478,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   +actor_rollout_ref.rollout.plugin.max_turn="$MAX_TURN" \
   +actor_rollout_ref.rollout.plugin.retry_cjk=10 \
   +actor_rollout_ref.rollout.plugin.turn_max_new_tokens="$TURN_MAX_NEW_TOKENS" \
+  +actor_rollout_ref.rollout.plugin.final_answer_reserve="$FINAL_ANSWER_RESERVE" \
   +actor_rollout_ref.rollout.plugin.max_session="$MAX_SESSION" \
   +actor_rollout_ref.rollout.plugin.val_max_session="$VAL_MAX_SESSION" \
   +actor_rollout_ref.rollout.plugin.session_timeout="$SESSION_TIMEOUT" \
