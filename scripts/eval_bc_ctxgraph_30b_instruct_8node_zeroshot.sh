@@ -109,6 +109,7 @@ export NCCL_P2P_LEVEL=NVL
 PROJECT_ROOT=/work/09281/chc_1996/vista/context-graph
 MODEL_PATH=${MODEL_PATH:-Qwen/Qwen3-30B-A3B-Instruct-2507}
 EMBED_MODEL=${EMBED_MODEL:-Qwen/Qwen3-Embedding-8B}
+FINAL_ANSWER_RESERVE=${FINAL_ANSWER_RESERVE:-1024}
 export HF_HOME=${HF_HOME:-/work/09281/chc_1996/vista/cache}
 export HF_HUB_CACHE=${HF_HUB_CACHE:-$HF_HOME/hub}
 cd "$PROJECT_ROOT"
@@ -394,6 +395,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   +actor_rollout_ref.rollout.plugin.must_search=True \
   +actor_rollout_ref.rollout.plugin.val_max_turn=100 \
   +actor_rollout_ref.rollout.plugin.val_response_length=32768 \
+  +actor_rollout_ref.rollout.plugin.final_answer_reserve="$FINAL_ANSWER_RESERVE" \
   trainer.val_before_train=True \
   trainer.val_only=True \
   trainer.n_gpus_per_node=1 \

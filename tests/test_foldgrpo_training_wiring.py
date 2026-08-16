@@ -88,6 +88,16 @@ def test_contextgraph_receives_fresh_graph_state_and_actionable_invalid_penaltie
     assert "agent['main'].set_process_reward(last_completion, -1)" in source
 
 
+def test_contextgraph_uses_the_shared_emergency_finalizer():
+    source = _read("agents/graph_agent_isolated.py")
+
+    assert "step_preserving_final_answer(" in source
+    assert "submit_emergency_final_answer(" in source
+    assert "'finalizer_attempted'" in source
+    assert "'forced_finish'" in source
+    assert "'pre_finalize_token_limit'" in source
+
+
 def test_contextgraph_uses_one_terminal_reward_per_episode():
     source = _read("agents/graph_agent_isolated.py")
 
