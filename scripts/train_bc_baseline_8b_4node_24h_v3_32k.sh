@@ -157,6 +157,19 @@ TURN_MAX_NEW_TOKENS=${TURN_MAX_NEW_TOKENS:-768}
 FINAL_ANSWER_RESERVE=${FINAL_ANSWER_RESERVE:-0}
 CHECKPOINT_ROOT=${CHECKPOINT_ROOT:-${SCRATCH:-/scratch/09281/chc_1996}/context-graph-ckpts/$EXPERIMENT_NAME}
 
+# Qwen3-8B advertises 40,960 positions. Longer evaluations must override both
+# the actor/reference HF config and vLLM's independently loaded HF config.
+LONG_CONTEXT_ARGS=()
+if [ "$CONTEXT_LENGTH" -gt 40960 ]; then
+  BC_YARN_FACTOR=${BC_YARN_FACTOR:-2.0}
+  BC_YARN_ORIGINAL_LENGTH=${BC_YARN_ORIGINAL_LENGTH:-32768}
+  LONG_CONTEXT_OVERRIDE="{max_position_embeddings:${CONTEXT_LENGTH},rope_scaling:{rope_type:yarn,factor:${BC_YARN_FACTOR},original_max_position_embeddings:${BC_YARN_ORIGINAL_LENGTH}}}"
+  LONG_CONTEXT_ARGS+=(
+    "+actor_rollout_ref.model.override_config=${LONG_CONTEXT_OVERRIDE}"
+    "+actor_rollout_ref.rollout.engine_kwargs.vllm.hf_overrides=${LONG_CONTEXT_OVERRIDE}"
+  )
+fi
+
 probe() { printf '+++ [%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 
 echo "=============================================================="
@@ -390,6 +403,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   actor_rollout_ref.rollout.calculate_log_probs=True \
   actor_rollout_ref.rollout.gpu_memory_utilization=0.6 \
   actor_rollout_ref.model.path="$MODEL_PATH" \
+  "${LONG_CONTEXT_ARGS[@]}" \
   actor_rollout_ref.rollout.prompt_length="$PROMPT_LENGTH" \
   actor_rollout_ref.rollout.response_length="$RESPONSE_LENGTH" \
   actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu="$CONTEXT_LENGTH" \
