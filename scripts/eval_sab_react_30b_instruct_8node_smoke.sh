@@ -17,7 +17,7 @@
 # Topology (8 nodes, no search server):
 #   NODELIST[0]   = Ray head + trainer rank 0
 #   NODELIST[1-7] = Ray workers (8 FSDP/vLLM GPUs total = 1 per node)
-#   No dedicated search node â€?SAB uses an in-process Python sandbox
+#   No dedicated search node; SAB uses an in-process Python sandbox
 #   (envs/scienceagent_sandbox.py), not an external service.
 #
 # Expected wall clock:
@@ -32,7 +32,7 @@
 #   mkdir -p data
 #   wget https://huggingface.co/datasets/osunlp/ScienceAgentBench/resolve/main/ScienceAgentBench.csv \
 #        -O data/ScienceAgentBench.csv
-#   # Unpack the full benchmark zip (password-protected â€?request from upstream)
+#   # Unpack the full benchmark zip (password-protected; request from upstream)
 #   #   benchmark zip -> data/sab_benchmark/{datasets,eval_programs,gold_programs}/
 #   unzip benchmark.zip -d data/sab_benchmark
 #   # Build per-workflow parquets
@@ -146,9 +146,10 @@ mapfile -t NODELIST < <(scontrol show hostnames "$SLURM_JOB_NODELIST")
 NODE0=${NODELIST[0]}
 NODE0_IP=$(getent hosts "$NODE0" | awk '{print $1}')
 NUM_NODES=${#NODELIST[@]}
+EXPECTED_NUM_NODES=${EXPECTED_NUM_NODES:-8}
 
-if [ "$NUM_NODES" -ne 8 ]; then
-  echo "Expected 8 nodes (set #SBATCH -N 8 or use idev -N 8), got $NUM_NODES"
+if [ "$NUM_NODES" -ne "$EXPECTED_NUM_NODES" ]; then
+  echo "Expected $EXPECTED_NUM_NODES nodes, got $NUM_NODES"
   exit 1
 fi
 
@@ -450,7 +451,7 @@ echo "=============================================================="
 if [ $RC -eq 0 ]; then
   echo "  EVAL RUN COMPLETED (exit 0)"
 else
-  echo "  EVAL RUN FAILED (exit $RC) â€?check above for first error"
+  echo "  EVAL RUN FAILED (exit $RC); check above for first error"
 fi
 echo "  Finished: $(date)"
 echo "=============================================================="
