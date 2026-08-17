@@ -91,6 +91,21 @@ export SAB_INTERACTIVE_EVAL_FEEDBACK=${SAB_INTERACTIVE_EVAL_FEEDBACK:-0}
 # disable thinking in the chat template unless explicitly overridden.
 export QWEN_ENABLE_THINKING=${QWEN_ENABLE_THINKING:-False}
 
+# Load visual-judge credentials before Ray starts. The official SAB evaluator
+# uses GPT-4o for visualization tasks, so a real-eval run without credentials
+# would otherwise turn an evaluator crash into a misleading task score of zero.
+OPENAI_ENV_SOURCE="env"
+if [ -z "${OPENAI_API_KEY:-}" ] && [ -z "${AZURE_OPENAI_KEY:-}" ]; then
+  for openai_env in "${WORK:-}/.openai_env" /work/09281/chc_1996/vista/.openai_env "$HOME/.openai_env"; do
+    if [ -n "$openai_env" ] && [ -f "$openai_env" ]; then
+      # shellcheck disable=SC1090
+      source "$openai_env"
+      OPENAI_ENV_SOURCE="$openai_env"
+      break
+    fi
+  done
+fi
+
 # WANDB: source credentials from explicit env first, then common Vista/project locations.
 WANDB_ENV_SOURCE="env"
 if [ -z "${WANDB_API_KEY:-}" ]; then
@@ -300,6 +315,25 @@ fi
 # verl wants a train_files path too even with val_only=True; reuse the same file.
 TRAIN_PARQUET="$VAL_PARQUET"
 probe "SAB parquet: $VAL_PARQUET"
+
+if [ "$SAB_REAL_EVAL" = "1" ]; then
+  if [ ! -f "$PROJECT_ROOT/gpt4_visual_judge.py" ]; then
+    echo "ERROR: missing $PROJECT_ROOT/gpt4_visual_judge.py"
+    echo "       Visual SAB evaluators cannot run without this helper."
+    exit 1
+  fi
+  if [ -n "${OPENAI_API_KEY:-}" ] && [ "${OPENAI_API_KEY:-}" != "dummy" ]; then
+    probe "real evaluator visual judge: OpenAI credentials loaded from $OPENAI_ENV_SOURCE"
+  elif [ -n "${AZURE_OPENAI_KEY:-}" ] && [ -n "${AZURE_OPENAI_API_VERSION:-}" ] && [ -n "${AZURE_OPENAI_ENDPOINT:-}" ] && [ -n "${AZURE_OPENAI_DEPLOYMENT_NAME:-}" ]; then
+    probe "real evaluator visual judge: Azure OpenAI credentials loaded from $OPENAI_ENV_SOURCE"
+  else
+    echo "ERROR: SAB_REAL_EVAL=1 requires a real OPENAI_API_KEY or the complete Azure OpenAI credential set"
+    echo "       Required Azure variables: AZURE_OPENAI_KEY, AZURE_OPENAI_API_VERSION,"
+    echo "       AZURE_OPENAI_ENDPOINT, and AZURE_OPENAI_DEPLOYMENT_NAME."
+    echo "       Store exported variables in \$WORK/.openai_env with mode 600."
+    exit 1
+  fi
+fi
 
 # ── Pre-flight: model weights must be cached (offline) ──
 probe "checking model cache"
