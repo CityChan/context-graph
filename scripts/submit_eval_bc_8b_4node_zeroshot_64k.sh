@@ -21,7 +21,7 @@ for method in baseline foldagent contextgraph; do
     --output="logs/eval-bc-8b-${method}-64k-finalizer.%j.out" \
     --error="logs/eval-bc-8b-${method}-64k-finalizer.%j.err" \
     --nodes=4 \
-    --time=04:00:00 \
+    --time=01:00:00 \
     scripts/eval_bc_baseline_8b_4node_zeroshot.sh)
   echo "$method: submitted job $job_id"
 done
