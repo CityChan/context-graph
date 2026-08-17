@@ -220,7 +220,7 @@ else
 fi
 
 TS=$(date +%Y%m%d_%H%M%S)
-EXPERIMENT_NAME="eval_react_sab_30b_instruct_8n_smoke_${TS}"
+EXPERIMENT_NAME="eval_react_sab_30b_instruct_${NUM_NODES}n_smoke_${TS}"
 
 export EXPERIMENT_NAME
 export WANDB_RUN_ID=${WANDB_RUN_ID:-$EXPERIMENT_NAME}
@@ -270,7 +270,7 @@ PY
 probe() { printf '+++ [%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 
 echo "=============================================================="
-echo "  SMOKE EVAL: ReAct (code) on ScienceAgentBench (Qwen3-30B-A3B-Instruct-2507, 8 nodes, short-resp, val_only=True)"
+echo "  SMOKE EVAL: ReAct (code) on ScienceAgentBench ($MODEL_PATH, $NUM_NODES nodes, short-resp, val_only=True)"
 echo "  Job: ${SLURM_JOB_ID:-<idev>}   Head: $NODE0 ($NODE0_IP)"
 echo "  Workers: ${NODELIST[@]:1}"
 echo "  Trainer model:  $MODEL_PATH"
@@ -419,14 +419,14 @@ probe "querying ray status"
 ray status || echo "WARN: ray status check failed"
 
 echo "=============================================================="
-echo "  Launching ReAct (code) SMOKE eval (8 nodes, short response cap, ScienceAgentBench smoke subset)"
+echo "  Launching ReAct (code) SMOKE eval ($NUM_NODES nodes, short response cap, ScienceAgentBench smoke subset)"
 echo "  default_agent_loop=react_agent_code  workflow=code  process_reward=[flat]"
 echo "  vLLM gpu_memory_utilization=0.55 + FP8 rollout + FSDP CPU offload (30B)"
 echo "  val_only=True (one val pass on ${SAB_VAL_MAX_SAMPLES} samples from sab_test_code.parquet then exit; no training)"
 echo "=============================================================="
 probe "launching trainer (model load + vLLM init typically ~10-15 min)"
 wandb_status trainer_launch 0
-RAY_LOG_MARKER=$(mktemp /tmp/qwen35-ray-log-marker.XXXXXX)
+RAY_LOG_MARKER=$(mktemp /tmp/qwen3-30b-ray-log-marker.XXXXXX)
 
 set +e
 srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_ROOT" \
