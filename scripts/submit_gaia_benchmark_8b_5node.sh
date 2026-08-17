@@ -16,7 +16,7 @@ set -euo pipefail
 PROJECT_ROOT=${PROJECT_ROOT:-/work/09281/chc_1996/vista/context-graph}
 CHECKPOINT_BASE=${CHECKPOINT_BASE:-${SCRATCH:-/scratch/09281/chc_1996}/context-graph-ckpts}
 GAIA_EVAL_MODE=${GAIA_EVAL_MODE:-zeroshot}
-GAIA_EVAL_TIME=${GAIA_EVAL_TIME:-04:00:00}
+GAIA_EVAL_TIME=${GAIA_EVAL_TIME:-03:00:00}
 GAIA_NUM_NODES=${GAIA_NUM_NODES:-5}
 GAIA_METHODS=${GAIA_METHODS:-baseline,foldagent,ctxgraph}
 STAMP=${STAMP:-$(date +%Y%m%d_%H%M%S)}
