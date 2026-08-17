@@ -133,6 +133,18 @@ for library_path_entry in "${LIBRARY_PATH_ENTRIES[@]}"; do
   esac
 done
 export LD_LIBRARY_PATH=${CONDA_PREFIX}/lib:${CUDA_TARGET_LIB}:${CUDA_LIB}${SYSTEM_LD_LIBRARY_PATH:+:$SYSTEM_LD_LIBRARY_PATH}
+# Vista's aarch64 glibc can hit its pthread_create/dlopen TLS race when a
+# threaded Ray worker imports an extension that loads libgomp lazily. Loading
+# libgomp before Ray creates worker threads avoids that dynamic TLS mutation.
+LIBGOMP_PATH=${CONDA_PREFIX}/lib/libgomp.so.1
+if [ ! -f "$LIBGOMP_PATH" ]; then
+  LIBGOMP_PATH=$(gcc -print-file-name=libgomp.so.1)
+fi
+if [ ! -f "$LIBGOMP_PATH" ]; then
+  echo "ERROR: could not locate libgomp.so.1 for the aarch64 TLS preload workaround"
+  exit 1
+fi
+export LD_PRELOAD=$LIBGOMP_PATH
 export LIBRARY_PATH=/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/targets/sbsa-linux/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/lib64:${LIBRARY_PATH:-}
 export CPATH=/home1/apps/nvidia/Linux_aarch64/25.3/math_libs/12.8/targets/sbsa-linux/include:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/include:${CPATH:-}
 
@@ -298,6 +310,7 @@ probe "checking Transformers support for $MODEL_PATH"
 python scripts/check_hf_model_support.py "$MODEL_PATH"
 probe "Transformers model support check passed"
 probe "LD_LIBRARY_PATH=$LD_LIBRARY_PATH"
+probe "LD_PRELOAD=$LD_PRELOAD"
 
 # ── Topology: NODE0 = Ray head + trainer rank 0; NODE1-4 = Ray workers ──
 TRAINER_HEAD_NODE=${NODELIST[0]}
@@ -312,6 +325,7 @@ for node in "${NODELIST[@]}"; do
     source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
     conda activate '"$CONDA_ENV_NAME"'
     export LD_LIBRARY_PATH='"$LD_LIBRARY_PATH"'
+    export LD_PRELOAD='"$LD_PRELOAD"'
     ray stop -f >/dev/null 2>&1 || true
   ' || true
 done
@@ -336,6 +350,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" bash -c '
   hash -r
   export PATH=/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/bin:${PATH}
   export LD_LIBRARY_PATH='"$LD_LIBRARY_PATH"'
+  export LD_PRELOAD='"$LD_PRELOAD"'
   export HF_HOME='"$HF_HOME"'
   export HF_HUB_CACHE='"$HF_HUB_CACHE"'
   export FLASHINFER_WORKSPACE_BASE=/tmp
@@ -365,6 +380,7 @@ for i in $(seq 1 $((NUM_NODES - 1))); do
     hash -r
     export PATH=/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/bin:${PATH}
     export LD_LIBRARY_PATH='"$LD_LIBRARY_PATH"'
+    export LD_PRELOAD='"$LD_PRELOAD"'
     export HF_HOME='"$HF_HOME"'
     export HF_HUB_CACHE='"$HF_HUB_CACHE"'
     export FLASHINFER_WORKSPACE_BASE=/tmp
@@ -403,6 +419,7 @@ echo "  val_only=True (one val pass on ${SAB_VAL_MAX_SAMPLES} samples from sab_t
 echo "=============================================================="
 probe "launching trainer (model load + vLLM init typically ~10-15 min)"
 wandb_status trainer_launch 0
+RAY_LOG_MARKER=$(mktemp /tmp/qwen35-ray-log-marker.XXXXXX)
 
 set +e
 srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_ROOT" \
@@ -470,6 +487,17 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   trainer.logger="$TRAINER_LOGGER"
 RC=$?
 set -e
+if [ $RC -ne 0 ]; then
+  RAY_LOG_DIR=/tmp/ray/session_latest/logs
+  probe "collecting recent non-empty Ray worker logs from $RAY_LOG_DIR"
+  if [ -d "$RAY_LOG_DIR" ]; then
+    while IFS= read -r -d '' ray_log; do
+      echo "----- RAY LOG: $ray_log -----"
+      tail -n 160 "$ray_log" || true
+    done < <(find "$RAY_LOG_DIR" -maxdepth 1 -type f -newer "$RAY_LOG_MARKER" -size +0c \( -name 'worker-*.err' -o -name 'python-core-worker-*.log' -o -name 'raylet.err' \) -print0)
+  fi
+fi
+rm -f "$RAY_LOG_MARKER"
 wandb_status trainer_exit "$RC"
 
 echo "=============================================================="
