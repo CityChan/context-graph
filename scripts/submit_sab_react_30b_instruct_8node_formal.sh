@@ -1,5 +1,5 @@
 #!/bin/bash
-# Submit the full 102-task Qwen3-30B-A3B-Instruct ReAct evaluation on SAB.
+# Submit one full 102-task Qwen3-30B-A3B-Instruct evaluation on SAB.
 
 set -euo pipefail
 
@@ -21,9 +21,17 @@ else
 fi
 
 TS=$(date +%Y%m%d_%H%M%S)
-EXPERIMENT_NAME=${EXPERIMENT_NAME:-eval_react_sab_30b_instruct_8n_formal_${TS}}
+SAB_METHOD=${SAB_METHOD:-react}
+case "$SAB_METHOD" in
+  react|fold|ctxgraph) ;;
+  *)
+    echo "ERROR: SAB_METHOD must be react, fold, or ctxgraph; got $SAB_METHOD"
+    exit 1
+    ;;
+esac
+EXPERIMENT_NAME=${EXPERIMENT_NAME:-eval_${SAB_METHOD}_sab_30b_instruct_8n_formal_${TS}}
 
-echo "Submitting $EXPERIMENT_NAME: 8 GH nodes, 102 SAB tasks, 40960-token working context"
-sbatch -J sab30b-react-formal -N 8 -t 04:00:00 \
-  --export=ALL,EXPECTED_NUM_NODES=8,CONDA_ENV_NAME=cxtgraph,MODEL_PATH=Qwen/Qwen3-30B-A3B-Instruct-2507,EXPERIMENT_NAME="$EXPERIMENT_NAME",TRAIN_BATCH_SIZE=8,PPO_MINI_BATCH_SIZE=8,SAB_RUN_TAG=formal,SAB_REAL_EVAL=1,SAB_DUMP_VALIDATION=1,SAB_VAL_MAX_SAMPLES=-1,SAB_TRAIN_MAX_SAMPLES=8,SAB_PROMPT_LENGTH=16384,SAB_RESPONSE_LENGTH=24576,SAB_MAX_TOKEN_LEN_PER_GPU=40960,SAB_VAL_MAX_TURN=32,SAB_TURN_MAX_NEW_TOKENS=2048,QWEN_ENABLE_THINKING=False \
+echo "Submitting $EXPERIMENT_NAME: method=$SAB_METHOD, 8 GH nodes, 102 SAB tasks, 40960-token working context"
+sbatch -J "sab30b-${SAB_METHOD}-formal" -N 8 -t 04:00:00 \
+  --export=ALL,EXPECTED_NUM_NODES=8,CONDA_ENV_NAME=cxtgraph,MODEL_PATH=Qwen/Qwen3-30B-A3B-Instruct-2507,EXPERIMENT_NAME="$EXPERIMENT_NAME",TRAIN_BATCH_SIZE=8,PPO_MINI_BATCH_SIZE=8,SAB_METHOD="$SAB_METHOD",SAB_RUN_TAG=formal,SAB_REAL_EVAL=1,SAB_DUMP_VALIDATION=1,SAB_VAL_MAX_SAMPLES=-1,SAB_TRAIN_MAX_SAMPLES=8,SAB_DATA_SEED=42,SAB_PROMPT_LENGTH=16384,SAB_RESPONSE_LENGTH=24576,SAB_MAX_TOKEN_LEN_PER_GPU=40960,SAB_VAL_MAX_TURN=32,SAB_TURN_MAX_NEW_TOKENS=2048,SAB_MAX_SESSION=4,SAB_BRANCH_LEN=32768,QWEN_ENABLE_THINKING=False \
   scripts/eval_sab_react_30b_instruct_8node_smoke.sh

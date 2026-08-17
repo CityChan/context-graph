@@ -227,6 +227,44 @@ SAB_RESPONSE_LENGTH=${SAB_RESPONSE_LENGTH:-2048}
 SAB_MAX_TOKEN_LEN_PER_GPU=${SAB_MAX_TOKEN_LEN_PER_GPU:-18432}
 SAB_VAL_MAX_TURN=${SAB_VAL_MAX_TURN:-4}
 SAB_TURN_MAX_NEW_TOKENS=${SAB_TURN_MAX_NEW_TOKENS:-512}
+SAB_DATA_SEED=${SAB_DATA_SEED:-42}
+SAB_METHOD=${SAB_METHOD:-react}
+case "$SAB_METHOD" in
+  react)
+    SAB_METHOD_LABEL=ReAct
+    SAB_AGENT_LOOP=react_agent_code
+    SAB_WORKFLOW=code
+    SAB_PROCESS_REWARD='[flat]'
+    SAB_DATA_FILE=data/sab_test_code.parquet
+    SAB_LAMBDA_COST=0.002
+    ;;
+  fold)
+    SAB_METHOD_LABEL=FoldAgent
+    SAB_AGENT_LOOP=fold_agent_code
+    SAB_WORKFLOW=code_branch
+    SAB_PROCESS_REWARD='[flat,scope]'
+    SAB_DATA_FILE=data/sab_test_code_branch.parquet
+    SAB_LAMBDA_COST=0.002
+    ;;
+  ctxgraph)
+    SAB_METHOD_LABEL=ContextGraph
+    SAB_AGENT_LOOP=context_graph_code_isolated_agent
+    SAB_WORKFLOW=code_graph
+    SAB_PROCESS_REWARD='[flat,scope,graph]'
+    SAB_DATA_FILE=data/sab_test_code_graph.parquet
+    SAB_LAMBDA_COST=0.02
+    ;;
+  *)
+    echo "ERROR: SAB_METHOD must be react, fold, or ctxgraph; got $SAB_METHOD"
+    exit 1
+    ;;
+esac
+SAB_MAX_SESSION=${SAB_MAX_SESSION:-4}
+if [ "$SAB_RUN_TAG" = "formal" ]; then
+  SAB_BRANCH_LEN=${SAB_BRANCH_LEN:-32768}
+else
+  SAB_BRANCH_LEN=${SAB_BRANCH_LEN:-$SAB_RESPONSE_LENGTH}
+fi
 if (( TRAIN_BATCH_SIZE % NUM_NODES != 0 )); then
   echo "ERROR: TRAIN_BATCH_SIZE=$TRAIN_BATCH_SIZE must be divisible by NUM_NODES=$NUM_NODES"
   exit 1
@@ -251,7 +289,7 @@ else
 fi
 
 TS=$(date +%Y%m%d_%H%M%S)
-EXPERIMENT_NAME=${EXPERIMENT_NAME:-eval_react_sab_30b_instruct_${NUM_NODES}n_${SAB_RUN_TAG}_${TS}}
+EXPERIMENT_NAME=${EXPERIMENT_NAME:-eval_${SAB_METHOD}_sab_30b_instruct_${NUM_NODES}n_${SAB_RUN_TAG}_${TS}}
 
 TRAINER_DEBUG_OVERRIDES=()
 if [ "$SAB_DUMP_VALIDATION" = "1" ]; then
@@ -308,7 +346,7 @@ PY
 probe() { printf '+++ [%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 
 echo "=============================================================="
-echo "  ZERO-SHOT EVAL: ReAct (code) on ScienceAgentBench ($MODEL_PATH, $NUM_NODES nodes, ${SAB_RUN_TAG^^}, val_only=True)"
+echo "  ZERO-SHOT EVAL: $SAB_METHOD_LABEL ($SAB_WORKFLOW) on ScienceAgentBench ($MODEL_PATH, $NUM_NODES nodes, ${SAB_RUN_TAG^^}, val_only=True)"
 echo "  Job: ${SLURM_JOB_ID:-<idev>}   Head: $NODE0 ($NODE0_IP)"
 echo "  Workers: ${NODELIST[@]:1}"
 echo "  Trainer model:  $MODEL_PATH"
@@ -318,7 +356,7 @@ echo "  Experiment:     $EXPERIMENT_NAME"
 echo "  Sandbox workdir root: $SAB_WORKDIR_ROOT"
 echo "  Logger: ${probe_msg}"
 echo "  Batch sizes:    train=$TRAIN_BATCH_SIZE ppo_mini=$PPO_MINI_BATCH_SIZE"
-echo "  Smoke samples:  $SAB_VAL_MAX_SAMPLES"
+echo "  Sample caps:    val=$SAB_VAL_MAX_SAMPLES train=$SAB_TRAIN_MAX_SAMPLES seed=$SAB_DATA_SEED"
 echo "  Train samples:  $SAB_TRAIN_MAX_SAMPLES (trainer init only; val_only=True)"
 echo "  Length caps:    prompt=$SAB_PROMPT_LENGTH response=$SAB_RESPONSE_LENGTH max_tokens_per_gpu=$SAB_MAX_TOKEN_LEN_PER_GPU"
 echo "  Turn caps:      val_max_turn=$SAB_VAL_MAX_TURN turn_max_new_tokens=$SAB_TURN_MAX_NEW_TOKENS"
@@ -329,7 +367,7 @@ echo "=============================================================="
 
 # ── Pre-flight: data parquets must exist ──
 probe "checking ScienceAgentBench artefacts"
-VAL_PARQUET="$PROJECT_ROOT/data/sab_test_code.parquet"
+VAL_PARQUET="$PROJECT_ROOT/$SAB_DATA_FILE"
 if [ ! -f "$VAL_PARQUET" ]; then
   echo "ERROR: missing $VAL_PARQUET"
   echo "       Run: python scripts/make_sab_data.py --csv data/ScienceAgentBench.csv \\"
@@ -477,10 +515,10 @@ probe "querying ray status"
 ray status || echo "WARN: ray status check failed"
 
 echo "=============================================================="
-echo "  Launching ReAct (code) SMOKE eval ($NUM_NODES nodes, short response cap, ScienceAgentBench smoke subset)"
-echo "  default_agent_loop=react_agent_code  workflow=code  process_reward=[flat]"
+echo "  Launching $SAB_METHOD_LABEL ($SAB_WORKFLOW) ZERO-SHOT eval ($NUM_NODES nodes ${SAB_RUN_TAG^^}, ScienceAgentBench test cap=$SAB_VAL_MAX_SAMPLES)"
+echo "  default_agent_loop=$SAB_AGENT_LOOP  workflow=$SAB_WORKFLOW  process_reward=$SAB_PROCESS_REWARD"
 echo "  vLLM gpu_memory_utilization=0.55 + FP8 rollout + FSDP CPU offload (30B)"
-echo "  val_only=True (one val pass on ${SAB_VAL_MAX_SAMPLES} samples from sab_test_code.parquet then exit; no training)"
+echo "  val_only=True (one val pass on $SAB_DATA_FILE then exit; no training)"
 echo "=============================================================="
 probe "launching trainer (model load + vLLM init typically ~10-15 min)"
 wandb_status trainer_launch 0
@@ -492,7 +530,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   python -m scripts.train_sab \
   algorithm.adv_estimator=foldgrpo \
   algorithm.kl_ctrl.kl_coef=0.005 \
-  actor_rollout_ref.rollout.agent.default_agent_loop=react_agent_code \
+  actor_rollout_ref.rollout.agent.default_agent_loop=$SAB_AGENT_LOOP \
   actor_rollout_ref.rollout.name=vllm \
   actor_rollout_ref.rollout.mode=async \
   actor_rollout_ref.rollout.dtype=bfloat16 \
@@ -519,9 +557,10 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   actor_rollout_ref.actor.use_kl_loss=True \
   actor_rollout_ref.actor.grad_clip=0.5 \
   actor_rollout_ref.actor.kl_loss_coef=0.0005 \
-  data.train_files=data/sab_test_code.parquet \
-  data.val_files=data/sab_test_code.parquet \
+  data.train_files=$SAB_DATA_FILE \
+  data.val_files=$SAB_DATA_FILE \
   data.train_batch_size=$TRAIN_BATCH_SIZE \
+  data.seed=$SAB_DATA_SEED \
   data.train_max_samples=$SAB_TRAIN_MAX_SAMPLES \
   data.val_max_samples=$SAB_VAL_MAX_SAMPLES \
   data.max_prompt_length=$SAB_PROMPT_LENGTH \
@@ -532,11 +571,25 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   actor_rollout_ref.actor.ppo_max_token_len_per_gpu=$SAB_MAX_TOKEN_LEN_PER_GPU \
   actor_rollout_ref.actor.ppo_infer_max_token_len_per_gpu=$SAB_MAX_TOKEN_LEN_PER_GPU \
   actor_rollout_ref.model.enable_gradient_checkpointing=True \
-  +actor_rollout_ref.rollout.plugin.workflow=code \
+  +actor_rollout_ref.rollout.plugin.workflow=$SAB_WORKFLOW \
   +actor_rollout_ref.rollout.plugin.max_turn=$SAB_VAL_MAX_TURN \
   +actor_rollout_ref.rollout.plugin.turn_max_new_tokens=$SAB_TURN_MAX_NEW_TOKENS \
   +actor_rollout_ref.rollout.plugin.sandbox_timeout=60 \
-  +actor_rollout_ref.rollout.plugin.process_reward='[flat]' \
+  +actor_rollout_ref.rollout.plugin.process_reward="$SAB_PROCESS_REWARD" \
+  +actor_rollout_ref.rollout.plugin.max_session=$SAB_MAX_SESSION \
+  +actor_rollout_ref.rollout.plugin.val_max_session=$SAB_MAX_SESSION \
+  +actor_rollout_ref.rollout.plugin.session_timeout=3600 \
+  +actor_rollout_ref.rollout.plugin.enable_summary=False \
+  +actor_rollout_ref.rollout.plugin.branch_len=$SAB_BRANCH_LEN \
+  +actor_rollout_ref.rollout.plugin.max_traj=4 \
+  +actor_rollout_ref.rollout.plugin.must_finish=False \
+  +actor_rollout_ref.rollout.plugin.must_search=False \
+  +actor_rollout_ref.rollout.plugin.lambda_compact=0.2 \
+  +actor_rollout_ref.rollout.plugin.lambda_cost=$SAB_LAMBDA_COST \
+  +actor_rollout_ref.rollout.plugin.consolidation_interval=5 \
+  +actor_rollout_ref.rollout.plugin.uniqueness_weight=0.10 \
+  +actor_rollout_ref.rollout.plugin.auto_bind_branch_edges=True \
+  +actor_rollout_ref.rollout.plugin.auto_bind_min_overlap=0.05 \
   +actor_rollout_ref.rollout.plugin.val_max_turn=$SAB_VAL_MAX_TURN \
   +actor_rollout_ref.rollout.plugin.val_response_length=$SAB_RESPONSE_LENGTH \
   trainer.val_before_train=True \
