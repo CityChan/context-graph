@@ -10,7 +10,7 @@ GAIA_TRAIN_NUM_NODES=${GAIA_TRAIN_NUM_NODES:-5}
 GAIA_TRAIN_STEPS=${GAIA_TRAIN_STEPS:-50}
 GAIA_TRAIN_METHODS=${GAIA_TRAIN_METHODS:-baseline,foldagent,ctxgraph}
 STAMP=${STAMP:-$(date +%Y%m%d_%H%M%S)}
-GAIA_BUILD_TRAIN_IF_MISSING=${GAIA_BUILD_TRAIN_IF_MISSING:-1}
+GAIA_PREPARE_DEV_SPLIT_IF_MISSING=${GAIA_PREPARE_DEV_SPLIT_IF_MISSING:-1}
 GAIA_DATA_PYTHON=${GAIA_DATA_PYTHON:-/work/09281/chc_1996/vista/miniconda3/envs/cxtgraph/bin/python}
 
 cd "$PROJECT_ROOT"
@@ -25,29 +25,29 @@ if [ -z "${OPENAI_API_KEY:-}" ] || [ "${OPENAI_API_KEY:-}" = "dummy" ]; then
   exit 1
 fi
 
-if [ ! -s data/gaia_train.parquet ] || [ ! -s data/gaia_train_branch.parquet ] || [ ! -s data/gaia_train_graph.parquet ]; then
-  if [ "$GAIA_BUILD_TRAIN_IF_MISSING" != "1" ]; then
-    echo "ERROR: GAIA train parquets are missing and GAIA_BUILD_TRAIN_IF_MISSING=$GAIA_BUILD_TRAIN_IF_MISSING" >&2
+if [ ! -s data/gaia_train.parquet ] || [ ! -s data/gaia_train_branch.parquet ] || [ ! -s data/gaia_train_graph.parquet ] || [ ! -s data/gaia_holdout.parquet ] || [ ! -s data/gaia_holdout_branch.parquet ] || [ ! -s data/gaia_holdout_graph.parquet ]; then
+  if [ "$GAIA_PREPARE_DEV_SPLIT_IF_MISSING" != "1" ]; then
+    echo "ERROR: GAIA train/holdout parquets are missing and GAIA_PREPARE_DEV_SPLIT_IF_MISSING=$GAIA_PREPARE_DEV_SPLIT_IF_MISSING" >&2
     exit 2
   fi
   if [ ! -x "$GAIA_DATA_PYTHON" ]; then
     echo "ERROR: GAIA data Python is not executable: $GAIA_DATA_PYTHON" >&2
     exit 2
   fi
-  echo "Building text-only GAIA train parquets before submission"
-  "$GAIA_DATA_PYTHON" scripts/make_gaia_data.py --split train --out-dir data
+  echo "Creating matched 80/20 train/holdout splits from public GAIA validation data"
+  "$GAIA_DATA_PYTHON" scripts/split_gaia_validation_for_training.py --input-dir data --output-dir data --holdout-fraction 0.2 --seed 42
 fi
 
 for data_file in \
   data/gaia_train.parquet \
   data/gaia_train_branch.parquet \
   data/gaia_train_graph.parquet \
-  data/gaia_validation.parquet \
-  data/gaia_validation_branch.parquet \
-  data/gaia_validation_graph.parquet; do
+  data/gaia_holdout.parquet \
+  data/gaia_holdout_branch.parquet \
+  data/gaia_holdout_graph.parquet; do
   if [ ! -s "$data_file" ]; then
     echo "ERROR: missing or empty GAIA parquet: $PROJECT_ROOT/$data_file" >&2
-    echo "       Build train data with: python scripts/make_gaia_data.py --split train --out-dir data" >&2
+    echo "       Rebuild with: python scripts/split_gaia_validation_for_training.py --input-dir data --output-dir data" >&2
     exit 3
   fi
 done
@@ -65,7 +65,7 @@ submit_method() {
   local train_data=$3
   local val_data=$4
   local short_method=$5
-  local experiment_name="train_gaia_${method}_grpo_8b_5n_50s_64k_${STAMP}"
+  local experiment_name="train_gaia_${method}_grpo_8b_5n_50s_64k_devsplit_${STAMP}"
   local checkpoint_root="$CHECKPOINT_BASE/$experiment_name"
   local job_name="train-gaia-${short_method}-8b-64k"
   local export_vars
@@ -86,13 +86,13 @@ submit_method() {
 echo "Submitting matched GAIA GRPO training: methods=$GAIA_TRAIN_METHODS nodes=$GAIA_TRAIN_NUM_NODES steps=$GAIA_TRAIN_STEPS context=65536"
 
 if method_enabled baseline; then
-  submit_method baseline scripts/train_bc_baseline_8b_4node_24h_v3_32k.sh data/gaia_train.parquet data/gaia_validation.parquet base
+  submit_method baseline scripts/train_bc_baseline_8b_4node_24h_v3_32k.sh data/gaia_train.parquet data/gaia_holdout.parquet base
 fi
 if method_enabled foldagent; then
-  submit_method foldagent scripts/train_bc_foldagent_8b_paperfaithful_5node_48h.sh data/gaia_train_branch.parquet data/gaia_validation_branch.parquet fold
+  submit_method foldagent scripts/train_bc_foldagent_8b_paperfaithful_5node_48h.sh data/gaia_train_branch.parquet data/gaia_holdout_branch.parquet fold
 fi
 if method_enabled ctxgraph; then
-  submit_method ctxgraph scripts/train_bc_ctxgraph_8b_paperfaithful_5node_48h.sh data/gaia_train_graph.parquet data/gaia_validation_graph.parquet cg
+  submit_method ctxgraph scripts/train_bc_ctxgraph_8b_paperfaithful_5node_48h.sh data/gaia_train_graph.parquet data/gaia_holdout_graph.parquet cg
 fi
 
 squeue -u "${USER:-$(whoami)}" -o "%.18i %.9P %.32j %.2t %.10M %.10L %.6D %R"
