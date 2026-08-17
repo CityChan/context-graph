@@ -134,8 +134,9 @@ for library_path_entry in "${LIBRARY_PATH_ENTRIES[@]}"; do
 done
 export LD_LIBRARY_PATH=${CONDA_PREFIX}/lib:${CUDA_TARGET_LIB}:${CUDA_LIB}${SYSTEM_LD_LIBRARY_PATH:+:$SYSTEM_LD_LIBRARY_PATH}
 # Vista's aarch64 glibc can hit its pthread_create/dlopen TLS race when a
-# threaded Ray worker imports an extension that loads libgomp lazily. Loading
-# libgomp before Ray creates worker threads avoids that dynamic TLS mutation.
+# threaded Ray worker imports PyTorch and its native dependencies lazily.
+# Load both OpenMP and PyTorch's global dependency bundle before Ray creates
+# worker threads so importing torch does not mutate the TLS layout afterward.
 LIBGOMP_PATH=${CONDA_PREFIX}/lib/libgomp.so.1
 if [ ! -f "$LIBGOMP_PATH" ]; then
   LIBGOMP_PATH=$(gcc -print-file-name=libgomp.so.1)
@@ -145,6 +146,12 @@ if [ ! -f "$LIBGOMP_PATH" ]; then
   exit 1
 fi
 export LD_PRELOAD=$LIBGOMP_PATH
+TORCH_GLOBAL_DEPS_PATH=$(python -c 'import importlib.util, pathlib; spec = importlib.util.find_spec("torch"); print(pathlib.Path(spec.origin).parent / "lib" / "libtorch_global_deps.so") if spec and spec.origin else print("")')
+if [ ! -f "$TORCH_GLOBAL_DEPS_PATH" ]; then
+  echo "ERROR: could not locate torch/lib/libtorch_global_deps.so for the aarch64 TLS preload workaround"
+  exit 1
+fi
+export LD_PRELOAD=${LD_PRELOAD}:$TORCH_GLOBAL_DEPS_PATH
 export LIBRARY_PATH=/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/targets/sbsa-linux/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/lib64:${LIBRARY_PATH:-}
 export CPATH=/home1/apps/nvidia/Linux_aarch64/25.3/math_libs/12.8/targets/sbsa-linux/include:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/include:${CPATH:-}
 
