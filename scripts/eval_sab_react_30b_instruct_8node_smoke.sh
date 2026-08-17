@@ -108,9 +108,11 @@ export WANDB_DIR=${WANDB_DIR:-/work/09281/chc_1996/vista/context-graph/wandb}
 mkdir -p "$WANDB_DIR"
 
 # ── Conda + CUDA ──
+CONDA_ENV_NAME=${CONDA_ENV_NAME:-cxtgraph}
+export CONDA_ENV_NAME
 set +u  # conda activation scripts reference unbound vars (PS1, _CE_CONDA) -> set -u would kill us silently
 source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
-conda activate cxtgraph
+conda activate "$CONDA_ENV_NAME"
 set -u
 export NCCL_HOSTID="${SLURMD_NODENAME:-$(hostname -s)}"
 export PATH="${CONDA_PREFIX}/bin:${PATH}"
@@ -240,6 +242,7 @@ echo "  SMOKE EVAL: ReAct (code) on ScienceAgentBench (Qwen3-30B-A3B-Instruct-25
 echo "  Job: ${SLURM_JOB_ID:-<idev>}   Head: $NODE0 ($NODE0_IP)"
 echo "  Workers: ${NODELIST[@]:1}"
 echo "  Trainer model:  $MODEL_PATH"
+echo "  Conda env:      $CONDA_ENV_NAME"
 echo "  Experiment:     $EXPERIMENT_NAME"
 echo "  Sandbox workdir root: $SAB_WORKDIR_ROOT"
 echo "  Logger: ${probe_msg}"
@@ -275,6 +278,12 @@ if [ ! -d "$TRAINER_CACHE_DIR" ]; then
 fi
 probe "trainer cache: $TRAINER_CACHE_DIR"
 
+# Fail before starting a multi-node Ray cluster when the installed Transformers
+# build cannot recognize a newly released model architecture.
+probe "checking Transformers support for $MODEL_PATH"
+python scripts/check_hf_model_support.py "$MODEL_PATH"
+probe "Transformers model support check passed"
+
 # ── Topology: NODE0 = Ray head + trainer rank 0; NODE1-4 = Ray workers ──
 TRAINER_HEAD_NODE=${NODELIST[0]}
 TRAINER_HEAD_IP=$(getent hosts "$TRAINER_HEAD_NODE" | awk '{print $1}')
@@ -286,7 +295,7 @@ probe "ray stop sweep across $NUM_NODES nodes"
 for node in "${NODELIST[@]}"; do
   srun --overlap --nodes=1 --ntasks=1 -w "$node" bash -c '
     source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
-    conda activate cxtgraph
+    conda activate '"$CONDA_ENV_NAME"'
     ray stop -f >/dev/null 2>&1 || true
   ' || true
 done
@@ -305,7 +314,7 @@ probe "sanity imports done"
 probe "starting Ray head on $TRAINER_HEAD_NODE"
 srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" bash -c '
   source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
-  conda activate cxtgraph
+  conda activate '"$CONDA_ENV_NAME"'
   export NCCL_HOSTID="${SLURMD_NODENAME:-$(hostname -s)}"
   export PATH="${CONDA_PREFIX}/bin:${PATH}"
   hash -r
@@ -334,7 +343,7 @@ for i in $(seq 1 $((NUM_NODES - 1))); do
   WORKER_NODE=${NODELIST[$i]}
   srun --overlap --nodes=1 --ntasks=1 -w "$WORKER_NODE" bash -c '
     source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
-    conda activate cxtgraph
+    conda activate '"$CONDA_ENV_NAME"'
     export NCCL_HOSTID="${SLURMD_NODENAME:-$(hostname -s)}"
     export PATH="${CONDA_PREFIX}/bin:${PATH}"
     hash -r

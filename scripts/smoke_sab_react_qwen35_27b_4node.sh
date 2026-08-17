@@ -1,6 +1,11 @@
 #!/bin/bash
 # Run inside an existing four-node Vista GH idev allocation.
 # This is a one-sample compatibility/memory smoke, not a benchmark result.
+# One-time environment setup (do not mutate the shared cxtgraph environment):
+#   conda create -n cxtgraph-qwen35 --clone cxtgraph -y
+#   conda activate cxtgraph-qwen35
+#   python -m pip install --upgrade git+https://github.com/huggingface/transformers.git@main
+#   python -m pip check
 
 set -euo pipefail
 
@@ -9,6 +14,7 @@ cd "$PROJECT_ROOT"
 
 export EXPECTED_NUM_NODES=${EXPECTED_NUM_NODES:-4}
 export MODEL_PATH=${MODEL_PATH:-Qwen/Qwen3.5-27B}
+export CONDA_ENV_NAME=${CONDA_ENV_NAME:-cxtgraph-qwen35}
 export TRAIN_BATCH_SIZE=${TRAIN_BATCH_SIZE:-4}
 export PPO_MINI_BATCH_SIZE=${PPO_MINI_BATCH_SIZE:-4}
 export SAB_VAL_MAX_SAMPLES=${SAB_VAL_MAX_SAMPLES:-1}
