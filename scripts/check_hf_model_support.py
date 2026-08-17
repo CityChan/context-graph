@@ -41,6 +41,20 @@ def main() -> int:
         f"model_type={getattr(config, 'model_type', None)} "
         f"architectures={getattr(config, 'architectures', None)}"
     )
+
+    try:
+        from verl.utils.model import get_hf_auto_model_class
+
+        auto_model_class = get_hf_auto_model_class(config)
+    except Exception as exc:
+        print(
+            "ERROR: verl cannot route this Transformers model config: "
+            f"{type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )
+        return 3
+
+    print(f"verl auto model class: {auto_model_class.__name__}")
     return 0
 
 
