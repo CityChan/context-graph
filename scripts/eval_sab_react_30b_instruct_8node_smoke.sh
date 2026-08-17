@@ -119,7 +119,20 @@ export PATH="${CONDA_PREFIX}/bin:${PATH}"
 hash -r
 
 export PATH=/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/bin:${PATH}
-export LD_LIBRARY_PATH=${CONDA_PREFIX}/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/targets/sbsa-linux/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/lib64:${LD_LIBRARY_PATH:-}
+CUDA_TARGET_LIB=/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/targets/sbsa-linux/lib
+CUDA_LIB=/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/lib64
+# A shell that switches from cxtgraph to a cloned environment can retain the
+# old environment's lib directory. Mixing both prefixes can crash Ray workers
+# in ld.so before Python has a chance to report an exception.
+SYSTEM_LD_LIBRARY_PATH=""
+IFS=: read -ra LIBRARY_PATH_ENTRIES <<< "${LD_LIBRARY_PATH:-}"
+for library_path_entry in "${LIBRARY_PATH_ENTRIES[@]}"; do
+  case "$library_path_entry" in
+    ""|*/miniconda3/envs/*|"$CUDA_TARGET_LIB"|"$CUDA_LIB") ;;
+    *) SYSTEM_LD_LIBRARY_PATH="${SYSTEM_LD_LIBRARY_PATH:+$SYSTEM_LD_LIBRARY_PATH:}$library_path_entry" ;;
+  esac
+done
+export LD_LIBRARY_PATH=${CONDA_PREFIX}/lib:${CUDA_TARGET_LIB}:${CUDA_LIB}${SYSTEM_LD_LIBRARY_PATH:+:$SYSTEM_LD_LIBRARY_PATH}
 export LIBRARY_PATH=/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/targets/sbsa-linux/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/lib64:${LIBRARY_PATH:-}
 export CPATH=/home1/apps/nvidia/Linux_aarch64/25.3/math_libs/12.8/targets/sbsa-linux/include:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/include:${CPATH:-}
 
@@ -243,6 +256,7 @@ echo "  Job: ${SLURM_JOB_ID:-<idev>}   Head: $NODE0 ($NODE0_IP)"
 echo "  Workers: ${NODELIST[@]:1}"
 echo "  Trainer model:  $MODEL_PATH"
 echo "  Conda env:      $CONDA_ENV_NAME"
+echo "  Conda prefix:   $CONDA_PREFIX"
 echo "  Experiment:     $EXPERIMENT_NAME"
 echo "  Sandbox workdir root: $SAB_WORKDIR_ROOT"
 echo "  Logger: ${probe_msg}"
@@ -283,6 +297,7 @@ probe "trainer cache: $TRAINER_CACHE_DIR"
 probe "checking Transformers support for $MODEL_PATH"
 python scripts/check_hf_model_support.py "$MODEL_PATH"
 probe "Transformers model support check passed"
+probe "LD_LIBRARY_PATH=$LD_LIBRARY_PATH"
 
 # ── Topology: NODE0 = Ray head + trainer rank 0; NODE1-4 = Ray workers ──
 TRAINER_HEAD_NODE=${NODELIST[0]}
@@ -296,6 +311,7 @@ for node in "${NODELIST[@]}"; do
   srun --overlap --nodes=1 --ntasks=1 -w "$node" bash -c '
     source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
     conda activate '"$CONDA_ENV_NAME"'
+    export LD_LIBRARY_PATH='"$LD_LIBRARY_PATH"'
     ray stop -f >/dev/null 2>&1 || true
   ' || true
 done
@@ -319,7 +335,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" bash -c '
   export PATH="${CONDA_PREFIX}/bin:${PATH}"
   hash -r
   export PATH=/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/bin:${PATH}
-  export LD_LIBRARY_PATH=${CONDA_PREFIX}/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/targets/sbsa-linux/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/lib64:${LD_LIBRARY_PATH}
+  export LD_LIBRARY_PATH='"$LD_LIBRARY_PATH"'
   export HF_HOME='"$HF_HOME"'
   export HF_HUB_CACHE='"$HF_HUB_CACHE"'
   export FLASHINFER_WORKSPACE_BASE=/tmp
@@ -348,7 +364,7 @@ for i in $(seq 1 $((NUM_NODES - 1))); do
     export PATH="${CONDA_PREFIX}/bin:${PATH}"
     hash -r
     export PATH=/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/bin:${PATH}
-    export LD_LIBRARY_PATH=${CONDA_PREFIX}/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/targets/sbsa-linux/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/lib64:${LD_LIBRARY_PATH}
+    export LD_LIBRARY_PATH='"$LD_LIBRARY_PATH"'
     export HF_HOME='"$HF_HOME"'
     export HF_HUB_CACHE='"$HF_HUB_CACHE"'
     export FLASHINFER_WORKSPACE_BASE=/tmp
