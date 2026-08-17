@@ -56,6 +56,10 @@ def get_ppo_ray_runtime_env():
     # can resolve CUDA shared libraries like libnvrtc at process start.
     for key in (
         "PATH",
+        # Linker preloads must be present before Ray execs each worker process.
+        # This is required on aarch64 when libgomp is preloaded to avoid the
+        # glibc dl-tls race during the first PyTorch import in a threaded worker.
+        "LD_PRELOAD",
         "LD_LIBRARY_PATH",
         "LIBRARY_PATH",
         "CPATH",
