@@ -138,6 +138,7 @@ BC_MAX_TOKEN_LEN_PER_GPU=${BC_MAX_TOKEN_LEN_PER_GPU:-$((BC_PROMPT_LENGTH + BC_RE
 BC_MAX_TURN=${BC_MAX_TURN:-100}
 BC_SESSION_TIMEOUT=${BC_SESSION_TIMEOUT:-600}
 BC_TURN_MAX_NEW_TOKENS=${BC_TURN_MAX_NEW_TOKENS:-768}
+BC_FINAL_ANSWER_RESERVE=${BC_FINAL_ANSWER_RESERVE:-1024}
 BC_MAX_SESSION=${BC_MAX_SESSION:-10}
 BC_SEARCH_TIMEOUT_SECONDS=${BC_SEARCH_TIMEOUT_SECONDS:-600}
 BC_METHOD=${BC_METHOD:-baseline}
@@ -204,7 +205,7 @@ echo "  Trainer model:  $MODEL_PATH"
 echo "  Embedder model: $EMBED_MODEL"
 echo "  Experiment: $EXPERIMENT_NAME"
 echo "  Logger: ${probe_msg}"
-echo "  Caps: val_samples=$BC_VAL_MAX_SAMPLES prompt=$BC_PROMPT_LENGTH response=$BC_RESPONSE_LENGTH total_context=$BC_MAX_TOKEN_LEN_PER_GPU max_turn=$BC_MAX_TURN"
+echo "  Caps: val_samples=$BC_VAL_MAX_SAMPLES prompt=$BC_PROMPT_LENGTH response=$BC_RESPONSE_LENGTH total_context=$BC_MAX_TOKEN_LEN_PER_GPU max_turn=$BC_MAX_TURN final_answer_reserve=$BC_FINAL_ANSWER_RESERVE"
 if [ ${#LONG_CONTEXT_ARGS[@]} -gt 0 ]; then
   echo "  Long context: YaRN factor=$BC_YARN_FACTOR original=$BC_YARN_ORIGINAL_LENGTH (HF actor + vLLM)"
 fi
@@ -485,6 +486,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   +actor_rollout_ref.rollout.plugin.must_search=True \
   +actor_rollout_ref.rollout.plugin.val_max_turn=${BC_MAX_TURN} \
   +actor_rollout_ref.rollout.plugin.val_response_length=${BC_RESPONSE_LENGTH} \
+  +actor_rollout_ref.rollout.plugin.final_answer_reserve=${BC_FINAL_ANSWER_RESERVE} \
   trainer.val_before_train=True \
   trainer.val_only=True \
   trainer.n_gpus_per_node=1 \

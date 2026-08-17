@@ -14,11 +14,12 @@ for method in baseline foldagent contextgraph; do
     BC_RESPONSE_LENGTH=57344 \
     BC_YARN_FACTOR=2.0 \
     BC_YARN_ORIGINAL_LENGTH=32768 \
+    BC_FINAL_ANSWER_RESERVE=1024 \
     BC_VAL_MAX_SAMPLES=-1 \
     sbatch --parsable \
-    --job-name="eval-bc-8b-${method}-64k" \
-    --output="logs/eval-bc-8b-${method}-64k.%j.out" \
-    --error="logs/eval-bc-8b-${method}-64k.%j.err" \
+    --job-name="eval-bc-8b-${method}-64k-finalizer" \
+    --output="logs/eval-bc-8b-${method}-64k-finalizer.%j.out" \
+    --error="logs/eval-bc-8b-${method}-64k-finalizer.%j.err" \
     --nodes=4 \
     --time=04:00:00 \
     scripts/eval_bc_baseline_8b_4node_zeroshot.sh)
