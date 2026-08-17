@@ -81,10 +81,26 @@ export RAY_memory_usage_threshold=0.99
 export RAY_memory_monitor_refresh_ms=0
 
 # Real per-task eval (eval_programs/<script> -> [0,1] success) vs the
-# Phase-D2 file-existence placeholder. Default 0 (placeholder). Set
-# SAB_REAL_EVAL=1 at submit time for paper-grade scoring. Exported onto
-# every Ray node below because get_reward reads it inside AgentLoopWorker.
-export SAB_REAL_EVAL=${SAB_REAL_EVAL:-0}
+# Phase-D2 file-existence placeholder. Formal runs require paper-grade scoring
+# and preserve per-sample validation generations for audit/re-scoring.
+SAB_RUN_TAG=${SAB_RUN_TAG:-smoke}
+case "$SAB_RUN_TAG" in
+  *[!A-Za-z0-9_-]*)
+    echo "ERROR: SAB_RUN_TAG may contain only letters, numbers, underscores, and hyphens"
+    exit 1
+    ;;
+esac
+if [ "$SAB_RUN_TAG" = "formal" ]; then
+  export SAB_REAL_EVAL=${SAB_REAL_EVAL:-1}
+  SAB_DUMP_VALIDATION=${SAB_DUMP_VALIDATION:-1}
+else
+  export SAB_REAL_EVAL=${SAB_REAL_EVAL:-0}
+  SAB_DUMP_VALIDATION=${SAB_DUMP_VALIDATION:-0}
+fi
+if [ "$SAB_RUN_TAG" = "formal" ] && [ "$SAB_REAL_EVAL" != "1" ]; then
+  echo "ERROR: SAB_RUN_TAG=formal requires SAB_REAL_EVAL=1"
+  exit 1
+fi
 export SAB_EXPOSE_EVAL_CONTRACT=${SAB_EXPOSE_EVAL_CONTRACT:-0}
 export SAB_INTERACTIVE_EVAL_FEEDBACK=${SAB_INTERACTIVE_EVAL_FEEDBACK:-0}
 # Qwen3 Thinking models default to long <think> traces. For tool-use eval,
@@ -235,7 +251,14 @@ else
 fi
 
 TS=$(date +%Y%m%d_%H%M%S)
-EXPERIMENT_NAME="eval_react_sab_30b_instruct_${NUM_NODES}n_smoke_${TS}"
+EXPERIMENT_NAME=${EXPERIMENT_NAME:-eval_react_sab_30b_instruct_${NUM_NODES}n_${SAB_RUN_TAG}_${TS}}
+
+TRAINER_DEBUG_OVERRIDES=()
+if [ "$SAB_DUMP_VALIDATION" = "1" ]; then
+  SAB_VALIDATION_DATA_DIR=${SAB_VALIDATION_DATA_DIR:-${SCRATCH:-/scratch/09281/chc_1996}/sab_validation_generations/$EXPERIMENT_NAME}
+  mkdir -p "$SAB_VALIDATION_DATA_DIR"
+  TRAINER_DEBUG_OVERRIDES+=("trainer.validation_data_dir=$SAB_VALIDATION_DATA_DIR")
+fi
 
 export EXPERIMENT_NAME
 export WANDB_RUN_ID=${WANDB_RUN_ID:-$EXPERIMENT_NAME}
@@ -285,7 +308,7 @@ PY
 probe() { printf '+++ [%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 
 echo "=============================================================="
-echo "  SMOKE EVAL: ReAct (code) on ScienceAgentBench ($MODEL_PATH, $NUM_NODES nodes, short-resp, val_only=True)"
+echo "  ZERO-SHOT EVAL: ReAct (code) on ScienceAgentBench ($MODEL_PATH, $NUM_NODES nodes, ${SAB_RUN_TAG^^}, val_only=True)"
 echo "  Job: ${SLURM_JOB_ID:-<idev>}   Head: $NODE0 ($NODE0_IP)"
 echo "  Workers: ${NODELIST[@]:1}"
 echo "  Trainer model:  $MODEL_PATH"
@@ -300,6 +323,7 @@ echo "  Train samples:  $SAB_TRAIN_MAX_SAMPLES (trainer init only; val_only=True
 echo "  Length caps:    prompt=$SAB_PROMPT_LENGTH response=$SAB_RESPONSE_LENGTH max_tokens_per_gpu=$SAB_MAX_TOKEN_LEN_PER_GPU"
 echo "  Turn caps:      val_max_turn=$SAB_VAL_MAX_TURN turn_max_new_tokens=$SAB_TURN_MAX_NEW_TOKENS"
 echo "  Qwen thinking:  $QWEN_ENABLE_THINKING"
+echo "  Evaluation:     real=$SAB_REAL_EVAL dump_validation=$SAB_DUMP_VALIDATION ${SAB_VALIDATION_DATA_DIR:+dir=$SAB_VALIDATION_DATA_DIR}"
 echo "  Started: $(date)"
 echo "=============================================================="
 
@@ -525,7 +549,8 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   trainer.default_local_dir=${SCRATCH:-/scratch/09281/chc_1996}/context-graph-ckpts/$EXPERIMENT_NAME \
   trainer.project_name=context-graph \
   trainer.experiment_name="$EXPERIMENT_NAME" \
-  trainer.logger="$TRAINER_LOGGER"
+  trainer.logger="$TRAINER_LOGGER" \
+  "${TRAINER_DEBUG_OVERRIDES[@]}"
 RC=$?
 set -e
 if [ $RC -ne 0 ]; then
