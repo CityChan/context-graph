@@ -1,0 +1,24 @@
+#!/bin/bash
+#SBATCH -J eval-db-30b
+#SBATCH -o /work/09281/chc_1996/vista/context-graph/logs/eval-db-30b.%j.out
+#SBATCH -e /work/09281/chc_1996/vista/context-graph/logs/eval-db-30b.%j.err
+#SBATCH -p gh
+#SBATCH -N 8
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=72
+#SBATCH -t 12:00:00
+#SBATCH -A AST24021
+set -euo pipefail
+
+export EXPECTED_NUM_NODES=8
+export SAB_RUN_TAG=formal
+export DISCOVERYBENCH_REAL_EVAL=1
+export DISCOVERYBENCH_VAL_MAX_SAMPLES=${DISCOVERYBENCH_VAL_MAX_SAMPLES:-239}
+export DISCOVERYBENCH_TRAIN_MAX_SAMPLES=${DISCOVERYBENCH_TRAIN_MAX_SAMPLES:-8}
+export TRAIN_BATCH_SIZE=${TRAIN_BATCH_SIZE:-8}
+export PPO_MINI_BATCH_SIZE=${PPO_MINI_BATCH_SIZE:-8}
+export DISCOVERYBENCH_RESPONSE_LENGTH=${DISCOVERYBENCH_RESPONSE_LENGTH:-8192}
+export DISCOVERYBENCH_MAX_TOKEN_LEN_PER_GPU=${DISCOVERYBENCH_MAX_TOKEN_LEN_PER_GPU:-24576}
+export EXPERIMENT_NAME=${EXPERIMENT_NAME:-eval_${DISCOVERYBENCH_METHOD:-react}_discoverybench_30b_8n_formal_${SLURM_JOB_ID:-local}}
+
+exec bash scripts/smoke_discoverybench_qwen3_30b_instruct_4node.sh

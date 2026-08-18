@@ -79,6 +79,19 @@ def get_ppo_ray_runtime_env():
         "LOCAL_SEARCH_URL",
         "NO_PROXY",
         "no_proxy",
+        # DiscoveryBench HMS runs inside Ray AgentLoopWorkers and therefore
+        # needs its evaluator settings and judge credentials in runtime_env.
+        "DISCOVERYBENCH_WORKDIR_ROOT",
+        "DISCOVERYBENCH_RESULTS_DIR",
+        "DISCOVERYBENCH_REAL_EVAL",
+        "DISCOVERYBENCH_JUDGE_MODEL",
+        "OPENAI_API_KEY",
+        "OPENAI_BASE_URL",
+        "AZURE_OPENAI_KEY",
+        "AZURE_OPENAI_API_KEY",
+        "AZURE_OPENAI_API_VERSION",
+        "AZURE_OPENAI_ENDPOINT",
+        "AZURE_OPENAI_DEPLOYMENT_NAME",
     ):
         value = os.environ.get(key)
         if value is not None:

@@ -110,16 +110,20 @@ class ScienceAgentEnv:
         # Set up a unique workdir for this trajectory. If SAB_WORKDIR_ROOT is
         # set by the sbatch/idev script, keep these dirs under scratch so a
         # failed/no-output trajectory can be inspected after the run.
-        workdir_root = os.environ.get("SAB_WORKDIR_ROOT")
+        # Other code-execution benchmarks reuse this sandbox while keeping
+        # their artifacts in a benchmark-specific scratch directory.
+        workdir_root_env = extra.get("workdir_root_env", "SAB_WORKDIR_ROOT")
+        workdir_prefix = extra.get("workdir_prefix", "sab_")
+        workdir_root = os.environ.get(workdir_root_env)
         if extra.get('workdir'):
             self.workdir = extra.get('workdir')
         elif workdir_root:
             os.makedirs(workdir_root, exist_ok=True)
             self.workdir = tempfile.mkdtemp(
-                prefix=f"sab_{self.task_id}_", dir=workdir_root
+                prefix=f"{workdir_prefix}{self.task_id}_", dir=workdir_root
             )
         else:
-            self.workdir = tempfile.mkdtemp(prefix=f"sab_{self.task_id}_")
+            self.workdir = tempfile.mkdtemp(prefix=f"{workdir_prefix}{self.task_id}_")
         os.makedirs(self.workdir, exist_ok=True)
 
         # Copy (or symlink, for large files) input files into workdir, PRESERVING

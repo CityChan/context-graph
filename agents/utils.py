@@ -28,9 +28,13 @@ def select_env(ability, config, extra_info=None):
         # Imported lazily so we don't pay the cost on BC-Plus / ALFWorld runs.
         from envs.scienceagent_env import ScienceAgentEnv
         EnvClass = ScienceAgentEnv
+    elif 'DiscoveryBench' in ability:
+        from envs.discoverybench_env import DiscoveryBenchEnv
+        EnvClass = DiscoveryBenchEnv
     else:
         raise ValueError(
-            f"Unknown ability: {ability}. Supported: ALFWorld@*, LocalSearch, GAIA, ScienceAgentBench."
+            f"Unknown ability: {ability}. Supported: ALFWorld@*, LocalSearch, GAIA, "
+            "ScienceAgentBench, DiscoveryBench."
         )
     return EnvClass
 

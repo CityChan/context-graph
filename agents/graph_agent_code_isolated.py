@@ -712,7 +712,10 @@ async def process_item(
     # aggregate into val/* metrics. At 8B zero-shot SR floors to 0, so VER is
     # the signal that separates the agents. Only present under SAB_REAL_EVAL=1.
     if isinstance(reward_dict, dict):
-        for _k in ('valid_execution', 'produced_files'):
+        for _k in (
+            'valid_execution', 'produced_files', 'valid_result_json',
+            'hms_score', 'hms_context_recall', 'hms_mean_accuracy', 'judge_error',
+        ):
             if _k in reward_dict:
                 try:
                     env.stats[_k] = float(reward_dict[_k])

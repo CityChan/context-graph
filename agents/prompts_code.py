@@ -86,6 +86,21 @@ Use these to keep the active working set small and well-connected. Variables (da
 """
 
 
+_DISCOVERYBENCH_ADDENDUM = """
+
+# DiscoveryBench result requirements
+- Your goal is a defensible natural-language discovery, not a model file or plot.
+- Preserve numerical values, comparison groups, direction, functional form,
+  thresholds, and boundary conditions supported by the data.
+- Save exactly one JSON object to `pred_results/discovery_result.json` with
+  non-empty string fields `hypothesis` and `workflow`.
+- `hypothesis` must directly answer the discovery question. `workflow` must
+  concisely identify the analysis and evidence actually used.
+- Do not put Markdown fences around the JSON and do not invent unsupported
+  quantitative claims.
+"""
+
+
 _MANIFEST_CAP = 40
 
 
@@ -157,6 +172,8 @@ def _build_user_prompt_code(instruction: str, workflow: str, env=None) -> str:
         sys_prompt += _CODE_BRANCH_ADDENDUM
     if workflow == 'code_graph':
         sys_prompt += _CODE_GRAPH_ADDENDUM
+    if env is not None and "DiscoveryBench" in str(getattr(env, "ability", "")):
+        sys_prompt += _DISCOVERYBENCH_ADDENDUM
 
     env_block = _build_env_block(env)
     user_msg = f"# Task\n\n{instruction.strip()}\n\n"

@@ -45,6 +45,15 @@
 # ─────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
+# The launch plumbing is shared by code-execution benchmarks. Wrappers may
+# override these values while the default remains the original SAB behavior.
+CODE_BENCHMARK_LABEL=${CODE_BENCHMARK_LABEL:-ScienceAgentBench}
+CODE_BENCHMARK_PROFILE=${CODE_BENCHMARK_PROFILE:-sab}
+CODE_BENCHMARK_DATA_FILE=${CODE_BENCHMARK_DATA_FILE:-}
+CODE_BENCHMARK_TRAIN_MODULE=${CODE_BENCHMARK_TRAIN_MODULE:-scripts.train_sab}
+CODE_BENCHMARK_PREPARE_HINT=${CODE_BENCHMARK_PREPARE_HINT:-}
+export CODE_BENCHMARK_LABEL CODE_BENCHMARK_PROFILE
+
 # ── Self-owned log: line-buffered, written directly to Lustre so early output
 #    survives even if slurmstepd's stdout buffer is lost on a hard kill / node fail.
 #    Also records the submit-dir pwd to catch wrong-WorkDir relative -o failures.
@@ -91,14 +100,22 @@ case "$SAB_RUN_TAG" in
     ;;
 esac
 if [ "$SAB_RUN_TAG" = "formal" ]; then
-  export SAB_REAL_EVAL=${SAB_REAL_EVAL:-1}
+  if [ "$CODE_BENCHMARK_PROFILE" = "sab" ]; then
+    export SAB_REAL_EVAL=${SAB_REAL_EVAL:-1}
+  else
+    export SAB_REAL_EVAL=${SAB_REAL_EVAL:-0}
+  fi
   SAB_DUMP_VALIDATION=${SAB_DUMP_VALIDATION:-1}
 else
   export SAB_REAL_EVAL=${SAB_REAL_EVAL:-0}
   SAB_DUMP_VALIDATION=${SAB_DUMP_VALIDATION:-0}
 fi
-if [ "$SAB_RUN_TAG" = "formal" ] && [ "$SAB_REAL_EVAL" != "1" ]; then
+if [ "$SAB_RUN_TAG" = "formal" ] && [ "$CODE_BENCHMARK_PROFILE" = "sab" ] && [ "$SAB_REAL_EVAL" != "1" ]; then
   echo "ERROR: SAB_RUN_TAG=formal requires SAB_REAL_EVAL=1"
+  exit 1
+fi
+if [ "$SAB_RUN_TAG" = "formal" ] && [ "$CODE_BENCHMARK_PROFILE" = "discoverybench" ] && [ "${DISCOVERYBENCH_REAL_EVAL:-0}" != "1" ]; then
+  echo "ERROR: DiscoveryBench formal runs require DISCOVERYBENCH_REAL_EVAL=1"
   exit 1
 fi
 export SAB_EXPOSE_EVAL_CONTRACT=${SAB_EXPOSE_EVAL_CONTRACT:-0}
@@ -111,7 +128,7 @@ export QWEN_ENABLE_THINKING=${QWEN_ENABLE_THINKING:-False}
 # uses GPT-4o for visualization tasks, so a real-eval run without credentials
 # would otherwise turn an evaluator crash into a misleading task score of zero.
 OPENAI_ENV_SOURCE="env"
-if [ -z "${OPENAI_API_KEY:-}" ] && [ -z "${AZURE_OPENAI_KEY:-}" ]; then
+if [ -z "${OPENAI_API_KEY:-}" ] && [ -z "${AZURE_OPENAI_KEY:-}" ] && [ -z "${AZURE_OPENAI_API_KEY:-}" ]; then
   for openai_env in "${WORK:-}/.openai_env" /work/09281/chc_1996/vista/.openai_env "$HOME/.openai_env"; do
     if [ -n "$openai_env" ] && [ -f "$openai_env" ]; then
       # shellcheck disable=SC1090
@@ -205,6 +222,11 @@ export PYTHONPATH="$PROJECT_ROOT:${PYTHONPATH:-}"
 # Per-trajectory sandbox workdir root (scratch is fastest on Vista)
 export SAB_WORKDIR_ROOT=${SAB_WORKDIR_ROOT:-${SCRATCH:-/scratch/09281/chc_1996}/sab_workdirs}
 mkdir -p "$SAB_WORKDIR_ROOT"
+export DISCOVERYBENCH_WORKDIR_ROOT=${DISCOVERYBENCH_WORKDIR_ROOT:-${SCRATCH:-/scratch/09281/chc_1996}/discoverybench_workdirs}
+export DISCOVERYBENCH_RESULTS_DIR=${DISCOVERYBENCH_RESULTS_DIR:-${SCRATCH:-/scratch/09281/chc_1996}/discoverybench_results/${SLURM_JOB_ID:-local}}
+export DISCOVERYBENCH_REAL_EVAL=${DISCOVERYBENCH_REAL_EVAL:-0}
+export DISCOVERYBENCH_JUDGE_MODEL=${DISCOVERYBENCH_JUDGE_MODEL:-gpt-4-1106-preview}
+mkdir -p "$DISCOVERYBENCH_WORKDIR_ROOT" "$DISCOVERYBENCH_RESULTS_DIR"
 
 # ── Node info ──
 mapfile -t NODELIST < <(scontrol show hostnames "$SLURM_JOB_NODELIST")
@@ -259,6 +281,9 @@ case "$SAB_METHOD" in
     exit 1
     ;;
 esac
+if [ -n "$CODE_BENCHMARK_DATA_FILE" ]; then
+  SAB_DATA_FILE=$CODE_BENCHMARK_DATA_FILE
+fi
 SAB_MAX_SESSION=${SAB_MAX_SESSION:-4}
 if [ "$SAB_RUN_TAG" = "formal" ]; then
   SAB_BRANCH_LEN=${SAB_BRANCH_LEN:-32768}
@@ -346,7 +371,7 @@ PY
 probe() { printf '+++ [%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 
 echo "=============================================================="
-echo "  ZERO-SHOT EVAL: $SAB_METHOD_LABEL ($SAB_WORKFLOW) on ScienceAgentBench ($MODEL_PATH, $NUM_NODES nodes, ${SAB_RUN_TAG^^}, val_only=True)"
+echo "  ZERO-SHOT EVAL: $SAB_METHOD_LABEL ($SAB_WORKFLOW) on $CODE_BENCHMARK_LABEL ($MODEL_PATH, $NUM_NODES nodes, ${SAB_RUN_TAG^^}, val_only=True)"
 echo "  Job: ${SLURM_JOB_ID:-<idev>}   Head: $NODE0 ($NODE0_IP)"
 echo "  Workers: ${NODELIST[@]:1}"
 echo "  Trainer model:  $MODEL_PATH"
@@ -362,23 +387,30 @@ echo "  Length caps:    prompt=$SAB_PROMPT_LENGTH response=$SAB_RESPONSE_LENGTH 
 echo "  Turn caps:      val_max_turn=$SAB_VAL_MAX_TURN turn_max_new_tokens=$SAB_TURN_MAX_NEW_TOKENS"
 echo "  Qwen thinking:  $QWEN_ENABLE_THINKING"
 echo "  Evaluation:     real=$SAB_REAL_EVAL dump_validation=$SAB_DUMP_VALIDATION ${SAB_VALIDATION_DATA_DIR:+dir=$SAB_VALIDATION_DATA_DIR}"
+if [ "$CODE_BENCHMARK_PROFILE" = "discoverybench" ]; then
+  echo "  Discovery HMS:  real=$DISCOVERYBENCH_REAL_EVAL judge=$DISCOVERYBENCH_JUDGE_MODEL results=$DISCOVERYBENCH_RESULTS_DIR"
+fi
 echo "  Started: $(date)"
 echo "=============================================================="
 
 # ── Pre-flight: data parquets must exist ──
-probe "checking ScienceAgentBench artefacts"
+probe "checking $CODE_BENCHMARK_LABEL artefacts"
 VAL_PARQUET="$PROJECT_ROOT/$SAB_DATA_FILE"
 if [ ! -f "$VAL_PARQUET" ]; then
   echo "ERROR: missing $VAL_PARQUET"
-  echo "       Run: python scripts/make_sab_data.py --csv data/ScienceAgentBench.csv \\"
-  echo "                 --benchmark-dir data/sab_benchmark --out-dir data"
+  if [ -n "$CODE_BENCHMARK_PREPARE_HINT" ]; then
+    echo "       $CODE_BENCHMARK_PREPARE_HINT"
+  else
+    echo "       Run: python scripts/make_sab_data.py --csv data/ScienceAgentBench.csv \\"
+    echo "                 --benchmark-dir data/sab_benchmark --out-dir data"
+  fi
   exit 1
 fi
 # verl wants a train_files path too even with val_only=True; reuse the same file.
 TRAIN_PARQUET="$VAL_PARQUET"
 probe "SAB parquet: $VAL_PARQUET"
 
-if [ "$SAB_REAL_EVAL" = "1" ]; then
+if [ "$CODE_BENCHMARK_PROFILE" = "sab" ] && [ "$SAB_REAL_EVAL" = "1" ]; then
   if [ ! -f "$PROJECT_ROOT/gpt4_visual_judge.py" ]; then
     echo "ERROR: missing $PROJECT_ROOT/gpt4_visual_judge.py"
     echo "       Visual SAB evaluators cannot run without this helper."
@@ -386,13 +418,24 @@ if [ "$SAB_REAL_EVAL" = "1" ]; then
   fi
   if [ -n "${OPENAI_API_KEY:-}" ] && [ "${OPENAI_API_KEY:-}" != "dummy" ]; then
     probe "real evaluator visual judge: OpenAI credentials loaded from $OPENAI_ENV_SOURCE"
-  elif [ -n "${AZURE_OPENAI_KEY:-}" ] && [ -n "${AZURE_OPENAI_API_VERSION:-}" ] && [ -n "${AZURE_OPENAI_ENDPOINT:-}" ] && [ -n "${AZURE_OPENAI_DEPLOYMENT_NAME:-}" ]; then
+  elif { [ -n "${AZURE_OPENAI_KEY:-}" ] || [ -n "${AZURE_OPENAI_API_KEY:-}" ]; } && [ -n "${AZURE_OPENAI_API_VERSION:-}" ] && [ -n "${AZURE_OPENAI_ENDPOINT:-}" ] && [ -n "${AZURE_OPENAI_DEPLOYMENT_NAME:-}" ]; then
     probe "real evaluator visual judge: Azure OpenAI credentials loaded from $OPENAI_ENV_SOURCE"
   else
     echo "ERROR: SAB_REAL_EVAL=1 requires a real OPENAI_API_KEY or the complete Azure OpenAI credential set"
     echo "       Required Azure variables: AZURE_OPENAI_KEY, AZURE_OPENAI_API_VERSION,"
     echo "       AZURE_OPENAI_ENDPOINT, and AZURE_OPENAI_DEPLOYMENT_NAME."
     echo "       Store exported variables in \$WORK/.openai_env with mode 600."
+    exit 1
+  fi
+fi
+
+if [ "$CODE_BENCHMARK_PROFILE" = "discoverybench" ] && [ "$DISCOVERYBENCH_REAL_EVAL" = "1" ]; then
+  if [ -n "${OPENAI_API_KEY:-}" ] && [ "${OPENAI_API_KEY:-}" != "dummy" ]; then
+    probe "DiscoveryBench HMS judge: OpenAI credentials loaded from $OPENAI_ENV_SOURCE"
+  elif { [ -n "${AZURE_OPENAI_KEY:-}" ] || [ -n "${AZURE_OPENAI_API_KEY:-}" ]; } && [ -n "${AZURE_OPENAI_API_VERSION:-}" ] && [ -n "${AZURE_OPENAI_ENDPOINT:-}" ] && [ -n "${AZURE_OPENAI_DEPLOYMENT_NAME:-}" ]; then
+    probe "DiscoveryBench HMS judge: Azure OpenAI credentials loaded from $OPENAI_ENV_SOURCE"
+  else
+    echo "ERROR: DISCOVERYBENCH_REAL_EVAL=1 requires OPENAI_API_KEY or the complete Azure OpenAI credential set"
     exit 1
   fi
 fi
@@ -440,7 +483,11 @@ probe "python sanity imports"
 python -c "import torch; print('torch:', torch.__version__, 'cuda available:', torch.cuda.is_available(), 'devices:', torch.cuda.device_count())"
 python -c "import vllm; print('vllm:', vllm.__version__)"
 python -c "import verl; print('verl OK')"
-python -c "from envs.scienceagent_sandbox import CodeSandbox; from envs.scienceagent_env import ScienceAgentEnv; print('SAB env OK')"
+if [ "$CODE_BENCHMARK_PROFILE" = "discoverybench" ]; then
+  python -c "from envs.discoverybench_env import DiscoveryBenchEnv; from envs.discoverybench_eval import score_hypothesis; print('DiscoveryBench env OK')"
+else
+  python -c "from envs.scienceagent_sandbox import CodeSandbox; from envs.scienceagent_env import ScienceAgentEnv; print('SAB env OK')"
+fi
 probe "sanity imports done"
 
 # ── Ray head on NODELIST[0] ──
@@ -463,6 +510,10 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" bash -c '
   export SAB_REAL_EVAL='"$SAB_REAL_EVAL"'
   export SAB_EXPOSE_EVAL_CONTRACT='"$SAB_EXPOSE_EVAL_CONTRACT"'
   export SAB_INTERACTIVE_EVAL_FEEDBACK='"$SAB_INTERACTIVE_EVAL_FEEDBACK"'
+  export DISCOVERYBENCH_WORKDIR_ROOT='"$DISCOVERYBENCH_WORKDIR_ROOT"'
+  export DISCOVERYBENCH_RESULTS_DIR='"$DISCOVERYBENCH_RESULTS_DIR"'
+  export DISCOVERYBENCH_REAL_EVAL='"$DISCOVERYBENCH_REAL_EVAL"'
+  export DISCOVERYBENCH_JUDGE_MODEL='"$DISCOVERYBENCH_JUDGE_MODEL"'
   export QWEN_ENABLE_THINKING='"$QWEN_ENABLE_THINKING"'
   ray start --head --node-ip-address='"$TRAINER_HEAD_IP"' --port=6379 \
     --num-cpus=70 --num-gpus=1 --dashboard-host=0.0.0.0 --block
@@ -493,6 +544,10 @@ for i in $(seq 1 $((NUM_NODES - 1))); do
     export SAB_REAL_EVAL='"$SAB_REAL_EVAL"'
     export SAB_EXPOSE_EVAL_CONTRACT='"$SAB_EXPOSE_EVAL_CONTRACT"'
     export SAB_INTERACTIVE_EVAL_FEEDBACK='"$SAB_INTERACTIVE_EVAL_FEEDBACK"'
+    export DISCOVERYBENCH_WORKDIR_ROOT='"$DISCOVERYBENCH_WORKDIR_ROOT"'
+    export DISCOVERYBENCH_RESULTS_DIR='"$DISCOVERYBENCH_RESULTS_DIR"'
+    export DISCOVERYBENCH_REAL_EVAL='"$DISCOVERYBENCH_REAL_EVAL"'
+    export DISCOVERYBENCH_JUDGE_MODEL='"$DISCOVERYBENCH_JUDGE_MODEL"'
   export QWEN_ENABLE_THINKING='"$QWEN_ENABLE_THINKING"'
     ray start --address='"${TRAINER_HEAD_IP}:6379"' --num-cpus=70 --num-gpus=1 --block
   ' &
@@ -515,7 +570,7 @@ probe "querying ray status"
 ray status || echo "WARN: ray status check failed"
 
 echo "=============================================================="
-echo "  Launching $SAB_METHOD_LABEL ($SAB_WORKFLOW) ZERO-SHOT eval ($NUM_NODES nodes ${SAB_RUN_TAG^^}, ScienceAgentBench test cap=$SAB_VAL_MAX_SAMPLES)"
+echo "  Launching $SAB_METHOD_LABEL ($SAB_WORKFLOW) ZERO-SHOT eval ($NUM_NODES nodes ${SAB_RUN_TAG^^}, $CODE_BENCHMARK_LABEL test cap=$SAB_VAL_MAX_SAMPLES)"
 echo "  default_agent_loop=$SAB_AGENT_LOOP  workflow=$SAB_WORKFLOW  process_reward=$SAB_PROCESS_REWARD"
 echo "  vLLM gpu_memory_utilization=0.55 + FP8 rollout + FSDP CPU offload (30B)"
 echo "  val_only=True (one val pass on $SAB_DATA_FILE then exit; no training)"
@@ -526,8 +581,8 @@ RAY_LOG_MARKER=$(mktemp /tmp/qwen3-30b-ray-log-marker.XXXXXX)
 
 set +e
 srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_ROOT" \
-  --export=ALL,SAB_WORKDIR_ROOT="$SAB_WORKDIR_ROOT",SAB_REAL_EVAL="$SAB_REAL_EVAL",SAB_EXPOSE_EVAL_CONTRACT="$SAB_EXPOSE_EVAL_CONTRACT",SAB_INTERACTIVE_EVAL_FEEDBACK="$SAB_INTERACTIVE_EVAL_FEEDBACK",QWEN_ENABLE_THINKING="$QWEN_ENABLE_THINKING" \
-  python -m scripts.train_sab \
+  --export=ALL,SAB_WORKDIR_ROOT="$SAB_WORKDIR_ROOT",SAB_REAL_EVAL="$SAB_REAL_EVAL",SAB_EXPOSE_EVAL_CONTRACT="$SAB_EXPOSE_EVAL_CONTRACT",SAB_INTERACTIVE_EVAL_FEEDBACK="$SAB_INTERACTIVE_EVAL_FEEDBACK",DISCOVERYBENCH_WORKDIR_ROOT="$DISCOVERYBENCH_WORKDIR_ROOT",DISCOVERYBENCH_RESULTS_DIR="$DISCOVERYBENCH_RESULTS_DIR",DISCOVERYBENCH_REAL_EVAL="$DISCOVERYBENCH_REAL_EVAL",DISCOVERYBENCH_JUDGE_MODEL="$DISCOVERYBENCH_JUDGE_MODEL",QWEN_ENABLE_THINKING="$QWEN_ENABLE_THINKING" \
+  python -m "$CODE_BENCHMARK_TRAIN_MODULE" \
   algorithm.adv_estimator=foldgrpo \
   algorithm.kl_ctrl.kl_coef=0.005 \
   actor_rollout_ref.rollout.agent.default_agent_loop=$SAB_AGENT_LOOP \
