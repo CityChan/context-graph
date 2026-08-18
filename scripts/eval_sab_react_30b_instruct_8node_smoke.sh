@@ -228,18 +228,6 @@ SAB_MAX_TOKEN_LEN_PER_GPU=${SAB_MAX_TOKEN_LEN_PER_GPU:-18432}
 SAB_VAL_MAX_TURN=${SAB_VAL_MAX_TURN:-4}
 SAB_TURN_MAX_NEW_TOKENS=${SAB_TURN_MAX_NEW_TOKENS:-512}
 SAB_DATA_SEED=${SAB_DATA_SEED:-42}
-SCIENCE_BENCHMARK_LABEL=${SCIENCE_BENCHMARK_LABEL:-ScienceAgentBench}
-TRAINER_VAL_ONLY=${TRAINER_VAL_ONLY:-True}
-TRAINER_VAL_BEFORE_TRAIN=${TRAINER_VAL_BEFORE_TRAIN:-True}
-TOTAL_TRAINING_STEPS=${TOTAL_TRAINING_STEPS:-1}
-TEST_FREQ=${TEST_FREQ:-999}
-SAVE_FREQ=${SAVE_FREQ:-999}
-ROLLOUT_N=${ROLLOUT_N:-1}
-ADV_ESTIMATOR=${ADV_ESTIMATOR:-foldgrpo}
-ACTOR_LR=${ACTOR_LR:-2e-6}
-ROLLOUT_GPU_MEMORY_UTILIZATION=${ROLLOUT_GPU_MEMORY_UTILIZATION:-0.55}
-SANDBOX_TIMEOUT=${SANDBOX_TIMEOUT:-60}
-EVAL_TIMEOUT=${EVAL_TIMEOUT:-300}
 SAB_METHOD=${SAB_METHOD:-react}
 case "$SAB_METHOD" in
   react)
@@ -271,8 +259,6 @@ case "$SAB_METHOD" in
     exit 1
     ;;
 esac
-SCIENCE_TRAIN_FILE=${SCIENCE_TRAIN_FILE:-$SAB_DATA_FILE}
-SCIENCE_VAL_FILE=${SCIENCE_VAL_FILE:-$SAB_DATA_FILE}
 SAB_MAX_SESSION=${SAB_MAX_SESSION:-4}
 if [ "$SAB_RUN_TAG" = "formal" ]; then
   SAB_BRANCH_LEN=${SAB_BRANCH_LEN:-32768}
@@ -360,7 +346,7 @@ PY
 probe() { printf '+++ [%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 
 echo "=============================================================="
-echo "  RUN: $SAB_METHOD_LABEL ($SAB_WORKFLOW) on $SCIENCE_BENCHMARK_LABEL ($MODEL_PATH, $NUM_NODES nodes, ${SAB_RUN_TAG^^}, val_only=$TRAINER_VAL_ONLY)"
+echo "  ZERO-SHOT EVAL: $SAB_METHOD_LABEL ($SAB_WORKFLOW) on ScienceAgentBench ($MODEL_PATH, $NUM_NODES nodes, ${SAB_RUN_TAG^^}, val_only=True)"
 echo "  Job: ${SLURM_JOB_ID:-<idev>}   Head: $NODE0 ($NODE0_IP)"
 echo "  Workers: ${NODELIST[@]:1}"
 echo "  Trainer model:  $MODEL_PATH"
@@ -371,7 +357,7 @@ echo "  Sandbox workdir root: $SAB_WORKDIR_ROOT"
 echo "  Logger: ${probe_msg}"
 echo "  Batch sizes:    train=$TRAIN_BATCH_SIZE ppo_mini=$PPO_MINI_BATCH_SIZE"
 echo "  Sample caps:    val=$SAB_VAL_MAX_SAMPLES train=$SAB_TRAIN_MAX_SAMPLES seed=$SAB_DATA_SEED"
-echo "  Train samples:  $SAB_TRAIN_MAX_SAMPLES (val_only=$TRAINER_VAL_ONLY)"
+echo "  Train samples:  $SAB_TRAIN_MAX_SAMPLES (trainer init only; val_only=True)"
 echo "  Length caps:    prompt=$SAB_PROMPT_LENGTH response=$SAB_RESPONSE_LENGTH max_tokens_per_gpu=$SAB_MAX_TOKEN_LEN_PER_GPU"
 echo "  Turn caps:      val_max_turn=$SAB_VAL_MAX_TURN turn_max_new_tokens=$SAB_TURN_MAX_NEW_TOKENS"
 echo "  Qwen thinking:  $QWEN_ENABLE_THINKING"
@@ -380,25 +366,17 @@ echo "  Started: $(date)"
 echo "=============================================================="
 
 # ── Pre-flight: data parquets must exist ──
-probe "checking $SCIENCE_BENCHMARK_LABEL artefacts"
-VAL_PARQUET="$PROJECT_ROOT/$SCIENCE_VAL_FILE"
+probe "checking ScienceAgentBench artefacts"
+VAL_PARQUET="$PROJECT_ROOT/$SAB_DATA_FILE"
 if [ ! -f "$VAL_PARQUET" ]; then
   echo "ERROR: missing $VAL_PARQUET"
-  if [ "$SCIENCE_BENCHMARK_LABEL" = "D3-Gym" ]; then
-    echo "       Run: python scripts/make_d3gym_data.py --out-dir data"
-  else
-    echo "       Run: python scripts/make_sab_data.py --csv data/ScienceAgentBench.csv \\"
-    echo "                 --benchmark-dir data/sab_benchmark --out-dir data"
-  fi
+  echo "       Run: python scripts/make_sab_data.py --csv data/ScienceAgentBench.csv \\"
+  echo "                 --benchmark-dir data/sab_benchmark --out-dir data"
   exit 1
 fi
-TRAIN_PARQUET="$PROJECT_ROOT/$SCIENCE_TRAIN_FILE"
-if [ ! -f "$TRAIN_PARQUET" ]; then
-  echo "ERROR: missing $TRAIN_PARQUET"
-  exit 1
-fi
-probe "$SCIENCE_BENCHMARK_LABEL train parquet: $TRAIN_PARQUET"
-probe "$SCIENCE_BENCHMARK_LABEL val parquet: $VAL_PARQUET"
+# verl wants a train_files path too even with val_only=True; reuse the same file.
+TRAIN_PARQUET="$VAL_PARQUET"
+probe "SAB parquet: $VAL_PARQUET"
 
 if [ "$SAB_REAL_EVAL" = "1" ]; then
   if [ ! -f "$PROJECT_ROOT/gpt4_visual_judge.py" ]; then
@@ -537,10 +515,10 @@ probe "querying ray status"
 ray status || echo "WARN: ray status check failed"
 
 echo "=============================================================="
-echo "  Launching $SAB_METHOD_LABEL ($SAB_WORKFLOW) ($NUM_NODES nodes ${SAB_RUN_TAG^^}, $SCIENCE_BENCHMARK_LABEL val cap=$SAB_VAL_MAX_SAMPLES)"
+echo "  Launching $SAB_METHOD_LABEL ($SAB_WORKFLOW) ZERO-SHOT eval ($NUM_NODES nodes ${SAB_RUN_TAG^^}, ScienceAgentBench test cap=$SAB_VAL_MAX_SAMPLES)"
 echo "  default_agent_loop=$SAB_AGENT_LOOP  workflow=$SAB_WORKFLOW  process_reward=$SAB_PROCESS_REWARD"
-echo "  vLLM gpu_memory_utilization=$ROLLOUT_GPU_MEMORY_UTILIZATION + FP8 rollout + FSDP CPU offload (30B)"
-echo "  val_only=$TRAINER_VAL_ONLY train=$SCIENCE_TRAIN_FILE val=$SCIENCE_VAL_FILE rollout_n=$ROLLOUT_N steps=$TOTAL_TRAINING_STEPS"
+echo "  vLLM gpu_memory_utilization=0.55 + FP8 rollout + FSDP CPU offload (30B)"
+echo "  val_only=True (one val pass on $SAB_DATA_FILE then exit; no training)"
 echo "=============================================================="
 probe "launching trainer (model load + vLLM init typically ~10-15 min)"
 wandb_status trainer_launch 0
@@ -550,7 +528,7 @@ set +e
 srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_ROOT" \
   --export=ALL,SAB_WORKDIR_ROOT="$SAB_WORKDIR_ROOT",SAB_REAL_EVAL="$SAB_REAL_EVAL",SAB_EXPOSE_EVAL_CONTRACT="$SAB_EXPOSE_EVAL_CONTRACT",SAB_INTERACTIVE_EVAL_FEEDBACK="$SAB_INTERACTIVE_EVAL_FEEDBACK",QWEN_ENABLE_THINKING="$QWEN_ENABLE_THINKING" \
   python -m scripts.train_sab \
-  algorithm.adv_estimator=$ADV_ESTIMATOR \
+  algorithm.adv_estimator=foldgrpo \
   algorithm.kl_ctrl.kl_coef=0.005 \
   actor_rollout_ref.rollout.agent.default_agent_loop=$SAB_AGENT_LOOP \
   actor_rollout_ref.rollout.name=vllm \
@@ -558,13 +536,13 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   actor_rollout_ref.rollout.dtype=bfloat16 \
   +actor_rollout_ref.rollout.quantization=fp8 \
   actor_rollout_ref.rollout.calculate_log_probs=True \
-  actor_rollout_ref.rollout.gpu_memory_utilization=$ROLLOUT_GPU_MEMORY_UTILIZATION \
+  actor_rollout_ref.rollout.gpu_memory_utilization=0.55 \
   actor_rollout_ref.model.path="$MODEL_PATH" \
   actor_rollout_ref.rollout.prompt_length=$SAB_PROMPT_LENGTH \
   actor_rollout_ref.rollout.response_length=$SAB_RESPONSE_LENGTH \
   actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu=$SAB_MAX_TOKEN_LEN_PER_GPU \
   actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
-  actor_rollout_ref.rollout.n=$ROLLOUT_N \
+  actor_rollout_ref.rollout.n=1 \
   actor_rollout_ref.rollout.agent.num_workers=1 \
   actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=1 \
   actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=1 \
@@ -574,13 +552,13 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   actor_rollout_ref.ref.fsdp_config.model_dtype=bfloat16 \
   actor_rollout_ref.actor.fsdp_config.param_offload=True \
   actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
-  actor_rollout_ref.actor.optim.lr=$ACTOR_LR \
+  actor_rollout_ref.actor.optim.lr=2e-6 \
   actor_rollout_ref.actor.optim.weight_decay=0.1 \
   actor_rollout_ref.actor.use_kl_loss=True \
   actor_rollout_ref.actor.grad_clip=0.5 \
   actor_rollout_ref.actor.kl_loss_coef=0.0005 \
-  data.train_files=$SCIENCE_TRAIN_FILE \
-  data.val_files=$SCIENCE_VAL_FILE \
+  data.train_files=$SAB_DATA_FILE \
+  data.val_files=$SAB_DATA_FILE \
   data.train_batch_size=$TRAIN_BATCH_SIZE \
   data.seed=$SAB_DATA_SEED \
   data.train_max_samples=$SAB_TRAIN_MAX_SAMPLES \
@@ -596,8 +574,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   +actor_rollout_ref.rollout.plugin.workflow=$SAB_WORKFLOW \
   +actor_rollout_ref.rollout.plugin.max_turn=$SAB_VAL_MAX_TURN \
   +actor_rollout_ref.rollout.plugin.turn_max_new_tokens=$SAB_TURN_MAX_NEW_TOKENS \
-  +actor_rollout_ref.rollout.plugin.sandbox_timeout=$SANDBOX_TIMEOUT \
-  +actor_rollout_ref.rollout.plugin.eval_timeout=$EVAL_TIMEOUT \
+  +actor_rollout_ref.rollout.plugin.sandbox_timeout=60 \
   +actor_rollout_ref.rollout.plugin.process_reward="$SAB_PROCESS_REWARD" \
   +actor_rollout_ref.rollout.plugin.max_session=$SAB_MAX_SESSION \
   +actor_rollout_ref.rollout.plugin.val_max_session=$SAB_MAX_SESSION \
@@ -615,13 +592,13 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   +actor_rollout_ref.rollout.plugin.auto_bind_min_overlap=0.05 \
   +actor_rollout_ref.rollout.plugin.val_max_turn=$SAB_VAL_MAX_TURN \
   +actor_rollout_ref.rollout.plugin.val_response_length=$SAB_RESPONSE_LENGTH \
-  trainer.val_before_train=$TRAINER_VAL_BEFORE_TRAIN \
-  trainer.val_only=$TRAINER_VAL_ONLY \
+  trainer.val_before_train=True \
+  trainer.val_only=True \
   trainer.n_gpus_per_node=1 \
   trainer.nnodes=$NUM_NODES \
-  trainer.total_training_steps=$TOTAL_TRAINING_STEPS \
-  trainer.test_freq=$TEST_FREQ \
-  trainer.save_freq=$SAVE_FREQ \
+  trainer.total_training_steps=1 \
+  trainer.test_freq=999 \
+  trainer.save_freq=999 \
   trainer.default_local_dir=${SCRATCH:-/scratch/09281/chc_1996}/context-graph-ckpts/$EXPERIMENT_NAME \
   trainer.project_name=context-graph \
   trainer.experiment_name="$EXPERIMENT_NAME" \

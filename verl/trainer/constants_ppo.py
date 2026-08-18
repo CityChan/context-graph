@@ -79,16 +79,6 @@ def get_ppo_ray_runtime_env():
         "LOCAL_SEARCH_URL",
         "NO_PROXY",
         "no_proxy",
-        # D3-Gym task images are launched by Ray agent-loop workers.  Preserve
-        # the selected runtime and shared image/workdir caches on every node.
-        "D3GYM_RUNTIME",
-        "D3GYM_STRICT_INIT",
-        "D3GYM_IMAGE_DIR",
-        "D3GYM_WORKDIR_ROOT",
-        "APPTAINER_CACHEDIR",
-        "APPTAINER_TMPDIR",
-        "SINGULARITY_CACHEDIR",
-        "SINGULARITY_TMPDIR",
     ):
         value = os.environ.get(key)
         if value is not None:
