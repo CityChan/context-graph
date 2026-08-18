@@ -127,7 +127,7 @@ def test_custom_agent_loops_forward_verl_sampling_parameters():
         "scripts/train_baseline.py",
         "scripts/train_fold.py",
         "scripts/train_graph.py",
-        "scripts/train_sab.py",
+        "verl/experimental/agent_loop/code_agent_loop.py",
     ):
         source = _read(script)
         call_count = source.count("CallLLM(")
@@ -139,6 +139,18 @@ def test_custom_agent_loops_forward_verl_sampling_parameters():
     assert "sampling_params = dict(self.sampling_params)" in utils
     assert "sampling_params.update(kwargs.pop('sampling_params', None) or {})" in utils
     assert "Rollout log-probs were requested" in utils
+
+
+def test_code_agent_loop_registration_has_no_entrypoint_import_cycle():
+    package_init = _read("verl/experimental/agent_loop/__init__.py")
+    sab_entrypoint = _read("scripts/train_sab.py")
+
+    assert "from scripts.train_sab import" not in package_init
+    assert "from .code_agent_loop import" in package_init
+    assert (
+        "from verl.experimental.agent_loop.code_agent_loop import"
+        in sab_entrypoint
+    )
 
 
 def test_contextgraph_training_history_is_immutable():

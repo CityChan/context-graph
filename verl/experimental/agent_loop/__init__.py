@@ -23,7 +23,7 @@ from scripts.train_baseline import ReactAgentLoop
 # ScienceAgentBench code-domain agent loops (react_agent_code / fold_agent_code /
 # context_graph_code_isolated_agent) — must be imported here so Ray agent-loop
 # workers register them too, not just the driver process running train_sab.
-from scripts.train_sab import (
+from .code_agent_loop import (
     ReactAgentCodeLoop,
     FoldAgentCodeLoop,
     ContextGraphCodeIsolatedLoop,
