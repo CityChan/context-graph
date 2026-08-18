@@ -8,7 +8,7 @@ import pandas as pd
 from agents.prompts_code import create_chat_code
 from envs.d3gym_env import D3GymEnv, extract_input_paths
 from envs.d3gym_sandbox import D3GymSandbox, parse_d3gym_verdict
-from scripts.cache_d3gym_images import canonical_arch, collect_task_ids, image_path
+from scripts.cache_d3gym_images import canonical_arch, collect_task_ids, image_path, inspect_image_arch
 from scripts.make_d3gym_data import extract_expected_outputs, split_by_repository
 
 
@@ -188,3 +188,18 @@ def test_image_architecture_aliases_are_normalized():
     assert canonical_arch("x86_64") == "amd64"
     assert canonical_arch("aarch64") == "arm64"
     assert canonical_arch("arm64v8") == "arm64"
+
+
+def test_image_architecture_is_recovered_from_apptainer_mismatch(monkeypatch, tmp_path):
+    failure = SimpleNamespace(
+        returncode=255,
+        stdout="",
+        stderr=(
+            "FATAL: image's architecture (amd64) could not run on "
+            "the host's (arm64)"
+        ),
+    )
+    monkeypatch.setattr("scripts.cache_d3gym_images.subprocess.run", lambda *args, **kwargs: failure)
+    arch, detail = inspect_image_arch("apptainer", tmp_path / "task_29.sif")
+    assert arch == "amd64"
+    assert "host's (arm64)" in detail

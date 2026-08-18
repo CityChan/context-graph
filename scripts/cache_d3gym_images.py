@@ -8,6 +8,7 @@ import ast
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -77,7 +78,11 @@ def inspect_image_arch(runtime: str, image: Path) -> tuple[str | None, str]:
     except subprocess.TimeoutExpired:
         return None, "image metadata inspection timed out"
     if proc.returncode != 0:
-        return None, (proc.stderr or proc.stdout or "image metadata inspection failed").strip()[-1000:]
+        detail = (proc.stderr or proc.stdout or "image metadata inspection failed").strip()[-1000:]
+        mismatch = re.search(r"image's architecture \(([^)]+)\) could not run on the host's \(([^)]+)\)", detail)
+        if mismatch:
+            return canonical_arch(mismatch.group(1)), detail
+        return None, detail
     try:
         payload = json.loads(proc.stdout)
         labels = payload["data"]["attributes"]["labels"]
