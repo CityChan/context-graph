@@ -82,6 +82,7 @@ def get_ppo_ray_runtime_env():
         # D3-Gym task images are launched by Ray agent-loop workers.  Preserve
         # the selected runtime and shared image/workdir caches on every node.
         "D3GYM_RUNTIME",
+        "D3GYM_STRICT_INIT",
         "D3GYM_IMAGE_DIR",
         "D3GYM_WORKDIR_ROOT",
         "APPTAINER_CACHEDIR",

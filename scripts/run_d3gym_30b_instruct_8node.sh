@@ -115,7 +115,7 @@ fi
 mkdir -p "$D3GYM_IMAGE_DIR" "$D3GYM_WORKDIR_ROOT" "$APPTAINER_CACHEDIR" "$APPTAINER_TMPDIR"
 
 if [ "$D3GYM_RUNTIME" = apptainer ] || [ "$D3GYM_RUNTIME" = singularity ]; then
-  IMAGE_CHECK=(python scripts/cache_d3gym_images.py --check-only --runtime "$D3GYM_RUNTIME" --image-dir "$D3GYM_IMAGE_DIR")
+  IMAGE_CHECK=(python scripts/cache_d3gym_images.py --check-only --check-arch --runtime "$D3GYM_RUNTIME" --image-dir "$D3GYM_IMAGE_DIR")
   case "$D3GYM_MODE" in
     smoke) IMAGE_CHECK+=(--limit "$SAB_VAL_MAX_SAMPLES" --parquet "$SCIENCE_VAL_FILE") ;;
     eval) IMAGE_CHECK+=(--parquet "$SCIENCE_VAL_FILE") ;;

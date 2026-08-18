@@ -85,6 +85,11 @@ class D3GymEnv(ScienceAgentEnv):
                 f"{type(exc).__name__}: {exc}]"
             )
             print(f"[D3-Gym env] task={self.task_id} init failed: {type(exc).__name__}: {exc}")
+            if os.environ.get("D3GYM_STRICT_INIT", "0") == "1":
+                raise RuntimeError(
+                    f"D3-Gym strict initialization failed for {self.task_id}: "
+                    f"{type(exc).__name__}: {exc}"
+                ) from exc
 
     async def run_action(self, response: str) -> dict:
         self.stats["action"] += 1

@@ -8,7 +8,7 @@ import pandas as pd
 from agents.prompts_code import create_chat_code
 from envs.d3gym_env import D3GymEnv, extract_input_paths
 from envs.d3gym_sandbox import D3GymSandbox, parse_d3gym_verdict
-from scripts.cache_d3gym_images import collect_task_ids, image_path
+from scripts.cache_d3gym_images import canonical_arch, collect_task_ids, image_path
 from scripts.make_d3gym_data import extract_expected_outputs, split_by_repository
 
 
@@ -84,6 +84,21 @@ def test_local_task_image_execution_and_official_eval(tmp_path):
         sandbox.close()
 
 
+def test_timeout_output_bytes_are_decoded(monkeypatch):
+    sandbox = object.__new__(D3GymSandbox)
+
+    def time_out(*args, **kwargs):
+        raise __import__("subprocess").TimeoutExpired(
+            cmd=args[0], timeout=3, output=b"partial stdout", stderr=b"partial stderr"
+        )
+
+    monkeypatch.setattr("envs.d3gym_sandbox.subprocess.run", time_out)
+    proc = sandbox._run(["apptainer", "exec"], 3)
+    assert proc.returncode == 124
+    assert proc.stdout == "partial stdout"
+    assert proc.stderr == "partial stderr\n[D3-Gym] timed out after 3s"
+
+
 def test_d3gym_env_dispatch_prompt_and_reward(tmp_path, monkeypatch):
     task = tmp_path / "source_task"
     (task / "datasets").mkdir(parents=True)
@@ -150,6 +165,7 @@ def test_d3gym_30b_launcher_wiring():
     assert "EXPECTED_NUM_NODES=${EXPECTED_NUM_NODES:-8}" in wrapper
     assert "EXPECTED_NUM_NODES=${EXPECTED_NUM_NODES:-4}" in idev_wrapper
     assert "D3GYM_MODE=smoke" in idev_wrapper
+    assert "D3GYM_STRICT_INIT=${D3GYM_STRICT_INIT:-1}" in idev_wrapper
     assert "d3gym_train_${DATA_SUFFIX}.parquet" in wrapper
     assert "react fold ctxgraph" in submit
     assert "data.train_files=$SCIENCE_TRAIN_FILE" in base
@@ -166,3 +182,9 @@ def test_image_cache_collects_parquet_task_ids(tmp_path, monkeypatch):
     monkeypatch.setattr(pd, "read_parquet", lambda *args, **kwargs: frame)
     assert collect_task_ids(["tasks.parquet"], "task_3") == ["task_2", "task_1", "task_3"]
     assert image_path(str(tmp_path), "task_1") == tmp_path / "task_1.sif"
+
+
+def test_image_architecture_aliases_are_normalized():
+    assert canonical_arch("x86_64") == "amd64"
+    assert canonical_arch("aarch64") == "arm64"
+    assert canonical_arch("arm64v8") == "arm64"

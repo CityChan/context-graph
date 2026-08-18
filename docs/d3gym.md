@@ -18,7 +18,15 @@ conda run -n cxtgraph python scripts/make_d3gym_data.py --out-dir data --runtime
 The builder creates a deterministic repository-disjoint train/validation split
 and emits `code`, `code_branch`, and `code_graph` parquets.
 
-## Cache task images on Vista
+## Cache task images
+
+The official D3-Gym Docker images currently use the `linux/amd64`
+architecture. They do not run natively on Vista GH200 (`arm64`) compute nodes.
+The launcher inspects each SIF before loading the model and exits immediately
+on an architecture mismatch. Run official images on x86_64 GPU compute nodes,
+or use native arm64 images if the benchmark authors publish them. QEMU
+emulation is not suitable for multi-turn training because each tool call starts
+a task container and is many times slower than native execution.
 
 Load Apptainer if the executable is not already on `PATH`, then cache the
 images needed by the chosen split. For a one-task smoke test:
@@ -33,7 +41,7 @@ starting Ray so missing images do not waste a GPU allocation.
 
 ## Run
 
-Inside an existing four-node GH idev allocation:
+Inside an existing four-node allocation with architecture-compatible images:
 
 ```bash
 bash scripts/smoke_d3gym_qwen3_30b_instruct_4node.sh

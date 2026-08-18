@@ -39,7 +39,17 @@ _STDOUT_CAP = 4096
 _STDERR_CAP = 4096
 
 
-def _truncate(value: str, cap: int) -> str:
+def _as_text(value: str | bytes | None) -> str:
+    """Normalize subprocess output, including TimeoutExpired byte payloads."""
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return str(value)
+
+
+def _truncate(value: str | bytes | None, cap: int) -> str:
+    value = _as_text(value)
     if len(value) <= cap:
         return value
     half = cap // 2
@@ -218,8 +228,10 @@ class D3GymSandbox:
         try:
             proc = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
         except subprocess.TimeoutExpired as exc:
+            stdout = _as_text(exc.stdout)
+            stderr = _as_text(exc.stderr)
             return subprocess.CompletedProcess(
-                argv, 124, exc.stdout or "", (exc.stderr or "") + f"\n[D3-Gym] timed out after {timeout}s"
+                argv, 124, stdout, stderr + f"\n[D3-Gym] timed out after {timeout}s"
             )
         proc.elapsed = time.time() - started  # type: ignore[attr-defined]
         return proc
@@ -246,7 +258,7 @@ class D3GymSandbox:
                 )
                 elapsed = time.time() - started
             except subprocess.TimeoutExpired as exc:
-                proc = subprocess.CompletedProcess(argv, 124, exc.stdout or "", exc.stderr or "")
+                proc = subprocess.CompletedProcess(argv, 124, _as_text(exc.stdout), _as_text(exc.stderr))
                 elapsed = time.time() - started
         else:
             proc = self._run(self._base_exec() + ["python", "-c", code], self.per_call_timeout)
@@ -270,7 +282,7 @@ class D3GymSandbox:
                     timeout=self.eval_timeout,
                 )
             except subprocess.TimeoutExpired as exc:
-                proc = subprocess.CompletedProcess(argv, 124, exc.stdout or "", exc.stderr or "")
+                proc = subprocess.CompletedProcess(argv, 124, _as_text(exc.stdout), _as_text(exc.stderr))
         else:
             proc = self._run(self._base_exec() + ["python", "-c", code], self.eval_timeout)
         score, rule, detail = parse_d3gym_verdict(proc.returncode, proc.stdout or "", proc.stderr or "")

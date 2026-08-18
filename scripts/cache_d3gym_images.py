@@ -7,6 +7,7 @@ import argparse
 import ast
 import json
 import os
+import platform
 import shutil
 import subprocess
 import sys
@@ -54,6 +55,38 @@ def image_path(image_dir: str, task_id: str) -> Path:
     return Path(image_dir, f"{task_id}.sif")
 
 
+def canonical_arch(value: str) -> str:
+    aliases = {
+        "x86_64": "amd64",
+        "x64": "amd64",
+        "aarch64": "arm64",
+        "arm64v8": "arm64",
+    }
+    normalized = str(value or "").strip().lower()
+    return aliases.get(normalized, normalized)
+
+
+def inspect_image_arch(runtime: str, image: Path) -> tuple[str | None, str]:
+    try:
+        proc = subprocess.run(
+            [runtime, "inspect", "--json", str(image)],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except subprocess.TimeoutExpired:
+        return None, "image metadata inspection timed out"
+    if proc.returncode != 0:
+        return None, (proc.stderr or proc.stdout or "image metadata inspection failed").strip()[-1000:]
+    try:
+        payload = json.loads(proc.stdout)
+        labels = payload["data"]["attributes"]["labels"]
+        arch = labels.get("org.label-schema.build-arch")
+    except (KeyError, TypeError, ValueError):
+        return None, "org.label-schema.build-arch is missing from image metadata"
+    return canonical_arch(arch), ""
+
+
 def pull_image(runtime: str, image_dir: str, image_template: str, task_id: str) -> tuple[str, bool, str]:
     destination = image_path(image_dir, task_id)
     if destination.is_file() and destination.stat().st_size > 0:
@@ -88,6 +121,7 @@ def main() -> None:
     parser.add_argument("--workers", type=int, default=1)
     parser.add_argument("--limit", type=int)
     parser.add_argument("--check-only", action="store_true")
+    parser.add_argument("--check-arch", action="store_true")
     args = parser.parse_args()
 
     task_ids = collect_task_ids(args.parquet, args.task_ids)
@@ -107,6 +141,25 @@ def main() -> None:
             print("missing: " + " ".join(missing[:20]) + (" ..." if len(missing) > 20 else ""))
             raise SystemExit(1)
         print(f"[OK] {len(task_ids)} D3-Gym images present in {args.image_dir}")
+        if args.check_arch:
+            if shutil.which(args.runtime) is None:
+                raise SystemExit(f"ERROR: runtime executable not found: {args.runtime}")
+            host_arch = canonical_arch(platform.machine())
+            failures = []
+            for task_id in task_ids:
+                arch, detail = inspect_image_arch(args.runtime, image_path(args.image_dir, task_id))
+                if arch is None:
+                    failures.append(f"{task_id}: unknown ({detail})")
+                elif arch != host_arch:
+                    failures.append(f"{task_id}: image={arch} host={host_arch}")
+            if failures:
+                print(
+                    "ERROR: D3-Gym image architecture is incompatible with this host; "
+                    "native matching images or x86_64 compute nodes are required."
+                )
+                print("architecture failures: " + "; ".join(failures[:20]))
+                raise SystemExit(2)
+            print(f"[OK] D3-Gym image architecture matches host: {host_arch}")
         return
 
     if shutil.which(args.runtime) is None:
