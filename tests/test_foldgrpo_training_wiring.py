@@ -92,10 +92,23 @@ def test_contextgraph_uses_the_shared_emergency_finalizer():
     source = _read("agents/graph_agent_isolated.py")
 
     assert "step_preserving_final_answer(" in source
+    assert "append_observation_preserving_final_answer(" in source
     assert "submit_emergency_final_answer(" in source
     assert "'finalizer_attempted'" in source
     assert "'forced_finish'" in source
     assert "'pre_finalize_token_limit'" in source
+
+
+def test_all_gaia_agent_loops_protect_reserve_from_observations():
+    for relative_path in (
+        "agents/react_agent.py",
+        "agents/fold_agent.py",
+        "agents/graph_agent_isolated.py",
+    ):
+        source = _read(relative_path)
+        assert "append_observation_preserving_final_answer(" in source
+        assert "observation_budget_truncations" in source
+        assert "observation_budget_skips" in source
 
 
 def test_contextgraph_uses_one_terminal_reward_per_episode():

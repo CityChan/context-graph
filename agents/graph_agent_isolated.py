@@ -42,6 +42,7 @@ from typing import Any, Union
 from verl import DataProto
 from .utils import Agent, select_env, truncate_text, is_weird, TaskContext, run_action, AgentLoopOutput, AgentLoopMetrics
 from .finalizer import (
+    append_observation_preserving_final_answer,
     remaining_generation_tokens,
     step_preserving_final_answer,
     submit_emergency_final_answer,
@@ -319,6 +320,13 @@ async def process_item(
     final_answer_reserve = max(
         int(getattr(config.plugin, "final_answer_reserve", 0) or 0), 0
     )
+    final_answer_safety_margin = max(
+        int(getattr(config.plugin, "final_answer_safety_margin", 64) or 0), 0
+    )
+    protected_final_answer_budget = (
+        final_answer_reserve + final_answer_safety_margin
+        if final_answer_reserve else 0
+    )
     # Valid graph mechanics are reward-neutral until final task success; SFT
     # teaches tool usage and the task-gated terminal reward supplies credit.
     consolidation_op_reward = getattr(config.plugin, "consolidation_op_reward", 0.0)
@@ -359,6 +367,8 @@ async def process_item(
     timed_out = False
     natural_finish = False
     pre_finalize_token_limit = False
+    observation_budget_truncations = 0
+    observation_budget_skips = 0
     session_message = []
     working_memory_turns = []
     retrieval_totals = {
@@ -406,14 +416,14 @@ async def process_item(
             session_message.append({'role': 'user', 'content': next_session_prompt})
 
         response = await step_preserving_final_answer(
-            agent['main'], final_answer_reserve
+            agent['main'], protected_final_answer_budget
         )
 
         if response is None:
             pre_finalize_token_limit = bool(
                 final_answer_reserve
                 and remaining_generation_tokens(agent['main'])
-                <= final_answer_reserve + 9
+                <= protected_final_answer_budget + 9
             )
             break
 
@@ -719,10 +729,20 @@ async def process_item(
         )
 
         observation_turn = len(agent['main'].chat)
-        agent['main'].append({'role': 'user', 'content': observation})
+        fitted_observation = append_observation_preserving_final_answer(
+            agent['main'],
+            observation,
+            final_answer_reserve,
+            final_answer_safety_margin,
+        )
+        if fitted_observation is None:
+            observation_budget_skips += 1
+            pre_finalize_token_limit = bool(final_answer_reserve)
+            break
+        observation_budget_truncations += int(fitted_observation != str(observation))
         if enable_history_replacement:
             working_memory_turns.append(observation_turn)
-        session_message.append({'role': 'user', 'content': observation})
+        session_message.append({'role': 'user', 'content': fitted_observation})
 
         # ── Forced consolidation checkpoint ──
         # Every `consolidation_interval` main turns, inject a checkpoint
@@ -751,17 +771,29 @@ async def process_item(
                 f"{pass_clause}\n"
                 f"After this checkpoint you continue the task normally."
             )
-            agent['main'].append({'role': 'user', 'content': consol_prompt})
-            session_message.append({'role': 'user', 'content': consol_prompt})
+            fitted_consol_prompt = append_observation_preserving_final_answer(
+                agent['main'],
+                consol_prompt,
+                final_answer_reserve,
+                final_answer_safety_margin,
+            )
+            if fitted_consol_prompt is None:
+                observation_budget_skips += 1
+                pre_finalize_token_limit = bool(final_answer_reserve)
+                break
+            observation_budget_truncations += int(
+                fitted_consol_prompt != consol_prompt
+            )
+            session_message.append({'role': 'user', 'content': fitted_consol_prompt})
 
             consol_response = await step_preserving_final_answer(
-                agent['main'], final_answer_reserve
+                agent['main'], protected_final_answer_budget
             )
             if consol_response is None:
                 pre_finalize_token_limit = bool(
                     final_answer_reserve
                     and remaining_generation_tokens(agent['main'])
-                    <= final_answer_reserve + 9
+                    <= protected_final_answer_budget + 9
                 )
                 break
             session_message.append({'role': 'assistant', 'content': consol_response})
@@ -818,8 +850,18 @@ async def process_item(
                 ack = "[CONSOLIDATION ACK] invalid response, continuing."
 
             ack = f"{ack}\n\n[Latest ContextGraph state]\n{graph.to_state_text()}"
-            agent['main'].append({'role': 'user', 'content': ack})
-            session_message.append({'role': 'user', 'content': ack})
+            fitted_ack = append_observation_preserving_final_answer(
+                agent['main'],
+                ack,
+                final_answer_reserve,
+                final_answer_safety_margin,
+            )
+            if fitted_ack is None:
+                observation_budget_skips += 1
+                pre_finalize_token_limit = bool(final_answer_reserve)
+                break
+            observation_budget_truncations += int(fitted_ack != ack)
+            session_message.append({'role': 'user', 'content': fitted_ack})
 
     finalizer_attempted = bool(
         final_answer_reserve
@@ -874,6 +916,8 @@ async def process_item(
     env.stats['finalizer_attempted'] = int(finalizer_attempted)
     env.stats['forced_finish'] = int(forced_finish)
     env.stats['pre_finalize_token_limit'] = int(pre_finalize_token_limit)
+    env.stats['observation_budget_truncations'] = observation_budget_truncations
+    env.stats['observation_budget_skips'] = observation_budget_skips
     env.stats['graph_n_nodes'] = len(graph.nodes)
     env.stats['graph_n_active'] = len(graph.active_nodes)
     env.stats['graph_n_edges'] = len(graph.active_edges)

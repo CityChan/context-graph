@@ -20,6 +20,7 @@ from .utils import (
     AgentLoopMetrics,
 )
 from .finalizer import (
+    append_observation_preserving_final_answer,
     remaining_generation_tokens,
     step_preserving_final_answer,
     submit_emergency_final_answer,
@@ -112,6 +113,13 @@ async def process_item(
 
     max_turn = getattr(config.plugin, 'max_turn', 64) if config.plugin else 64
     final_answer_reserve = max(int(getattr(config.plugin, 'final_answer_reserve', 0) or 0), 0)
+    final_answer_safety_margin = max(
+        int(getattr(config.plugin, 'final_answer_safety_margin', 64) or 0), 0
+    )
+    protected_final_answer_budget = (
+        final_answer_reserve + final_answer_safety_margin
+        if final_answer_reserve else 0
+    )
     max_session = getattr(config.plugin, "max_session", 5)
     if not is_train:
         max_session = getattr(config.plugin, "val_max_session", max_session)
@@ -138,6 +146,8 @@ async def process_item(
     timed_out = False
     natural_finish = False
     pre_finalize_token_limit = False
+    observation_budget_truncations = 0
+    observation_budget_skips = 0
     session_message = []
     while iteration < max_turn:
         if time.time() - session_start_time > session_timeout:
@@ -169,13 +179,16 @@ async def process_item(
             agent[current].append({'role': 'user', 'content': next_session_prompt})
             session_message.append({'role': 'user', 'content': next_session_prompt})
 
-        response = await step_preserving_final_answer(agent['main'], final_answer_reserve)
+        response = await step_preserving_final_answer(
+            agent['main'], protected_final_answer_budget
+        )
         # print(response)
 
         if response is None:
             pre_finalize_token_limit = bool(
                 final_answer_reserve
-                and remaining_generation_tokens(agent['main']) <= final_answer_reserve + 9
+                and remaining_generation_tokens(agent['main'])
+                <= protected_final_answer_budget + 9
             )
             break
 
@@ -240,8 +253,18 @@ async def process_item(
         if process_reward:
             observation = truncate_text(observation, max_lines=100, merge_repeat=True, merge_num=4)
         # print(observation)
-        agent['main'].append({'role': 'user', 'content': observation})
-        session_message.append({'role': 'user', 'content': observation})
+        fitted_observation = append_observation_preserving_final_answer(
+            agent['main'],
+            observation,
+            final_answer_reserve,
+            final_answer_safety_margin,
+        )
+        if fitted_observation is None:
+            observation_budget_skips += 1
+            pre_finalize_token_limit = bool(final_answer_reserve)
+            break
+        observation_budget_truncations += int(fitted_observation != str(observation))
+        session_message.append({'role': 'user', 'content': fitted_observation})
 
     finalizer_attempted = bool(
         final_answer_reserve
@@ -290,6 +313,8 @@ async def process_item(
     env.stats['finalizer_attempted'] = int(finalizer_attempted)
     env.stats['forced_finish'] = int(forced_finish)
     env.stats['pre_finalize_token_limit'] = int(pre_finalize_token_limit)
+    env.stats['observation_budget_truncations'] = observation_budget_truncations
+    env.stats['observation_budget_skips'] = observation_budget_skips
 
     if getattr(env, 'is_finish', False) or getattr(env, 'finish', False):
         mask_rollout = False

@@ -13,6 +13,7 @@ from .utils import (
     AgentLoopMetrics,
 )
 from .finalizer import (
+    append_observation_preserving_final_answer,
     remaining_generation_tokens,
     step_preserving_final_answer,
     submit_emergency_final_answer,
@@ -61,6 +62,13 @@ async def process_item(
     user_prompt = create_chat(env.instance_info['problem_statement'], workflow, item)
     max_turn = getattr(config.plugin, 'max_turn', 64) if config.plugin else 64
     final_answer_reserve = max(int(getattr(config.plugin, 'final_answer_reserve', 0) or 0), 0)
+    final_answer_safety_margin = max(
+        int(getattr(config.plugin, 'final_answer_safety_margin', 64) or 0), 0
+    )
+    protected_final_answer_budget = (
+        final_answer_reserve + final_answer_safety_margin
+        if final_answer_reserve else 0
+    )
 
     llm_client = context.llm_client
     prompt_turn = len(user_prompt)
@@ -69,20 +77,35 @@ async def process_item(
     iteration = 0
     natural_finish = False
     pre_finalize_token_limit = False
+    observation_budget_truncations = 0
+    observation_budget_skips = 0
     while iteration < max_turn:
         iteration += 1
-        response = await step_preserving_final_answer(agent, final_answer_reserve)
+        response = await step_preserving_final_answer(
+            agent, protected_final_answer_budget
+        )
         if response is None:
             pre_finalize_token_limit = bool(
                 final_answer_reserve
-                and remaining_generation_tokens(agent) <= final_answer_reserve + 9
+                and remaining_generation_tokens(agent)
+                <= protected_final_answer_budget + 9
             )
             break
         observation = await run_action(env, response)
         if observation is None:
             natural_finish = True
             break
-        agent.append({'role': 'user', 'content': observation})
+        fitted_observation = append_observation_preserving_final_answer(
+            agent,
+            observation,
+            final_answer_reserve,
+            final_answer_safety_margin,
+        )
+        if fitted_observation is None:
+            observation_budget_skips += 1
+            pre_finalize_token_limit = bool(final_answer_reserve)
+            break
+        observation_budget_truncations += int(fitted_observation != str(observation))
 
     finalizer_attempted = bool(
         final_answer_reserve
@@ -124,6 +147,8 @@ async def process_item(
     env.stats['finalizer_attempted'] = int(finalizer_attempted)
     env.stats['forced_finish'] = int(forced_finish)
     env.stats['pre_finalize_token_limit'] = int(pre_finalize_token_limit)
+    env.stats['observation_budget_truncations'] = observation_budget_truncations
+    env.stats['observation_budget_skips'] = observation_budget_skips
 
     main_response_tokens = max(len(agent.context()) - agent.prompt_ids_len, 0)
     main_context_tokens = len(agent.context())

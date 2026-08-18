@@ -3,6 +3,11 @@
 import re
 
 
+OBSERVATION_TRUNCATION_MARKER = (
+    "\n...[observation truncated to preserve the final-answer budget]...\n"
+)
+
+
 FINAL_ANSWER_PROMPT = """FINAL ANSWER REQUIRED NOW.
 Stop researching and do not call search, open_page, branch, or return. Using only the evidence already present in the conversation, submit your single best answer immediately with the finish tool. A best-effort answer is required even if some evidence is incomplete. Use exactly:
 <function=finish>
@@ -16,6 +21,101 @@ def remaining_generation_tokens(agent) -> int:
     """Return tokens left in the rollout's prompt+response budget."""
     budget_end = int(agent.prompt_ids_len) + int(agent.config.response_length)
     return max(budget_end - len(agent.context()), 0)
+
+
+def _truncate_observation_tokens(agent, observation: str, keep_tokens: int) -> str:
+    """Keep the head and tail of an observation within a token target."""
+    observation = str(observation)
+    token_ids = agent.tokenizer.encode(observation, add_special_tokens=False)
+    keep_tokens = max(int(keep_tokens), 0)
+    if len(token_ids) <= keep_tokens:
+        return observation
+    if keep_tokens == 0:
+        return ""
+
+    marker_ids = agent.tokenizer.encode(
+        OBSERVATION_TRUNCATION_MARKER, add_special_tokens=False
+    )
+    if keep_tokens <= len(marker_ids) + 2:
+        return agent.tokenizer.decode(token_ids[:keep_tokens], skip_special_tokens=True)
+
+    payload_tokens = keep_tokens - len(marker_ids)
+    head_tokens = (payload_tokens + 1) // 2
+    tail_tokens = payload_tokens - head_tokens
+    head = agent.tokenizer.decode(
+        token_ids[:head_tokens], skip_special_tokens=True
+    )
+    tail = agent.tokenizer.decode(
+        token_ids[-tail_tokens:], skip_special_tokens=True
+    ) if tail_tokens else ""
+    return f"{head}{OBSERVATION_TRUNCATION_MARKER}{tail}"
+
+
+def append_observation_preserving_final_answer(
+    agent,
+    observation: str,
+    reserve_tokens: int,
+    safety_tokens: int = 64,
+):
+    """Append the largest observation that cannot consume protected budget.
+
+    Returns the text actually appended, or ``None`` when even the smallest
+    user turn would cross the protected boundary. The check measures the
+    rendered context, so chat-template overhead is included.
+    """
+    observation = str(observation)
+    reserve_tokens = max(int(reserve_tokens or 0), 0)
+    safety_tokens = max(int(safety_tokens or 0), 0)
+    if reserve_tokens == 0:
+        agent.append({"role": "user", "content": observation})
+        return observation
+
+    protected_tokens = reserve_tokens + safety_tokens
+    context_len_before = len(agent.context())
+    max_append_tokens = remaining_generation_tokens(agent) - protected_tokens
+    if max_append_tokens <= 0:
+        print(
+            "[FINALIZER] skipping observation: only protected final-answer "
+            f"budget remains ({remaining_generation_tokens(agent)} tokens)"
+        )
+        return None
+
+    def fits(candidate: str) -> bool:
+        agent.append({"role": "user", "content": candidate})
+        rendered_cost = len(agent.context()) - context_len_before
+        enough_room = remaining_generation_tokens(agent) >= protected_tokens
+        agent.rollback(k=1)
+        return rendered_cost <= max_append_tokens and enough_room
+
+    if fits(observation):
+        agent.append({"role": "user", "content": observation})
+        return observation
+
+    token_ids = agent.tokenizer.encode(observation, add_special_tokens=False)
+    low, high = 1, max(len(token_ids) - 1, 0)
+    fitted = None
+    while low <= high:
+        mid = (low + high) // 2
+        candidate = _truncate_observation_tokens(agent, observation, mid)
+        if fits(candidate):
+            fitted = candidate
+            low = mid + 1
+        else:
+            high = mid - 1
+
+    if fitted is None:
+        print(
+            "[FINALIZER] skipping observation: chat-template overhead would "
+            "consume the protected final-answer budget"
+        )
+        return None
+
+    agent.append({"role": "user", "content": fitted})
+    print(
+        "[FINALIZER] truncated observation to preserve "
+        f"{protected_tokens} protected tokens"
+    )
+    return fitted
 
 
 async def step_preserving_final_answer(agent, reserve_tokens: int):

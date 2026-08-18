@@ -33,6 +33,10 @@ def test_gaia_grpo_suite_is_matched_64k_training():
     assert "TRAIN_LR=1e-6" in source
     assert "USE_KL_LOSS=False" in source
     assert "CLIP_RATIO_HIGH=0.28" in source
+    assert "GAIA_FINAL_ANSWER_RESERVE=${GAIA_FINAL_ANSWER_RESERVE:-2048}" in source
+    assert "GAIA_FINAL_ANSWER_SAFETY_MARGIN=${GAIA_FINAL_ANSWER_SAFETY_MARGIN:-64}" in source
+    assert "FINAL_ANSWER_RESERVE=$GAIA_FINAL_ANSWER_RESERVE" in source
+    assert "FINAL_ANSWER_SAFETY_MARGIN=$GAIA_FINAL_ANSWER_SAFETY_MARGIN" in source
 
 
 def test_gaia_grpo_32k_suite_reuses_matched_submitter_with_32k_budget():

@@ -158,7 +158,8 @@ MAX_TURN=${MAX_TURN:-100}
 MAX_SESSION=${MAX_SESSION:-10}
 VAL_MAX_SESSION=${VAL_MAX_SESSION:-10}
 TURN_MAX_NEW_TOKENS=${TURN_MAX_NEW_TOKENS:-768}
-FINAL_ANSWER_RESERVE=${FINAL_ANSWER_RESERVE:-0}
+FINAL_ANSWER_RESERVE=${FINAL_ANSWER_RESERVE:-2048}
+FINAL_ANSWER_SAFETY_MARGIN=${FINAL_ANSWER_SAFETY_MARGIN:-64}
 ENTROPY_FROM_LOGITS_WITH_CHUNKING=${ENTROPY_FROM_LOGITS_WITH_CHUNKING:-True}
 CHECKPOINT_ROOT=${CHECKPOINT_ROOT:-${SCRATCH:-/scratch/09281/chc_1996}/context-graph-ckpts/$EXPERIMENT_NAME}
 
@@ -475,6 +476,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   +actor_rollout_ref.rollout.plugin.retry_cjk=10 \
   +actor_rollout_ref.rollout.plugin.turn_max_new_tokens="$TURN_MAX_NEW_TOKENS" \
   +actor_rollout_ref.rollout.plugin.final_answer_reserve="$FINAL_ANSWER_RESERVE" \
+  +actor_rollout_ref.rollout.plugin.final_answer_safety_margin="$FINAL_ANSWER_SAFETY_MARGIN" \
   +actor_rollout_ref.rollout.plugin.max_session="$MAX_SESSION" \
   +actor_rollout_ref.rollout.plugin.val_max_session="$VAL_MAX_SESSION" \
   +actor_rollout_ref.rollout.plugin.session_timeout="$SESSION_TIMEOUT" \

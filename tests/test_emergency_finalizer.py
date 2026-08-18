@@ -2,6 +2,8 @@ import asyncio
 from types import SimpleNamespace
 
 from agents.finalizer import (
+    OBSERVATION_TRUNCATION_MARKER,
+    append_observation_preserving_final_answer,
     remaining_generation_tokens,
     step_preserving_final_answer,
     submit_emergency_final_answer,
@@ -57,6 +59,41 @@ async def fake_action_runner(env, response):
     return result.get("observation")
 
 
+class WordTokenizer:
+    def encode(self, text, add_special_tokens=False):
+        return str(text).split()
+
+    def decode(self, token_ids, skip_special_tokens=True):
+        return " ".join(token_ids)
+
+
+class ObservationBudgetAgent:
+    def __init__(self, context_len=60):
+        self.prompt_ids_len = 20
+        self.config = SimpleNamespace(response_length=80)
+        self.tokenizer = WordTokenizer()
+        self._context_len = context_len
+        self._messages = [{"role": "user", "content": "question"}]
+        self._costs = []
+
+    def context(self):
+        return list(range(self._context_len))
+
+    def messages(self):
+        return self._messages
+
+    def append(self, turn):
+        cost = len(self.tokenizer.encode(turn["content"])) + 2
+        self._messages.append(turn)
+        self._costs.append(cost)
+        self._context_len += cost
+
+    def rollback(self, k=1):
+        for _ in range(k):
+            self._messages.pop()
+            self._context_len -= self._costs.pop()
+
+
 def test_normal_step_preserves_configured_final_answer_reserve():
     agent = FakeAgent(context_len=60, response="normal")
 
@@ -74,6 +111,44 @@ def test_normal_step_stops_when_only_reserve_remains():
 
     assert result is None
     assert agent.step_budgets == []
+
+
+def test_observation_is_truncated_without_consuming_protected_budget():
+    agent = ObservationBudgetAgent(context_len=60)
+    observation = " ".join(f"token-{i}" for i in range(50))
+
+    fitted = append_observation_preserving_final_answer(
+        agent, observation, reserve_tokens=20, safety_tokens=2
+    )
+
+    assert fitted is not None
+    assert fitted != observation
+    assert OBSERVATION_TRUNCATION_MARKER.strip() in fitted
+    assert remaining_generation_tokens(agent) >= 22
+    assert agent.messages()[-1]["content"] == fitted
+
+
+def test_observation_is_skipped_when_only_protected_budget_remains():
+    agent = ObservationBudgetAgent(context_len=79)
+
+    fitted = append_observation_preserving_final_answer(
+        agent, "search result", reserve_tokens=20, safety_tokens=2
+    )
+
+    assert fitted is None
+    assert len(agent.messages()) == 1
+    assert remaining_generation_tokens(agent) == 21
+
+
+def test_zero_reserve_keeps_legacy_full_observation_behavior():
+    agent = ObservationBudgetAgent(context_len=60)
+
+    fitted = append_observation_preserving_final_answer(
+        agent, "full search result", reserve_tokens=0
+    )
+
+    assert fitted == "full search result"
+    assert agent.messages()[-1]["content"] == "full search result"
 
 
 def test_finalizer_submits_tool_call_and_uses_only_protected_budget():
