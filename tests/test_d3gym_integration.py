@@ -8,7 +8,7 @@ import pandas as pd
 from agents.prompts_code import create_chat_code
 from envs.d3gym_env import D3GymEnv, extract_input_paths
 from envs.d3gym_sandbox import D3GymSandbox, parse_d3gym_verdict
-from scripts.cache_d3gym_images import canonical_arch, collect_task_ids, image_path, inspect_image_arch
+from scripts.cache_d3gym_images import canonical_arch, collect_task_ids, image_path, inspect_image_arch, select_task_ids
 from scripts.make_d3gym_data import extract_expected_outputs, split_by_repository
 
 
@@ -182,6 +182,9 @@ def test_image_cache_collects_parquet_task_ids(tmp_path, monkeypatch):
     monkeypatch.setattr(pd, "read_parquet", lambda *args, **kwargs: frame)
     assert collect_task_ids(["tasks.parquet"], "task_3") == ["task_2", "task_1", "task_3"]
     assert image_path(str(tmp_path), "task_1") == tmp_path / "task_1.sif"
+    task_ids = [f"task_{index}" for index in range(61)]
+    assert select_task_ids(task_ids, 1, 42) == [task_ids[5]]
+    assert select_task_ids(task_ids, 1, None) == [task_ids[0]]
 
 
 def test_image_architecture_aliases_are_normalized():

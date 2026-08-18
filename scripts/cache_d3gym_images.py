@@ -15,6 +15,7 @@ import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 
@@ -54,6 +55,16 @@ def collect_task_ids(parquets: list[str], explicit: str | None = None) -> list[s
 
 def image_path(image_dir: str, task_id: str) -> Path:
     return Path(image_dir, f"{task_id}.sif")
+
+
+def select_task_ids(task_ids: list[str], limit: int | None, seed: int | None) -> list[str]:
+    if limit is None or limit < 0 or limit >= len(task_ids):
+        return task_ids
+    if seed is None:
+        return task_ids[:limit]
+    rng = np.random.default_rng(seed)
+    indices = rng.choice(len(task_ids), size=limit, replace=False)
+    return [task_ids[int(index)] for index in indices]
 
 
 def canonical_arch(value: str) -> str:
@@ -125,13 +136,13 @@ def main() -> None:
     parser.add_argument("--image-template", default="hananemoussa/d3-gym:{task_id}")
     parser.add_argument("--workers", type=int, default=1)
     parser.add_argument("--limit", type=int)
+    parser.add_argument("--sample-seed", type=int)
     parser.add_argument("--check-only", action="store_true")
     parser.add_argument("--check-arch", action="store_true")
     args = parser.parse_args()
 
     task_ids = collect_task_ids(args.parquet, args.task_ids)
-    if args.limit is not None:
-        task_ids = task_ids[: args.limit]
+    task_ids = select_task_ids(task_ids, args.limit, args.sample_seed)
     if not task_ids:
         raise SystemExit("ERROR: no D3-Gym task IDs were found")
     os.makedirs(args.image_dir, exist_ok=True)

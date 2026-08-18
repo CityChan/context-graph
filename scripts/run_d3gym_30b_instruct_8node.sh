@@ -53,6 +53,7 @@ export SAB_RESPONSE_LENGTH=${SAB_RESPONSE_LENGTH:-24576}
 export SAB_MAX_TOKEN_LEN_PER_GPU=${SAB_MAX_TOKEN_LEN_PER_GPU:-40960}
 export SAB_VAL_MAX_TURN=${SAB_VAL_MAX_TURN:-32}
 export SAB_TURN_MAX_NEW_TOKENS=${SAB_TURN_MAX_NEW_TOKENS:-2048}
+export SAB_DATA_SEED=${SAB_DATA_SEED:-42}
 export SANDBOX_TIMEOUT=${SANDBOX_TIMEOUT:-300}
 export EVAL_TIMEOUT=${EVAL_TIMEOUT:-480}
 export ROLLOUT_GPU_MEMORY_UTILIZATION=${ROLLOUT_GPU_MEMORY_UTILIZATION:-0.55}
@@ -117,7 +118,7 @@ mkdir -p "$D3GYM_IMAGE_DIR" "$D3GYM_WORKDIR_ROOT" "$APPTAINER_CACHEDIR" "$APPTAI
 if [ "$D3GYM_RUNTIME" = apptainer ] || [ "$D3GYM_RUNTIME" = singularity ]; then
   IMAGE_CHECK=(python scripts/cache_d3gym_images.py --check-only --check-arch --runtime "$D3GYM_RUNTIME" --image-dir "$D3GYM_IMAGE_DIR")
   case "$D3GYM_MODE" in
-    smoke) IMAGE_CHECK+=(--limit "$SAB_VAL_MAX_SAMPLES" --parquet "$SCIENCE_VAL_FILE") ;;
+    smoke) IMAGE_CHECK+=(--limit "$SAB_VAL_MAX_SAMPLES" --sample-seed "$SAB_DATA_SEED" --parquet "$SCIENCE_VAL_FILE") ;;
     eval) IMAGE_CHECK+=(--parquet "$SCIENCE_VAL_FILE") ;;
     train) IMAGE_CHECK+=(--parquet "$SCIENCE_TRAIN_FILE" "$SCIENCE_VAL_FILE") ;;
   esac
