@@ -2,11 +2,13 @@ import csv
 import json
 from pathlib import Path
 
+import pandas as pd
 import pytest
 
 from envs import discoverybench_eval
-from envs.discoverybench_env import load_prediction
+from envs.discoverybench_env import load_metadata, load_prediction
 from envs.discoverybench_loader import load_discoverybench_tasks
+from scripts.make_discoverybench_data import _row
 from scripts.summarize_discoverybench_results import summarize
 
 
@@ -67,6 +69,33 @@ def test_loader_builds_gold_hidden_test_task(tmp_path):
     assert task["gold_hypothesis"].startswith("Group B")
     assert task["gold_hypothesis"] not in task["instruction"]
     assert "pred_results/discovery_result.json" in task["instruction"]
+
+
+def test_parquet_row_serializes_heterogeneous_metadata_as_json(tmp_path):
+    _write_fixture(tmp_path)
+    task = load_discoverybench_tasks(str(tmp_path), "real", "test")[0]
+    task["metadata"]["empty_nested_struct"] = {"element": {}}
+
+    row = _row(task)
+    assert isinstance(row["extra_info"]["metadata"], str)
+    assert load_metadata(row["extra_info"]["metadata"])["empty_nested_struct"] == {
+        "element": {}
+    }
+
+    pytest.importorskip("pyarrow", reason="Parquet round-trip requires pyarrow")
+    output = tmp_path / "discoverybench.parquet"
+    pd.DataFrame([row]).to_parquet(output, index=False)
+    stored = pd.read_parquet(output).iloc[0]["extra_info"]
+
+    assert isinstance(stored["metadata"], str)
+    assert load_metadata(stored["metadata"])["empty_nested_struct"] == {
+        "element": {}
+    }
+
+
+def test_metadata_loader_accepts_legacy_dicts():
+    metadata = {"datasets": [], "element": {}}
+    assert load_metadata(metadata) is metadata
 
 
 def test_prediction_contract_rejects_empty_workflow(tmp_path):

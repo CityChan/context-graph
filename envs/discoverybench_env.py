@@ -28,6 +28,20 @@ def load_prediction(path: str | Path) -> tuple[str, str]:
     return hypothesis.strip(), workflow.strip()
 
 
+def load_metadata(value: Any) -> dict:
+    """Decode Parquet-safe metadata while accepting legacy in-memory rows."""
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            decoded = json.loads(value)
+        except json.JSONDecodeError as exc:
+            raise ValueError("DiscoveryBench metadata is not valid JSON") from exc
+        if isinstance(decoded, dict):
+            return decoded
+    raise ValueError("DiscoveryBench metadata must be a JSON object")
+
+
 def _safe_task_name(task_id: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", task_id).strip("_") or "unknown"
 
@@ -43,7 +57,13 @@ class DiscoveryBenchEnv(ScienceAgentEnv):
         self.query = str(extra.get("query", ""))
         self.gold_hypothesis = str(extra.get("gold_hypothesis", ""))
         self.gold_workflow = str(extra.get("gold_workflow", ""))
-        self.discovery_metadata = extra.get("metadata", {}) or {}
+        try:
+            self.discovery_metadata = load_metadata(extra.get("metadata", "{}"))
+        except ValueError as exc:
+            self.env_fail = True
+            self.discovery_metadata = {}
+            print(f"[DiscoveryBench env] invalid metadata: {exc}")
+            return
         self.dataset_type = str(extra.get("dataset_type", "real"))
         self.eval_contract = (
             "Write UTF-8 JSON, not Markdown or JSONL. The root must be exactly one "

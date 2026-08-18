@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 from pathlib import Path
@@ -29,11 +30,21 @@ def _snapshot(download_dir: str | None) -> str:
 
 
 def _row(task: dict) -> dict:
+    # DiscoveryBench metadata is heterogeneous across tasks and occasionally
+    # contains empty dictionaries (for example ``{"element": {}}``).  Arrow
+    # cannot represent an empty struct in Parquet, so keep the complete
+    # metadata as JSON and decode it in DiscoveryBenchEnv.
+    parquet_task = {
+        **task,
+        "metadata": json.dumps(
+            task.get("metadata", {}), ensure_ascii=False, sort_keys=True
+        ),
+    }
     return {
         "prompt": [{"role": "user", "content": task["instruction"]}],
         "ability": "DiscoveryBench",
         "extra_info": {
-            **task,
+            **parquet_task,
             "problem_statement": task["instruction"],
             "workdir_root_env": "DISCOVERYBENCH_WORKDIR_ROOT",
             "workdir_prefix": "discoverybench_",
