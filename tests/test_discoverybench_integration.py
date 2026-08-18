@@ -13,14 +13,16 @@ from scripts.summarize_discoverybench_results import summarize
 def _write_fixture(root: Path) -> None:
     task_dir = root / "discoverybench" / "real" / "test" / "demo"
     task_dir.mkdir(parents=True)
-    (task_dir / "measurements.csv").write_text(
+    # HF and GitHub currently disagree on punctuation for at least one real
+    # test filename. Exercise the compatibility resolver here.
+    (task_dir / "measurements_data.csv").write_text(
         "group,value\nA,1\nB,2\n", encoding="utf-8"
     )
     metadata = {
         "id": 999,  # filename id is authoritative in the official snapshot
         "domain": "science",
         "datasets": [{
-            "name": "measurements.csv",
+            "name": "measurements-data.csv",
             "description": "Group measurements",
             "columns": {"raw": [
                 {"name": "group", "description": "Group label"},
@@ -60,7 +62,8 @@ def test_loader_builds_gold_hidden_test_task(tmp_path):
     assert len(tasks) == 1
     task = tasks[0]
     assert task["task_id"] == "real:demo:m7:q3"
-    assert task["input_rel_paths"] == ["measurements.csv"]
+    assert task["input_rel_paths"] == ["measurements-data.csv"]
+    assert Path(task["input_files"][0]).name == "measurements_data.csv"
     assert task["gold_hypothesis"].startswith("Group B")
     assert task["gold_hypothesis"] not in task["instruction"]
     assert "pred_results/discovery_result.json" in task["instruction"]

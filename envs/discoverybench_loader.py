@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import csv
 import json
+import re
 from pathlib import Path
 from typing import Iterable
 
@@ -54,6 +55,38 @@ def _answer_key_path(root: Path, dataset_type: str) -> Path:
 def _dataset_root(root: Path) -> Path:
     nested = root / "discoverybench"
     return nested if nested.is_dir() else root
+
+
+def _normalized_relpath(value: str) -> str:
+    """Normalize benign filename drift between the HF and GitHub snapshots."""
+    return re.sub(r"[^a-z0-9]+", "", value.casefold())
+
+
+def _resolve_data_file(directory: Path, relative_name: str) -> Path:
+    exact = directory / relative_name
+    if exact.is_file():
+        return exact
+
+    target = _normalized_relpath(Path(relative_name).as_posix())
+    matches = [
+        path for path in directory.rglob("*")
+        if path.is_file()
+        and _normalized_relpath(path.relative_to(directory).as_posix()) == target
+    ]
+    if len(matches) == 1:
+        print(
+            "[DiscoveryBench data] repaired metadata filename drift: "
+            f"{relative_name} -> {matches[0].relative_to(directory)}"
+        )
+        return matches[0]
+    if len(matches) > 1:
+        raise FileNotFoundError(
+            f"Metadata filename {relative_name!r} is ambiguous under {directory}: "
+            f"{[str(path.name) for path in matches]}"
+        )
+    raise FileNotFoundError(
+        f"Metadata references missing dataset file {exact}"
+    )
 
 
 def _load_answers(root: Path, dataset_type: str) -> dict[tuple[str, int, int], str]:
@@ -124,11 +157,10 @@ def load_discoverybench_tasks(
             rel = str(dataset.get("name", "")).strip()
             if not rel:
                 continue
-            source = metadata_path.parent / rel
-            if not source.is_file():
-                raise FileNotFoundError(
-                    f"Metadata {metadata_path} references missing dataset file {source}"
-                )
+            try:
+                source = _resolve_data_file(metadata_path.parent, rel)
+            except FileNotFoundError as exc:
+                raise FileNotFoundError(f"Metadata {metadata_path}: {exc}") from exc
             input_files.append(str(source.resolve()))
             input_rel_paths.append(rel)
 
