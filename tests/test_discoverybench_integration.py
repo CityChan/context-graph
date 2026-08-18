@@ -1,5 +1,6 @@
 import csv
 import json
+from types import SimpleNamespace
 from pathlib import Path
 
 import pandas as pd
@@ -189,3 +190,61 @@ def test_result_summary_reports_mean_and_judge_errors(tmp_path):
     assert result["hms_scored"] == 2
     assert result["judge_errors"] == 1
     assert result["mean_hms"] == 0.5
+
+
+def _completion_response(payload):
+    return SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(payload)))]
+    )
+
+
+def test_judge_uses_current_completion_token_parameter():
+    class Completions:
+        def __init__(self):
+            self.calls = []
+
+        def create(self, **kwargs):
+            self.calls.append(kwargs)
+            return _completion_response({"ok": True})
+
+    completions = Completions()
+    client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+    assert discoverybench_eval._chat_json(client, "gpt-5-nano", "prompt") == {"ok": True}
+    assert completions.calls[0]["max_completion_tokens"] == 1200
+    assert "max_tokens" not in completions.calls[0]
+
+
+def test_judge_falls_back_for_legacy_completion_token_parameter():
+    class Completions:
+        def __init__(self):
+            self.calls = []
+
+        def create(self, **kwargs):
+            self.calls.append(dict(kwargs))
+            if "max_completion_tokens" in kwargs:
+                raise RuntimeError("Unsupported parameter: max_completion_tokens")
+            return _completion_response({"ok": True})
+
+    completions = Completions()
+    client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+    assert discoverybench_eval._chat_json(client, "legacy", "prompt") == {"ok": True}
+    assert "max_completion_tokens" in completions.calls[0]
+    assert completions.calls[1]["max_tokens"] == 1200
+
+
+def test_judge_drops_unsupported_temperature():
+    class Completions:
+        def __init__(self):
+            self.calls = []
+
+        def create(self, **kwargs):
+            self.calls.append(dict(kwargs))
+            if "temperature" in kwargs:
+                raise RuntimeError("Unsupported parameter: temperature")
+            return _completion_response({"ok": True})
+
+    completions = Completions()
+    client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+    assert discoverybench_eval._chat_json(client, "gpt-5-nano", "prompt") == {"ok": True}
+    assert "temperature" in completions.calls[0]
+    assert "temperature" not in completions.calls[1]

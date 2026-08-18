@@ -48,7 +48,7 @@ def build_judge_client():
         raise DiscoveryBenchJudgeError(
             "Official HMS scoring requires OPENAI_API_KEY or the Azure OpenAI credential set"
         )
-    model = os.getenv("DISCOVERYBENCH_JUDGE_MODEL", "gpt-4-1106-preview")
+    model = os.getenv("DISCOVERYBENCH_JUDGE_MODEL", "gpt-5-nano")
     kwargs = {"api_key": api_key}
     if os.getenv("OPENAI_BASE_URL"):
         kwargs["base_url"] = os.getenv("OPENAI_BASE_URL")
@@ -75,14 +75,42 @@ def _chat_json(client, model: str, prompt: str, retries: int = 3) -> dict:
                     {"role": "user", "content": prompt},
                 ],
                 "temperature": 0,
-                "max_tokens": 1200,
+                "max_completion_tokens": 1200,
+                "response_format": {"type": "json_object"},
             }
-            try:
-                response = client.chat.completions.create(
-                    response_format={"type": "json_object"}, **kwargs
-                )
-            except Exception:
-                response = client.chat.completions.create(**kwargs)
+            # Current reasoning models require max_completion_tokens, while
+            # some legacy/Azure deployments only accept max_tokens. Likewise,
+            # a few deployments reject temperature or JSON response format.
+            # Retry only explicitly rejected parameters so authentication,
+            # quota, and transport errors still reach the outer retry loop.
+            while True:
+                try:
+                    response = client.chat.completions.create(**kwargs)
+                    break
+                except Exception as exc:
+                    message = str(exc).lower()
+                    if (
+                        "max_completion_tokens" in kwargs
+                        and "max_completion_tokens" in message
+                        and ("unsupported" in message or "not supported" in message)
+                    ):
+                        kwargs["max_tokens"] = kwargs.pop("max_completion_tokens")
+                        continue
+                    if (
+                        "temperature" in kwargs
+                        and "temperature" in message
+                        and ("unsupported" in message or "not supported" in message)
+                    ):
+                        kwargs.pop("temperature")
+                        continue
+                    if (
+                        "response_format" in kwargs
+                        and "response_format" in message
+                        and ("unsupported" in message or "not supported" in message)
+                    ):
+                        kwargs.pop("response_format")
+                        continue
+                    raise
             content = response.choices[0].message.content or ""
             parsed = json.loads(_strip_json_fence(content))
             if not isinstance(parsed, dict):
@@ -236,7 +264,7 @@ def score_hypothesis(
         client, discovered_model, provider = build_judge_client()
         model = model or discovered_model
     if not model:
-        model = os.getenv("DISCOVERYBENCH_JUDGE_MODEL", "gpt-4-1106-preview")
+        model = os.getenv("DISCOVERYBENCH_JUDGE_MODEL", "gpt-5-nano")
     judge = lambda prompt: _chat_json(client, model, prompt)  # noqa: E731
     metadata_view = _metadata_view(metadata, dataset_type)
     gold_facets = _decompose(
