@@ -36,6 +36,16 @@ logger = logging.getLogger(__file__)
 logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "WARN"))
 
 
+def _prewarm_code_runtime():
+    # D3-Gym executes science code inside task images. Importing the SAB host
+    # stack here adds startup cost and can introduce dependency failures that
+    # have no bearing on the containerized task.
+    if os.environ.get("D3GYM_RUNTIME"):
+        logger.info("Skipping SAB host-package prewarm for D3-Gym")
+        return
+    prewarm_heavy_imports()
+
+
 def _build_context(self, sampling_params, kwargs):
     """Shared TaskContext + LLM client setup for all three agent loops."""
     item = DataProto.from_dict(non_tensors=kwargs)
@@ -71,7 +81,7 @@ class ReactAgentCodeLoop(AgentLoopBase):
         cls.tokenizer = tokenizer
         cls.processor = processor
         cls.config = config
-        prewarm_heavy_imports()
+        _prewarm_code_runtime()
 
     async def run(self, sampling_params: dict[str, Any], **kwargs):
         item, context = _build_context(self, sampling_params, kwargs)
@@ -91,7 +101,7 @@ class FoldAgentCodeLoop(AgentLoopBase):
         cls.tokenizer = tokenizer
         cls.processor = processor
         cls.config = config
-        prewarm_heavy_imports()
+        _prewarm_code_runtime()
 
     async def run(self, sampling_params: dict[str, Any], **kwargs):
         item, context = _build_context(self, sampling_params, kwargs)
@@ -112,7 +122,7 @@ class ContextGraphCodeIsolatedLoop(AgentLoopBase):
         cls.tokenizer = tokenizer
         cls.processor = processor
         cls.config = config
-        prewarm_heavy_imports()
+        _prewarm_code_runtime()
 
     async def run(self, sampling_params: dict[str, Any], **kwargs):
         item, context = _build_context(self, sampling_params, kwargs)

@@ -24,13 +24,18 @@ def select_env(ability, config, extra_info=None):
         EnvClass = ALFWorldEnv
     elif 'LocalSearch' in ability or 'GAIA' in ability:
         EnvClass = LocalSearch
+    elif 'D3Gym' in ability:
+        # D3-Gym uses the same code-agent loops as SAB, but executes and
+        # verifies inside the official per-task container image.
+        from envs.d3gym_env import D3GymEnv
+        EnvClass = D3GymEnv
     elif 'ScienceAgentBench' in ability:
         # Imported lazily so we don't pay the cost on BC-Plus / ALFWorld runs.
         from envs.scienceagent_env import ScienceAgentEnv
         EnvClass = ScienceAgentEnv
     else:
         raise ValueError(
-            f"Unknown ability: {ability}. Supported: ALFWorld@*, LocalSearch, GAIA, ScienceAgentBench."
+            f"Unknown ability: {ability}. Supported: ALFWorld@*, LocalSearch, GAIA, ScienceAgentBench, D3Gym."
         )
     return EnvClass
 

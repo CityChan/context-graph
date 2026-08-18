@@ -101,9 +101,10 @@ def _build_env_block(env) -> str:
     if env is None:
         return ""
 
-    workdir = getattr(env, "workdir", None)
+    workdir = getattr(env, "execution_cwd", None) or getattr(env, "workdir", None)
     manifest = list(getattr(env, "input_manifest", []) or [])
     expected = getattr(env, "expected_output_basename", None)
+    expected_many = list(getattr(env, "expected_output_basenames", []) or [])
     eval_contract = getattr(env, "eval_contract", None)
 
     lines = ["# Your working environment"]
@@ -111,6 +112,12 @@ def _build_env_block(env) -> str:
         lines.append(
             f"Current working directory: `{workdir}`\n"
             "All relative paths in your code resolve from here."
+        )
+    if getattr(env, "persistent_python_state", True) is False:
+        lines.append(
+            "Each `python_exec` call starts a fresh Python process inside the "
+            "task image. Python variables do not persist, but files do. Put "
+            "reusable code in `solution.py` or reload inputs on each call."
         )
     if manifest:
         shown = manifest[:_MANIFEST_CAP]
@@ -130,7 +137,14 @@ def _build_env_block(env) -> str:
             "No input data files were placed in the workdir for this task; "
             "produce the requested output from the instruction alone."
         )
-    if expected:
+    if expected_many:
+        lines.append(
+            "# Output contract\nRequired final outputs under `pred_results/`:\n"
+            + "\n".join(f"  - pred_results/{path}" for path in expected_many)
+            + "\nThe official task verifier determines correctness. Create every "
+              "listed artifact, then inspect output_status before finishing."
+        )
+    elif expected:
         lines.append(
             "# Output contract\n"
             f"Required final output: `pred_results/{expected}`\n"
@@ -153,6 +167,17 @@ def _build_user_prompt_code(instruction: str, workflow: str, env=None) -> str:
     tool_desc = convert_tools_to_description(tools)
 
     sys_prompt = _CODE_SYSTEM_PROMPT.format(tool_descriptions=tool_desc)
+    if env is not None and getattr(env, "persistent_python_state", True) is False:
+        sys_prompt = sys_prompt.replace(
+            "by executing Python code in a persistent sandbox.",
+            "by executing Python code in an isolated task image.",
+        ).replace(
+            "State persists between calls.",
+            "Python state resets between calls; files persist.",
+        ).replace(
+            "The sandbox preserves state across calls. You do NOT need to re-import or re-load data.",
+            "Each call starts a fresh Python process. Re-import modules and reload data, or persist reusable code/files under pred_results/.",
+        )
     if workflow in ('code_branch', 'code_graph'):
         sys_prompt += _CODE_BRANCH_ADDENDUM
     if workflow == 'code_graph':
