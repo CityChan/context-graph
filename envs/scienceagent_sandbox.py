@@ -273,6 +273,22 @@ _PREWARM_PACKAGES = [
 ]
 
 
+def _configured_prewarm_packages() -> list[str]:
+    """Return the package list, optionally restricted by the environment.
+
+    DiscoveryBench does not need SAB's entire chemistry/biology stack during
+    worker startup.  In particular, importing deepchem can enter native
+    TensorFlow initialization while holding the GIL, which prevents a Python
+    thread ``join(timeout)`` from enforcing its nominal deadline.  Keep the
+    comprehensive SAB default, while allowing benchmark wrappers to select a
+    smaller, deterministic startup set.
+    """
+    configured = os.environ.get("SAB_PREWARM_PACKAGES")
+    if configured is None:
+        return list(_PREWARM_PACKAGES)
+    return [name.strip() for name in configured.split(",") if name.strip()]
+
+
 def _import_with_timeout(name: str, timeout: float):
     """Import `name` in a daemon thread, waiting at most `timeout` s.
 
@@ -336,7 +352,10 @@ def prewarm_heavy_imports(verbose: bool = True) -> None:
 
     t0 = time.time()
     warmed = skipped = timed_out = 0
-    for name in _PREWARM_PACKAGES:
+    packages = _configured_prewarm_packages()
+    if verbose:
+        print(f"[SAB prewarm] package set: {','.join(packages) or '(disabled)'}", flush=True)
+    for name in packages:
         # Announce BEFORE importing so a hang is pinpointed to this exact
         # package in the log (the previous version only logged on success).
         if verbose:

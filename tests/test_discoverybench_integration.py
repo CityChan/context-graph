@@ -167,6 +167,8 @@ def test_discoverybench_scripts_wire_all_three_agents_and_real_hms():
     for method in ("react", "fold", "ctxgraph"):
         assert f"  {method})" in smoke
     assert "DISCOVERYBENCH_REAL_EVAL=${DISCOVERYBENCH_REAL_EVAL:-1}" in smoke
+    assert "DISCOVERYBENCH_PREWARM_PACKAGES:-numpy,pandas" in smoke
+    assert "deepchem" not in smoke.split("DISCOVERYBENCH_PREWARM_PACKAGES:-", 1)[1].split("}", 1)[0]
     assert "DISCOVERYBENCH_VAL_MAX_SAMPLES:-239" in full
     assert 'python -m "$CODE_BENCHMARK_TRAIN_MODULE"' in shared
 

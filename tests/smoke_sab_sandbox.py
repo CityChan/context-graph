@@ -154,6 +154,24 @@ def test_prewarm_idempotent():
     return "test_prewarm_idempotent"
 
 
+def test_prewarm_package_override():
+    """Benchmark wrappers can exclude native imports that are unsafe at startup."""
+    import envs.scienceagent_sandbox as sb_mod
+
+    previous = os.environ.get("SAB_PREWARM_PACKAGES")
+    try:
+        os.environ["SAB_PREWARM_PACKAGES"] = "numpy, pandas,,scipy "
+        assert sb_mod._configured_prewarm_packages() == ["numpy", "pandas", "scipy"]
+        os.environ["SAB_PREWARM_PACKAGES"] = ""
+        assert sb_mod._configured_prewarm_packages() == []
+    finally:
+        if previous is None:
+            os.environ.pop("SAB_PREWARM_PACKAGES", None)
+        else:
+            os.environ["SAB_PREWARM_PACKAGES"] = previous
+    return "test_prewarm_package_override"
+
+
 # ── Test 1b: prompt builders + workflow tool assembly ──
 
 def test_prompt_code_workflow_assembly():
@@ -839,6 +857,7 @@ async def main():
         test_sandbox_pred_results_dir,
         test_sandbox_blocks_shell_and_pip,
         test_prewarm_idempotent,
+        test_prewarm_package_override,
         test_prompt_code_workflow_assembly,
         test_xml_tool_call_parsing,
         test_loader_basic,

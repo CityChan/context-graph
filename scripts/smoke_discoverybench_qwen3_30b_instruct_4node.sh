@@ -41,6 +41,11 @@ export SAB_RESPONSE_LENGTH=${DISCOVERYBENCH_RESPONSE_LENGTH:-8192}
 export SAB_MAX_TOKEN_LEN_PER_GPU=${DISCOVERYBENCH_MAX_TOKEN_LEN_PER_GPU:-24576}
 export SAB_VAL_MAX_TURN=${DISCOVERYBENCH_VAL_MAX_TURN:-12}
 export SAB_TURN_MAX_NEW_TOKENS=${DISCOVERYBENCH_TURN_MAX_NEW_TOKENS:-1024}
+# DiscoveryBench primarily uses the core tabular/statistical stack. Avoid
+# eagerly importing SAB-only chemistry/biology packages such as deepchem and
+# DeepPurpose: their native TensorFlow initialization can deadlock a Ray agent
+# worker after vLLM has initialized CUDA. Tasks can still import them on demand.
+export SAB_PREWARM_PACKAGES=${DISCOVERYBENCH_PREWARM_PACKAGES:-numpy,pandas,scipy,sklearn,statsmodels,xgboost,matplotlib,matplotlib.pyplot,seaborn}
 export EXPERIMENT_NAME=${EXPERIMENT_NAME:-eval_${DISCOVERYBENCH_METHOD}_discoverybench_30b_4n_${SAB_RUN_TAG}_${SLURM_JOB_ID:-idev}}
 
 exec bash scripts/eval_sab_react_30b_instruct_8node_smoke.sh
