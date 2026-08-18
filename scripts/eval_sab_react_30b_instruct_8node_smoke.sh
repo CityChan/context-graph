@@ -466,14 +466,23 @@ echo "  Trainer workers:       ${NODELIST[@]:1}"
 
 # ── Stale Ray cleanup on all nodes ──
 probe "ray stop sweep across $NUM_NODES nodes"
+RAY_STOP_SRUN_TIMEOUT_SECONDS=${RAY_STOP_SRUN_TIMEOUT_SECONDS:-60}
 for node in "${NODELIST[@]}"; do
-  srun --overlap --nodes=1 --ntasks=1 -w "$node" bash -c '
-    source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
-    conda activate '"$CONDA_ENV_NAME"'
-    export LD_LIBRARY_PATH='"$LD_LIBRARY_PATH"'
-    export LD_PRELOAD='"$LD_PRELOAD"'
-    ray stop -f >/dev/null 2>&1 || true
-  ' || true
+  probe "ray stop start node=$node timeout=${RAY_STOP_SRUN_TIMEOUT_SECONDS}s"
+  if timeout --signal=TERM --kill-after=10s "${RAY_STOP_SRUN_TIMEOUT_SECONDS}s" \
+    srun --overlap --kill-on-bad-exit=1 --nodes=1 --ntasks=1 -w "$node" bash -c '
+      source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
+      conda activate '"$CONDA_ENV_NAME"'
+      export LD_LIBRARY_PATH='"$LD_LIBRARY_PATH"'
+      export LD_PRELOAD='"$LD_PRELOAD"'
+      timeout --signal=TERM --kill-after=5s 30s ray stop -f >/dev/null 2>&1 || true
+    '
+  then
+    probe "ray stop done node=$node"
+  else
+    ray_stop_rc=$?
+    probe "WARNING: ray stop skipped node=$node rc=$ray_stop_rc after timeout/error"
+  fi
 done
 sleep 5
 probe "ray stop sweep done"
