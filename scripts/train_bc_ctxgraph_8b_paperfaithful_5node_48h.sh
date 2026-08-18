@@ -149,6 +149,7 @@ MAX_TURN=${MAX_TURN:-100}
 MAX_SESSION=${MAX_SESSION:-10}
 VAL_MAX_SESSION=${VAL_MAX_SESSION:-10}
 TURN_MAX_NEW_TOKENS=${TURN_MAX_NEW_TOKENS:-2048}
+ENTROPY_FROM_LOGITS_WITH_CHUNKING=${ENTROPY_FROM_LOGITS_WITH_CHUNKING:-True}
 FINAL_ANSWER_RESERVE=${FINAL_ANSWER_RESERVE:-0}
 TRAIN_LR=${TRAIN_LR:-2e-6}
 USE_KL_LOSS=${USE_KL_LOSS:-True}
@@ -261,6 +262,8 @@ SEARCH_NODE=${NODELIST[0]}
 SEARCH_NODE_IP=$(getent hosts "$SEARCH_NODE" | awk '{print $1}')
 TRAINER_HEAD_NODE=${NODELIST[1]}
 TRAINER_HEAD_IP=$(getent hosts "$TRAINER_HEAD_NODE" | awk '{print $1}')
+export NO_PROXY="${NO_PROXY:+$NO_PROXY,}127.0.0.1,localhost,$SEARCH_NODE,$SEARCH_NODE_IP,$TRAINER_HEAD_NODE,$TRAINER_HEAD_IP"
+export no_proxy="$NO_PROXY"
 echo "  Dedicated search node: $SEARCH_NODE ($SEARCH_NODE_IP)"
 echo "  Trainer Ray head:      $TRAINER_HEAD_NODE ($TRAINER_HEAD_IP)"
 echo "  Trainer workers:       ${NODELIST[@]:2}"
@@ -295,7 +298,7 @@ SEARCH_PID=$!
 probe "waiting for search server /health (up to ${BC_SEARCH_TIMEOUT_SECONDS}s)"
 HEALTH_OK=0
 for _ in $(seq 1 "$BC_SEARCH_TIMEOUT_SECONDS"); do
-  if curl -fsS "http://${SEARCH_NODE_IP}:18999/health" >/dev/null 2>&1; then
+  if curl --noproxy '*' -fsS "http://${SEARCH_NODE_IP}:18999/health" >/dev/null 2>&1; then
     HEALTH_OK=1
     break
   fi
@@ -316,7 +319,7 @@ fi
 probe "waiting for search server /search probe (up to ${BC_SEARCH_TIMEOUT_SECONDS}s)"
 SEARCH_OK=0
 for _ in $(seq 1 "$BC_SEARCH_TIMEOUT_SECONDS"); do
-  if curl -fsS -X POST -H 'Content-Type: application/json' \
+  if curl --noproxy '*' -fsS -X POST -H 'Content-Type: application/json' \
       -d '{"query":"Eiffel Tower","k":1}' \
       "http://${SEARCH_NODE_IP}:18999/search" >/dev/null 2>&1; then
     SEARCH_OK=1
@@ -475,6 +478,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=1 \
   actor_rollout_ref.actor.ppo_max_token_len_per_gpu="$CONTEXT_LENGTH" \
   actor_rollout_ref.actor.ppo_infer_max_token_len_per_gpu="$CONTEXT_LENGTH" \
+  actor_rollout_ref.actor.entropy_from_logits_with_chunking="$ENTROPY_FROM_LOGITS_WITH_CHUNKING" \
   actor_rollout_ref.model.enable_gradient_checkpointing=True \
   +actor_rollout_ref.rollout.plugin.workflow=search_graph \
   +actor_rollout_ref.rollout.plugin.max_turn="$MAX_TURN" \

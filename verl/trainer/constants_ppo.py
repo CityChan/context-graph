@@ -73,6 +73,12 @@ def get_ppo_ray_runtime_env():
         "HF_HUB_OFFLINE",
         "TRANSFORMERS_OFFLINE",
         "FLASHINFER_WORKSPACE_BASE",
+        # Keep intra-allocation HTTP traffic off external proxies. Search
+        # workers use LOCAL_SEARCH_URL while answer judging may still need the
+        # configured proxy for public endpoints.
+        "LOCAL_SEARCH_URL",
+        "NO_PROXY",
+        "no_proxy",
         # D3-Gym task images are launched by Ray agent-loop workers.  Preserve
         # the selected runtime and shared image/workdir caches on every node.
         "D3GYM_RUNTIME",

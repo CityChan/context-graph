@@ -139,6 +139,7 @@ VAL_BEFORE_TRAIN=${VAL_BEFORE_TRAIN:-True}
 TOTAL_TRAINING_STEPS=${TOTAL_TRAINING_STEPS:-30}
 TEST_FREQ=${TEST_FREQ:-10}
 SAVE_FREQ=${SAVE_FREQ:-10}
+BC_SEARCH_TIMEOUT_SECONDS=${BC_SEARCH_TIMEOUT_SECONDS:-600}
 ADV_ESTIMATOR=${ADV_ESTIMATOR:-foldgrpo}
 PROMPT_LENGTH=${PROMPT_LENGTH:-8192}
 RESPONSE_LENGTH=${RESPONSE_LENGTH:-32768}
@@ -158,6 +159,7 @@ MAX_SESSION=${MAX_SESSION:-10}
 VAL_MAX_SESSION=${VAL_MAX_SESSION:-10}
 TURN_MAX_NEW_TOKENS=${TURN_MAX_NEW_TOKENS:-768}
 FINAL_ANSWER_RESERVE=${FINAL_ANSWER_RESERVE:-0}
+ENTROPY_FROM_LOGITS_WITH_CHUNKING=${ENTROPY_FROM_LOGITS_WITH_CHUNKING:-True}
 CHECKPOINT_ROOT=${CHECKPOINT_ROOT:-${SCRATCH:-/scratch/09281/chc_1996}/context-graph-ckpts/$EXPERIMENT_NAME}
 
 # Qwen3-8B advertises 40,960 positions. Longer evaluations must override both
@@ -261,6 +263,8 @@ SEARCH_NODE=${NODELIST[0]}
 SEARCH_NODE_IP=$(getent hosts "$SEARCH_NODE" | awk '{print $1}')
 TRAINER_HEAD_NODE=${NODELIST[1]}
 TRAINER_HEAD_IP=$(getent hosts "$TRAINER_HEAD_NODE" | awk '{print $1}')
+export NO_PROXY="${NO_PROXY:+$NO_PROXY,}127.0.0.1,localhost,$SEARCH_NODE,$SEARCH_NODE_IP,$TRAINER_HEAD_NODE,$TRAINER_HEAD_IP"
+export no_proxy="$NO_PROXY"
 echo "  Dedicated search node: $SEARCH_NODE ($SEARCH_NODE_IP)"
 echo "  Trainer Ray head:      $TRAINER_HEAD_NODE ($TRAINER_HEAD_IP)"
 echo "  Trainer workers:       ${NODELIST[@]:2}"
@@ -286,16 +290,42 @@ srun --overlap --nodes=1 --ntasks=1 -w "$SEARCH_NODE" bash -c "
 " >/tmp/hp_server_$$.log 2>&1 &
 SEARCH_PID=$!
 
-probe "waiting for search server /health (up to 240s)"
-for i in $(seq 1 120); do
-  if curl -fsS "http://${SEARCH_NODE_IP}:18999/health" >/dev/null 2>&1; then
+probe "waiting for search server /health (up to ${BC_SEARCH_TIMEOUT_SECONDS}s)"
+HEALTH_OK=0
+for _ in $(seq 1 "$BC_SEARCH_TIMEOUT_SECONDS"); do
+  if curl --noproxy '*' -fsS "http://${SEARCH_NODE_IP}:18999/health" >/dev/null 2>&1; then
+    HEALTH_OK=1
     break
   fi
-  sleep 2
+  if ! kill -0 "$SEARCH_PID" 2>/dev/null; then
+    echo "ERROR: search server exited before becoming healthy. Last 80 lines:"
+    tail -80 /tmp/hp_server_$$.log || true
+    exit 1
+  fi
+  sleep 1
 done
-if ! curl -fsS -X POST -H 'Content-Type: application/json' \
-        -d '{"query":"Eiffel Tower","k":1}' \
-        "http://${SEARCH_NODE_IP}:18999/search" >/dev/null; then
+if [ "$HEALTH_OK" != "1" ]; then
+  echo "ERROR: search server did not become healthy within ${BC_SEARCH_TIMEOUT_SECONDS}s. Last 80 lines:"
+  tail -80 /tmp/hp_server_$$.log || true
+  kill "$SEARCH_PID" 2>/dev/null || true
+  exit 1
+fi
+
+probe "waiting for search server /search probe (up to ${BC_SEARCH_TIMEOUT_SECONDS}s)"
+SEARCH_OK=0
+for _ in $(seq 1 "$BC_SEARCH_TIMEOUT_SECONDS"); do
+  if curl --noproxy '*' -fsS -X POST -H 'Content-Type: application/json' \
+      -d '{"query":"Eiffel Tower","k":1}' \
+      "http://${SEARCH_NODE_IP}:18999/search" >/dev/null 2>&1; then
+    SEARCH_OK=1
+    break
+  fi
+  if ! kill -0 "$SEARCH_PID" 2>/dev/null; then
+    break
+  fi
+  sleep 1
+done
+if [ "$SEARCH_OK" != "1" ]; then
   echo "ERROR: search server not reachable at ${SEARCH_NODE_IP}:18999. Last 80 lines:"
   tail -80 /tmp/hp_server_$$.log || true
   kill "$SEARCH_PID" 2>/dev/null || true
@@ -438,6 +468,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=1 \
   actor_rollout_ref.actor.ppo_max_token_len_per_gpu="$CONTEXT_LENGTH" \
   actor_rollout_ref.actor.ppo_infer_max_token_len_per_gpu="$CONTEXT_LENGTH" \
+  actor_rollout_ref.actor.entropy_from_logits_with_chunking="$ENTROPY_FROM_LOGITS_WITH_CHUNKING" \
   actor_rollout_ref.model.enable_gradient_checkpointing=True \
   +actor_rollout_ref.rollout.plugin.workflow=search_base \
   +actor_rollout_ref.rollout.plugin.max_turn="$MAX_TURN" \
