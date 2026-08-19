@@ -66,6 +66,9 @@ def _chat_json(client, model: str, prompt: str, retries: int = 3) -> dict:
     last_error: Exception | None = None
     for attempt in range(retries):
         try:
+            max_completion_tokens = int(
+                os.getenv("DISCOVERYBENCH_JUDGE_MAX_COMPLETION_TOKENS", "4096")
+            )
             kwargs = {
                 "model": model,
                 "messages": [
@@ -75,12 +78,18 @@ def _chat_json(client, model: str, prompt: str, retries: int = 3) -> dict:
                     {"role": "user", "content": prompt},
                 ],
                 "temperature": 0,
-                "max_completion_tokens": 1200,
+                "max_completion_tokens": max_completion_tokens,
                 "response_format": {"type": "json_object"},
             }
+            reasoning_effort = os.getenv("DISCOVERYBENCH_JUDGE_REASONING_EFFORT")
+            if reasoning_effort is None and model.lower().startswith("gpt-5"):
+                reasoning_effort = "minimal"
+            if reasoning_effort:
+                kwargs["reasoning_effort"] = reasoning_effort
             # Current reasoning models require max_completion_tokens, while
             # some legacy/Azure deployments only accept max_tokens. Likewise,
-            # a few deployments reject temperature or JSON response format.
+            # a few deployments reject reasoning effort, temperature, or JSON
+            # response format.
             # Retry only explicitly rejected parameters so authentication,
             # quota, and transport errors still reach the outer retry loop.
             while True:
@@ -97,6 +106,13 @@ def _chat_json(client, model: str, prompt: str, retries: int = 3) -> dict:
                         kwargs["max_tokens"] = kwargs.pop("max_completion_tokens")
                         continue
                     if (
+                        "reasoning_effort" in kwargs
+                        and "reasoning_effort" in message
+                        and ("unsupported" in message or "not supported" in message)
+                    ):
+                        kwargs.pop("reasoning_effort")
+                        continue
+                    if (
                         "temperature" in kwargs
                         and "temperature" in message
                         and ("unsupported" in message or "not supported" in message)
@@ -111,7 +127,22 @@ def _chat_json(client, model: str, prompt: str, retries: int = 3) -> dict:
                         kwargs.pop("response_format")
                         continue
                     raise
-            content = response.choices[0].message.content or ""
+            choice = response.choices[0]
+            content = choice.message.content or ""
+            if not content.strip():
+                usage = getattr(response, "usage", None)
+                details = getattr(usage, "completion_tokens_details", None)
+                if isinstance(details, dict):
+                    reasoning_tokens = details.get("reasoning_tokens")
+                else:
+                    reasoning_tokens = getattr(details, "reasoning_tokens", None)
+                raise ValueError(
+                    "judge returned empty content "
+                    f"(finish_reason={getattr(choice, 'finish_reason', None)!r}, "
+                    f"completion_tokens={getattr(usage, 'completion_tokens', None)!r}, "
+                    f"reasoning_tokens={reasoning_tokens!r}, "
+                    f"refusal={getattr(choice.message, 'refusal', None)!r})"
+                )
             parsed = json.loads(_strip_json_fence(content))
             if not isinstance(parsed, dict):
                 raise ValueError("judge response was not a JSON object")

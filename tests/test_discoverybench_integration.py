@@ -192,13 +192,19 @@ def test_result_summary_reports_mean_and_judge_errors(tmp_path):
     assert result["mean_hms"] == 0.5
 
 
-def _completion_response(payload):
+def _completion_response(payload, *, finish_reason="stop", usage=None):
     return SimpleNamespace(
-        choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(payload)))]
+        choices=[SimpleNamespace(
+            finish_reason=finish_reason,
+            message=SimpleNamespace(content=json.dumps(payload), refusal=None),
+        )],
+        usage=usage,
     )
 
 
-def test_judge_uses_current_completion_token_parameter():
+def test_judge_uses_current_completion_token_parameter(monkeypatch):
+    monkeypatch.delenv("DISCOVERYBENCH_JUDGE_MAX_COMPLETION_TOKENS", raising=False)
+    monkeypatch.delenv("DISCOVERYBENCH_JUDGE_REASONING_EFFORT", raising=False)
     class Completions:
         def __init__(self):
             self.calls = []
@@ -210,11 +216,14 @@ def test_judge_uses_current_completion_token_parameter():
     completions = Completions()
     client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
     assert discoverybench_eval._chat_json(client, "gpt-5-nano", "prompt") == {"ok": True}
-    assert completions.calls[0]["max_completion_tokens"] == 1200
+    assert completions.calls[0]["max_completion_tokens"] == 4096
+    assert completions.calls[0]["reasoning_effort"] == "minimal"
     assert "max_tokens" not in completions.calls[0]
 
 
-def test_judge_falls_back_for_legacy_completion_token_parameter():
+def test_judge_falls_back_for_legacy_completion_token_parameter(monkeypatch):
+    monkeypatch.delenv("DISCOVERYBENCH_JUDGE_MAX_COMPLETION_TOKENS", raising=False)
+    monkeypatch.delenv("DISCOVERYBENCH_JUDGE_REASONING_EFFORT", raising=False)
     class Completions:
         def __init__(self):
             self.calls = []
@@ -229,7 +238,55 @@ def test_judge_falls_back_for_legacy_completion_token_parameter():
     client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
     assert discoverybench_eval._chat_json(client, "legacy", "prompt") == {"ok": True}
     assert "max_completion_tokens" in completions.calls[0]
-    assert completions.calls[1]["max_tokens"] == 1200
+    assert completions.calls[1]["max_tokens"] == 4096
+    assert "reasoning_effort" not in completions.calls[0]
+
+
+def test_judge_drops_unsupported_reasoning_effort(monkeypatch):
+    monkeypatch.delenv("DISCOVERYBENCH_JUDGE_REASONING_EFFORT", raising=False)
+
+    class Completions:
+        def __init__(self):
+            self.calls = []
+
+        def create(self, **kwargs):
+            self.calls.append(dict(kwargs))
+            if "reasoning_effort" in kwargs:
+                raise RuntimeError("Unsupported parameter: reasoning_effort")
+            return _completion_response({"ok": True})
+
+    completions = Completions()
+    client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+    assert discoverybench_eval._chat_json(client, "gpt-5-nano", "prompt") == {"ok": True}
+    assert completions.calls[0]["reasoning_effort"] == "minimal"
+    assert "reasoning_effort" not in completions.calls[1]
+
+
+def test_judge_reports_empty_completion_details(monkeypatch):
+    monkeypatch.delenv("DISCOVERYBENCH_JUDGE_REASONING_EFFORT", raising=False)
+
+    class Completions:
+        def create(self, **kwargs):
+            del kwargs
+            usage = SimpleNamespace(
+                completion_tokens=4096,
+                completion_tokens_details=SimpleNamespace(reasoning_tokens=4096),
+            )
+            return SimpleNamespace(
+                choices=[SimpleNamespace(
+                    finish_reason="length",
+                    message=SimpleNamespace(content="", refusal=None),
+                )],
+                usage=usage,
+            )
+
+    client = SimpleNamespace(chat=SimpleNamespace(completions=Completions()))
+    with pytest.raises(discoverybench_eval.DiscoveryBenchJudgeError) as exc_info:
+        discoverybench_eval._chat_json(client, "gpt-5-nano", "prompt", retries=1)
+    message = str(exc_info.value)
+    assert "judge returned empty content" in message
+    assert "finish_reason='length'" in message
+    assert "reasoning_tokens=4096" in message
 
 
 def test_judge_drops_unsupported_temperature():
