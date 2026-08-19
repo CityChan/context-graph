@@ -4,11 +4,30 @@
 set -euo pipefail
 
 PROJECT_ROOT=/work/09281/chc_1996/vista/context-graph
+MODEL_PATH=${MODEL_PATH:-Qwen/Qwen3-8B}
+BC_METHODS=${BC_METHODS:-baseline,foldagent,contextgraph}
+BC_JOB_MODEL_TAG=${BC_JOB_MODEL_TAG:-8b}
+BC_EXPERIMENT_MODEL_TAG=${BC_EXPERIMENT_MODEL_TAG:-8b}
+BC_EVAL_TIME=${BC_EVAL_TIME:-01:00:00}
 cd "$PROJECT_ROOT"
 mkdir -p logs
 
+method_enabled() {
+  case ",$BC_METHODS," in
+    *",$1,"*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+echo "Submitting BC-P eval: model=$MODEL_PATH methods=$BC_METHODS nodes=4 time=$BC_EVAL_TIME"
+
 for method in baseline foldagent contextgraph; do
-  job_id=$(BC_METHOD="$method" \
+  if ! method_enabled "$method"; then
+    continue
+  fi
+  job_id=$(MODEL_PATH="$MODEL_PATH" \
+    BC_METHOD="$method" \
+    BC_EXPERIMENT_MODEL_TAG="$BC_EXPERIMENT_MODEL_TAG" \
     BC_CONTEXT_LENGTH=65536 \
     BC_PROMPT_LENGTH=8192 \
     BC_RESPONSE_LENGTH=57344 \
@@ -17,11 +36,11 @@ for method in baseline foldagent contextgraph; do
     BC_FINAL_ANSWER_RESERVE=1024 \
     BC_VAL_MAX_SAMPLES=-1 \
     sbatch --parsable \
-    --job-name="eval-bc-8b-${method}-64k-finalizer" \
-    --output="logs/eval-bc-8b-${method}-64k-finalizer.%j.out" \
-    --error="logs/eval-bc-8b-${method}-64k-finalizer.%j.err" \
+    --job-name="eval-bc-${BC_JOB_MODEL_TAG}-${method}-64k" \
+    --output="logs/eval-bc-${BC_JOB_MODEL_TAG}-${method}-64k.%j.out" \
+    --error="logs/eval-bc-${BC_JOB_MODEL_TAG}-${method}-64k.%j.err" \
     --nodes=4 \
-    --time=01:00:00 \
+    --time="$BC_EVAL_TIME" \
     scripts/eval_bc_baseline_8b_4node_zeroshot.sh)
   echo "$method: submitted job $job_id"
 done

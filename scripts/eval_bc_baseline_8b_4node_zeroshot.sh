@@ -142,6 +142,14 @@ BC_FINAL_ANSWER_RESERVE=${BC_FINAL_ANSWER_RESERVE:-1024}
 BC_MAX_SESSION=${BC_MAX_SESSION:-10}
 BC_SEARCH_TIMEOUT_SECONDS=${BC_SEARCH_TIMEOUT_SECONDS:-600}
 BC_METHOD=${BC_METHOD:-baseline}
+BC_EXPERIMENT_MODEL_TAG=${BC_EXPERIMENT_MODEL_TAG:-8b}
+
+case "$BC_EXPERIMENT_MODEL_TAG" in
+  *[!A-Za-z0-9_-]*)
+    echo "ERROR: BC_EXPERIMENT_MODEL_TAG may contain only letters, numbers, underscores, and hyphens"
+    exit 1
+    ;;
+esac
 
 if [ "$BC_RESPONSE_LENGTH" -le 0 ]; then
   echo "ERROR: BC_RESPONSE_LENGTH must be positive (context=$BC_CONTEXT_LENGTH prompt=$BC_PROMPT_LENGTH)"
@@ -193,7 +201,7 @@ if [ "$BC_MAX_TOKEN_LEN_PER_GPU" -gt 40960 ]; then
 fi
 
 TS=$(date +%Y%m%d_%H%M%S)
-EXPERIMENT_NAME="eval_${BC_METHOD}_bc_8b_4n_zeroshot_${BC_MAX_TOKEN_LEN_PER_GPU}ctx_${TS}"
+EXPERIMENT_NAME=${EXPERIMENT_NAME:-eval_${BC_METHOD}_bc_${BC_EXPERIMENT_MODEL_TAG}_4n_zeroshot_${BC_MAX_TOKEN_LEN_PER_GPU}ctx_${TS}}
 
 probe() { printf '+++ [%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 

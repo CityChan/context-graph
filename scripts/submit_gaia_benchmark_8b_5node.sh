@@ -19,6 +19,9 @@ GAIA_EVAL_MODE=${GAIA_EVAL_MODE:-zeroshot}
 GAIA_EVAL_TIME=${GAIA_EVAL_TIME:-03:00:00}
 GAIA_NUM_NODES=${GAIA_NUM_NODES:-5}
 GAIA_METHODS=${GAIA_METHODS:-baseline,foldagent,ctxgraph}
+GAIA_MODEL_PATH=${GAIA_MODEL_PATH:-Qwen/Qwen3-8B}
+GAIA_JOB_MODEL_TAG=${GAIA_JOB_MODEL_TAG:-8b}
+GAIA_EXPERIMENT_MODEL_TAG=${GAIA_EXPERIMENT_MODEL_TAG:-qwen3_8b}
 STAMP=${STAMP:-$(date +%Y%m%d_%H%M%S)}
 
 PROMPT_LENGTH=${PROMPT_LENGTH:-8192}
@@ -81,14 +84,14 @@ submit_method() {
   local batch_script=$2
   local gaia_data=$3
   local checkpoint_path=$4
-  local job_name="gaia-${method}-8b-${CONTEXT_TAG}-${GAIA_EVAL_MODE}"
-  local experiment_name="eval_gaia_${method}_qwen3_8b_${CONTEXT_TAG}_${GAIA_EVAL_MODE}_${STAMP}"
+  local job_name="gaia-${method}-${GAIA_JOB_MODEL_TAG}-${CONTEXT_TAG}-${GAIA_EVAL_MODE}"
+  local experiment_name="eval_gaia_${method}_${GAIA_EXPERIMENT_MODEL_TAG}_${CONTEXT_TAG}_${GAIA_EVAL_MODE}_${STAMP}"
   local output_root="$CHECKPOINT_BASE/$experiment_name"
   local export_vars
   local submit_output
   local job_id
 
-  export_vars="ALL,EXPECTED_NUM_NODES=$GAIA_NUM_NODES,EXPERIMENT_NAME=$experiment_name,CHECKPOINT_ROOT=$output_root,TRAIN_DATA_FILE=$gaia_data,VAL_DATA_FILE=$gaia_data,TRAINER_VAL_ONLY=True,VAL_BEFORE_TRAIN=True,TOTAL_TRAINING_STEPS=1,TEST_FREQ=999,SAVE_FREQ=-1,PROMPT_LENGTH=$PROMPT_LENGTH,RESPONSE_LENGTH=$RESPONSE_LENGTH,CONTEXT_LENGTH=$CONTEXT_LENGTH,BC_YARN_FACTOR=$BC_YARN_FACTOR,BC_YARN_ORIGINAL_LENGTH=$BC_YARN_ORIGINAL_LENGTH,TRAIN_BATCH_SIZE=32,PPO_MINI_BATCH_SIZE=16,ROLLOUT_N=1,MAX_TURN=$MAX_TURN,MAX_SESSION=10,VAL_MAX_SESSION=10,TURN_MAX_NEW_TOKENS=$TURN_MAX_NEW_TOKENS,FINAL_ANSWER_RESERVE=$FINAL_ANSWER_RESERVE,SESSION_TIMEOUT=$SESSION_TIMEOUT,BC_SEARCH_TIMEOUT_SECONDS=600"
+  export_vars="ALL,MODEL_PATH=$GAIA_MODEL_PATH,EXPECTED_NUM_NODES=$GAIA_NUM_NODES,EXPERIMENT_NAME=$experiment_name,CHECKPOINT_ROOT=$output_root,TRAIN_DATA_FILE=$gaia_data,VAL_DATA_FILE=$gaia_data,TRAINER_VAL_ONLY=True,VAL_BEFORE_TRAIN=True,TOTAL_TRAINING_STEPS=1,TEST_FREQ=999,SAVE_FREQ=-1,PROMPT_LENGTH=$PROMPT_LENGTH,RESPONSE_LENGTH=$RESPONSE_LENGTH,CONTEXT_LENGTH=$CONTEXT_LENGTH,BC_YARN_FACTOR=$BC_YARN_FACTOR,BC_YARN_ORIGINAL_LENGTH=$BC_YARN_ORIGINAL_LENGTH,TRAIN_BATCH_SIZE=32,PPO_MINI_BATCH_SIZE=16,ROLLOUT_N=1,MAX_TURN=$MAX_TURN,MAX_SESSION=10,VAL_MAX_SESSION=10,TURN_MAX_NEW_TOKENS=$TURN_MAX_NEW_TOKENS,FINAL_ANSWER_RESERVE=$FINAL_ANSWER_RESERVE,SESSION_TIMEOUT=$SESSION_TIMEOUT,BC_SEARCH_TIMEOUT_SECONDS=600"
   if [ -n "$checkpoint_path" ]; then
     export_vars="$export_vars,RESUME_CHECKPOINT_PATH=$checkpoint_path"
   fi
@@ -107,7 +110,7 @@ submit_method() {
     exit 5
   fi
 
-  printf '%-10s job=%s data=%s checkpoint=%s\n' "$method" "$job_id" "$gaia_data" "${checkpoint_path:-Qwen/Qwen3-8B}"
+  printf '%-10s job=%s data=%s model=%s checkpoint=%s\n' "$method" "$job_id" "$gaia_data" "$GAIA_MODEL_PATH" "${checkpoint_path:-none}"
 }
 
 method_enabled() {
@@ -117,7 +120,7 @@ method_enabled() {
   esac
 }
 
-echo "Submitting matched GAIA benchmark: methods=$GAIA_METHODS mode=$GAIA_EVAL_MODE nodes=$GAIA_NUM_NODES prompt=$PROMPT_LENGTH response=$RESPONSE_LENGTH context=$CONTEXT_LENGTH final_reserve=$FINAL_ANSWER_RESERVE"
+echo "Submitting matched GAIA benchmark: model=$GAIA_MODEL_PATH methods=$GAIA_METHODS mode=$GAIA_EVAL_MODE nodes=$GAIA_NUM_NODES prompt=$PROMPT_LENGTH response=$RESPONSE_LENGTH context=$CONTEXT_LENGTH final_reserve=$FINAL_ANSWER_RESERVE"
 
 if method_enabled baseline; then
   submit_method \
