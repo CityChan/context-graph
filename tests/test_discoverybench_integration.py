@@ -167,6 +167,9 @@ def test_discoverybench_scripts_wire_all_three_agents_and_real_hms():
     submit_8b = Path(
         "scripts/submit_eval_discoverybench_qwen3_8b_4node.sh"
     ).read_text(encoding="utf-8")
+    submit_30b = Path(
+        "scripts/submit_eval_discoverybench_qwen3_30b_instruct_8node.sh"
+    ).read_text(encoding="utf-8")
     shared = Path(
         "scripts/eval_sab_react_30b_instruct_8node_smoke.sh"
     ).read_text(encoding="utf-8")
@@ -184,6 +187,10 @@ def test_discoverybench_scripts_wire_all_three_agents_and_real_hms():
     assert 'if [ "$SAB_ROLLOUT_QUANTIZATION" != "none" ]' in shared
     for method in ("react", "fold", "ctxgraph"):
         assert method in submit_8b
+        assert method in submit_30b
+    assert "Qwen/Qwen3-30B-A3B-Instruct-2507" in submit_30b
+    assert 'nodes=8' in submit_30b
+    assert "DISCOVERYBENCH_VAL_MAX_SAMPLES:-239" in submit_30b
     assert 'python -m "$CODE_BENCHMARK_TRAIN_MODULE"' in shared
 
 
