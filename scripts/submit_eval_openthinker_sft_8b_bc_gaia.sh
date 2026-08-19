@@ -44,7 +44,8 @@ if [ ! -x "$PYTHON_BIN" ]; then
 fi
 
 echo "Checking model compatibility before submitting jobs"
-HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_HOME="$HF_HOME" HF_HUB_CACHE="$HF_HUB_CACHE" \
+PYTHONPATH="$PROJECT_ROOT${PYTHONPATH:+:$PYTHONPATH}" \
+  HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_HOME="$HF_HOME" HF_HUB_CACHE="$HF_HUB_CACHE" \
   "$PYTHON_BIN" scripts/check_hf_model_support.py "$MODEL_PATH"
 
 if [ "$RUN_BC" = "1" ]; then

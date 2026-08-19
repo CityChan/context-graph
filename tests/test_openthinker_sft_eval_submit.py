@@ -12,6 +12,7 @@ def test_openthinker_submit_wires_model_to_bc_and_gaia():
     assert "scripts/submit_eval_bc_8b_4node_zeroshot_64k.sh" in source
     assert "scripts/submit_gaia_benchmark_8b_5node.sh" in source
     assert "scripts/check_hf_model_support.py" in source
+    assert 'PYTHONPATH="$PROJECT_ROOT${PYTHONPATH:+:$PYTHONPATH}"' in source
     assert "HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1" in source
     assert "BC_EXPERIMENT_MODEL_TAG=openthinker_sft_8b" in source
     assert "GAIA_EXPERIMENT_MODEL_TAG=openthinker_sft_8b" in source
