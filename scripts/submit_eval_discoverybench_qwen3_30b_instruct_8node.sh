@@ -72,7 +72,9 @@ submit_method() {
     --time="$DISCOVERYBENCH_TIME_LIMIT" \
     --export="ALL,MODEL_PATH=$MODEL_PATH,DISCOVERYBENCH_METHOD=$method,DISCOVERYBENCH_VAL_MAX_SAMPLES=$DISCOVERYBENCH_VAL_MAX_SAMPLES" \
     "$EVAL_SCRIPT")
-  job_id=${output%%;*}
+  # Vista prints a submit-validation banner before the parsable job id. Keep
+  # only a line that is entirely a Slurm id, optionally followed by ;cluster.
+  job_id=$(printf '%s\n' "$output" | sed -nE 's/^([0-9]+)(;[^[:space:]]+)?$/\1/p' | tail -n 1)
   case "$job_id" in
     ''|*[!0-9]*)
       echo "ERROR: could not parse job id from: $output" >&2

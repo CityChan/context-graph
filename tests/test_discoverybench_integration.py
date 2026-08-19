@@ -191,6 +191,7 @@ def test_discoverybench_scripts_wire_all_three_agents_and_real_hms():
     assert "Qwen/Qwen3-30B-A3B-Instruct-2507" in submit_30b
     assert 'nodes=8' in submit_30b
     assert "DISCOVERYBENCH_VAL_MAX_SAMPLES:-239" in submit_30b
+    assert "sed -nE 's/^([0-9]+)(;[^[:space:]]+)?$/\\1/p'" in submit_30b
     assert 'python -m "$CODE_BENCHMARK_TRAIN_MODULE"' in shared
 
 
