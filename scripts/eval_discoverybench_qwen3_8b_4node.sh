@@ -1,0 +1,29 @@
+#!/bin/bash
+#SBATCH -J eval-db-8b-4n
+#SBATCH -o /work/09281/chc_1996/vista/context-graph/logs/eval-db-8b-4n.%j.out
+#SBATCH -e /work/09281/chc_1996/vista/context-graph/logs/eval-db-8b-4n.%j.err
+#SBATCH -p gh
+#SBATCH -N 4
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=72
+#SBATCH -t 08:00:00
+#SBATCH -A AST24021
+set -euo pipefail
+
+# Formal zero-shot evaluation of the complete DiscoveryBench real-test split.
+# Select react, fold, or ctxgraph through DISCOVERYBENCH_METHOD.
+export EXPECTED_NUM_NODES=4
+export MODEL_PATH=${MODEL_PATH:-Qwen/Qwen3-8B}
+export SAB_RUN_TAG=formal
+export DISCOVERYBENCH_REAL_EVAL=1
+export DISCOVERYBENCH_VAL_MAX_SAMPLES=${DISCOVERYBENCH_VAL_MAX_SAMPLES:-239}
+export DISCOVERYBENCH_TRAIN_MAX_SAMPLES=${DISCOVERYBENCH_TRAIN_MAX_SAMPLES:-4}
+export TRAIN_BATCH_SIZE=${TRAIN_BATCH_SIZE:-4}
+export PPO_MINI_BATCH_SIZE=${PPO_MINI_BATCH_SIZE:-4}
+export DISCOVERYBENCH_RESPONSE_LENGTH=${DISCOVERYBENCH_RESPONSE_LENGTH:-8192}
+export DISCOVERYBENCH_MAX_TOKEN_LEN_PER_GPU=${DISCOVERYBENCH_MAX_TOKEN_LEN_PER_GPU:-24576}
+export SAB_ROLLOUT_QUANTIZATION=${SAB_ROLLOUT_QUANTIZATION:-none}
+export SAB_ROLLOUT_GPU_MEMORY_UTILIZATION=${SAB_ROLLOUT_GPU_MEMORY_UTILIZATION:-0.6}
+export EXPERIMENT_NAME=${EXPERIMENT_NAME:-eval_${DISCOVERYBENCH_METHOD:-react}_discoverybench_8b_4n_formal_${SLURM_JOB_ID:-local}}
+
+exec bash scripts/smoke_discoverybench_qwen3_30b_instruct_4node.sh

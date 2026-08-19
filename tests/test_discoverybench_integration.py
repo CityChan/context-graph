@@ -161,6 +161,12 @@ def test_discoverybench_scripts_wire_all_three_agents_and_real_hms():
     full = Path(
         "scripts/eval_discoverybench_qwen3_30b_instruct_8node.sh"
     ).read_text(encoding="utf-8")
+    full_8b = Path(
+        "scripts/eval_discoverybench_qwen3_8b_4node.sh"
+    ).read_text(encoding="utf-8")
+    submit_8b = Path(
+        "scripts/submit_eval_discoverybench_qwen3_8b_4node.sh"
+    ).read_text(encoding="utf-8")
     shared = Path(
         "scripts/eval_sab_react_30b_instruct_8node_smoke.sh"
     ).read_text(encoding="utf-8")
@@ -171,6 +177,13 @@ def test_discoverybench_scripts_wire_all_three_agents_and_real_hms():
     assert "DISCOVERYBENCH_PREWARM_PACKAGES:-numpy,pandas" in smoke
     assert "deepchem" not in smoke.split("DISCOVERYBENCH_PREWARM_PACKAGES:-", 1)[1].split("}", 1)[0]
     assert "DISCOVERYBENCH_VAL_MAX_SAMPLES:-239" in full
+    assert "#SBATCH -N 4" in full_8b
+    assert "MODEL_PATH:-Qwen/Qwen3-8B" in full_8b
+    assert "DISCOVERYBENCH_VAL_MAX_SAMPLES:-239" in full_8b
+    assert "SAB_ROLLOUT_QUANTIZATION:-none" in full_8b
+    assert 'if [ "$SAB_ROLLOUT_QUANTIZATION" != "none" ]' in shared
+    for method in ("react", "fold", "ctxgraph"):
+        assert method in submit_8b
     assert 'python -m "$CODE_BENCHMARK_TRAIN_MODULE"' in shared
 
 

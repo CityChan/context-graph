@@ -247,6 +247,8 @@ SAB_TRAIN_MAX_SAMPLES=${SAB_TRAIN_MAX_SAMPLES:-$TRAIN_BATCH_SIZE}
 SAB_PROMPT_LENGTH=${SAB_PROMPT_LENGTH:-16384}
 SAB_RESPONSE_LENGTH=${SAB_RESPONSE_LENGTH:-2048}
 SAB_MAX_TOKEN_LEN_PER_GPU=${SAB_MAX_TOKEN_LEN_PER_GPU:-18432}
+SAB_ROLLOUT_QUANTIZATION=${SAB_ROLLOUT_QUANTIZATION:-fp8}
+SAB_ROLLOUT_GPU_MEMORY_UTILIZATION=${SAB_ROLLOUT_GPU_MEMORY_UTILIZATION:-0.55}
 SAB_VAL_MAX_TURN=${SAB_VAL_MAX_TURN:-4}
 SAB_TURN_MAX_NEW_TOKENS=${SAB_TURN_MAX_NEW_TOKENS:-512}
 SAB_DATA_SEED=${SAB_DATA_SEED:-42}
@@ -321,6 +323,11 @@ if [ "$SAB_DUMP_VALIDATION" = "1" ]; then
   SAB_VALIDATION_DATA_DIR=${SAB_VALIDATION_DATA_DIR:-${SCRATCH:-/scratch/09281/chc_1996}/sab_validation_generations/$EXPERIMENT_NAME}
   mkdir -p "$SAB_VALIDATION_DATA_DIR"
   TRAINER_DEBUG_OVERRIDES+=("trainer.validation_data_dir=$SAB_VALIDATION_DATA_DIR")
+fi
+
+ROLLOUT_QUANTIZATION_OVERRIDES=()
+if [ "$SAB_ROLLOUT_QUANTIZATION" != "none" ]; then
+  ROLLOUT_QUANTIZATION_OVERRIDES+=("+actor_rollout_ref.rollout.quantization=$SAB_ROLLOUT_QUANTIZATION")
 fi
 
 export EXPERIMENT_NAME
@@ -581,7 +588,7 @@ ray status || echo "WARN: ray status check failed"
 echo "=============================================================="
 echo "  Launching $SAB_METHOD_LABEL ($SAB_WORKFLOW) ZERO-SHOT eval ($NUM_NODES nodes ${SAB_RUN_TAG^^}, $CODE_BENCHMARK_LABEL test cap=$SAB_VAL_MAX_SAMPLES)"
 echo "  default_agent_loop=$SAB_AGENT_LOOP  workflow=$SAB_WORKFLOW  process_reward=$SAB_PROCESS_REWARD"
-echo "  vLLM gpu_memory_utilization=0.55 + FP8 rollout + FSDP CPU offload (30B)"
+echo "  vLLM gpu_memory_utilization=$SAB_ROLLOUT_GPU_MEMORY_UTILIZATION quantization=$SAB_ROLLOUT_QUANTIZATION + FSDP CPU offload"
 echo "  val_only=True (one val pass on $SAB_DATA_FILE then exit; no training)"
 echo "=============================================================="
 probe "launching trainer (model load + vLLM init typically ~10-15 min)"
@@ -598,9 +605,9 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   actor_rollout_ref.rollout.name=vllm \
   actor_rollout_ref.rollout.mode=async \
   actor_rollout_ref.rollout.dtype=bfloat16 \
-  +actor_rollout_ref.rollout.quantization=fp8 \
+  "${ROLLOUT_QUANTIZATION_OVERRIDES[@]}" \
   actor_rollout_ref.rollout.calculate_log_probs=True \
-  actor_rollout_ref.rollout.gpu_memory_utilization=0.55 \
+  actor_rollout_ref.rollout.gpu_memory_utilization=$SAB_ROLLOUT_GPU_MEMORY_UTILIZATION \
   actor_rollout_ref.model.path="$MODEL_PATH" \
   actor_rollout_ref.rollout.prompt_length=$SAB_PROMPT_LENGTH \
   actor_rollout_ref.rollout.response_length=$SAB_RESPONSE_LENGTH \

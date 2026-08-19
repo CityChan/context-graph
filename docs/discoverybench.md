@@ -41,6 +41,22 @@ DISCOVERYBENCH_METHOD=fold sbatch scripts/eval_discoverybench_qwen3_30b_instruct
 DISCOVERYBENCH_METHOD=ctxgraph sbatch scripts/eval_discoverybench_qwen3_30b_instruct_8node.sh
 ```
 
+For the matched Qwen3-8B suite, each method uses four GH nodes and requests an
+eight-hour walltime. Submit all three methods with:
+
+```bash
+bash scripts/submit_eval_discoverybench_qwen3_8b_4node.sh
+```
+
+Select a subset with `DISCOVERYBENCH_METHODS`, for example:
+
+```bash
+DISCOVERYBENCH_METHODS=react bash scripts/submit_eval_discoverybench_qwen3_8b_4node.sh
+```
+
+The sample cap and requested walltime can be overridden with
+`DISCOVERYBENCH_VAL_MAX_SAMPLES` and `DISCOVERYBENCH_TIME_LIMIT`.
+
 Per-query predictions, gold references, decompositions, matches, and HMS
 components are written to `$SCRATCH/discoverybench_results/<job_id>/`. Validation
 generations are also retained. Report mean `val/hms_score` (equivalently
