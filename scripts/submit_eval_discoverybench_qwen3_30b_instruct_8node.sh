@@ -16,6 +16,7 @@ HF_HUB_CACHE=${HF_HUB_CACHE:-$HF_HOME/hub}
 DISCOVERYBENCH_METHODS=${DISCOVERYBENCH_METHODS:-react,fold,ctxgraph}
 DISCOVERYBENCH_TIME_LIMIT=${DISCOVERYBENCH_TIME_LIMIT:-12:00:00}
 DISCOVERYBENCH_VAL_MAX_SAMPLES=${DISCOVERYBENCH_VAL_MAX_SAMPLES:-239}
+DISCOVERYBENCH_VAL_MAX_TURN=${DISCOVERYBENCH_VAL_MAX_TURN:-24}
 EVAL_SCRIPT=scripts/eval_discoverybench_qwen3_30b_instruct_8node.sh
 
 cd "$PROJECT_ROOT"
@@ -70,7 +71,7 @@ submit_method() {
     --output="logs/eval-db-${method}-30b-8n.%j.out" \
     --error="logs/eval-db-${method}-30b-8n.%j.err" \
     --time="$DISCOVERYBENCH_TIME_LIMIT" \
-    --export="ALL,MODEL_PATH=$MODEL_PATH,DISCOVERYBENCH_METHOD=$method,DISCOVERYBENCH_VAL_MAX_SAMPLES=$DISCOVERYBENCH_VAL_MAX_SAMPLES" \
+    --export="ALL,MODEL_PATH=$MODEL_PATH,DISCOVERYBENCH_METHOD=$method,DISCOVERYBENCH_VAL_MAX_SAMPLES=$DISCOVERYBENCH_VAL_MAX_SAMPLES,DISCOVERYBENCH_VAL_MAX_TURN=$DISCOVERYBENCH_VAL_MAX_TURN" \
     "$EVAL_SCRIPT")
   # Vista prints a submit-validation banner before the parsable job id. Keep
   # only a line that is entirely a Slurm id, optionally followed by ;cluster.
@@ -81,11 +82,11 @@ submit_method() {
       exit 5
       ;;
   esac
-  printf '%-10s job=%s nodes=8 limit=%s samples=%s model=%s\n' \
-    "$method" "$job_id" "$DISCOVERYBENCH_TIME_LIMIT" "$DISCOVERYBENCH_VAL_MAX_SAMPLES" "$MODEL_PATH"
+  printf '%-10s job=%s nodes=8 limit=%s samples=%s max_turn=%s model=%s\n' \
+    "$method" "$job_id" "$DISCOVERYBENCH_TIME_LIMIT" "$DISCOVERYBENCH_VAL_MAX_SAMPLES" "$DISCOVERYBENCH_VAL_MAX_TURN" "$MODEL_PATH"
 }
 
-echo "Submitting 30B DiscoveryBench zero-shot suite: model=$MODEL_PATH methods=$DISCOVERYBENCH_METHODS"
+echo "Submitting 30B DiscoveryBench zero-shot suite: model=$MODEL_PATH methods=$DISCOVERYBENCH_METHODS max_turn=$DISCOVERYBENCH_VAL_MAX_TURN"
 
 enabled_method_count=0
 for method in react fold ctxgraph; do
