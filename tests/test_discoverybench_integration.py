@@ -181,6 +181,7 @@ def test_discoverybench_scripts_wire_all_three_agents_and_real_hms():
     assert "deepchem" not in smoke.split("DISCOVERYBENCH_PREWARM_PACKAGES:-", 1)[1].split("}", 1)[0]
     assert "DISCOVERYBENCH_VAL_MAX_SAMPLES:-239" in full
     assert "DISCOVERYBENCH_VAL_MAX_TURN:-24" in full
+    assert "#SBATCH -t 02:00:00" in full
     assert "#SBATCH -N 4" in full_8b
     assert "MODEL_PATH:-Qwen/Qwen3-8B" in full_8b
     assert "DISCOVERYBENCH_VAL_MAX_SAMPLES:-239" in full_8b
@@ -193,6 +194,7 @@ def test_discoverybench_scripts_wire_all_three_agents_and_real_hms():
     assert 'nodes=8' in submit_30b
     assert "DISCOVERYBENCH_VAL_MAX_SAMPLES:-239" in submit_30b
     assert "DISCOVERYBENCH_VAL_MAX_TURN:-24" in submit_30b
+    assert "DISCOVERYBENCH_TIME_LIMIT:-02:00:00" in submit_30b
     assert "DISCOVERYBENCH_VAL_MAX_TURN=$DISCOVERYBENCH_VAL_MAX_TURN" in submit_30b
     assert "sed -nE 's/^([0-9]+)(;[^[:space:]]+)?$/\\1/p'" in submit_30b
     assert 'python -m "$CODE_BENCHMARK_TRAIN_MODULE"' in shared

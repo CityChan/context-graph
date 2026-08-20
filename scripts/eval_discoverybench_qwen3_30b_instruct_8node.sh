@@ -6,7 +6,7 @@
 #SBATCH -N 8
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=72
-#SBATCH -t 12:00:00
+#SBATCH -t 02:00:00
 #SBATCH -A AST24021
 set -euo pipefail
 
