@@ -279,11 +279,33 @@ class CallAPI(LLMClass):  # Call external API (OpenAI)
 
         for attempt in range(5):
             try:
-                response = await self.client.chat.completions.create(
-                    model=self.model,
-                    messages=messages,
-                    max_completion_tokens=max_tokens,
-                )
+                request = {
+                    "model": self.model,
+                    "messages": messages,
+                    "max_completion_tokens": max_tokens,
+                }
+                temperature = getattr(self.config.plugin, "temperature", None)
+                top_p = getattr(self.config.plugin, "top_p", None)
+                reasoning_effort = getattr(self.config.plugin, "reasoning_effort", None)
+                if temperature is not None:
+                    request["temperature"] = float(temperature)
+                if top_p is not None:
+                    request["top_p"] = float(top_p)
+                if reasoning_effort:
+                    # DeepSeek-V4 exposes reasoning controls through its
+                    # custom chat-template kwargs. Keep this in extra_body so
+                    # older OpenAI SDKs can forward it to a local vLLM server.
+                    if reasoning_effort == "non-thinking":
+                        chat_template_kwargs = {"thinking": False}
+                    else:
+                        chat_template_kwargs = {
+                            "thinking": True,
+                            "reasoning_effort": str(reasoning_effort),
+                        }
+                    request["extra_body"] = {
+                        "chat_template_kwargs": chat_template_kwargs,
+                    }
+                response = await self.client.chat.completions.create(**request)
 
                 text = response.choices[0].message.content or ""
                 text_ids = self.tokenizer.encode(text, add_special_tokens=False)

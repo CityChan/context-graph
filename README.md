@@ -167,6 +167,31 @@ bash -n scripts/eval_sab_react_8b_4node_smoke.sh
 bash -n scripts/train_alfworld_ctxgraph_8b_4node_30step.sh
 ```
 
+## ContextGraph SFT data
+
+The open-source teacher pipeline uses `deepseek-ai/DeepSeek-V4-Flash-0731`.
+It expects the model under `$SCRATCH` (either a direct directory or the normal
+Hugging Face cache layout), eight GH200 nodes for a TP=8 vLLM server, and one
+additional node for BrowseComp-Plus retrieval. The DeepSeek server runs in a
+dedicated `deepseek_v4` conda environment with vLLM 0.25 or newer; the agent
+runner remains in `cxtgraph`.
+
+Submit a 25-sample pilot:
+
+```bash
+PREFLIGHT_ONLY=1 bash scripts/generate_ctxgraph_sft_deepseek_v4_flash_0731_9node.sh
+sbatch scripts/generate_ctxgraph_sft_deepseek_v4_flash_0731_9node.sh
+```
+
+Override an explicit checkpoint directory or increase the deterministic shard:
+
+```bash
+MODEL_PATH=$SCRATCH/models/DeepSeek-V4-Flash-0731 START_INDEX=0 MAX_SAMPLES=100 sbatch scripts/generate_ctxgraph_sft_deepseek_v4_flash_0731_9node.sh
+```
+
+Only correct, finished, non-overlong trajectories with no invalid graph calls
+and at least one successful structural graph operation are retained.
+
 ## Documentation
 
 Architecture and reward design are documented in `docs/contextgraph_architecture.md`. SAB-specific design notes are in `docs/design_scienceagentbench_ctxgraph.md`.

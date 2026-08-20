@@ -41,12 +41,22 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--local-search-url", default=None)
     parser.add_argument("--num-workers", type=int, default=8)
     parser.add_argument("--max-samples", type=int, default=-1)
+    parser.add_argument("--start-index", type=int, default=0,
+                        help="Start row for deterministic sharded generation.")
     parser.add_argument("--prompt-length", type=int, default=16384)
     parser.add_argument("--response-length", type=int, default=32768)
     parser.add_argument("--max-turn", type=int, default=80)
     parser.add_argument("--max-session", type=int, default=8)
     parser.add_argument("--branch-len", type=int, default=8192)
     parser.add_argument("--turn-max-new-tokens", type=int, default=1024)
+    parser.add_argument("--temperature", type=float, default=None)
+    parser.add_argument("--top-p", type=float, default=None)
+    parser.add_argument(
+        "--reasoning-effort",
+        choices=["non-thinking", "low", "high", "max"],
+        default=None,
+        help="Optional reasoning effort forwarded to compatible local/API teachers.",
+    )
     parser.add_argument("--search-topk-cap", type=int, default=5)
     parser.add_argument("--search-snippet-words", type=int, default=128)
     parser.add_argument("--search-snippet-chars", type=int, default=2000)
@@ -89,6 +99,9 @@ def _make_config(args: argparse.Namespace, workflow: str):
                     "session_timeout": 5400,
                     "branch_len": args.branch_len,
                     "turn_max_new_tokens": args.turn_max_new_tokens,
+                    "temperature": args.temperature,
+                    "top_p": args.top_p,
+                    "reasoning_effort": args.reasoning_effort,
                     "search_topk_cap": args.search_topk_cap,
                     "search_snippet_words": args.search_snippet_words,
                     "search_snippet_chars": args.search_snippet_chars,
@@ -260,6 +273,10 @@ def main() -> None:
         os.environ["LOCAL_SEARCH_URL"] = args.local_search_url
 
     df = pd.read_parquet(args.data_path)
+    if args.start_index < 0:
+        raise SystemExit("--start-index must be non-negative")
+    if args.start_index:
+        df = df.iloc[args.start_index:]
     if args.max_samples > 0:
         df = df.head(args.max_samples)
     rows = df.to_dict("records")
@@ -293,6 +310,7 @@ def main() -> None:
         "data_path": args.data_path,
         "workflow": args.workflow or "from_parquet",
         "model_name": args.model_name,
+        "start_index": args.start_index,
         "count": len(results),
         "successful_items": sum(r["status"] == "success" for r in results),
         "finished_items": sum(bool(r["is_finish"]) for r in results),
