@@ -11,6 +11,7 @@ def test_deepseek_sft_script_uses_open_checkpoint_and_scratch():
     assert "deepseek-ai/DeepSeek-V4-Flash-0731" in text
     assert "SCRATCH" in text
     assert "/work/09281/chc_1996/vista/cache/hub/models--deepseek-ai" not in text
+    assert "require_scratch_path MODEL_PATH" in text
 
 
 def test_deepseek_sft_script_requires_v4_serving_features():
@@ -42,6 +43,9 @@ def test_deepseek_interactive_script_covers_both_train_domains_and_strict_trace(
     assert "--min-graph-quality-score 1.0" in text
     assert "--max-invalid-graph-ops 0" in text
     assert "_train.parquet" in text
+    assert "require_scratch_path MODEL_PATH" in text
+    assert "SHARED_HF_HOME" not in text
+    assert "SHARED_HF_HUB_CACHE" not in text
 
 
 def test_deepseek_four_node_idev_smoke_is_conservative():

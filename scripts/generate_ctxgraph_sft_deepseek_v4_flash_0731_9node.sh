@@ -69,6 +69,22 @@ resolve_snapshot() {
   return 1
 }
 
+require_scratch_path() {
+  local label=$1
+  local path=$2
+  local scratch_real
+  local path_real
+  scratch_real=$(realpath -m "$SCRATCH")
+  path_real=$(realpath -m "$path")
+  case "$path_real" in
+    "$scratch_real"/*) ;;
+    *) echo "ERROR: $label must be stored under SCRATCH=$scratch_real, got $path_real"; exit 2 ;;
+  esac
+}
+
+require_scratch_path HF_HOME "$HF_HOME"
+require_scratch_path HF_HUB_CACHE "$HF_HUB_CACHE"
+
 if [ -n "${MODEL_PATH:-}" ]; then
   if [ ! -s "$MODEL_PATH/config.json" ]; then
     echo "ERROR: MODEL_PATH does not contain config.json: $MODEL_PATH"
@@ -91,6 +107,7 @@ if [ -z "${MODEL_PATH:-}" ]; then
   echo "Override with MODEL_PATH=/absolute/path/to/DeepSeek-V4-Flash-0731"
   exit 2
 fi
+require_scratch_path MODEL_PATH "$MODEL_PATH"
 
 if [ -n "${STUDENT_TOKENIZER_PATH:-}" ]; then
   if [ ! -s "$STUDENT_TOKENIZER_PATH/config.json" ] && [ ! -s "$STUDENT_TOKENIZER_PATH/tokenizer_config.json" ]; then

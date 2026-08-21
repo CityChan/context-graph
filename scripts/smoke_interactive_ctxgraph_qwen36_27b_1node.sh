@@ -46,8 +46,6 @@ fi
 : "${SCRATCH:?SCRATCH must point to the Vista scratch filesystem}"
 HF_HOME=${HF_HOME:-$SCRATCH/hf_cache}
 HF_HUB_CACHE=${HF_HUB_CACHE:-$HF_HOME/hub}
-SHARED_HF_HOME=${SHARED_HF_HOME:-/work/09281/chc_1996/vista/cache}
-SHARED_HF_HUB_CACHE=${SHARED_HF_HUB_CACHE:-$SHARED_HF_HOME/hub}
 ARTIFACT_ROOT=${ARTIFACT_ROOT:-$SCRATCH/contextgraph_sft/qwen3_6_27b_interactive_smoke/$RUN_TAG/$DOMAIN}
 RAW_OUTPUT_DIR=$ARTIFACT_ROOT/raw
 SFT_OUTPUT=$ARTIFACT_ROOT/contextgraph_sft_train.parquet
@@ -69,12 +67,29 @@ resolve_snapshot() {
   return 1
 }
 
+require_scratch_path() {
+  local label=$1
+  local path=$2
+  local scratch_real
+  local path_real
+  scratch_real=$(realpath -m "$SCRATCH")
+  path_real=$(realpath -m "$path")
+  case "$path_real" in
+    "$scratch_real"/*) ;;
+    *) echo "ERROR: $label must be stored under SCRATCH=$scratch_real, got $path_real"; exit 2 ;;
+  esac
+}
+
+require_scratch_path HF_HOME "$HF_HOME"
+require_scratch_path HF_HUB_CACHE "$HF_HUB_CACHE"
+
 if [ -n "${MODEL_PATH:-}" ]; then
   test -s "$MODEL_PATH/config.json" || { echo "ERROR: invalid MODEL_PATH=$MODEL_PATH"; exit 2; }
 else
-  MODEL_PATH=$(resolve_snapshot "$MODEL_ID" "$HF_HUB_CACHE" "$SHARED_HF_HUB_CACHE" "$SCRATCH/hf_cache") || true
+  MODEL_PATH=$(resolve_snapshot "$MODEL_ID" "$HF_HUB_CACHE" "$SCRATCH/hf_cache") || true
 fi
 test -n "${MODEL_PATH:-}" || { echo "ERROR: $MODEL_ID is not cached"; exit 2; }
+require_scratch_path MODEL_PATH "$MODEL_PATH"
 
 mkdir -p "$PROJECT_ROOT/logs" "$RAW_OUTPUT_DIR"
 cd "$PROJECT_ROOT"

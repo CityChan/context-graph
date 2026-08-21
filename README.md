@@ -170,11 +170,15 @@ bash -n scripts/train_alfworld_ctxgraph_8b_4node_30step.sh
 ## ContextGraph SFT data
 
 The open-source teacher pipeline uses `deepseek-ai/DeepSeek-V4-Flash-0731`.
-It expects the model under `$SCRATCH` (either a direct directory or the normal
+It requires the model under `$SCRATCH` (either a direct directory or the normal
 Hugging Face cache layout), eight GH200 nodes for a TP=8 vLLM server, and one
 additional node for BrowseComp-Plus retrieval. The DeepSeek server runs in a
 dedicated `deepseek_v4` conda environment with vLLM 0.25 or newer; the agent
 runner remains in `cxtgraph`.
+
+Interactive DeepSeek and Qwen teacher scripts reject `HF_HOME`,
+`HF_HUB_CACHE`, `MODEL_PATH`, and student-tokenizer paths outside `$SCRATCH`;
+large checkpoints are never resolved from the project `/work` filesystem.
 
 Submit a 25-sample pilot:
 

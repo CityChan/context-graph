@@ -2,6 +2,7 @@ from pathlib import Path
 
 
 SCRIPT = Path("scripts/smoke_generate_ctxgraph_sft_qwen3_6_27b_4node_idev.sh")
+INTERACTIVE_SCRIPT = Path("scripts/smoke_interactive_ctxgraph_qwen36_27b_1node.sh")
 
 
 def test_qwen36_smoke_uses_two_nodes_from_an_idev_allocation():
@@ -33,3 +34,10 @@ def test_qwen36_smoke_uses_supported_text_only_vllm_mode():
     assert "--reasoning-parser qwen3" in text
     assert "--language-model-only" in text
     assert "QWEN_ENABLE_THINKING=True" in text
+
+
+def test_qwen36_interactive_smoke_requires_scratch_model_storage():
+    text = INTERACTIVE_SCRIPT.read_text(encoding="utf-8")
+    assert "require_scratch_path MODEL_PATH" in text
+    assert "SHARED_HF_HOME" not in text
+    assert "SHARED_HF_HUB_CACHE" not in text
