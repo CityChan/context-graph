@@ -192,6 +192,19 @@ MODEL_PATH=$SCRATCH/models/DeepSeek-V4-Flash-0731 START_INDEX=0 MAX_SAMPLES=100 
 Only correct, finished, non-overlong trajectories with no invalid graph calls
 and at least one successful structural graph operation are retained.
 
+For a quick smoke inside an existing 4-node Vista `idev` allocation, use the
+single-GPU `Qwen/Qwen3.6-27B` teacher. The smoke uses one node for vLLM and one
+for retrieval; the other two allocated nodes remain idle. It evaluates two
+BrowseComp train questions by default:
+
+```bash
+MAX_SAMPLES=2 bash scripts/smoke_generate_ctxgraph_sft_qwen3_6_27b_4node_idev.sh
+```
+
+The output is written below
+`$SCRATCH/contextgraph_sft/qwen3_6_27b_smoke/$SLURM_JOB_ID`. The server requires
+vLLM 0.19 or newer; by default it reuses the `deepseek_v4` server environment.
+
 ## Documentation
 
 Architecture and reward design are documented in `docs/contextgraph_architecture.md`. SAB-specific design notes are in `docs/design_scienceagentbench_ctxgraph.md`.
