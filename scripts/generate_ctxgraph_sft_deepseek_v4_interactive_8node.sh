@@ -123,6 +123,10 @@ set +u
 source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
 conda activate "$SERVER_CONDA_ENV"
 set -u
+TORCH_GLOBAL_DEPS=$(python -c "import importlib.util, pathlib; s=importlib.util.find_spec('torch'); print(pathlib.Path(s.origin).parent / 'lib' / 'libtorch_global_deps.so')")
+SERVER_LD_PRELOAD=${SERVER_LD_PRELOAD:-$TORCH_GLOBAL_DEPS}
+test -s "$SERVER_LD_PRELOAD" || { echo "ERROR: server preload library missing: $SERVER_LD_PRELOAD"; exit 2; }
+echo "Server LD preload: $SERVER_LD_PRELOAD"
 python -c "import transformers, vllm; from packaging.version import Version; from transformers import AutoConfig; assert Version(vllm.__version__) >= Version('0.25.0'), 'DeepSeek-V4 requires vLLM >= 0.25.0'; c=AutoConfig.from_pretrained('$MODEL_PATH', trust_remote_code=True, local_files_only=True); print('server preflight:', 'transformers='+transformers.__version__, 'vllm='+vllm.__version__, 'model_type='+str(getattr(c, 'model_type', None)))"
 VLLM_HELP=$(vllm serve --help=all 2>&1)
 for required_flag in --distributed-executor-backend --tensor-parallel-size --enable-expert-parallel --kv-cache-dtype --tokenizer-mode --moe-backend; do
@@ -159,7 +163,7 @@ cleanup() {
 trap cleanup EXIT
 
 RAY_HEAD_LOG="$PROJECT_ROOT/logs/cg-sft-dsv4-mt-ray-head.${SLURM_ARRAY_JOB_ID:-${SLURM_JOB_ID:-local}}_${SLURM_ARRAY_TASK_ID:-0}.log"
-srun --overlap --nodes=1 --ntasks=1 -w "$TEACHER_HEAD_NODE" bash -lc "source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh; conda activate $SERVER_CONDA_ENV; ray stop --force >/dev/null 2>&1 || true; export HF_HOME=$HF_HOME HF_HUB_CACHE=$HF_HUB_CACHE; exec ray start --head --node-ip-address=$TEACHER_HEAD_IP --port=6379 --num-cpus=70 --num-gpus=1 --block" >"$RAY_HEAD_LOG" 2>&1 &
+srun --overlap --nodes=1 --ntasks=1 -w "$TEACHER_HEAD_NODE" bash -lc "source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh; conda activate $SERVER_CONDA_ENV; ray stop --force >/dev/null 2>&1 || true; export LD_PRELOAD=$SERVER_LD_PRELOAD OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1; export HF_HOME=$HF_HOME HF_HUB_CACHE=$HF_HUB_CACHE; exec ray start --head --node-ip-address=$TEACHER_HEAD_IP --port=6379 --num-cpus=70 --num-gpus=1 --block" >"$RAY_HEAD_LOG" 2>&1 &
 STEP_PIDS+=("$!")
 sleep 8
 
@@ -167,7 +171,7 @@ for i in $(seq 1 $((NUM_NODES - 1))); do
   node=${NODELIST[$i]}
   worker_ip=$(getent hosts "$node" | awk '{print $1}')
   worker_log="$PROJECT_ROOT/logs/cg-sft-dsv4-mt-ray-worker-${i}.${SLURM_ARRAY_JOB_ID:-${SLURM_JOB_ID:-local}}_${SLURM_ARRAY_TASK_ID:-0}.log"
-  srun --overlap --nodes=1 --ntasks=1 -w "$node" bash -lc "source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh; conda activate $SERVER_CONDA_ENV; ray stop --force >/dev/null 2>&1 || true; export HF_HOME=$HF_HOME HF_HUB_CACHE=$HF_HUB_CACHE; exec ray start --address=$TEACHER_HEAD_IP:6379 --node-ip-address=$worker_ip --num-cpus=70 --num-gpus=1 --block" >"$worker_log" 2>&1 &
+  srun --overlap --nodes=1 --ntasks=1 -w "$node" bash -lc "source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh; conda activate $SERVER_CONDA_ENV; ray stop --force >/dev/null 2>&1 || true; export LD_PRELOAD=$SERVER_LD_PRELOAD OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1; export HF_HOME=$HF_HOME HF_HUB_CACHE=$HF_HUB_CACHE; exec ray start --address=$TEACHER_HEAD_IP:6379 --node-ip-address=$worker_ip --num-cpus=70 --num-gpus=1 --block" >"$worker_log" 2>&1 &
   STEP_PIDS+=("$!")
 done
 
@@ -178,14 +182,28 @@ for _ in $(seq 1 180); do
 done
 
 VLLM_LOG="$PROJECT_ROOT/logs/cg-sft-dsv4-mt-vllm.${SLURM_ARRAY_JOB_ID:-${SLURM_JOB_ID:-local}}_${SLURM_ARRAY_TASK_ID:-0}.log"
-srun --overlap --nodes=1 --ntasks=1 -w "$TEACHER_HEAD_NODE" bash -lc "source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh; conda activate $SERVER_CONDA_ENV; export HF_HOME=$HF_HOME HF_HUB_CACHE=$HF_HUB_CACHE HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 RAY_ADDRESS=$TEACHER_HEAD_IP:6379; exec vllm serve $MODEL_PATH --served-model-name $MODEL_ID --host 0.0.0.0 --port $TEACHER_PORT --distributed-executor-backend ray --tensor-parallel-size $TEACHER_TP --enable-expert-parallel --moe-backend auto --trust-remote-code --tokenizer-mode deepseek_v4 --kv-cache-dtype fp8 --block-size 256 --max-model-len $MAX_MODEL_LEN --max-num-seqs $MAX_NUM_SEQS --gpu-memory-utilization $GPU_MEMORY_UTILIZATION --enable-chunked-prefill" >"$VLLM_LOG" 2>&1 &
+srun --overlap --nodes=1 --ntasks=1 -w "$TEACHER_HEAD_NODE" bash -lc "source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh; conda activate $SERVER_CONDA_ENV; export LD_PRELOAD=$SERVER_LD_PRELOAD OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1; export HF_HOME=$HF_HOME HF_HUB_CACHE=$HF_HUB_CACHE HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 RAY_ADDRESS=$TEACHER_HEAD_IP:6379; exec vllm serve $MODEL_PATH --served-model-name $MODEL_ID --host 0.0.0.0 --port $TEACHER_PORT --distributed-executor-backend ray --tensor-parallel-size $TEACHER_TP --enable-expert-parallel --moe-backend auto --trust-remote-code --tokenizer-mode deepseek_v4 --kv-cache-dtype fp8 --block-size 256 --max-model-len $MAX_MODEL_LEN --max-num-seqs $MAX_NUM_SEQS --gpu-memory-utilization $GPU_MEMORY_UTILIZATION --enable-chunked-prefill" >"$VLLM_LOG" 2>&1 &
+VLLM_STEP_PID=$!
 STEP_PIDS+=("$!")
 
-for _ in $(seq 1 1800); do
-  curl --noproxy '*' -fsS "http://$TEACHER_HEAD_IP:$TEACHER_PORT/v1/models" >/dev/null 2>&1 && break
+SERVER_READY=0
+for attempt in $(seq 1 1800); do
+  if curl --noproxy '*' -fsS "http://$TEACHER_HEAD_IP:$TEACHER_PORT/v1/models" >/dev/null 2>&1; then
+    SERVER_READY=1
+    break
+  fi
+  if ! kill -0 "$VLLM_STEP_PID" 2>/dev/null; then
+    wait "$VLLM_STEP_PID" || true
+    echo "ERROR: vLLM exited during startup; tail of $VLLM_LOG follows"
+    tail -n 120 "$VLLM_LOG" || true
+    exit 3
+  fi
+  if [ $((attempt % 30)) -eq 0 ]; then
+    echo "Waiting for vLLM health: ${attempt}s elapsed; log=$VLLM_LOG"
+  fi
   sleep 1
 done
-curl --noproxy '*' -fsS "http://$TEACHER_HEAD_IP:$TEACHER_PORT/v1/models" >/dev/null || { echo "ERROR: vLLM health timeout; inspect $VLLM_LOG"; exit 3; }
+test "$SERVER_READY" -eq 1 || { echo "ERROR: vLLM health timeout; inspect $VLLM_LOG"; exit 3; }
 
 set +u
 conda activate "$AGENT_CONDA_ENV"
