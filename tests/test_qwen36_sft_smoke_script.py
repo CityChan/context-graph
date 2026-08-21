@@ -29,6 +29,7 @@ def test_qwen36_smoke_keeps_executor_filters_and_outputs_sft():
 def test_qwen36_smoke_uses_supported_text_only_vllm_mode():
     text = SCRIPT.read_text(encoding="utf-8")
     assert "vLLM >= 0.19.0" in text
+    assert "vllm serve --help=all" in text
     assert "--reasoning-parser qwen3" in text
     assert "--language-model-only" in text
     assert "QWEN_ENABLE_THINKING=True" in text

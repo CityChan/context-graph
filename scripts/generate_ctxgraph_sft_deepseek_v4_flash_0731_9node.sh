@@ -126,7 +126,9 @@ source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
 conda activate "$SERVER_CONDA_ENV"
 set -u
 python -c "import transformers, vllm; from packaging.version import Version; from transformers import AutoConfig; assert Version(vllm.__version__) >= Version('0.25.0'), 'DeepSeek-V4-Flash-0731 requires vLLM >= 0.25.0'; c=AutoConfig.from_pretrained('$MODEL_PATH', trust_remote_code=True, local_files_only=True); print('server preflight:', 'transformers='+transformers.__version__, 'vllm='+vllm.__version__, 'model_type='+str(getattr(c, 'model_type', None)))"
-VLLM_HELP=$(vllm serve --help 2>&1)
+# vLLM 0.27 uses paged/grouped CLI help; plain --help intentionally omits
+# model and parallelism options.
+VLLM_HELP=$(vllm serve --help=all 2>&1)
 for required_flag in --distributed-executor-backend --tensor-parallel-size --enable-expert-parallel --kv-cache-dtype --tokenizer-mode --moe-backend; do
   if ! printf '%s\n' "$VLLM_HELP" | grep -q -- "$required_flag"; then
     echo "ERROR: $SERVER_CONDA_ENV vLLM does not support $required_flag"

@@ -14,6 +14,7 @@ def test_deepseek_sft_script_uses_open_checkpoint_and_scratch():
 def test_deepseek_sft_script_requires_v4_serving_features():
     text = SCRIPT.read_text(encoding="utf-8")
     assert "vLLM >= 0.25.0" in text
+    assert "vllm serve --help=all" in text
     assert "--tokenizer-mode deepseek_v4" in text
     assert "--enable-expert-parallel" in text
     assert "--tensor-parallel-size $TEACHER_TP" in text
