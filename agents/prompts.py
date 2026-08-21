@@ -1,4 +1,4 @@
-from .tool_spec import convert_tools_to_description, codeact_tool, search_tool, branch_tool, graph_tool, alfworld_tool, TOOL_PROMPT, PARALLEL_TOOL_PROMPT
+from .tool_spec import convert_tools_to_description, codeact_tool, search_tool, branch_tool, graph_tool, alfworld_tool, scienceworld_tool, TOOL_PROMPT, PARALLEL_TOOL_PROMPT
 
 
 def create_chat(problem_statement, workflow=None, item=None):
@@ -141,6 +141,37 @@ I've uploaded a python code repository in the directory /testbed. Consider the f
             "</function>"
         )
         chat = [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}]
+        return chat
+    elif workflow in ('scienceworld', 'scienceworld_branch', 'scienceworld_graph'):
+        tools = scienceworld_tool()
+        if 'branch' in workflow:
+            tools = tools + branch_tool()
+        if 'graph' in workflow:
+            tools = tools + branch_tool() + graph_tool()
+        tool_description = PARALLEL_TOOL_PROMPT.format(description=convert_tools_to_description(tools))
+        system_prompt = (
+            "You are a science agent acting in the ScienceWorld text simulator. "
+            "Complete the task through a sequence of real environment actions. "
+            "Track locations, objects, material properties, experimental steps, and observations. "
+            "Output exactly one XML tool call per turn, with no prose or markdown. "
+            "Do not call finish: the simulator terminates automatically when the goal is satisfied. "
+            "Use `look around` and `inventory` when state is uncertain. "
+            "Useful commands include `go to <location>`, `open <container>`, `pick up <object>`, "
+            "`put <object> in <container>`, `activate <device>`, `connect <object> to <object>`, "
+            "`pour <container> into <container>`, and `focus on <object>`. "
+            "Focus on the relevant object when the task asks you to identify, measure, or test it."
+        )
+        if workflow == 'scienceworld_graph':
+            system_prompt += (
+                " Use ContextGraph operations only when they preserve useful state: branch for a "
+                "genuine independent subgoal, add_edge for a meaningful dependency, merge for "
+                "combining experimental evidence, and prune for obsolete or disproven state."
+            )
+        user_prompt = f"Task and initial observation:\n\n{problem_statement}"
+        chat = [
+            {'role': 'system', 'content': system_prompt + '\n\n' + tool_description},
+            {'role': 'user', 'content': user_prompt},
+        ]
         return chat
     else:
         # Openhands Default

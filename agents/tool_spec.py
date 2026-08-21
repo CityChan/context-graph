@@ -465,6 +465,31 @@ def alfworld_tool(action_only: bool = False):
     return [action, think, finish]
 
 
+def scienceworld_tool():
+    """Action tool for the ScienceWorld text simulator."""
+    return [{
+        'type': 'function',
+        'function': {
+            'name': 'action',
+            'description': (
+                "Execute one text command in the ScienceWorld environment. "
+                "Use `look around`, `inventory`, `focus on <object>`, and the "
+                "possible actions/objects reported by observations to plan experiments."
+            ),
+            'parameters': {
+                'type': 'object',
+                'properties': {
+                    'command': {
+                        'type': 'string',
+                        'description': 'The exact ScienceWorld action command to execute.',
+                    },
+                },
+                'required': ['command'],
+            },
+        },
+    }]
+
+
 TOOL_PROMPT = """
 You have access to the following functions:
 

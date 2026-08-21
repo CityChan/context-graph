@@ -474,7 +474,16 @@ class RayPPOTrainer:
         except Exception as e:
             print(f"Warning: Could not set total_training_steps in config. Structure missing? Error: {e}")
 
-    def _dump_generations(self, inputs, outputs, gts, scores, reward_extra_infos_dict, dump_path):
+    def _dump_generations(
+        self,
+        inputs,
+        outputs,
+        gts,
+        scores,
+        reward_extra_infos_dict,
+        dump_path,
+        trajectory_fields=None,
+    ):
         """Dump rollout/validation samples as JSONL."""
         os.makedirs(dump_path, exist_ok=True)
         filename = os.path.join(dump_path, f"{self.global_steps}.jsonl")
@@ -489,6 +498,14 @@ class RayPPOTrainer:
         }
 
         for k, v in reward_extra_infos_dict.items():
+            if len(v) == n:
+                base_data[k] = v
+
+        # Agent-loop outputs contain the role-preserving conversation and
+        # executor statistics needed to turn successful validation rollouts
+        # into multi-turn SFT data.  Keep these optional so ordinary rollout
+        # implementations and existing dump consumers remain compatible.
+        for k, v in (trajectory_fields or {}).items():
             if len(v) == n:
                 base_data[k] = v
 
@@ -569,6 +586,7 @@ class RayPPOTrainer:
         sample_scores = []
         sample_turns = []
         sample_uids = []
+        trajectory_fields: dict[str, list] = defaultdict(list)
 
         for test_data in self.val_dataloader:
             test_batch = DataProto.from_single_dict(test_data)
@@ -664,6 +682,14 @@ class RayPPOTrainer:
             if "__num_turns__" in test_batch.non_tensor_batch:
                 sample_turns.append(test_batch.non_tensor_batch["__num_turns__"])
 
+            for key in (
+                "messages", "env_stats", "is_finish", "termination_reason",
+                "agent_name", "graph_trace", "graph_state", "graph_rewards",
+            ):
+                values = test_batch.non_tensor_batch.get(key)
+                if values is not None and len(values) == len(scores):
+                    trajectory_fields[key].extend(values.tolist() if hasattr(values, "tolist") else list(values))
+
             data_source_lst.append(test_batch.non_tensor_batch.get("data_source", ["unknown"] * reward_tensor.shape[0]))
 
         self._maybe_log_val_generations(inputs=sample_inputs, outputs=sample_outputs, scores=sample_scores)
@@ -678,6 +704,7 @@ class RayPPOTrainer:
                 scores=sample_scores,
                 reward_extra_infos_dict=reward_extra_infos_dict,
                 dump_path=val_data_dir,
+                trajectory_fields=trajectory_fields,
             )
 
         for key_info, lst in reward_extra_infos_dict.items():

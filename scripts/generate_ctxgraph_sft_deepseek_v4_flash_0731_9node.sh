@@ -232,5 +232,5 @@ set +u
 source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
 conda activate "$AGENT_CONDA_ENV"
 set -u
-python scripts/build_contextgraph_sft.py "$RESULT_FILE" --output "$SFT_OUTPUT" --validation-output "$SFT_VALIDATION_OUTPUT" --validation-fraction 0.05 --min-task-reward 1.0 --min-valid-graph-ops 1 --min-structural-graph-ops 1 --max-invalid-graph-ops 0 --teacher-provider local_vllm --teacher-model "$MODEL_ID"
+python scripts/build_contextgraph_sft.py "$RESULT_FILE" --output "$SFT_OUTPUT" --validation-output "$SFT_VALIDATION_OUTPUT" --validation-fraction 0.05 --min-task-reward 1.0 --min-valid-graph-ops 1 --min-structural-graph-ops 1 --max-invalid-graph-ops 0 --require-graph-trace --min-graph-quality-score 1.0 --max-redundant-graph-ops 0 --teacher-provider local_vllm --teacher-model "$MODEL_ID"
 echo "DeepSeek ContextGraph SFT generation complete: $SFT_OUTPUT"

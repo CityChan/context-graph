@@ -13,10 +13,15 @@ import argparse
 import hashlib
 import json
 import random
+import sys
 from pathlib import Path
 from typing import Any, Iterable
 
 import pandas as pd
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from agents.graph_trace import canonical_json, validate_graph_trace
 
 
 STRUCTURAL_GRAPH_FUNCTIONS = ("merge", "add_edge", "prune")
@@ -38,6 +43,18 @@ def parse_args() -> argparse.Namespace:
         help="Require merge/add_edge/prune calls in the accepted conversation.",
     )
     parser.add_argument("--max-invalid-graph-ops", type=int, default=0)
+    parser.add_argument(
+        "--require-graph-trace",
+        action="store_true",
+        help="Reject legacy trajectories without a structured ContextGraph trace.",
+    )
+    parser.add_argument(
+        "--min-graph-quality-score",
+        type=float,
+        default=0.0,
+        help="Minimum fraction of model graph decisions with their expected state effect.",
+    )
+    parser.add_argument("--max-redundant-graph-ops", type=int, default=0)
     parser.add_argument("--teacher-provider", default="local_vllm")
     parser.add_argument("--teacher-model", default=None)
     parser.add_argument(
@@ -105,32 +122,84 @@ def result_to_sft_row(
     min_structural_graph_ops: int = 0,
     teacher_provider: str = "local_vllm",
     teacher_model: str | None = None,
+    require_graph_trace: bool = False,
+    min_graph_quality_score: float = 0.0,
+    max_redundant_graph_ops: int = 0,
+    rejection_reasons: list[str] | None = None,
 ) -> dict[str, Any] | None:
+    def reject(reason: str) -> None:
+        if rejection_reasons is not None:
+            rejection_reasons.append(reason)
+
     if result.get("status") != "success":
+        reject("runner_failed")
         return None
     if float(result.get("task_reward", result.get("score", 0.0)) or 0.0) < min_task_reward:
+        reject("task_reward")
         return None
     if require_finish and not bool(result.get("is_finish", False)):
+        reject("unfinished")
         return None
 
     stats = result.get("env_stats") or {}
     valid_ops = int(stats.get("graph_explicit_ops", 0) or 0)
     invalid_ops = int(stats.get("graph_invalid_ops", 0) or 0)
+    consolidation_invalid = int(stats.get("consol_invalid", 0) or 0)
+    consolidation_pass_invalid = int(stats.get("consol_pass_invalid", 0) or 0)
     if valid_ops < min_valid_graph_ops or invalid_ops > max_invalid_graph_ops:
+        reject("graph_op_counts")
+        return None
+    if consolidation_invalid or consolidation_pass_invalid:
+        reject("consolidation_invalid")
         return None
     if bool(stats.get("overlong", False)) or bool(stats.get("hit_token_limit", False)):
+        reject("overlong")
         return None
 
     messages = normalize_messages(result.get("messages"))
     if not messages or not any(message["role"] == "assistant" for message in messages):
+        reject("messages")
         return None
-    structural_ops = count_structural_graph_ops(messages)
+
+    trace = result.get("graph_trace")
+    if isinstance(trace, str):
+        try:
+            trace = json.loads(trace)
+        except json.JSONDecodeError:
+            reject("graph_trace_json")
+            return None
+    trace_metrics: dict[str, Any] = {}
+    if trace is not None:
+        trace_valid, trace_errors, trace_metrics = validate_graph_trace(trace)
+        if not trace_valid:
+            reject("graph_trace_invalid:" + ";".join(trace_errors[:3]))
+            return None
+        if int(trace_metrics.get("explicit_valid_model_ops", -1)) != valid_ops:
+            reject("graph_trace_counter_mismatch")
+            return None
+        structural_ops = int(trace_metrics.get("structural_model_ops", 0))
+        if float(trace_metrics.get("quality_score", 0.0)) < min_graph_quality_score:
+            reject("graph_quality")
+            return None
+        if int(trace_metrics.get("redundant_model_ops", 0)) > max_redundant_graph_ops:
+            reject("redundant_graph_ops")
+            return None
+    else:
+        if require_graph_trace:
+            reject("graph_trace_missing")
+            return None
+        structural_ops = count_structural_graph_ops(messages)
     if structural_ops < min_structural_graph_ops:
+        reject("structural_graph_ops")
         return None
 
     canonical = json.dumps(messages, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     trajectory_id = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
     resolved_teacher_model = teacher_model or str(result.get("teacher_model", "unknown"))
+    trace_json = canonical_json(trace) if trace is not None else None
+    final_graph = trace.get("final_graph") if isinstance(trace, dict) else None
+    workflow = str(result.get("workflow", "unknown"))
+    domain = workflow.removesuffix("_graph").removesuffix("_branch")
     return {
         "messages": messages,
         # ContextGraph currently uses textual XML function calls injected into
@@ -139,6 +208,7 @@ def result_to_sft_row(
         "enable_thinking": bool(enable_thinking),
         "trajectory_id": trajectory_id,
         "task_id": str(result.get("task_id", "unknown")),
+        "domain": domain,
         "source": f"{teacher_provider}_contextgraph_teacher",
         "teacher_provider": teacher_provider,
         "teacher_model": resolved_teacher_model,
@@ -146,16 +216,31 @@ def result_to_sft_row(
         "graph_valid_ops": valid_ops,
         "graph_structural_ops": structural_ops,
         "graph_invalid_ops": invalid_ops,
+        "graph_consolidation_invalid": consolidation_invalid,
+        "graph_consolidation_pass_invalid": consolidation_pass_invalid,
         "graph_nodes": int(stats.get("graph_n_nodes", 0) or 0),
         "graph_edges": int(stats.get("graph_n_edges", 0) or 0),
+        "graph_schema_version": trace.get("schema_version") if isinstance(trace, dict) else None,
+        "graph_trace_json": trace_json,
+        "graph_trace_hash": hashlib.sha256(trace_json.encode("utf-8")).hexdigest() if trace_json else None,
+        "final_graph_json": canonical_json(final_graph) if final_graph is not None else None,
+        "graph_quality_score": float(trace_metrics.get("quality_score", 0.0)),
+        "graph_model_op_attempts": int(trace_metrics.get("model_op_attempts", 0)),
+        "graph_productive_model_ops": int(trace_metrics.get("productive_model_ops", 0)),
+        "graph_redundant_model_ops": int(trace_metrics.get("redundant_model_ops", 0)),
+        "graph_semantic_model_op_errors": int(trace_metrics.get("semantic_model_op_errors", 0)),
     }
 
 
-def build_rows(results: Iterable[dict[str, Any]], args: argparse.Namespace) -> tuple[list[dict[str, Any]], dict[str, int]]:
+def build_rows(results: Iterable[dict[str, Any]], args: argparse.Namespace) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     rows_by_id: dict[str, dict[str, Any]] = {}
-    counters = {"input": 0, "accepted": 0, "duplicates": 0, "rejected": 0}
+    counters: dict[str, Any] = {
+        "input": 0, "accepted": 0, "duplicates": 0, "rejected": 0,
+        "rejection_reasons": {},
+    }
     for result in results:
         counters["input"] += 1
+        reasons: list[str] = []
         row = result_to_sft_row(
             result,
             min_task_reward=args.min_task_reward,
@@ -166,9 +251,15 @@ def build_rows(results: Iterable[dict[str, Any]], args: argparse.Namespace) -> t
             min_structural_graph_ops=getattr(args, "min_structural_graph_ops", 0),
             teacher_provider=getattr(args, "teacher_provider", "local_vllm"),
             teacher_model=getattr(args, "teacher_model", None),
+            require_graph_trace=getattr(args, "require_graph_trace", False),
+            min_graph_quality_score=getattr(args, "min_graph_quality_score", 0.0),
+            max_redundant_graph_ops=getattr(args, "max_redundant_graph_ops", 0),
+            rejection_reasons=reasons,
         )
         if row is None:
             counters["rejected"] += 1
+            reason = reasons[0] if reasons else "unknown"
+            counters["rejection_reasons"][reason] = counters["rejection_reasons"].get(reason, 0) + 1
             continue
         trajectory_id = row["trajectory_id"]
         if trajectory_id in rows_by_id:
@@ -198,11 +289,23 @@ def main() -> None:
     rng.shuffle(rows)
     validation_count = 0
     if args.validation_output and len(rows) > 1 and args.validation_fraction > 0:
-        validation_count = max(1, round(len(rows) * args.validation_fraction))
-        validation_count = min(validation_count, len(rows) - 1)
-
-    validation_rows = rows[:validation_count]
-    training_rows = rows[validation_count:]
+        # Keep every trajectory for a task in one split. Exact conversation
+        # dedup alone is insufficient when multiple teacher samples exist for
+        # the same environment episode.
+        task_ids = sorted({row["task_id"] for row in rows})
+        rng.shuffle(task_ids)
+        if len(task_ids) > 1:
+            validation_task_count = max(1, round(len(task_ids) * args.validation_fraction))
+            validation_task_count = min(validation_task_count, len(task_ids) - 1)
+            validation_tasks = set(task_ids[:validation_task_count])
+        else:
+            validation_tasks = set()
+        validation_rows = [row for row in rows if row["task_id"] in validation_tasks]
+        training_rows = [row for row in rows if row["task_id"] not in validation_tasks]
+        validation_count = len(validation_rows)
+    else:
+        validation_rows = []
+        training_rows = rows
     write_parquet(training_rows, args.output)
     if args.validation_output and validation_rows:
         write_parquet(validation_rows, args.validation_output)

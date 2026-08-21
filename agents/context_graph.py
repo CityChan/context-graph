@@ -13,7 +13,9 @@ This generalizes FoldAgent's tree-structured branching to a full graph with:
 """
 
 from __future__ import annotations
+import hashlib
 import heapq
+import json
 import re
 from dataclasses import dataclass, field
 from enum import Enum
@@ -173,6 +175,126 @@ class ContextGraph:
     def _next_id(self, prefix: Optional[str] = None) -> str:
         self._node_counter += 1
         return f"{prefix or self.namespace_prefix}{self._node_counter}"
+
+    @staticmethod
+    def _json_safe(value: Any) -> Any:
+        """Convert graph metadata to a deterministic JSON-compatible value."""
+        if isinstance(value, Enum):
+            return value.value
+        if isinstance(value, dict):
+            return {
+                str(key): ContextGraph._json_safe(item)
+                for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+            }
+        if isinstance(value, (list, tuple)):
+            return [ContextGraph._json_safe(item) for item in value]
+        if isinstance(value, set):
+            return sorted(ContextGraph._json_safe(item) for item in value)
+        if value is None or isinstance(value, (str, int, float, bool)):
+            return value
+        return repr(value)
+
+    def to_dict(self, *, include_archives: bool = True) -> dict[str, Any]:
+        """Return a stable, JSON-serializable snapshot of the graph.
+
+        Child graphs are represented by their root/focus/size summary. Their raw
+        evidence is retained through ``archives`` after branch collapse, avoiding
+        recursive parent references and oversized training artifacts.
+        """
+        def compact_metadata(metadata: dict) -> dict[str, Any]:
+            compact = {key: value for key, value in metadata.items() if key != "raw_content"}
+            raw_content = metadata.get("raw_content")
+            if isinstance(raw_content, str):
+                compact["raw_content_sha256"] = hashlib.sha256(
+                    raw_content.encode("utf-8")
+                ).hexdigest()
+                compact["raw_content_chars"] = len(raw_content)
+            return self._json_safe(compact)
+
+        nodes = []
+        for node in sorted(self.nodes.values(), key=lambda item: (_seq_key(item.id), item.id)):
+            child = None
+            if node.child_graph is not None:
+                child = {
+                    "namespace_prefix": node.child_graph.namespace_prefix,
+                    "root_id": node.child_graph.root_id,
+                    "active_node_id": node.child_graph.active_node_id,
+                    "n_nodes": len(node.child_graph.nodes),
+                    "n_edges": len(node.child_graph.edges),
+                }
+            nodes.append({
+                "id": node.id,
+                "type": node.type.value,
+                "content": node.content,
+                "status": node.status.value,
+                "value": float(node.value),
+                "token_count": int(node.token_count),
+                "depth": int(node.depth),
+                "metadata": compact_metadata(node.metadata),
+                "child_graph": child,
+            })
+
+        def edge_dict(edge: ContextEdge) -> dict[str, Any]:
+            return {
+                "source": edge.source,
+                "target": edge.target,
+                "relation": edge.relation.value,
+                "weight": float(edge.weight),
+            }
+
+        snapshot = {
+            "schema_version": "contextgraph.state.v1",
+            "namespace_prefix": self.namespace_prefix,
+            "root_id": self.root_id,
+            "active_node_id": self.active_node_id,
+            "nodes": nodes,
+            "edges": [
+                edge_dict(edge)
+                for edge in sorted(
+                    self.edges,
+                    key=lambda item: (
+                        _seq_key(item.source), item.source,
+                        _seq_key(item.target), item.target,
+                        item.relation.value,
+                    ),
+                )
+            ],
+            "counters": {
+                "operation_count": int(self.operation_count),
+                "explicit_op_count": int(self.explicit_op_count),
+                "graph_op_attempt_count": int(self.graph_op_attempt_count),
+                "invalid_op_count": int(self.invalid_op_count),
+            },
+        }
+        if include_archives:
+            snapshot["archives"] = [
+                {
+                    "id": archive.id,
+                    "parent_node_id": archive.parent_node_id,
+                    "summary_node_id": archive.summary_node_id,
+                    "evidence": [
+                        {
+                            "id": evidence.id,
+                            "source_node_id": evidence.source_node_id,
+                            "type": evidence.type.value,
+                            "content": evidence.content,
+                            "metadata": self._json_safe(evidence.metadata),
+                            "sequence": int(evidence.sequence),
+                        }
+                        for evidence in archive.evidence
+                    ],
+                    "edges": [edge_dict(edge) for edge in archive.edges],
+                }
+                for archive in sorted(self.archives.values(), key=lambda item: item.id)
+            ]
+        return snapshot
+
+    def graph_hash(self) -> str:
+        """Hash the exact structured state used by graph-trace validation."""
+        canonical = json.dumps(
+            self.to_dict(), ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        )
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
     def record_graph_op(self, success: bool) -> None:
         """Record one LLM-requested graph operation attempt."""

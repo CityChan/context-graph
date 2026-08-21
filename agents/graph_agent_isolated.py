@@ -51,6 +51,7 @@ from .rollout_status import classify_rollout_status
 from .prompts import create_chat, BRANCH_MESSAGE_SEARCH, BRANCH_MESSAGE, SUMMARY_PROMPT_CODE, SUMMARY_PROMPT_SEARCH
 from .verifier import judge_scope
 from .context_graph import ContextGraph, GraphOpResult, NodeType, NodeStatus, EdgeRelation
+from .graph_trace import GraphTraceRecorder
 
 
 def print_chat(chat):
@@ -346,6 +347,7 @@ async def process_item(
     graph = ContextGraph(tokenizer, namespace_prefix="n")
     query_text = env.instance_info['problem_statement']
     root_id = graph.add_node(query_text, NodeType.QUERY)
+    graph_trace = GraphTraceRecorder(graph)
     branch_node_map = {}  # branch_name -> subtask_node_id
     branch_subgraph_stats = {}  # branch_name -> child graph stats (for logging)
 
@@ -403,9 +405,16 @@ async def process_item(
             if response is None:
                 break
             summary = extract_summary(response) or response
+            trace_before = graph_trace.capture(graph)
             graph.add_node(summary, NodeType.SUMMARY,
                           parent_id=graph.active_node_id,
                           edge_relation=EdgeRelation.TEMPORAL)
+            graph_trace.record(
+                graph, trace_before, turn_id=main_turn_count,
+                source="system", op="session_summary",
+                args={"summary": summary}, success=True,
+                assistant_content=response,
+            )
             next_session_prompt = (
                 f"For this question, you have already made the following progress in previous session, "
                 f"summarized as follow:\n\n{summary}\n\nNow continue work on it.")
@@ -439,12 +448,20 @@ async def process_item(
                 'select': handle_select,
                 'prune': handle_prune,
             }[fn_call['function']]
+            trace_before = graph_trace.capture(graph)
             budget_error = graph.graph_op_budget_error()
             observation = (
                 GraphOpResult(f"[Error] {budget_error}.\n\n{graph.to_state_text()}", False)
                 if budget_error else handler(graph, fn_call)
             )
             graph.record_graph_op(observation.success)
+            graph_trace.record(
+                graph, trace_before, turn_id=main_turn_count,
+                source="model", op=fn_call['function'],
+                args=fn_call.get('arguments', {}), success=observation.success,
+                error=None if observation.success else str(observation).split("\n", 1)[0],
+                assistant_content=response,
+            )
             if not observation.success and process_reward and is_train:
                 graph_turn_idx = len(agent['main'].chat) - 1
                 agent['main'].set_process_reward(
@@ -456,6 +473,7 @@ async def process_item(
         # Exposing and handling it explicitly keeps consolidation checkpoints
         # inside the same XML tool protocol as every other graph action.
         elif fn_call is not None and fn_call['function'] == 'pass':
+            trace_before = graph_trace.capture(graph)
             if graph.is_saturated():
                 observation = GraphOpResult(
                     f"[Graph] pass accepted; no consolidation needed.\n\n{graph.to_state_text()}",
@@ -471,11 +489,24 @@ async def process_item(
                     agent['main'].set_process_reward(
                         pass_turn_idx, consolidation_pass_invalid_penalty
                     )
+            graph_trace.record(
+                graph, trace_before, turn_id=main_turn_count,
+                source="model", op="pass", args={}, success=observation.success,
+                error=None if observation.success else str(observation).split("\n", 1)[0],
+                assistant_content=response,
+            )
 
         # ── Branch: spawn isolated child subgraph ──
         elif fn_call is not None and fn_call['function'] == 'branch':
+            trace_before = graph_trace.capture(graph)
             if len(branches) + 1 > max_session:
                 observation = f"You've already reached the limit of {len(branches)} branch calls. Continue working independently."
+                graph_trace.record(
+                    graph, trace_before, turn_id=main_turn_count,
+                    source="model", op="branch",
+                    args=fn_call.get('arguments', {}), success=False,
+                    error="branch session limit reached", assistant_content=response,
+                )
             else:
                 description = fn_call['arguments'].get('description', 'Agent')
                 message_to_branch = fn_call['arguments'].get('prompt', 'Empty prompt')
@@ -607,9 +638,16 @@ async def process_item(
                 else:
                     observation = branch_message
                 branch_return[agent_name] = branch_message
+                graph_trace.record(
+                    graph, trace_before, turn_id=main_turn_count,
+                    source="model", op="branch",
+                    args=fn_call.get('arguments', {}), success=True,
+                    assistant_content=response,
+                )
 
         # ── Regular tools on main agent: add observation to PARENT graph ──
         else:
+            trace_before = graph_trace.capture(graph)
             observation = await run_action(env, response)
             if observation is None:
                 mask_rollout = False
@@ -649,21 +687,50 @@ async def process_item(
                             'raw_content': observation,
                         },
                     )
+            if new_evidence_node_id is not None:
+                graph_trace.record(
+                    graph, trace_before, turn_id=main_turn_count,
+                    source="environment", op="add_observation",
+                    args={
+                        "tool": fn_call.get('function') if fn_call else None,
+                        "node_id": new_evidence_node_id,
+                    },
+                    success=True,
+                    assistant_content=response,
+                )
 
         # ── Auto graph operations on PARENT graph (only) ──
         # Parent graph stays small (subtask + summary + main observations),
         # so the same heuristic thresholds work fine.
+        trace_before = graph_trace.capture(graph)
         auto_pruned = graph.auto_prune_low_value(max_active=12)
         if auto_pruned:
+            graph_trace.record(
+                graph, trace_before, turn_id=main_turn_count,
+                source="heuristic", op="auto_prune",
+                args={"node_ids": auto_pruned}, success=True,
+            )
             print(f'[GRAPH ISOLATED AUTO] Pruned low-value nodes: {auto_pruned}')
 
+        trace_before = graph_trace.capture(graph)
         auto_edges = graph.auto_connect_semantic(keyword_overlap_threshold=3)
         if auto_edges:
+            graph_trace.record(
+                graph, trace_before, turn_id=main_turn_count,
+                source="heuristic", op="auto_connect",
+                args={"edges": auto_edges}, success=True,
+            )
             print(f'[GRAPH ISOLATED AUTO] Added semantic edges: {auto_edges}')
 
         if fn_call and fn_call.get('function') == 'branch':
+            trace_before = graph_trace.capture(graph)
             auto_merged = graph.auto_merge_similar(similarity_threshold=2)
             if auto_merged:
+                graph_trace.record(
+                    graph, trace_before, turn_id=main_turn_count,
+                    source="heuristic", op="auto_merge",
+                    args={"summary_node_id": auto_merged}, success=True,
+                )
                 print(f'[GRAPH ISOLATED AUTO] Merged: {auto_merged}')
 
         if agent['main'].chat[-1]['role'] == 'user':
@@ -810,12 +877,20 @@ async def process_item(
                     'select': handle_select,
                     'prune': handle_prune,
                 }[consol_fn['function']]
+                trace_before = graph_trace.capture(graph)
                 budget_error = graph.graph_op_budget_error()
                 consol_obs = (
                     GraphOpResult(f"[Error] {budget_error}.\n\n{graph.to_state_text()}", False)
                     if budget_error else handler(graph, consol_fn)
                 )
                 graph.record_graph_op(consol_obs.success)
+                graph_trace.record(
+                    graph, trace_before, turn_id=main_turn_count,
+                    source="model", op=consol_fn['function'],
+                    args=consol_fn.get('arguments', {}), success=consol_obs.success,
+                    error=None if consol_obs.success else str(consol_obs).split("\n", 1)[0],
+                    assistant_content=consol_response,
+                )
                 if consol_obs.success:
                     consolidation_stats['ops'] += 1
                     if process_reward and is_train:
@@ -829,6 +904,7 @@ async def process_item(
                     print(f'[CONSOL INVALID] {consol_fn["function"]} -> {consol_obs[:100]}')
                     ack = f"[CONSOLIDATION INVALID] {consol_obs[:300]}"
             elif consol_fn is not None and consol_fn['function'] == 'pass':
+                trace_before = graph_trace.capture(graph)
                 if is_sat:
                     consolidation_stats['pass_valid'] += 1
                     # reward-neutral
@@ -841,6 +917,12 @@ async def process_item(
                             consol_turn_idx, consolidation_pass_invalid_penalty)
                     print('[CONSOL PASS] NOT saturated -> penalty')
                     ack = "[CONSOLIDATION ACK] pass rejected (graph still sparse, op was expected)."
+                graph_trace.record(
+                    graph, trace_before, turn_id=main_turn_count,
+                    source="model", op="pass", args={}, success=is_sat,
+                    error=None if is_sat else "pass rejected: graph not saturated",
+                    assistant_content=consol_response,
+                )
             else:
                 consolidation_stats['invalid'] += 1
                 if process_reward and is_train:
@@ -963,6 +1045,12 @@ async def process_item(
     env.stats['memory_retrieval_summary_tokens'] = retrieval_totals['summary_tokens']
     env.stats['memory_retrieval_evidence_tokens'] = retrieval_totals['evidence_tokens']
     env.stats['memory_retrieval_max_context_tokens'] = retrieval_totals['max_context_tokens']
+    graph_trace_payload = graph_trace.finalize(graph)
+    env.stats['graph_trace_events'] = len(graph_trace_payload['events'])
+    env.stats['graph_trace_model_events'] = sum(
+        event.get('source') == 'model'
+        for event in graph_trace_payload['events']
+    )
 
     if getattr(env, 'is_finish', False) or getattr(env, 'finish', False):
         mask_rollout = False
@@ -1129,6 +1217,7 @@ async def process_item(
                 'uid': uid,
                 'gen_uid': gen_uid,
                 'graph_state': graph.to_state_text(),
+                'graph_trace': graph_trace_payload,
                 'graph_rewards': graph_rewards,
                 'isolated_subgraph_stats': branch_subgraph_stats,
             }

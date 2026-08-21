@@ -43,6 +43,17 @@ SAB uses `envs/scienceagent_env.py` and `envs/scienceagent_sandbox.py`.
 
 ALFWorld uses `envs/alfworld_env.py` and does not need a search server.
 
+## Multi-turn ContextGraph SFT
+
+- `eval_interactive.py`: shared API trajectory runner for ALFWorld and ScienceWorld.
+- `build_contextgraph_sft.py`: validates structured graph traces, filters failed or
+  redundant graph control, groups tasks across splits, and writes multi-turn SFT Parquet.
+- `smoke_interactive_ctxgraph_qwen36_27b_1node.sh`: two-domain Qwen3.6-27B smoke.
+- `generate_ctxgraph_sft_deepseek_v4_interactive_8node.sh`: two-domain DeepSeek-V4
+  production teacher job; array 0 is ALFWorld and array 1 is ScienceWorld.
+- `smoke_interactive_ctxgraph_deepseek_v4_4node_idev.sh`: conservative TP=4,
+  32K-context DeepSeek-V4 smoke for an existing four-GH200 allocation.
+
 ## Removed Surface
 
 HotpotQA, MuSiQue, and 2WikiMultiHopQA wrappers were removed from the active script surface. Shared search code remains for BrowseComp-Plus.

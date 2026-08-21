@@ -190,7 +190,31 @@ MODEL_PATH=$SCRATCH/models/DeepSeek-V4-Flash-0731 START_INDEX=0 MAX_SAMPLES=100 
 ```
 
 Only correct, finished, non-overlong trajectories with no invalid graph calls
-and at least one successful structural graph operation are retained.
+and at least one successful structural graph operation are retained. New
+trajectories also carry a `contextgraph.trace.v1` event log with hashed
+before/after states. The curator verifies event continuity, executor effects,
+counter agreement, redundant operations, and task-grouped train/validation
+splits before writing Parquet.
+
+ALFWorld and ScienceWorld use the eight-node interactive DeepSeek pipeline
+(no retrieval node). Array index 0 runs ALFWorld and index 1 runs ScienceWorld:
+
+```bash
+sbatch scripts/generate_ctxgraph_sft_deepseek_v4_interactive_8node.sh
+```
+
+Use `DOMAIN=alfworld` or `DOMAIN=scienceworld` when running a single array
+task manually. Raw JSON retains messages, the final rendered graph, graph
+rewards, and the replay-auditable structured trace; curated rows retain the
+canonical trace and final graph as JSON metadata alongside `messages`.
+
+Inside an existing four-GH200 `idev`, use the conservative TP=4 wrapper and
+run the two interactive domains sequentially:
+
+```bash
+DOMAIN=alfworld bash scripts/smoke_interactive_ctxgraph_deepseek_v4_4node_idev.sh
+DOMAIN=scienceworld bash scripts/smoke_interactive_ctxgraph_deepseek_v4_4node_idev.sh
+```
 
 For a quick smoke inside an existing 4-node Vista `idev` allocation, use the
 single-GPU `Qwen/Qwen3.6-27B` teacher. The smoke uses one node for vLLM and one
