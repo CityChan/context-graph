@@ -44,6 +44,9 @@ def test_deepseek_server_scripts_pin_vista_cuda_and_local_jit_caches():
         assert "--safetensors-load-strategy $SAFETENSORS_LOAD_STRATEGY" in text
         assert "PREFLIGHT_TIMEOUT_SECONDS" in text
         assert "Preflight: importing server packages" in text
+        assert "preflight stage: import transformers" in text
+        assert "preflight stage: import vllm" in text
+        assert "preflight stage: read model config" in text
         assert "export CUDA_HOME=$CUDA_HOME" in text
 
 
