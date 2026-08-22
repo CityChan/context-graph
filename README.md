@@ -180,7 +180,8 @@ DeepSeek teacher scripts default `HF_HOME` and `HF_HUB_CACHE` to `$SCRATCH`
 even when the login shell has stale `/work` cache variables. They pin Vista's
 CUDA 12.8 compiler with GCC/G++ host compilers, add Vista's CUDA math headers
 (including cuRAND), and give each node local DeepGEMM, FlashInfer, and vLLM
-JIT caches under `/tmp`. Override these defaults with the
+JIT caches under `/tmp`. Safetensors use eager loading by default to avoid
+long-lived mmap handles on the shared checkpoint filesystem. Override these defaults with the
 dedicated `DEEPSEEK_HF_HOME`, `DEEPSEEK_HF_HUB_CACHE`,
 `DEEPSEEK_CUDA_HOME`, `DEEPSEEK_CC`, `DEEPSEEK_CXX`, and
 `DEEPSEEK_CUDAHOSTCXX` variables. Model and student-tokenizer paths outside

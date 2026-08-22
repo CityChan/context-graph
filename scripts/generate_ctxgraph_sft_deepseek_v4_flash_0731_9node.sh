@@ -35,6 +35,7 @@ RESPONSE_LENGTH=${RESPONSE_LENGTH:-16384}
 MAX_MODEL_LEN=${MAX_MODEL_LEN:-32768}
 MAX_NUM_SEQS=${MAX_NUM_SEQS:-8}
 GPU_MEMORY_UTILIZATION=${GPU_MEMORY_UTILIZATION:-0.90}
+SAFETENSORS_LOAD_STRATEGY=${SAFETENSORS_LOAD_STRATEGY:-eager}
 REASONING_EFFORT=${REASONING_EFFORT:-non-thinking}
 TEMPERATURE=${TEMPERATURE:-1.0}
 TOP_P=${TOP_P:-0.95}
@@ -179,7 +180,7 @@ if ! VLLM_HELP=$(timeout "$PREFLIGHT_TIMEOUT_SECONDS" vllm serve --help=all 2>&1
   echo "ERROR: vLLM CLI preflight failed or exceeded ${PREFLIGHT_TIMEOUT_SECONDS}s"
   exit 2
 fi
-for required_flag in --distributed-executor-backend --tensor-parallel-size --enable-expert-parallel --kv-cache-dtype --tokenizer-mode --moe-backend; do
+for required_flag in --distributed-executor-backend --tensor-parallel-size --enable-expert-parallel --kv-cache-dtype --tokenizer-mode --moe-backend --safetensors-load-strategy; do
   if ! printf '%s\n' "$VLLM_HELP" | grep -q -- "$required_flag"; then
     echo "ERROR: $SERVER_CONDA_ENV vLLM does not support $required_flag"
     echo "Install a DeepSeek-V4-compatible vLLM build in the dedicated server environment."
@@ -216,6 +217,7 @@ echo "Model path: $MODEL_PATH"
 echo "Tokenizer:  $STUDENT_TOKENIZER_PATH"
 echo "Server env: $SERVER_CONDA_ENV; TP=$TEACHER_TP; model nodes=${NODELIST[*]:1}"
 echo "Search:     $SEARCH_NODE ($SEARCH_NODE_IP:$SEARCH_PORT)"
+echo "Safetensors load strategy: $SAFETENSORS_LOAD_STRATEGY"
 echo "Output:     $ARTIFACT_ROOT"
 
 STEP_PIDS=()
@@ -257,7 +259,7 @@ for _ in $(seq 1 180); do
 done
 
 VLLM_LOG="$PROJECT_ROOT/logs/gen-cg-sft-dsv4-vllm.${SLURM_JOB_ID:-local}.log"
-srun --overlap --nodes=1 --ntasks=1 -w "$TEACHER_HEAD_NODE" bash -lc "source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh; conda activate $SERVER_CONDA_ENV; export CUDA_HOME=$CUDA_HOME CUDACXX=$CUDACXX CC=$CC CXX=$CXX CUDAHOSTCXX=$CUDAHOSTCXX DG_JIT_CACHE_DIR=$DG_JIT_CACHE_DIR VLLM_CACHE_ROOT=$VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_BASE=$FLASHINFER_WORKSPACE_BASE; export PATH=$CUDA_HOME/bin:\$PATH LD_LIBRARY_PATH=$LD_LIBRARY_PATH LIBRARY_PATH=$LIBRARY_PATH CPATH=$CPATH C_INCLUDE_PATH=$C_INCLUDE_PATH CPLUS_INCLUDE_PATH=$CPLUS_INCLUDE_PATH; export NVCC_PREPEND_FLAGS=\"$NVCC_PREPEND_FLAGS\"; export HF_HOME=$HF_HOME HF_HUB_CACHE=$HF_HUB_CACHE HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 RAY_ADDRESS=$TEACHER_HEAD_IP:6379; exec vllm serve $MODEL_PATH --served-model-name $MODEL_ID --host 0.0.0.0 --port $TEACHER_PORT --distributed-executor-backend ray --tensor-parallel-size $TEACHER_TP --enable-expert-parallel --moe-backend auto --trust-remote-code --tokenizer-mode deepseek_v4 --kv-cache-dtype fp8 --block-size 256 --max-model-len $MAX_MODEL_LEN --max-num-seqs $MAX_NUM_SEQS --gpu-memory-utilization $GPU_MEMORY_UTILIZATION --enable-chunked-prefill" >"$VLLM_LOG" 2>&1 &
+srun --overlap --nodes=1 --ntasks=1 -w "$TEACHER_HEAD_NODE" bash -lc "source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh; conda activate $SERVER_CONDA_ENV; export CUDA_HOME=$CUDA_HOME CUDACXX=$CUDACXX CC=$CC CXX=$CXX CUDAHOSTCXX=$CUDAHOSTCXX DG_JIT_CACHE_DIR=$DG_JIT_CACHE_DIR VLLM_CACHE_ROOT=$VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_BASE=$FLASHINFER_WORKSPACE_BASE; export PATH=$CUDA_HOME/bin:\$PATH LD_LIBRARY_PATH=$LD_LIBRARY_PATH LIBRARY_PATH=$LIBRARY_PATH CPATH=$CPATH C_INCLUDE_PATH=$C_INCLUDE_PATH CPLUS_INCLUDE_PATH=$CPLUS_INCLUDE_PATH; export NVCC_PREPEND_FLAGS=\"$NVCC_PREPEND_FLAGS\"; export HF_HOME=$HF_HOME HF_HUB_CACHE=$HF_HUB_CACHE HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 RAY_ADDRESS=$TEACHER_HEAD_IP:6379; exec vllm serve $MODEL_PATH --served-model-name $MODEL_ID --host 0.0.0.0 --port $TEACHER_PORT --distributed-executor-backend ray --tensor-parallel-size $TEACHER_TP --enable-expert-parallel --moe-backend auto --trust-remote-code --tokenizer-mode deepseek_v4 --kv-cache-dtype fp8 --block-size 256 --max-model-len $MAX_MODEL_LEN --max-num-seqs $MAX_NUM_SEQS --gpu-memory-utilization $GPU_MEMORY_UTILIZATION --safetensors-load-strategy $SAFETENSORS_LOAD_STRATEGY --enable-chunked-prefill" >"$VLLM_LOG" 2>&1 &
 STEP_PIDS+=("$!")
 
 for _ in $(seq 1 1800); do

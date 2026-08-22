@@ -40,6 +40,8 @@ def test_deepseek_server_scripts_pin_vista_cuda_and_local_jit_caches():
         assert "DEEPSEEK_CUDA_MATH_LIB" in text
         assert "curand.h" in text
         assert "NVCC_PREPEND_FLAGS" in text
+        assert "SAFETENSORS_LOAD_STRATEGY=${SAFETENSORS_LOAD_STRATEGY:-eager}" in text
+        assert "--safetensors-load-strategy $SAFETENSORS_LOAD_STRATEGY" in text
         assert "PREFLIGHT_TIMEOUT_SECONDS" in text
         assert "Preflight: importing server packages" in text
         assert "export CUDA_HOME=$CUDA_HOME" in text
