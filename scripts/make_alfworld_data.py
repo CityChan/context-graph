@@ -94,6 +94,7 @@ def to_row(task, workflow, ability):
         "prompt": [{"role": "user", "content": task['task_desc']}],
         "ability": ability,
         "extra_info": {
+            "task_id": task.get("task_id", "unknown"),
             "query": task["task_desc"],
             "answer": task.get("answer", "success"),
             "problem_statement": task["task_desc"],

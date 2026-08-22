@@ -175,6 +175,7 @@ def test_data_scan_matches_official_solvable_filters(tmp_path):
 
 def test_foldagent_data_row_uses_branch_workflow():
     task = {
+        "task_id": "alfworld_train_pick_and_place_simple_demo",
         "task_desc": "ALFWorld task: pick and place simple",
         "answer": "success",
         "task_type": "pick_and_place_simple",
@@ -184,6 +185,7 @@ def test_foldagent_data_row_uses_branch_workflow():
     row = to_row(task, "alfworld_branch", "ALFWorld@real")
 
     assert row["extra_info"]["workflow"] == "alfworld_branch"
+    assert row["extra_info"]["task_id"] == task["task_id"]
 
 
 def test_alfworld_prompt_can_expose_action_only_toolset():

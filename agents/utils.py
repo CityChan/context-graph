@@ -417,15 +417,30 @@ class AgentContext:
         self.metrics = None
         self.prompt_ids_len = len(sum(self.chat_ids[:prompt_turn], []))
 
+    def _render_prefix(self, chat):
+        """Render a complete-enough chat prefix for incremental accounting.
+
+        Some modern templates (including Qwen3.6) reject a system-only
+        prefix with ``No user query found in messages`` even though the full
+        system+user conversation is valid. Defer those system tokens to the
+        first renderable prefix; the combined prompt token count remains
+        exact and later assistant/user turns retain normal segmentation.
+        """
+        if not chat:
+            return []
+        try:
+            return _apply_chat_template(
+                self.tokenizer, chat, self.config,
+                add_generation_prompt=False, tokenize=True
+            )
+        except Exception:
+            if not any(turn.get('role') == 'user' for turn in chat):
+                return []
+            raise
+
     def get_turn_context(self, i):
-        tokens = _apply_chat_template(
-            self.tokenizer, self.chat[:i + 1], self.config,
-            add_generation_prompt=False, tokenize=True
-        )
-        prev = _apply_chat_template(
-            self.tokenizer, self.chat[:i], self.config,
-            add_generation_prompt=False, tokenize=True
-        ) if i > 0 else []
+        tokens = self._render_prefix(self.chat[:i + 1])
+        prev = self._render_prefix(self.chat[:i]) if i > 0 else []
         turn_tokens = tokens[len(prev):]
         return turn_tokens
 

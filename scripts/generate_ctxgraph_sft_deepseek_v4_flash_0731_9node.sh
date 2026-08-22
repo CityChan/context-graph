@@ -18,6 +18,9 @@ PROJECT_ROOT=${PROJECT_ROOT:-/work/09281/chc_1996/vista/context-graph}
 MODEL_ID=${MODEL_ID:-deepseek-ai/DeepSeek-V4-Flash-0731}
 SERVER_CONDA_ENV=${SERVER_CONDA_ENV:-deepseek_v4}
 AGENT_CONDA_ENV=${AGENT_CONDA_ENV:-cxtgraph}
+DEEPSEEK_CUDA_HOME=${DEEPSEEK_CUDA_HOME:-/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8}
+DEEPSEEK_MATH_LIB_ROOT=${DEEPSEEK_MATH_LIB_ROOT:-/home1/apps/nvidia/Linux_aarch64/25.3/math_libs/12.8}
+DEEPSEEK_CUDA_MATH_INCLUDE=${DEEPSEEK_CUDA_MATH_INCLUDE:-$DEEPSEEK_MATH_LIB_ROOT/targets/sbsa-linux/include}
 EXPECTED_NUM_NODES=${EXPECTED_NUM_NODES:-9}
 TEACHER_TP=${TEACHER_TP:-8}
 TEACHER_PORT=${TEACHER_PORT:-18000}
@@ -41,10 +44,11 @@ EMBED_MODEL=${EMBED_MODEL:-Qwen/Qwen3-Embedding-8B}
 STUDENT_TOKENIZER_ID=${STUDENT_TOKENIZER_ID:-Qwen/Qwen3-8B}
 RUN_TAG=${RUN_TAG:-${SLURM_JOB_ID:-local}}
 PREFLIGHT_ONLY=${PREFLIGHT_ONLY:-0}
+PREFLIGHT_TIMEOUT_SECONDS=${PREFLIGHT_TIMEOUT_SECONDS:-180}
 
 : "${SCRATCH:?SCRATCH must point to the Vista scratch filesystem}"
-HF_HOME=${HF_HOME:-$SCRATCH/hf_cache}
-HF_HUB_CACHE=${HF_HUB_CACHE:-$HF_HOME/hub}
+HF_HOME=${DEEPSEEK_HF_HOME:-$SCRATCH/hf_cache}
+HF_HUB_CACHE=${DEEPSEEK_HF_HUB_CACHE:-$HF_HOME/hub}
 SCRATCH_HF_HUB_CACHE=${SCRATCH_HF_HUB_CACHE:-$SCRATCH/hf_cache/hub}
 SEARCH_HF_HOME=${SEARCH_HF_HOME:-/work/09281/chc_1996/vista/cache}
 SEARCH_HF_HUB_CACHE=${SEARCH_HF_HUB_CACHE:-$SEARCH_HF_HOME/hub}
@@ -142,10 +146,39 @@ set +u
 source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
 conda activate "$SERVER_CONDA_ENV"
 set -u
-python -c "import transformers, vllm; from packaging.version import Version; from transformers import AutoConfig; assert Version(vllm.__version__) >= Version('0.25.0'), 'DeepSeek-V4-Flash-0731 requires vLLM >= 0.25.0'; c=AutoConfig.from_pretrained('$MODEL_PATH', trust_remote_code=True, local_files_only=True); print('server preflight:', 'transformers='+transformers.__version__, 'vllm='+vllm.__version__, 'model_type='+str(getattr(c, 'model_type', None)))"
+test -x "$DEEPSEEK_CUDA_HOME/bin/nvcc" || { echo "ERROR: CUDA compiler missing: $DEEPSEEK_CUDA_HOME/bin/nvcc"; exit 2; }
+test -s "$DEEPSEEK_CUDA_MATH_INCLUDE/curand.h" || { echo "ERROR: CUDA math header missing: $DEEPSEEK_CUDA_MATH_INCLUDE/curand.h"; exit 2; }
+export CUDA_HOME="$DEEPSEEK_CUDA_HOME"
+export PATH="$CUDA_HOME/bin:$PATH"
+export CUDACXX="$CUDA_HOME/bin/nvcc"
+export CC=${DEEPSEEK_CC:-gcc}
+export CXX=${DEEPSEEK_CXX:-g++}
+export CUDAHOSTCXX=${DEEPSEEK_CUDAHOSTCXX:-g++}
+command -v "$CC" >/dev/null || { echo "ERROR: C compiler not found: $CC"; exit 2; }
+command -v "$CXX" >/dev/null || { echo "ERROR: C++ compiler not found: $CXX"; exit 2; }
+DEEPSEEK_CUDA_MATH_LIB=${DEEPSEEK_CUDA_MATH_LIB:-$DEEPSEEK_MATH_LIB_ROOT/targets/sbsa-linux/lib}
+export LD_LIBRARY_PATH="${CONDA_PREFIX}/lib:$DEEPSEEK_CUDA_MATH_LIB:$CUDA_HOME/targets/sbsa-linux/lib:$CUDA_HOME/lib64:${LD_LIBRARY_PATH:-}"
+export LIBRARY_PATH="$DEEPSEEK_CUDA_MATH_LIB:$CUDA_HOME/targets/sbsa-linux/lib:$CUDA_HOME/lib64:${LIBRARY_PATH:-}"
+export CPATH="$DEEPSEEK_CUDA_MATH_INCLUDE:$CUDA_HOME/include:${CPATH:-}"
+export C_INCLUDE_PATH="$DEEPSEEK_CUDA_MATH_INCLUDE:$CUDA_HOME/include:${C_INCLUDE_PATH:-}"
+export CPLUS_INCLUDE_PATH="$DEEPSEEK_CUDA_MATH_INCLUDE:$CUDA_HOME/include:${CPLUS_INCLUDE_PATH:-}"
+export NVCC_PREPEND_FLAGS="-I$DEEPSEEK_CUDA_MATH_INCLUDE ${NVCC_PREPEND_FLAGS:-}"
+DEEPSEEK_CACHE_TAG=${SLURM_JOB_ID:-local}_0
+export DG_JIT_CACHE_DIR=${DG_JIT_CACHE_DIR:-/tmp/contextgraph-deepgemm-$DEEPSEEK_CACHE_TAG}
+export VLLM_CACHE_ROOT=${VLLM_CACHE_ROOT:-/tmp/contextgraph-vllm-$DEEPSEEK_CACHE_TAG}
+export FLASHINFER_WORKSPACE_BASE=${FLASHINFER_WORKSPACE_BASE:-/tmp}
+echo "DeepSeek toolchain: nvcc=$CUDACXX host_cxx=$(command -v "$CXX")"
+echo "CUDA math headers: $DEEPSEEK_CUDA_MATH_INCLUDE"
+echo "Node-local JIT caches: DG_JIT_CACHE_DIR=$DG_JIT_CACHE_DIR VLLM_CACHE_ROOT=$VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_BASE=$FLASHINFER_WORKSPACE_BASE"
+echo "Preflight: importing server packages and reading model config"
+timeout "$PREFLIGHT_TIMEOUT_SECONDS" python -u -c "import transformers, vllm; from packaging.version import Version; from transformers import AutoConfig; assert Version(vllm.__version__) >= Version('0.25.0'), 'DeepSeek-V4-Flash-0731 requires vLLM >= 0.25.0'; c=AutoConfig.from_pretrained('$MODEL_PATH', trust_remote_code=True, local_files_only=True); print('server preflight:', 'transformers='+transformers.__version__, 'vllm='+vllm.__version__, 'model_type='+str(getattr(c, 'model_type', None)))" || { echo "ERROR: server package/model preflight failed or exceeded ${PREFLIGHT_TIMEOUT_SECONDS}s"; exit 2; }
 # vLLM 0.27 uses paged/grouped CLI help; plain --help intentionally omits
 # model and parallelism options.
-VLLM_HELP=$(vllm serve --help=all 2>&1)
+echo "Preflight: checking required vLLM CLI flags"
+if ! VLLM_HELP=$(timeout "$PREFLIGHT_TIMEOUT_SECONDS" vllm serve --help=all 2>&1); then
+  echo "ERROR: vLLM CLI preflight failed or exceeded ${PREFLIGHT_TIMEOUT_SECONDS}s"
+  exit 2
+fi
 for required_flag in --distributed-executor-backend --tensor-parallel-size --enable-expert-parallel --kv-cache-dtype --tokenizer-mode --moe-backend; do
   if ! printf '%s\n' "$VLLM_HELP" | grep -q -- "$required_flag"; then
     echo "ERROR: $SERVER_CONDA_ENV vLLM does not support $required_flag"
@@ -205,7 +238,7 @@ done
 curl --noproxy '*' -fsS "http://$SEARCH_NODE_IP:$SEARCH_PORT/health" >/dev/null
 
 RAY_HEAD_LOG="$PROJECT_ROOT/logs/gen-cg-sft-dsv4-ray-head.${SLURM_JOB_ID:-local}.log"
-srun --overlap --nodes=1 --ntasks=1 -w "$TEACHER_HEAD_NODE" bash -lc "source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh; conda activate $SERVER_CONDA_ENV; ray stop --force >/dev/null 2>&1 || true; export HF_HOME=$HF_HOME HF_HUB_CACHE=$HF_HUB_CACHE; exec ray start --head --node-ip-address=$TEACHER_HEAD_IP --port=6379 --num-cpus=70 --num-gpus=1 --block" >"$RAY_HEAD_LOG" 2>&1 &
+srun --overlap --nodes=1 --ntasks=1 -w "$TEACHER_HEAD_NODE" bash -lc "source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh; conda activate $SERVER_CONDA_ENV; ray stop --force >/dev/null 2>&1 || true; export CUDA_HOME=$CUDA_HOME CUDACXX=$CUDACXX CC=$CC CXX=$CXX CUDAHOSTCXX=$CUDAHOSTCXX DG_JIT_CACHE_DIR=$DG_JIT_CACHE_DIR VLLM_CACHE_ROOT=$VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_BASE=$FLASHINFER_WORKSPACE_BASE; export PATH=$CUDA_HOME/bin:\$PATH LD_LIBRARY_PATH=$LD_LIBRARY_PATH LIBRARY_PATH=$LIBRARY_PATH CPATH=$CPATH C_INCLUDE_PATH=$C_INCLUDE_PATH CPLUS_INCLUDE_PATH=$CPLUS_INCLUDE_PATH; export NVCC_PREPEND_FLAGS=\"$NVCC_PREPEND_FLAGS\"; export HF_HOME=$HF_HOME HF_HUB_CACHE=$HF_HUB_CACHE; exec ray start --head --node-ip-address=$TEACHER_HEAD_IP --port=6379 --num-cpus=70 --num-gpus=1 --block" >"$RAY_HEAD_LOG" 2>&1 &
 STEP_PIDS+=("$!")
 sleep 8
 
@@ -213,7 +246,7 @@ for i in $(seq 2 $((NUM_NODES - 1))); do
   node=${NODELIST[$i]}
   worker_ip=$(getent hosts "$node" | awk '{print $1}')
   worker_log="$PROJECT_ROOT/logs/gen-cg-sft-dsv4-ray-worker-${i}.${SLURM_JOB_ID:-local}.log"
-  srun --overlap --nodes=1 --ntasks=1 -w "$node" bash -lc "source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh; conda activate $SERVER_CONDA_ENV; ray stop --force >/dev/null 2>&1 || true; export HF_HOME=$HF_HOME HF_HUB_CACHE=$HF_HUB_CACHE; exec ray start --address=$TEACHER_HEAD_IP:6379 --node-ip-address=$worker_ip --num-cpus=70 --num-gpus=1 --block" >"$worker_log" 2>&1 &
+  srun --overlap --nodes=1 --ntasks=1 -w "$node" bash -lc "source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh; conda activate $SERVER_CONDA_ENV; ray stop --force >/dev/null 2>&1 || true; export CUDA_HOME=$CUDA_HOME CUDACXX=$CUDACXX CC=$CC CXX=$CXX CUDAHOSTCXX=$CUDAHOSTCXX DG_JIT_CACHE_DIR=$DG_JIT_CACHE_DIR VLLM_CACHE_ROOT=$VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_BASE=$FLASHINFER_WORKSPACE_BASE; export PATH=$CUDA_HOME/bin:\$PATH LD_LIBRARY_PATH=$LD_LIBRARY_PATH LIBRARY_PATH=$LIBRARY_PATH CPATH=$CPATH C_INCLUDE_PATH=$C_INCLUDE_PATH CPLUS_INCLUDE_PATH=$CPLUS_INCLUDE_PATH; export NVCC_PREPEND_FLAGS=\"$NVCC_PREPEND_FLAGS\"; export HF_HOME=$HF_HOME HF_HUB_CACHE=$HF_HUB_CACHE; exec ray start --address=$TEACHER_HEAD_IP:6379 --node-ip-address=$worker_ip --num-cpus=70 --num-gpus=1 --block" >"$worker_log" 2>&1 &
   STEP_PIDS+=("$!")
 done
 
@@ -224,7 +257,7 @@ for _ in $(seq 1 180); do
 done
 
 VLLM_LOG="$PROJECT_ROOT/logs/gen-cg-sft-dsv4-vllm.${SLURM_JOB_ID:-local}.log"
-srun --overlap --nodes=1 --ntasks=1 -w "$TEACHER_HEAD_NODE" bash -lc "source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh; conda activate $SERVER_CONDA_ENV; export HF_HOME=$HF_HOME HF_HUB_CACHE=$HF_HUB_CACHE HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 RAY_ADDRESS=$TEACHER_HEAD_IP:6379; exec vllm serve $MODEL_PATH --served-model-name $MODEL_ID --host 0.0.0.0 --port $TEACHER_PORT --distributed-executor-backend ray --tensor-parallel-size $TEACHER_TP --enable-expert-parallel --moe-backend auto --trust-remote-code --tokenizer-mode deepseek_v4 --kv-cache-dtype fp8 --block-size 256 --max-model-len $MAX_MODEL_LEN --max-num-seqs $MAX_NUM_SEQS --gpu-memory-utilization $GPU_MEMORY_UTILIZATION --enable-chunked-prefill" >"$VLLM_LOG" 2>&1 &
+srun --overlap --nodes=1 --ntasks=1 -w "$TEACHER_HEAD_NODE" bash -lc "source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh; conda activate $SERVER_CONDA_ENV; export CUDA_HOME=$CUDA_HOME CUDACXX=$CUDACXX CC=$CC CXX=$CXX CUDAHOSTCXX=$CUDAHOSTCXX DG_JIT_CACHE_DIR=$DG_JIT_CACHE_DIR VLLM_CACHE_ROOT=$VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_BASE=$FLASHINFER_WORKSPACE_BASE; export PATH=$CUDA_HOME/bin:\$PATH LD_LIBRARY_PATH=$LD_LIBRARY_PATH LIBRARY_PATH=$LIBRARY_PATH CPATH=$CPATH C_INCLUDE_PATH=$C_INCLUDE_PATH CPLUS_INCLUDE_PATH=$CPLUS_INCLUDE_PATH; export NVCC_PREPEND_FLAGS=\"$NVCC_PREPEND_FLAGS\"; export HF_HOME=$HF_HOME HF_HUB_CACHE=$HF_HUB_CACHE HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 RAY_ADDRESS=$TEACHER_HEAD_IP:6379; exec vllm serve $MODEL_PATH --served-model-name $MODEL_ID --host 0.0.0.0 --port $TEACHER_PORT --distributed-executor-backend ray --tensor-parallel-size $TEACHER_TP --enable-expert-parallel --moe-backend auto --trust-remote-code --tokenizer-mode deepseek_v4 --kv-cache-dtype fp8 --block-size 256 --max-model-len $MAX_MODEL_LEN --max-num-seqs $MAX_NUM_SEQS --gpu-memory-utilization $GPU_MEMORY_UTILIZATION --enable-chunked-prefill" >"$VLLM_LOG" 2>&1 &
 STEP_PIDS+=("$!")
 
 for _ in $(seq 1 1800); do

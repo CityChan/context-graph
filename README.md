@@ -176,9 +176,15 @@ additional node for BrowseComp-Plus retrieval. The DeepSeek server runs in a
 dedicated `deepseek_v4` conda environment with vLLM 0.25 or newer; the agent
 runner remains in `cxtgraph`.
 
-Interactive DeepSeek and Qwen teacher scripts reject `HF_HOME`,
-`HF_HUB_CACHE`, `MODEL_PATH`, and student-tokenizer paths outside `$SCRATCH`;
-large checkpoints are never resolved from the project `/work` filesystem.
+DeepSeek teacher scripts default `HF_HOME` and `HF_HUB_CACHE` to `$SCRATCH`
+even when the login shell has stale `/work` cache variables. They pin Vista's
+CUDA 12.8 compiler with GCC/G++ host compilers, add Vista's CUDA math headers
+(including cuRAND), and give each node local DeepGEMM, FlashInfer, and vLLM
+JIT caches under `/tmp`. Override these defaults with the
+dedicated `DEEPSEEK_HF_HOME`, `DEEPSEEK_HF_HUB_CACHE`,
+`DEEPSEEK_CUDA_HOME`, `DEEPSEEK_CC`, `DEEPSEEK_CXX`, and
+`DEEPSEEK_CUDAHOSTCXX` variables. Model and student-tokenizer paths outside
+`$SCRATCH` are still rejected.
 
 Submit a 25-sample pilot:
 

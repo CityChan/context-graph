@@ -25,6 +25,33 @@ def test_deepseek_sft_script_requires_v4_serving_features():
     assert 'if [ "$PREFLIGHT_ONLY" = "1" ]' in text
 
 
+def test_deepseek_server_scripts_pin_vista_cuda_and_local_jit_caches():
+    for path in (SCRIPT, INTERACTIVE_SCRIPT):
+        text = path.read_text(encoding="utf-8")
+        assert "25.3/cuda/12.8" in text
+        assert "export CUDACXX=\"$CUDA_HOME/bin/nvcc\"" in text
+        assert "export CC=${DEEPSEEK_CC:-gcc}" in text
+        assert "export CXX=${DEEPSEEK_CXX:-g++}" in text
+        assert "export CUDAHOSTCXX=${DEEPSEEK_CUDAHOSTCXX:-g++}" in text
+        assert "DG_JIT_CACHE_DIR" in text
+        assert "VLLM_CACHE_ROOT" in text
+        assert "FLASHINFER_WORKSPACE_BASE" in text
+        assert "DEEPSEEK_CUDA_MATH_INCLUDE" in text
+        assert "DEEPSEEK_CUDA_MATH_LIB" in text
+        assert "curand.h" in text
+        assert "NVCC_PREPEND_FLAGS" in text
+        assert "PREFLIGHT_TIMEOUT_SECONDS" in text
+        assert "Preflight: importing server packages" in text
+        assert "export CUDA_HOME=$CUDA_HOME" in text
+
+
+def test_deepseek_server_scripts_default_hf_cache_to_scratch():
+    for path in (SCRIPT, INTERACTIVE_SCRIPT):
+        text = path.read_text(encoding="utf-8")
+        assert "HF_HOME=${DEEPSEEK_HF_HOME:-$SCRATCH/hf_cache}" in text
+        assert "HF_HUB_CACHE=${DEEPSEEK_HF_HUB_CACHE:-$HF_HOME/hub}" in text
+
+
 def test_deepseek_sft_script_keeps_eval_splits_out_by_default():
     text = SCRIPT.read_text(encoding="utf-8")
     assert "ALLOW_EVAL_DATA=${ALLOW_EVAL_DATA:-0}" in text
@@ -46,13 +73,16 @@ def test_deepseek_interactive_script_covers_both_train_domains_and_strict_trace(
     assert "require_scratch_path MODEL_PATH" in text
     assert "SHARED_HF_HOME" not in text
     assert "SHARED_HF_HUB_CACHE" not in text
+    assert "vLLM latest:" in text
 
 
 def test_deepseek_four_node_idev_smoke_is_conservative():
     text = IDEV4_SCRIPT.read_text(encoding="utf-8")
     assert "EXPECTED_NUM_NODES=${EXPECTED_NUM_NODES:-4}" in text
     assert "TEACHER_TP=${TEACHER_TP:-4}" in text
-    assert "MAX_NUM_SEQS=${MAX_NUM_SEQS:-2}" in text
+    assert "NUM_WORKERS=${NUM_WORKERS:-1}" in text
+    assert "MAX_NUM_SEQS=${MAX_NUM_SEQS:-1}" in text
     assert "MAX_MODEL_LEN=${MAX_MODEL_LEN:-32768}" in text
     assert "REASONING_EFFORT=${REASONING_EFFORT:-non-thinking}" in text
+    assert "GPU_MEMORY_UTILIZATION=${GPU_MEMORY_UTILIZATION:-0.75}" in text
     assert "generate_ctxgraph_sft_deepseek_v4_interactive_8node.sh" in text
