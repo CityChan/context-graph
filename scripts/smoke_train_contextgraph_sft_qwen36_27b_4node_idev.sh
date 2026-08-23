@@ -1,9 +1,9 @@
 #!/bin/bash
 
 # One real multi-turn SFT optimizer step for Qwen3.6-27B inside an existing
-# four-node Vista idev allocation. All four GH200s train one sequence with
-# FSDP2 + Ulysses sequence parallelism. The default LoRA smoke saves a real
-# sharded checkpoint while keeping optimizer memory comfortably below 96 GiB.
+# four-node Vista idev allocation. All four GH200s train one repeated smoke
+# sample with FSDP2 data parallelism and PyTorch SDPA. The default LoRA smoke
+# saves a real sharded checkpoint while avoiding an external flash-attn build.
 set -euo pipefail
 
 PROJECT_ROOT=${PROJECT_ROOT:-/work/09281/chc_1996/vista/context-graph}
@@ -12,11 +12,12 @@ TRAIN_CONDA_ENV=${TRAIN_CONDA_ENV:-deepseek_v4}
 EXPECTED_NUM_NODES=${EXPECTED_NUM_NODES:-4}
 MAX_LENGTH=${MAX_LENGTH:-8192}
 TOTAL_TRAINING_STEPS=${TOTAL_TRAINING_STEPS:-1}
-TRAIN_BATCH_SIZE=${TRAIN_BATCH_SIZE:-1}
+TRAIN_BATCH_SIZE=${TRAIN_BATCH_SIZE:-4}
 MICRO_BATCH_SIZE=${MICRO_BATCH_SIZE:-1}
 LORA_RANK=${LORA_RANK:-32}
 LORA_ALPHA=${LORA_ALPHA:-64}
 TRAIN_LR=${TRAIN_LR:-1e-5}
+ATTN_IMPLEMENTATION=${ATTN_IMPLEMENTATION:-sdpa}
 MASTER_PORT=${MASTER_PORT:-29517}
 PREFLIGHT_ONLY=${PREFLIGHT_ONLY:-0}
 RUN_TAG=${RUN_TAG:-${SLURM_JOB_ID:-idev}_qwen36_27b_sft_smoke}
@@ -111,7 +112,7 @@ SCRIPT_PATH=$(readlink -f "$0")
 if [ "${SFT_PREFLIGHT_WORKER:-0}" = "1" ]; then
   activate_train_env
   cd "$PROJECT_ROOT"
-  python -c "import flash_attn, hydra, peft, tensordict, torch, torchdata, transformers; from transformers import AutoConfig; c=AutoConfig.from_pretrained('$MODEL_PATH', trust_remote_code=True, local_files_only=True); print('node preflight:', 'host='+__import__('socket').gethostname(), 'torch='+torch.__version__, 'transformers='+transformers.__version__, 'model_type='+str(getattr(c, 'model_type', None)))"
+  python -c "import accelerate, codetiming, hydra, omegaconf, pandas, peft, pyarrow, tensordict, torch, torchdata, transformers; from transformers import AutoConfig; c=AutoConfig.from_pretrained('$MODEL_PATH', trust_remote_code=True, local_files_only=True); print('node preflight:', 'host='+__import__('socket').gethostname(), 'torch='+torch.__version__, 'transformers='+transformers.__version__, 'model_type='+str(getattr(c, 'model_type', None)))"
   nvidia-smi --query-gpu=memory.used,memory.free --format=csv,noheader
   exit 0
 fi
@@ -120,17 +121,18 @@ if [ "${SFT_TRAIN_WORKER:-0}" = "1" ]; then
   activate_train_env
   cd "$PROJECT_ROOT"
   exec torchrun --nnodes="$NUM_NODES" --nproc-per-node=1 --node-rank="$SLURM_PROCID" --master-addr="$MASTER_ADDR" --master-port="$MASTER_PORT" -m verl.trainer.fsdp_sft_trainer \
-    data.train_files="$TRAIN_FILE" \
-    data.val_files="$TRAIN_FILE" \
+    data.train_files="$TRAIN_FILES" \
+    data.val_files="$TRAIN_FILES" \
     data.train_batch_size="$TRAIN_BATCH_SIZE" \
     data.micro_batch_size_per_gpu="$MICRO_BATCH_SIZE" \
-    data.train_max_samples=1 \
-    data.val_max_samples=1 \
+    data.train_max_samples="$NUM_NODES" \
+    data.val_max_samples="$NUM_NODES" \
     data.multiturn.enable=True \
     data.max_length="$MAX_LENGTH" \
     data.truncation=right \
     model.partial_pretrain="$MODEL_PATH" \
     model.trust_remote_code=True \
+    model.attn_implementation="$ATTN_IMPLEMENTATION" \
     model.fsdp_config.model_dtype=bfloat16 \
     model.enable_gradient_checkpointing=True \
     model.lora_rank="$LORA_RANK" \
@@ -139,8 +141,8 @@ if [ "${SFT_TRAIN_WORKER:-0}" = "1" ]; then
     model.strategy=fsdp2 \
     optim.lr="$TRAIN_LR" \
     optim.lr_warmup_steps_ratio=0.0 \
-    ulysses_sequence_parallel_size="$NUM_NODES" \
-    use_remove_padding=True \
+    ulysses_sequence_parallel_size=1 \
+    use_remove_padding=False \
     trainer.project_name=contextgraph-sft \
     trainer.experiment_name="$RUN_TAG" \
     trainer.default_local_dir="$CHECKPOINT_ROOT" \
@@ -168,7 +170,8 @@ if [ "$NUM_NODES" -ne "$EXPECTED_NUM_NODES" ]; then
   exit 2
 fi
 MASTER_ADDR=$(getent hosts "${NODELIST[0]}" | awk '{print $1}')
-export MODEL_PATH TRAIN_FILE CHECKPOINT_ROOT NUM_NODES MASTER_ADDR MASTER_PORT
+TRAIN_FILES="[$TRAIN_FILE,$TRAIN_FILE,$TRAIN_FILE,$TRAIN_FILE]"
+export MODEL_PATH TRAIN_FILE TRAIN_FILES CHECKPOINT_ROOT NUM_NODES MASTER_ADDR MASTER_PORT ATTN_IMPLEMENTATION
 
 mkdir -p "$PROJECT_ROOT/logs" "$CHECKPOINT_ROOT"
 cd "$PROJECT_ROOT"
@@ -178,8 +181,8 @@ echo "Qwen3.6-27B ContextGraph SFT training smoke"
 echo "Model: $MODEL_PATH"
 echo "Data: $TRAIN_FILE"
 echo "Nodes: ${NODELIST[*]}"
-echo "Parallelism: FSDP2 world=$NUM_NODES, Ulysses SP=$NUM_NODES, DP=1"
-echo "Training: steps=$TOTAL_TRAINING_STEPS max_length=$MAX_LENGTH LoRA rank=$LORA_RANK"
+echo "Parallelism: FSDP2 world=$NUM_NODES, Ulysses SP=1, DP=$NUM_NODES"
+echo "Training: steps=$TOTAL_TRAINING_STEPS max_length=$MAX_LENGTH LoRA rank=$LORA_RANK attention=$ATTN_IMPLEMENTATION"
 echo "Checkpoint: $CHECKPOINT_ROOT"
 
 python scripts/check_contextgraph_sft_data.py --data "$TRAIN_FILE" --tokenizer "$MODEL_PATH" --max-length "$MAX_LENGTH"

@@ -32,6 +32,9 @@ data:
   apply_chat_template_kwargs: {}
 model:
   partial_pretrain: ~/models/gemma-1.1-7b-it
+  # Use "sdpa" when the environment has a recent PyTorch build but no
+  # separately compiled flash-attn extension.
+  attn_implementation: flash_attention_2
   use_shm: False
   fsdp_config:
     model_dtype: fp32
