@@ -265,6 +265,10 @@ class CallAPI(LLMClass):  # Call external API (OpenAI)
             base_url=os.getenv("OPENAI_BASE_URL", None)  # Optional custom base URL
         )
 
+    async def close(self):
+        """Close the underlying async HTTP transport before its event loop exits."""
+        await self.client.close()
+
     async def create_completion(self, input_ids, **kwargs):
         max_len = kwargs.pop('max_len', None) or self.config.prompt_length + self.config.response_length
         max_tokens = min(max_len, self.config.prompt_length + self.config.response_length) - len(input_ids)

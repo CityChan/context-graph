@@ -46,7 +46,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-workers", type=int, default=1)
     parser.add_argument("--prompt-length", type=int, default=16384)
     parser.add_argument("--response-length", type=int, default=16384)
-    parser.add_argument("--max-turn", type=int, default=30)
+    parser.add_argument("--max-turn", type=int, default=70)
+    parser.add_argument("--consolidation-interval", type=int, default=8)
     parser.add_argument("--max-session", type=int, default=4)
     parser.add_argument("--branch-len", type=int, default=8192)
     parser.add_argument("--turn-max-new-tokens", type=int, default=1024)
@@ -95,7 +96,7 @@ def make_config(args: argparse.Namespace, workflow: str):
                 "double_check": False,
                 "enable_summary": False,
                 "enable_retrieval_memory": graph,
-                "consolidation_interval": 4 if graph else 0,
+                "consolidation_interval": args.consolidation_interval if graph else 0,
                 "lambda_compact": 0.1,
                 "lambda_cost": 0.005,
                 "scienceworld_max_steps": args.max_turn,
@@ -137,6 +138,7 @@ async def eval_one(row: dict[str, Any], args: argparse.Namespace, tokenizer) -> 
         "agent_reward": 0.0,
         "is_finish": False,
     }
+    client = None
     try:
         config = make_config(args, workflow)
         client = CallAPI(args.model_name, tokenizer, config.actor_rollout_ref.rollout)
@@ -162,6 +164,9 @@ async def eval_one(row: dict[str, Any], args: argparse.Namespace, tokenizer) -> 
             result["graph_rewards"] = fields.get("graph_rewards", {})
     except Exception as exc:
         result["error"] = repr(exc)
+    finally:
+        if client is not None:
+            await client.close()
     return result
 
 
@@ -186,13 +191,24 @@ async def preflight(args: argparse.Namespace) -> None:
         base_url=os.environ.get("OPENAI_BASE_URL"),
         timeout=30.0,
     )
-    response = await client.chat.completions.create(
-        model=args.model_name,
-        messages=[{"role": "user", "content": "Reply with OK."}],
-        max_completion_tokens=32,
-    )
-    if not response.choices:
-        raise RuntimeError("Model API returned no choices")
+    try:
+        response = await client.chat.completions.create(
+            model=args.model_name,
+            messages=[{"role": "user", "content": "Reply with OK."}],
+            max_completion_tokens=32,
+        )
+        if not response.choices:
+            raise RuntimeError("Model API returned no choices")
+    finally:
+        await client.close()
+
+
+async def run_with_preflight(
+    rows: list[dict[str, Any]], args: argparse.Namespace
+) -> list[dict[str, Any]]:
+    """Run API validation and evaluation on one event loop."""
+    await preflight(args)
+    return await run(rows, args)
 
 
 def main() -> None:
@@ -215,8 +231,7 @@ def main() -> None:
 
     if not os.environ.get("OPENAI_API_KEY") or not os.environ.get("OPENAI_BASE_URL"):
         raise SystemExit("OPENAI_API_KEY and OPENAI_BASE_URL are required")
-    asyncio.run(preflight(args))
-    results = asyncio.run(run(rows, args))
+    results = asyncio.run(run_with_preflight(rows, args))
     summary = {
         "data_path": args.data_path,
         "model_name": args.model_name,

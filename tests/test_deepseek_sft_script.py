@@ -73,6 +73,8 @@ def test_deepseek_interactive_script_covers_both_train_domains_and_strict_trace(
     assert "scienceworld_graph" in text
     assert "deepseek-ai/DeepSeek-V4-Flash-0731" in text
     assert '--reasoning-effort "$REASONING_EFFORT"' in text
+    assert "CONSOLIDATION_INTERVAL=${CONSOLIDATION_INTERVAL:-8}" in text
+    assert '--consolidation-interval "$CONSOLIDATION_INTERVAL"' in text
     assert "--require-graph-trace" in text
     assert "--min-graph-quality-score 1.0" in text
     assert "--max-invalid-graph-ops 0" in text
@@ -90,6 +92,8 @@ def test_deepseek_four_node_idev_smoke_is_conservative():
     assert "NUM_WORKERS=${NUM_WORKERS:-1}" in text
     assert "MAX_NUM_SEQS=${MAX_NUM_SEQS:-1}" in text
     assert "MAX_MODEL_LEN=${MAX_MODEL_LEN:-32768}" in text
+    assert "MAX_TURN=${MAX_TURN:-70}" in text
+    assert "CONSOLIDATION_INTERVAL=${CONSOLIDATION_INTERVAL:-8}" in text
     assert "REASONING_EFFORT=${REASONING_EFFORT:-non-thinking}" in text
     assert "GPU_MEMORY_UTILIZATION=${GPU_MEMORY_UTILIZATION:-0.75}" in text
     assert "generate_ctxgraph_sft_deepseek_v4_interactive_8node.sh" in text
