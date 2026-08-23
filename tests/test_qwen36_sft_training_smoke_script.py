@@ -34,6 +34,13 @@ def test_qwen36_training_smoke_checks_every_node_and_checkpoint_shard():
     assert "check_contextgraph_sft_data.py" in text
 
 
+def test_qwen36_training_smoke_ignores_inherited_shared_hf_cache():
+    text = SCRIPT.read_text(encoding="utf-8")
+    assert "HF_HOME=${SFT_HF_HOME:-$SCRATCH/hf_cache}" in text
+    assert "HF_HUB_CACHE=${SFT_HF_HUB_CACHE:-$HF_HOME/hub}" in text
+    assert 'require_scratch_path HF_HUB_CACHE "$HF_HUB_CACHE"' in text
+
+
 def test_contextgraph_sft_checker_requires_loss_tokens():
     text = CHECKER.read_text(encoding="utf-8")
     assert 'required_columns = {"messages", "tools", "enable_thinking"}' in text

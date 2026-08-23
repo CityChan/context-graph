@@ -22,8 +22,11 @@ PREFLIGHT_ONLY=${PREFLIGHT_ONLY:-0}
 RUN_TAG=${RUN_TAG:-${SLURM_JOB_ID:-idev}_qwen36_27b_sft_smoke}
 
 : "${SCRATCH:?SCRATCH must point to the Vista scratch filesystem}"
-HF_HOME=${HF_HOME:-$SCRATCH/hf_cache}
-HF_HUB_CACHE=${HF_HUB_CACHE:-$HF_HOME/hub}
+# Use SFT-specific overrides so an inherited login-shell HF_HOME under /work
+# cannot silently select the shared model cache. JIT/model reads on Vista must
+# use SCRATCH for this training path.
+HF_HOME=${SFT_HF_HOME:-$SCRATCH/hf_cache}
+HF_HUB_CACHE=${SFT_HF_HUB_CACHE:-$HF_HOME/hub}
 DATA_ROOT=${DATA_ROOT:-$SCRATCH/contextgraph_sft/deepseek_v4_flash_0731_interactive}
 CHECKPOINT_ROOT=${CHECKPOINT_ROOT:-$SCRATCH/contextgraph_sft_checkpoints/$RUN_TAG}
 
@@ -72,6 +75,7 @@ require_scratch_path() {
 }
 require_scratch_path MODEL_PATH "$MODEL_PATH"
 require_scratch_path HF_HOME "$HF_HOME"
+require_scratch_path HF_HUB_CACHE "$HF_HUB_CACHE"
 require_scratch_path CHECKPOINT_ROOT "$CHECKPOINT_ROOT"
 
 activate_train_env() {
