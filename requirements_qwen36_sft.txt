@@ -2,6 +2,7 @@
 # Torch, Transformers, Ray, NumPy, and vLLM are already provided there.
 pandas==2.3.3
 pyarrow==23.0.1
+datasets==4.4.1
 peft==0.18.1
 hydra-core==1.3.2
 omegaconf==2.3.0

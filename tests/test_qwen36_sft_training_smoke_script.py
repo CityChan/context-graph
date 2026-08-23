@@ -50,11 +50,13 @@ def test_qwen36_training_smoke_uses_deepseek_env_without_external_flash_attn():
     text = SCRIPT.read_text(encoding="utf-8")
     requirements = Path("requirements_qwen36_sft.txt").read_text(encoding="utf-8")
     assert "TRAIN_CONDA_ENV=${TRAIN_CONDA_ENV:-deepseek_v4}" in text
-    assert "import accelerate, codetiming, hydra" in text
+    assert "import accelerate, codetiming, datasets, hydra" in text
     assert "flash_attn" not in text
     assert "pandas==2.3.3" in requirements
+    assert "datasets==4.4.1" in requirements
     assert "peft==0.18.1" in requirements
     assert "torchdata==0.11.0" in requirements
+    assert "import verl.trainer.fsdp_sft_trainer" in text
 
 
 def test_contextgraph_sft_checker_requires_loss_tokens():
