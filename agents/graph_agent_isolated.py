@@ -115,6 +115,8 @@ def handle_merge(graph: ContextGraph, fn_call: dict) -> GraphOpResult:
         return GraphOpResult(f"[Error] merge node IDs must be unique: {node_ids}.\n\n{graph.to_state_text()}", False)
     if len(node_ids) > 6:
         return GraphOpResult(f"[Error] merge accepts at most 6 node IDs (got {len(node_ids)}).\n\n{graph.to_state_text()}", False)
+    if not summary.strip():
+        return GraphOpResult(f"[Error] merge requires a non-empty summary.\n\n{graph.to_state_text()}", False)
 
     merged_id = graph.merge(node_ids, summary)
     if merged_id is None:
@@ -363,7 +365,8 @@ async def process_item(
     iteration = 0
     main_turn_count = 0   # counts only main-agent turns (not branch internals)
     consolidation_stats = {
-        'attempts': 0, 'ops': 0, 'pass_valid': 0, 'pass_invalid': 0, 'invalid': 0,
+        'attempts': 0, 'ops': 0, 'pass_valid': 0, 'pass_invalid': 0,
+        'invalid': 0, 'budget_skips': 0,
     }
     mask_rollout = True
     timed_out = False
@@ -816,14 +819,44 @@ async def process_item(
         # asking the policy to emit a graph op or <pass>. <pass> is valid
         # (reward-neutral) only when the graph is saturated; otherwise
         # penalized. See ContextGraph.is_saturated() for thresholds.
-        if (consolidation_interval > 0
+        checkpoint_due = (consolidation_interval > 0
                 and main_turn_count > 0
                 and main_turn_count % consolidation_interval == 0
-                and iteration < max_turn):
+                and iteration < max_turn)
+        checkpoint_budget_error = (
+            graph.graph_op_budget_error() if checkpoint_due else None
+        )
+        if checkpoint_due and checkpoint_budget_error:
+            consolidation_stats['budget_skips'] += 1
+            print(f'[CONSOL SKIP] {checkpoint_budget_error}')
+
+        if checkpoint_due and checkpoint_budget_error is None:
             is_sat = graph.is_saturated()
             n_active = len(graph.active_nodes)
             n_edges = len(graph.active_edges)
             n_nodes = len(graph.nodes)
+            eligible_ids = [
+                node.id for node in graph.active_nodes
+                if node.id != graph.root_id
+            ]
+            eligible_text = ", ".join(eligible_ids) if eligible_ids else "(none)"
+            examples = []
+            if len(eligible_ids) >= 2:
+                first, second = eligible_ids[:2]
+                examples.extend([
+                    f"<function=merge><parameter=node_ids>{first},{second}</parameter>"
+                    "<parameter=summary>Combined relevant evidence</parameter></function>",
+                    f"<function=add_edge><parameter=source>{first}</parameter>"
+                    f"<parameter=target>{second}</parameter>"
+                    "<parameter=relation>semantic</parameter></function>",
+                ])
+            if eligible_ids:
+                examples.extend([
+                    f"<function=select><parameter=node_id>{eligible_ids[0]}</parameter></function>",
+                    f"<function=prune><parameter=node_id>{eligible_ids[0]}</parameter></function>",
+                ])
+            examples.append("<function=pass></function>")
+            example_text = "\n".join(f"  {example}" for example in examples)
             pass_clause = (
                 "If no obvious merge/prune/edge improvement helps, emit "
                 "exactly <function=pass></function>."
@@ -834,7 +867,11 @@ async def process_item(
             consol_prompt = (
                 f"[CONSOLIDATION CHECKPOINT turn={main_turn_count}]\n"
                 f"Current graph: {n_active} active nodes, {n_edges} edges, {n_nodes} total. "
-                f"Choose ONE operation: merge / prune / add_edge / select / pass.\n"
+                f"Eligible node IDs: {eligible_text}.\n"
+                f"Choose ONE operation: merge / prune / add_edge / select / pass. "
+                f"Use only eligible IDs and exactly the parameter names shown below.\n"
+                f"For merge, both node_ids and a meaningful non-empty summary are mandatory.\n"
+                f"Valid XML forms using current IDs:\n{example_text}\n"
                 f"{pass_clause}\n"
                 f"After this checkpoint you continue the task normally."
             )
@@ -1020,6 +1057,7 @@ async def process_item(
     env.stats['consol_pass_valid'] = consolidation_stats['pass_valid']
     env.stats['consol_pass_invalid'] = consolidation_stats['pass_invalid']
     env.stats['consol_invalid'] = consolidation_stats['invalid']
+    env.stats['consol_budget_skips'] = consolidation_stats['budget_skips']
     # Rates (denominator-safe; 0 when no consolidation fired)
     _ca = max(consolidation_stats['attempts'], 1)
     env.stats['consol_op_rate'] = consolidation_stats['ops'] / _ca

@@ -124,6 +124,8 @@ def handle_merge(graph: ContextGraph, fn_call: dict) -> GraphOpResult:
         return GraphOpResult(f"[Error] merge node IDs must be unique: {node_ids}.\n\n{graph.to_state_text()}", False)
     if len(node_ids) > 6:
         return GraphOpResult(f"[Error] merge accepts at most 6 node IDs (got {len(node_ids)}).\n\n{graph.to_state_text()}", False)
+    if not summary.strip():
+        return GraphOpResult(f"[Error] merge requires a non-empty summary.\n\n{graph.to_state_text()}", False)
 
     merged_id = graph.merge(node_ids, summary)
     if merged_id is None:

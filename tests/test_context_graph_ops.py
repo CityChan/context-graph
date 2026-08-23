@@ -43,6 +43,18 @@ def test_merge_rejects_duplicates_root_and_oversized_requests():
     assert len(graph.nodes) == 8
 
 
+def test_merge_rejects_empty_summary_without_mutating_graph():
+    graph, _, observations = _graph_with_observations()
+    node_count = len(graph.nodes)
+    edge_count = len(graph.edges)
+
+    assert graph.merge(observations, "") is None
+    assert graph.merge(observations, "   ") is None
+    assert len(graph.nodes) == node_count
+    assert len(graph.edges) == edge_count
+    assert all(graph.nodes[node_id].status == NodeStatus.ACTIVE for node_id in observations)
+
+
 def test_graph_mutations_require_active_nodes_and_unique_edges():
     graph, _, observations = _graph_with_observations(3)
     assert graph.add_edge(observations[0], observations[1], EdgeRelation.SEMANTIC)
@@ -104,6 +116,10 @@ def test_graph_operation_budget_bounds_long_trajectories():
     graph = ContextGraph()
     graph.explicit_op_count = 10
     assert "valid graph operation budget exhausted" in graph.graph_op_budget_error()
+    state = graph.to_state_text()
+    assert "Graph tools disabled" in state
+    assert "Continue with environment actions" in state
+    assert "Eligible graph-tool node IDs" not in state
 
     graph.explicit_op_count = 0
     graph.graph_op_attempt_count = 20

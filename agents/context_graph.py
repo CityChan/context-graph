@@ -505,6 +505,8 @@ class ContextGraph:
         Source nodes are marked as FOLDED. The new summary node inherits
         incoming edges from the merged nodes.
         """
+        if not isinstance(summary, str) or not summary.strip():
+            return None
         unique_ids = list(dict.fromkeys(node_ids))
         valid_ids = [
             nid for nid in unique_ids
@@ -700,12 +702,18 @@ class ContextGraph:
         """
         active = self.active_nodes
         eligible_ids = [node.id for node in active if node.id != self.root_id]
+        budget_error = self.graph_op_budget_error()
+        eligibility_line = (
+            f"  Graph tools disabled: {budget_error}. Continue with environment actions."
+            if budget_error else
+            "  Eligible graph-tool node IDs: "
+            + (", ".join(eligible_ids[-max_nodes_shown:]) if eligible_ids else "(none)")
+        )
         lines = [
             f"[Graph] {len(active)}/{len(self.nodes)} nodes active, "
             f"{len(self.active_edges)} active edges, ops={self.operation_count}, "
             f"focus=[{self.active_node_id}]",
-            "  Eligible graph-tool node IDs: "
-            + (", ".join(eligible_ids[-max_nodes_shown:]) if eligible_ids else "(none)"),
+            eligibility_line,
         ]
 
         visible = [(nid, n) for nid, n in self.nodes.items() if n.is_active()]
