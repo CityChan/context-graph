@@ -7,12 +7,6 @@ import argparse
 import json
 from pathlib import Path
 
-import pandas as pd
-from omegaconf import OmegaConf
-
-from verl.utils import hf_tokenizer
-from verl.utils.dataset.multiturn_sft_dataset import MultiTurnSFTDataset
-
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -22,12 +16,25 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def stage(message: str) -> None:
+    print(f"SFT data preflight stage: {message}", flush=True)
+
+
 def main() -> None:
     args = parse_args()
     data_path = Path(args.data)
     if not data_path.is_file() or data_path.stat().st_size == 0:
         raise SystemExit(f"missing or empty SFT parquet: {data_path}")
 
+    stage("import pandas and OmegaConf")
+    import pandas as pd
+    from omegaconf import OmegaConf
+
+    stage("import VERL tokenizer and multi-turn dataset")
+    from verl.utils import hf_tokenizer
+    from verl.utils.dataset.multiturn_sft_dataset import MultiTurnSFTDataset
+
+    stage("read parquet")
     frame = pd.read_parquet(data_path)
     required_columns = {"messages", "tools", "enable_thinking"}
     missing = sorted(required_columns.difference(frame.columns))
@@ -36,7 +43,8 @@ def main() -> None:
     if frame.empty:
         raise SystemExit("SFT parquet has no rows")
 
-    tokenizer = hf_tokenizer(args.tokenizer, trust_remote_code=True)
+    stage("load tokenizer")
+    tokenizer = hf_tokenizer(args.tokenizer, trust_remote_code=True, local_files_only=True)
     config = OmegaConf.create(
         {
             "messages_key": "messages",
@@ -47,12 +55,14 @@ def main() -> None:
             "pad_mode": "right",
         }
     )
+    stage("construct one-row multi-turn dataset")
     dataset = MultiTurnSFTDataset(
         parquet_files=str(data_path),
         tokenizer=tokenizer,
         config=config,
         max_samples=1,
     )
+    stage("tokenize first sample")
     sample = dataset[0]
     input_tokens = int(sample["attention_mask"].sum().item())
     loss_tokens = int(sample["loss_mask"].sum().item())
@@ -61,6 +71,7 @@ def main() -> None:
     if loss_tokens <= 0:
         raise SystemExit("tokenized SFT sample has no assistant loss tokens")
 
+    stage("complete")
     print(
         json.dumps(
             {

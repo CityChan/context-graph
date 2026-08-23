@@ -35,6 +35,8 @@ def test_qwen36_training_smoke_checks_every_node_and_checkpoint_shard():
     assert "model_world_size_*_rank_*.pt" in text
     assert 'if [ "$MODEL_SHARDS" -ne "$NUM_NODES" ]' in text
     assert "check_contextgraph_sft_data.py" in text
+    assert "DATA_PREFLIGHT_TIMEOUT=${DATA_PREFLIGHT_TIMEOUT:-300}" in text
+    assert 'timeout --foreground "${DATA_PREFLIGHT_TIMEOUT}s" python -u' in text
 
 
 def test_qwen36_training_smoke_ignores_inherited_shared_hf_cache():
@@ -60,3 +62,6 @@ def test_contextgraph_sft_checker_requires_loss_tokens():
     assert 'required_columns = {"messages", "tools", "enable_thinking"}' in text
     assert 'sample["loss_mask"]' in text
     assert "tokenized SFT sample has no assistant loss tokens" in text
+    assert 'stage("load tokenizer")' in text
+    assert 'stage("tokenize first sample")' in text
+    assert "local_files_only=True" in text

@@ -20,6 +20,7 @@ TRAIN_LR=${TRAIN_LR:-1e-5}
 ATTN_IMPLEMENTATION=${ATTN_IMPLEMENTATION:-sdpa}
 MASTER_PORT=${MASTER_PORT:-29517}
 PREFLIGHT_ONLY=${PREFLIGHT_ONLY:-0}
+DATA_PREFLIGHT_TIMEOUT=${DATA_PREFLIGHT_TIMEOUT:-300}
 RUN_TAG=${RUN_TAG:-${SLURM_JOB_ID:-idev}_qwen36_27b_sft_smoke}
 
 : "${SCRATCH:?SCRATCH must point to the Vista scratch filesystem}"
@@ -185,7 +186,8 @@ echo "Parallelism: FSDP2 world=$NUM_NODES, Ulysses SP=1, DP=$NUM_NODES"
 echo "Training: steps=$TOTAL_TRAINING_STEPS max_length=$MAX_LENGTH LoRA rank=$LORA_RANK attention=$ATTN_IMPLEMENTATION"
 echo "Checkpoint: $CHECKPOINT_ROOT"
 
-python scripts/check_contextgraph_sft_data.py --data "$TRAIN_FILE" --tokenizer "$MODEL_PATH" --max-length "$MAX_LENGTH"
+echo "Preflight: validating and tokenizing one SFT row (timeout=${DATA_PREFLIGHT_TIMEOUT}s)"
+timeout --foreground "${DATA_PREFLIGHT_TIMEOUT}s" python -u scripts/check_contextgraph_sft_data.py --data "$TRAIN_FILE" --tokenizer "$MODEL_PATH" --max-length "$MAX_LENGTH"
 echo "Preflight: checking the training stack and GPU memory on all nodes"
 srun --overlap --nodes="$NUM_NODES" --ntasks="$NUM_NODES" --ntasks-per-node=1 env SFT_PREFLIGHT_WORKER=1 bash "$SCRIPT_PATH"
 
