@@ -77,3 +77,5 @@ def test_multiturn_sft_uses_renderable_conversation_prefixes():
     assert 'turn.get("role") == "user"' in text
     assert "previous_inputs = render_prefix(conversation_prefix[:-1])" in text
     assert "Chat template tokenization is not prefix-stable" in text
+    assert "if len(prefix) == 0:" in text
+    assert "messages: list = convert_nested_value_to_list_recursive(example[self.messages_key])" in text

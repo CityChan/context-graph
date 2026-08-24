@@ -191,7 +191,7 @@ class MultiTurnSFTDataset(Dataset):
             apply_chat_template_kwargs["enable_thinking"] = enable_thinking
 
         def render_prefix(prefix: list[dict[str, Any]]):
-            if not prefix:
+            if len(prefix) == 0:
                 return {
                     "input_ids": torch.empty((1, 0), dtype=torch.long),
                     "attention_mask": torch.empty((1, 0), dtype=torch.long),
@@ -256,7 +256,7 @@ class MultiTurnSFTDataset(Dataset):
         Returns:
             messages: List of messages with replaced placeholder.
         """
-        messages: list = example[self.messages_key]
+        messages: list = convert_nested_value_to_list_recursive(example[self.messages_key])
         images = example[self.image_key] if self.image_key in example else []
         videos = example[self.video_key] if self.video_key in example else []
 
