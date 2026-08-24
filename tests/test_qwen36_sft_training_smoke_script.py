@@ -54,6 +54,7 @@ def test_qwen36_training_smoke_uses_deepseek_env_without_external_flash_attn():
     assert "flash_attn" not in text
     assert "pandas==2.3.3" in requirements
     assert "datasets==4.4.1" in requirements
+    assert "qwen-vl-utils==0.0.14" in requirements
     assert "peft==0.18.1" in requirements
     assert "torchdata==0.11.0" in requirements
     assert "import verl.trainer.fsdp_sft_trainer" in text
