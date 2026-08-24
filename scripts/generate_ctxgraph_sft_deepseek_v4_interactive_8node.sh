@@ -47,6 +47,7 @@ SCIENCEWORLD_VERSION=${SCIENCEWORLD_VERSION:-1.2.3}
 PREFLIGHT_ONLY=${PREFLIGHT_ONLY:-0}
 PREFLIGHT_TIMEOUT_SECONDS=${PREFLIGHT_TIMEOUT_SECONDS:-180}
 RUN_TAG=${RUN_TAG:-${SLURM_ARRAY_JOB_ID:-${SLURM_JOB_ID:-local}}_${SLURM_ARRAY_TASK_ID:-0}}
+ARRAY_CHUNK_MODE=${ARRAY_CHUNK_MODE:-0}
 
 if [ -n "${DOMAIN:-}" ]; then
   case "$DOMAIN" in
@@ -59,6 +60,12 @@ else
     1) DOMAIN=scienceworld ;;
     *) echo "ERROR: array index must be 0 or 1"; exit 2 ;;
   esac
+fi
+
+if [ "$ARRAY_CHUNK_MODE" = "1" ]; then
+  test -n "${SLURM_ARRAY_TASK_ID:-}" || { echo "ERROR: ARRAY_CHUNK_MODE=1 requires a Slurm array task"; exit 2; }
+  test "$MAX_SAMPLES" -gt 0 || { echo "ERROR: ARRAY_CHUNK_MODE=1 requires MAX_SAMPLES > 0"; exit 2; }
+  START_INDEX=$((SLURM_ARRAY_TASK_ID * MAX_SAMPLES))
 fi
 
 : "${SCRATCH:?SCRATCH must point to the Vista scratch filesystem}"
@@ -188,6 +195,7 @@ export NO_PROXY="${NO_PROXY:+$NO_PROXY,}127.0.0.1,localhost,$TEACHER_HEAD_NODE,$
 export no_proxy=$NO_PROXY
 
 echo "Domain: $DOMAIN"
+echo "Sample shard: start=$START_INDEX count=$MAX_SAMPLES array_chunk_mode=$ARRAY_CHUNK_MODE"
 echo "Model: $MODEL_ID at $MODEL_PATH"
 echo "Student tokenizer: $STUDENT_TOKENIZER_PATH"
 echo "Teacher nodes: ${NODELIST[*]}"

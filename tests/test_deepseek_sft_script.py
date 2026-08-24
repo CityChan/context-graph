@@ -85,6 +85,15 @@ def test_deepseek_interactive_script_covers_both_train_domains_and_strict_trace(
     assert "vLLM latest:" in text
 
 
+def test_deepseek_interactive_script_supports_array_chunking():
+    text = INTERACTIVE_SCRIPT.read_text(encoding="utf-8")
+    assert "ARRAY_CHUNK_MODE=${ARRAY_CHUNK_MODE:-0}" in text
+    assert 'if [ "$ARRAY_CHUNK_MODE" = "1" ]' in text
+    assert "START_INDEX=$((SLURM_ARRAY_TASK_ID * MAX_SAMPLES))" in text
+    assert "ARRAY_CHUNK_MODE=1 requires MAX_SAMPLES > 0" in text
+    assert "Sample shard: start=$START_INDEX count=$MAX_SAMPLES" in text
+
+
 def test_deepseek_four_node_idev_smoke_is_conservative():
     text = IDEV4_SCRIPT.read_text(encoding="utf-8")
     assert "EXPECTED_NUM_NODES=${EXPECTED_NUM_NODES:-4}" in text
