@@ -96,6 +96,11 @@ class MultiTurnSFTDataset(Dataset):
         self.seed = config.get("seed")
         self.max_samples = max_samples
         self.ignore_input_ids_mismatch = config.get("ignore_input_ids_mismatch", False)
+        multiturn_config = config.get("multiturn", {})
+        self.loss_mask_mode = config.get(
+            "loss_mask_mode", multiturn_config.get("loss_mask_mode", "per_message")
+        )
+        assert self.loss_mask_mode in ["per_message", "assistant_tokens"]
         assert self.truncation in ["error", "left", "right"]
 
         if not isinstance(parquet_files, list | ListConfig):
@@ -244,6 +249,58 @@ class MultiTurnSFTDataset(Dataset):
 
         return input_ids, loss_mask, attention_mask, inputs
 
+    def _process_full_conversation(
+        self,
+        messages: list[dict[str, Any]],
+        tools: Optional[list[dict[str, Any]]] = None,
+        enable_thinking: Optional[bool] = None,
+    ):
+        """Tokenize once and use the chat template's native assistant mask."""
+        processor = self.processor if self.processor is not None else self.tokenizer
+        apply_chat_template_kwargs = {**self.apply_chat_template_kwargs}
+        if enable_thinking is not None:
+            apply_chat_template_kwargs["enable_thinking"] = enable_thinking
+        inputs = dict(
+            processor.apply_chat_template(
+                messages,
+                tools=tools,
+                add_generation_prompt=False,
+                tokenize=True,
+                return_dict=True,
+                return_tensors="pt",
+                return_assistant_tokens_mask=True,
+                **apply_chat_template_kwargs,
+            )
+        )
+        input_ids = inputs.pop("input_ids")
+        attention_mask = inputs.pop("attention_mask")
+        assistant_masks = inputs.pop("assistant_masks", inputs.pop("assistant_mask", None))
+        if assistant_masks is None:
+            raise ValueError(
+                "Chat template did not return an assistant token mask; "
+                "use a template with Jinja generation blocks or loss_mask_mode=per_message."
+            )
+        if input_ids.ndim == 2:
+            input_ids = input_ids[0]
+        if attention_mask.ndim == 2:
+            attention_mask = attention_mask[0]
+        loss_mask = torch.as_tensor(assistant_masks, dtype=attention_mask.dtype)
+        if loss_mask.ndim == 2:
+            loss_mask = loss_mask[0]
+        if input_ids.shape != attention_mask.shape or input_ids.shape != loss_mask.shape:
+            raise ValueError(
+                "Chat template returned mismatched input, attention, and assistant mask shapes: "
+                f"{input_ids.shape}, {attention_mask.shape}, {loss_mask.shape}."
+            )
+        if any(message.get("role") == "assistant" for message in messages) and not bool(loss_mask.any()):
+            raise ValueError("Chat template returned an empty assistant token mask for a conversation with responses.")
+        multi_modal_inputs = {}
+        for key, value in inputs.items():
+            if torch.is_tensor(value) and value.ndim > 0 and value.shape[0] == 1:
+                value = value[0]
+            multi_modal_inputs[key] = value
+        return input_ids, loss_mask, attention_mask, multi_modal_inputs
+
     def _build_messages(self, example: dict):
         """Replace <image> and <video> placeholder in messages with corresponding image and video
         which is required by processor.apply_chat_template.
@@ -296,32 +353,37 @@ class MultiTurnSFTDataset(Dataset):
         tools = self.tools[item] if self.tools is not None else None
         enable_thinking = self.enable_thinking[item] if self.enable_thinking is not None else None
 
-        # 1. tokenize each message
-        input_ids, loss_mask, attention_mask, multi_modal_inputs = [], [], [], {}
-        for i, message in enumerate(messages):
-            _input_ids, _loss_mask, _attention_mask, _inputs = self._process_single_message(
-                index=i,
-                message=message,
-                conversation_prefix=messages[: i + 1],
-                tools=tools,
-                enable_thinking=enable_thinking,
+        # 1. tokenize the conversation and build the assistant-only loss mask
+        if self.loss_mask_mode == "assistant_tokens":
+            input_ids, loss_mask, attention_mask, multi_modal_inputs = self._process_full_conversation(
+                messages=messages, tools=tools, enable_thinking=enable_thinking
             )
-            input_ids.append(_input_ids)
-            loss_mask.append(_loss_mask)
-            attention_mask.append(_attention_mask)
-            for k, v in _inputs.items():
-                multi_modal_inputs.setdefault(k, []).append(v)
+        else:
+            input_ids, loss_mask, attention_mask, multi_modal_inputs = [], [], [], {}
+            for i, message in enumerate(messages):
+                _input_ids, _loss_mask, _attention_mask, _inputs = self._process_single_message(
+                    index=i,
+                    message=message,
+                    conversation_prefix=messages[: i + 1],
+                    tools=tools,
+                    enable_thinking=enable_thinking,
+                )
+                input_ids.append(_input_ids)
+                loss_mask.append(_loss_mask)
+                attention_mask.append(_attention_mask)
+                for k, v in _inputs.items():
+                    multi_modal_inputs.setdefault(k, []).append(v)
 
-        input_ids = torch.cat(input_ids, dim=0)
-        loss_mask = torch.cat(loss_mask, dim=0)
-        attention_mask = torch.cat(attention_mask, dim=0)
-        assert input_ids.shape == loss_mask.shape == attention_mask.shape, (
-            f"Shape mismatch: {input_ids.shape}, {loss_mask.shape}, {attention_mask.shape}"
-        )
-        self.sanity_check(input_ids, messages, tools, enable_thinking)
+            input_ids = torch.cat(input_ids, dim=0)
+            loss_mask = torch.cat(loss_mask, dim=0)
+            attention_mask = torch.cat(attention_mask, dim=0)
+            assert input_ids.shape == loss_mask.shape == attention_mask.shape, (
+                f"Shape mismatch: {input_ids.shape}, {loss_mask.shape}, {attention_mask.shape}"
+            )
+            self.sanity_check(input_ids, messages, tools, enable_thinking)
 
-        for k, v in multi_modal_inputs.items():
-            multi_modal_inputs[k] = torch.concat(v, dim=0)
+            for k, v in multi_modal_inputs.items():
+                multi_modal_inputs[k] = torch.concat(v, dim=0)
 
         # 2. handle position_ids for Qwen-VL series models
         if self.processor is not None and "Qwen2VLImageProcessor" in self.processor.image_processor.__class__.__name__:

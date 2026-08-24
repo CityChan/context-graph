@@ -21,6 +21,7 @@ data:
     messages_key: messages  # Key for messages list in multi-turn mode
     tools_key: tools  # Key for tools list in multi-turn mode
     enable_thinking_key: enable_thinking  # Whether to enable thinking in multi-turn mode
+    loss_mask_mode: per_message  # Use assistant_tokens for templates with native generation masks
   max_length: 1024
   truncation: error
   balance_dp_token: False

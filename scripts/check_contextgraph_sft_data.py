@@ -53,6 +53,7 @@ def main() -> None:
             "max_length": args.max_length,
             "truncation": "right",
             "pad_mode": "right",
+            "loss_mask_mode": "assistant_tokens",
         }
     )
     stage("construct one-row multi-turn dataset")

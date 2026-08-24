@@ -129,6 +129,7 @@ if [ "${SFT_TRAIN_WORKER:-0}" = "1" ]; then
     data.train_max_samples="$NUM_NODES" \
     data.val_max_samples="$NUM_NODES" \
     data.multiturn.enable=True \
+    data.multiturn.loss_mask_mode=assistant_tokens \
     data.max_length="$MAX_LENGTH" \
     data.truncation=right \
     model.partial_pretrain="$MODEL_PATH" \
