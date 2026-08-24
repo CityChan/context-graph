@@ -3,6 +3,7 @@ from pathlib import Path
 
 SCRIPT = Path("scripts/generate_ctxgraph_sft_deepseek_v4_flash_0731_9node.sh")
 INTERACTIVE_SCRIPT = Path("scripts/generate_ctxgraph_sft_deepseek_v4_interactive_8node.sh")
+FULL_INTERACTIVE_SUBMIT = Path("scripts/submit_full_ctxgraph_sft_deepseek_v4_interactive.sh")
 IDEV4_SCRIPT = Path("scripts/smoke_interactive_ctxgraph_deepseek_v4_4node_idev.sh")
 
 
@@ -92,6 +93,19 @@ def test_deepseek_interactive_script_supports_array_chunking():
     assert "START_INDEX=$((SLURM_ARRAY_TASK_ID * MAX_SAMPLES))" in text
     assert "ARRAY_CHUNK_MODE=1 requires MAX_SAMPLES > 0" in text
     assert "Sample shard: start=$START_INDEX count=$MAX_SAMPLES" in text
+
+
+def test_full_interactive_submitter_uses_bounded_restart_safe_shards():
+    text = FULL_INTERACTIVE_SUBMIT.read_text(encoding="utf-8")
+    assert "CHUNK_SIZE=${CHUNK_SIZE:-1000}" in text
+    assert "MAX_CONCURRENT_PER_DOMAIN=${MAX_CONCURRENT_PER_DOMAIN:-1}" in text
+    assert "ALFWORLD_TOTAL=${ALFWORLD_TOTAL:-3553}" in text
+    assert "SCIENCEWORLD_TRAIN_TOTAL=${SCIENCEWORLD_TRAIN_TOTAL:-3604}" in text
+    assert "DOMAIN=alfworld,ARRAY_CHUNK_MODE=1" in text
+    assert "DOMAIN=scienceworld,ARRAY_CHUNK_MODE=1" in text
+    assert "--parsable" in text
+    assert 'if [ "$DRY_RUN" = "1" ]' in text
+    assert "unset RAY_ADDRESS" in text
 
 
 def test_deepseek_four_node_idev_smoke_is_conservative():
