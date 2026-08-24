@@ -3,6 +3,7 @@ from pathlib import Path
 
 SCRIPT = Path("scripts/smoke_train_contextgraph_sft_qwen36_27b_4node_idev.sh")
 CHECKER = Path("scripts/check_contextgraph_sft_data.py")
+MULTITURN_DATASET = Path("verl/utils/dataset/multiturn_sft_dataset.py")
 
 
 def test_qwen36_training_smoke_runs_a_real_multiturn_optimizer_step():
@@ -68,3 +69,11 @@ def test_contextgraph_sft_checker_requires_loss_tokens():
     assert 'stage("load tokenizer")' in text
     assert 'stage("tokenize first sample")' in text
     assert "local_files_only=True" in text
+
+
+def test_multiturn_sft_uses_renderable_conversation_prefixes():
+    text = MULTITURN_DATASET.read_text(encoding="utf-8")
+    assert "conversation_prefix=messages[: i + 1]" in text
+    assert 'turn.get("role") == "user"' in text
+    assert "previous_inputs = render_prefix(conversation_prefix[:-1])" in text
+    assert "Chat template tokenization is not prefix-stable" in text

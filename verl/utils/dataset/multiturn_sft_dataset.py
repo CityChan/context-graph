@@ -167,6 +167,7 @@ class MultiTurnSFTDataset(Dataset):
         self,
         index: int,
         message: dict[str, Any],
+        conversation_prefix: Optional[list[dict[str, Any]]] = None,
         tools: Optional[list[dict[str, Any]]] = None,
         enable_thinking: Optional[bool] = None,
     ) -> tuple[list[int], list[int], list[int]]:
@@ -189,24 +190,50 @@ class MultiTurnSFTDataset(Dataset):
         if enable_thinking is not None:
             apply_chat_template_kwargs["enable_thinking"] = enable_thinking
 
-        inputs = processor.apply_chat_template(
-            [message],
-            tools=tools,
-            add_generation_prompt=False,
-            tokenize=True,
-            return_dict=True,
-            return_tensors="pt",
-            **apply_chat_template_kwargs,
-        )
+        def render_prefix(prefix: list[dict[str, Any]]):
+            if not prefix:
+                return {
+                    "input_ids": torch.empty((1, 0), dtype=torch.long),
+                    "attention_mask": torch.empty((1, 0), dtype=torch.long),
+                }
+            try:
+                return processor.apply_chat_template(
+                    prefix,
+                    tools=tools,
+                    add_generation_prompt=False,
+                    tokenize=True,
+                    return_dict=True,
+                    return_tensors="pt",
+                    **apply_chat_template_kwargs,
+                )
+            except Exception:
+                # Modern Qwen templates reject a system-only conversation.
+                # Defer those tokens to the first prefix containing a user;
+                # the concatenated token sequence remains exact.
+                if not any(turn.get("role") == "user" for turn in prefix):
+                    return {
+                        "input_ids": torch.empty((1, 0), dtype=torch.long),
+                        "attention_mask": torch.empty((1, 0), dtype=torch.long),
+                    }
+                raise
+
+        if conversation_prefix is None:
+            conversation_prefix = [message]
+        inputs = render_prefix(conversation_prefix)
+        previous_inputs = render_prefix(conversation_prefix[:-1])
 
         inputs = dict(inputs)
         input_ids = inputs.pop("input_ids")[0]
         attention_mask = inputs.pop("attention_mask")[0]
-
-        # remove system prompt if exists
-        if index != 0 and message["role"] != "system":
-            input_ids = input_ids[len(self.system_prompt) :]
-            attention_mask = attention_mask[len(self.system_prompt) :]
+        previous_input_ids = previous_inputs["input_ids"][0]
+        prefix_length = len(previous_input_ids)
+        if prefix_length > len(input_ids) or not torch.equal(input_ids[:prefix_length], previous_input_ids):
+            raise ValueError(
+                "Chat template tokenization is not prefix-stable for this conversation; "
+                "cannot construct an exact per-turn SFT loss mask."
+            )
+        input_ids = input_ids[prefix_length:]
+        attention_mask = attention_mask[prefix_length:]
 
         if message["role"] == "assistant":
             loss_mask = torch.ones_like(attention_mask)
@@ -275,7 +302,8 @@ class MultiTurnSFTDataset(Dataset):
             _input_ids, _loss_mask, _attention_mask, _inputs = self._process_single_message(
                 index=i,
                 message=message,
-                tools=tools if i == 0 else None,
+                conversation_prefix=messages[: i + 1],
+                tools=tools,
                 enable_thinking=enable_thinking,
             )
             input_ids.append(_input_ids)
