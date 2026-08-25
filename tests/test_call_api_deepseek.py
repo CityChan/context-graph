@@ -68,3 +68,17 @@ def test_call_api_sends_deepseek_reasoning_effort(monkeypatch):
     assert completions.calls[0]["extra_body"] == {
         "chat_template_kwargs": {"thinking": True, "reasoning_effort": "high"},
     }
+
+
+def test_call_api_merges_structured_outputs_with_chat_template_kwargs(monkeypatch):
+    client, completions = _client(monkeypatch, "non-thinking")
+    schema = {"type": "object", "properties": {}}
+    asyncio.run(client.create_completion(
+        [1, 2],
+        messages=[{"role": "user", "content": "merge"}],
+        structured_outputs={"json": schema},
+    ))
+    assert completions.calls[0]["extra_body"] == {
+        "chat_template_kwargs": {"thinking": False},
+        "structured_outputs": {"json": schema},
+    }

@@ -82,6 +82,23 @@ def test_result_to_sft_row_rejects_invalid_graph_operation():
     ) is None
 
 
+def test_result_to_sft_row_rejects_controller_error_before_graph_counts():
+    result = _result()
+    result["env_stats"]["graph_explicit_ops"] = 0
+    result["env_stats"]["consol_controller_errors"] = 1
+    reasons = []
+    assert result_to_sft_row(
+        result,
+        min_task_reward=1.0,
+        min_valid_graph_ops=1,
+        max_invalid_graph_ops=0,
+        require_finish=True,
+        enable_thinking=False,
+        rejection_reasons=reasons,
+    ) is None
+    assert reasons == ["consolidation_controller_error"]
+
+
 def test_build_rows_deduplicates_identical_conversations():
     args = Namespace(
         min_task_reward=1.0,

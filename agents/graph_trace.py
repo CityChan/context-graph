@@ -77,6 +77,7 @@ class GraphTraceRecorder:
         success: bool = True,
         error: str | None = None,
         assistant_content: str | None = None,
+        decision_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         after = self.capture(graph)
         before_nodes = {node["id"]: node for node in before.get("nodes", [])}
@@ -98,6 +99,7 @@ class GraphTraceRecorder:
             "assistant_content_preview": (
                 assistant_content[-512:] if assistant_content is not None else None
             ),
+            "decision_context": ContextGraph._json_safe(decision_context or {}),
             "before_hash": snapshot_hash(before),
             "after_hash": snapshot_hash(after),
             "before_state": deepcopy(before),
@@ -317,6 +319,29 @@ def _model_operation_errors(event: dict[str, Any]) -> list[str]:
         ]
         if len(created) != 1 or created[0].get("metadata", {}).get("merged_from") != node_ids:
             errors.append("merge summary provenance does not match its sources")
+        decision_context = event.get("decision_context") or {}
+        if decision_context.get("mode") == "controller_merge":
+            if decision_context.get("graph_hash") != event.get("before_hash"):
+                errors.append("controller snapshot hash does not match the merge pre-state")
+            candidates = decision_context.get("candidates")
+            decision = decision_context.get("decision")
+            if not isinstance(candidates, list) or not isinstance(decision, dict):
+                errors.append("controller decision context is incomplete")
+            else:
+                by_index = {
+                    candidate.get("index"): candidate.get("node_id")
+                    for candidate in candidates
+                    if isinstance(candidate, dict)
+                }
+                selected = decision.get("candidate_indices")
+                if not isinstance(selected, list):
+                    errors.append("controller decision has no candidate index list")
+                else:
+                    resolved = [by_index.get(index) for index in selected]
+                    if any(node_id is None for node_id in resolved) or resolved != node_ids:
+                        errors.append("controller candidate mapping does not match merge sources")
+                if str(decision.get("summary", "")).strip() != str(args.get("summary", "")).strip():
+                    errors.append("controller summary does not match merge arguments")
     elif op == "prune":
         target = args.get("node_id")
         if target not in active_before or target == before.get("root_id"):

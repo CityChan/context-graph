@@ -178,6 +178,13 @@ class CallLLM(LLMClass):  # Call LLM in Verl RL env
     async def _create_completion(self, input_ids, **kwargs):
         from uuid import uuid4
 
+        if kwargs.pop('structured_outputs', None) is not None:
+            raise NotImplementedError(
+                "Controller-constrained graph decoding is not wired to the "
+                "internal VERL rollout server; use CallAPI or disable the "
+                "structured graph controller."
+            )
+
         max_len = kwargs.pop('max_len', None) or self.config.prompt_length + self.config.response_length
         max_len = min(max_len, self.config.prompt_length + self.config.response_length)
         max_new_tokens = max_len - len(input_ids)
@@ -283,6 +290,7 @@ class CallAPI(LLMClass):  # Call external API (OpenAI)
         messages = kwargs.get('messages', None)
         if messages is None:
             messages = decode_conversation(input_ids, self.tokenizer)[0]
+        structured_outputs = kwargs.pop('structured_outputs', None)
 
         for attempt in range(5):
             try:
@@ -298,6 +306,7 @@ class CallAPI(LLMClass):  # Call external API (OpenAI)
                     request["temperature"] = float(temperature)
                 if top_p is not None:
                     request["top_p"] = float(top_p)
+                extra_body = {}
                 if reasoning_effort:
                     # DeepSeek-V4 exposes reasoning controls through its
                     # custom chat-template kwargs. Keep this in extra_body so
@@ -309,9 +318,11 @@ class CallAPI(LLMClass):  # Call external API (OpenAI)
                             "thinking": True,
                             "reasoning_effort": str(reasoning_effort),
                         }
-                    request["extra_body"] = {
-                        "chat_template_kwargs": chat_template_kwargs,
-                    }
+                    extra_body["chat_template_kwargs"] = chat_template_kwargs
+                if structured_outputs is not None:
+                    extra_body["structured_outputs"] = structured_outputs
+                if extra_body:
+                    request["extra_body"] = extra_body
                 response = await self.client.chat.completions.create(**request)
 
                 text = response.choices[0].message.content or ""
@@ -553,13 +564,19 @@ class Agent(AgentContext):
         self.retry_cjk = getattr(config.plugin, "retry_cjk", 0)
         self.info_cache = {}
 
-    async def step(self, max_new_tokens=None, retry_cjk=0):
+    async def step(self, max_new_tokens=None, retry_cjk=0, completion_kwargs=None):
         prompt = self.context()
         max_len = self.prompt_ids_len + self.config.response_length
         if max_new_tokens is not None:
             max_len = min(len(prompt) + max_new_tokens, 131072)
+        completion_kwargs = dict(completion_kwargs or {})
         completion = await self.llm_client.create_completion(
-            prompt, uid=self.context_uid, max_len=max_len, messages=self.chat)
+            prompt,
+            uid=self.context_uid,
+            max_len=max_len,
+            messages=self.chat,
+            **completion_kwargs,
+        )
         if completion is None:
             return None
         response = completion["choices"][0]["message"]["content"]

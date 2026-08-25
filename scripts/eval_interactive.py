@@ -48,6 +48,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--response-length", type=int, default=16384)
     parser.add_argument("--max-turn", type=int, default=70)
     parser.add_argument("--consolidation-interval", type=int, default=8)
+    parser.add_argument(
+        "--structured-graph-controller",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Use controller-owned JSON-schema merge checkpoints for graph "
+            "workflows (disable only for legacy XML comparisons)."
+        ),
+    )
+    parser.add_argument("--graph-controller-max-candidates", type=int, default=12)
+    parser.add_argument("--graph-controller-preview-chars", type=int, default=360)
     parser.add_argument("--max-session", type=int, default=4)
     parser.add_argument("--branch-len", type=int, default=8192)
     parser.add_argument("--turn-max-new-tokens", type=int, default=1024)
@@ -97,6 +108,11 @@ def make_config(args: argparse.Namespace, workflow: str):
                 "enable_summary": False,
                 "enable_retrieval_memory": graph,
                 "consolidation_interval": args.consolidation_interval if graph else 0,
+                "structured_graph_controller": bool(
+                    graph and args.structured_graph_controller
+                ),
+                "graph_controller_max_candidates": args.graph_controller_max_candidates,
+                "graph_controller_preview_chars": args.graph_controller_preview_chars,
                 "lambda_compact": 0.1,
                 "lambda_cost": 0.005,
                 "scienceworld_max_steps": args.max_turn,
@@ -183,7 +199,7 @@ async def run(rows: list[dict[str, Any]], args: argparse.Namespace) -> list[dict
     return await asyncio.gather(*(guarded(row) for row in rows))
 
 
-async def preflight(args: argparse.Namespace) -> None:
+async def preflight(args: argparse.Namespace, workflow: str) -> None:
     from openai import AsyncOpenAI
 
     client = AsyncOpenAI(
@@ -192,13 +208,59 @@ async def preflight(args: argparse.Namespace) -> None:
         timeout=30.0,
     )
     try:
-        response = await client.chat.completions.create(
-            model=args.model_name,
-            messages=[{"role": "user", "content": "Reply with OK."}],
-            max_completion_tokens=32,
-        )
+        request: dict[str, Any] = {
+            "model": args.model_name,
+            "messages": [{"role": "user", "content": "Reply with OK."}],
+            "max_completion_tokens": 32,
+        }
+        if WORKFLOWS[workflow] == "graph" and args.structured_graph_controller:
+            schema = {
+                "type": "object",
+                "properties": {
+                    "candidate_indices": {
+                        "type": "array",
+                        "items": {"type": "integer", "enum": [0, 1]},
+                        "minItems": 2,
+                        "maxItems": 2,
+                        "uniqueItems": True,
+                    },
+                    "summary": {"type": "string", "minLength": 1},
+                },
+                "required": ["candidate_indices", "summary"],
+                "additionalProperties": False,
+            }
+            request["messages"] = [{
+                "role": "user",
+                "content": (
+                    "Return JSON selecting candidate indices 0 and 1 with a "
+                    "short non-empty summary."
+                ),
+            }]
+            extra_body: dict[str, Any] = {
+                "structured_outputs": {"json": schema},
+            }
+            if args.reasoning_effort == "non-thinking":
+                extra_body["chat_template_kwargs"] = {"thinking": False}
+            elif args.reasoning_effort:
+                extra_body["chat_template_kwargs"] = {
+                    "thinking": True,
+                    "reasoning_effort": str(args.reasoning_effort),
+                }
+            request["extra_body"] = extra_body
+        response = await client.chat.completions.create(**request)
         if not response.choices:
             raise RuntimeError("Model API returned no choices")
+        if WORKFLOWS[workflow] == "graph" and args.structured_graph_controller:
+            content = response.choices[0].message.content or ""
+            decision = json.loads(content)
+            if sorted(decision.get("candidate_indices", [])) != [0, 1]:
+                raise RuntimeError(
+                    "Structured-output preflight returned invalid candidate indices"
+                )
+            if not str(decision.get("summary", "")).strip():
+                raise RuntimeError(
+                    "Structured-output preflight returned an empty summary"
+                )
     finally:
         await client.close()
 
@@ -207,7 +269,8 @@ async def run_with_preflight(
     rows: list[dict[str, Any]], args: argparse.Namespace
 ) -> list[dict[str, Any]]:
     """Run API validation and evaluation on one event loop."""
-    await preflight(args)
+    workflow = row_workflow(rows[0], args.workflow)
+    await preflight(args, workflow)
     return await run(rows, args)
 
 

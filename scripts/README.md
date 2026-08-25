@@ -46,6 +46,11 @@ ALFWorld uses `envs/alfworld_env.py` and does not need a search server.
 ## Multi-turn ContextGraph SFT
 
 - `eval_interactive.py`: shared API trajectory runner for ALFWorld and ScienceWorld.
+  Graph workflows default to controller-owned merge checkpoints: the controller
+  freezes a bounded legal-node snapshot, vLLM constrains the teacher to a JSON
+  schema over candidate indices plus a summary, and normal environment turns do
+  not expose graph XML tools. Use `--no-structured-graph-controller` only for a
+  legacy-protocol comparison.
 - `build_contextgraph_sft.py`: validates structured graph traces, filters failed or
   redundant graph control, groups tasks across splits, and writes multi-turn SFT Parquet.
 - `smoke_train_contextgraph_sft_qwen36_27b_4node_idev.sh`: performs one real

@@ -144,8 +144,12 @@ def result_to_sft_row(
     stats = result.get("env_stats") or {}
     valid_ops = int(stats.get("graph_explicit_ops", 0) or 0)
     invalid_ops = int(stats.get("graph_invalid_ops", 0) or 0)
+    controller_errors = int(stats.get("consol_controller_errors", 0) or 0)
     consolidation_invalid = int(stats.get("consol_invalid", 0) or 0)
     consolidation_pass_invalid = int(stats.get("consol_pass_invalid", 0) or 0)
+    if controller_errors:
+        reject("consolidation_controller_error")
+        return None
     if valid_ops < min_valid_graph_ops or invalid_ops > max_invalid_graph_ops:
         reject("graph_op_counts")
         return None
@@ -216,6 +220,7 @@ def result_to_sft_row(
         "graph_valid_ops": valid_ops,
         "graph_structural_ops": structural_ops,
         "graph_invalid_ops": invalid_ops,
+        "graph_controller_errors": controller_errors,
         "graph_consolidation_invalid": consolidation_invalid,
         "graph_consolidation_pass_invalid": consolidation_pass_invalid,
         "graph_nodes": int(stats.get("graph_n_nodes", 0) or 0),

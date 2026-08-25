@@ -118,16 +118,27 @@ def append_observation_preserving_final_answer(
     return fitted
 
 
-async def step_preserving_final_answer(agent, reserve_tokens: int):
+async def step_preserving_final_answer(
+    agent,
+    reserve_tokens: int,
+    *,
+    completion_kwargs=None,
+):
     """Generate one normal turn without consuming the final-answer reserve."""
     reserve_tokens = max(int(reserve_tokens or 0), 0)
     if reserve_tokens == 0:
-        return await agent.step()
+        if completion_kwargs is None:
+            return await agent.step()
+        return await agent.step(completion_kwargs=completion_kwargs)
 
     normal_budget = remaining_generation_tokens(agent) - reserve_tokens
     if normal_budget < 10:
         return None
-    return await agent.step(max_new_tokens=normal_budget)
+    if completion_kwargs is None:
+        return await agent.step(max_new_tokens=normal_budget)
+    return await agent.step(
+        max_new_tokens=normal_budget, completion_kwargs=completion_kwargs
+    )
 
 
 def _fallback_finish_call(response: str) -> str:

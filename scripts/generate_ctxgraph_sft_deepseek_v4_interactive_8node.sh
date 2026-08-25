@@ -278,7 +278,7 @@ fi
 
 export OPENAI_API_KEY=dummy
 export OPENAI_BASE_URL="http://$TEACHER_HEAD_IP:$TEACHER_PORT/v1"
-python scripts/eval_interactive.py --data-path "$DATA_PATH" --output-dir "$RAW_OUTPUT_DIR" --workflow "$WORKFLOW" --model-name "$MODEL_ID" --tokenizer-name "$STUDENT_TOKENIZER_PATH" --max-samples "$MAX_SAMPLES" --start-index "$START_INDEX" --num-workers "$NUM_WORKERS" --prompt-length "$PROMPT_LENGTH" --response-length "$RESPONSE_LENGTH" --max-turn "$MAX_TURN" --consolidation-interval "$CONSOLIDATION_INTERVAL" --max-session 4 --branch-len 8192 --turn-max-new-tokens "$TURN_MAX_NEW_TOKENS" --temperature "$TEMPERATURE" --top-p "$TOP_P" --reasoning-effort "$REASONING_EFFORT" --save-messages
+python scripts/eval_interactive.py --data-path "$DATA_PATH" --output-dir "$RAW_OUTPUT_DIR" --workflow "$WORKFLOW" --model-name "$MODEL_ID" --tokenizer-name "$STUDENT_TOKENIZER_PATH" --max-samples "$MAX_SAMPLES" --start-index "$START_INDEX" --num-workers "$NUM_WORKERS" --prompt-length "$PROMPT_LENGTH" --response-length "$RESPONSE_LENGTH" --max-turn "$MAX_TURN" --consolidation-interval "$CONSOLIDATION_INTERVAL" --structured-graph-controller --max-session 4 --branch-len 8192 --turn-max-new-tokens "$TURN_MAX_NEW_TOKENS" --temperature "$TEMPERATURE" --top-p "$TOP_P" --reasoning-effort "$REASONING_EFFORT" --save-messages
 
 RESULT_FILE=$(find "$RAW_OUTPUT_DIR" -maxdepth 1 -name 'interactive_results_*.json' -type f | sort | tail -n 1)
 test -n "$RESULT_FILE" || { echo "ERROR: evaluator produced no result JSON"; exit 3; }

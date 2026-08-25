@@ -52,6 +52,17 @@ class FakeEnv:
         return {"observation": "not finished"}
 
 
+class StructuredFakeAgent(FakeAgent):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.completion_kwargs = []
+
+    async def step(self, max_new_tokens=None, completion_kwargs=None):
+        self.step_budgets.append(max_new_tokens)
+        self.completion_kwargs.append(completion_kwargs)
+        return self.response
+
+
 async def fake_action_runner(env, response):
     result = await env.run_action(response)
     if result.get("action") == "finish":
@@ -111,6 +122,21 @@ def test_normal_step_stops_when_only_reserve_remains():
 
     assert result is None
     assert agent.step_budgets == []
+
+
+def test_normal_step_forwards_structured_completion_constraints():
+    agent = StructuredFakeAgent(context_len=60, response='{"summary":"ok"}')
+    structured = {"structured_outputs": {"json": {"type": "object"}}}
+
+    result = asyncio.run(step_preserving_final_answer(
+        agent,
+        reserve_tokens=20,
+        completion_kwargs=structured,
+    ))
+
+    assert result == '{"summary":"ok"}'
+    assert agent.step_budgets == [20]
+    assert agent.completion_kwargs == [structured]
 
 
 def test_observation_is_truncated_without_consuming_protected_budget():

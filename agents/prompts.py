@@ -1,7 +1,13 @@
 from .tool_spec import convert_tools_to_description, codeact_tool, search_tool, branch_tool, graph_tool, alfworld_tool, scienceworld_tool, TOOL_PROMPT, PARALLEL_TOOL_PROMPT
 
 
-def create_chat(problem_statement, workflow=None, item=None):
+def create_chat(
+    problem_statement,
+    workflow=None,
+    item=None,
+    *,
+    expose_graph_tools=True,
+):
     if workflow == 'code':
         tool_description = TOOL_PROMPT.format(description=convert_tools_to_description(codeact_tool()))
         system_prompt = CODE_SYSTEM_PROMPT + '\n\n' + tool_description
@@ -79,16 +85,18 @@ I've uploaded a python code repository in the directory /testbed. Consider the f
         chat = [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}]
         return chat
     elif workflow == 'search_graph':
+        graph_tools = graph_tool() if expose_graph_tools else []
         tool_description = PARALLEL_TOOL_PROMPT.format(
-            description=convert_tools_to_description(search_tool() + branch_tool() + graph_tool()))
+            description=convert_tools_to_description(search_tool() + branch_tool() + graph_tools))
         system_prompt = SEARCH_SYSTEM_PROMPT_GRAPH + '\n\n' + tool_description
         problem_statement = SEARCH_USER_PROMPT_GRAPH.format(Question=problem_statement)
         user_prompt = problem_statement
         chat = [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}]
         return chat
     elif workflow == 'search_graph_multi':
+        graph_tools = graph_tool() if expose_graph_tools else []
         tool_description = PARALLEL_TOOL_PROMPT.format(
-            description=convert_tools_to_description(search_tool() + branch_tool() + graph_tool()))
+            description=convert_tools_to_description(search_tool() + branch_tool() + graph_tools))
         system_prompt = SEARCH_SYSTEM_PROMPT_GRAPH + '\n\n' + tool_description
         problem_statement = ("The following are multiple questions you need to answer. You should find answers for all of them. After collecting the answers, submit them using the `finish` tool. In the `answer` field, include responses for every question, wrapped with <qn></qn> tags. For example: "
                                 "<parameter=answer> <q1>Answer to q1</q1> <q2>Answer to q2</q2> <q3>Answer to q3</q3> ... </parameter>.\n\n") + problem_statement
@@ -107,7 +115,9 @@ I've uploaded a python code repository in the directory /testbed. Consider the f
         if 'branch' in workflow:
             tools = tools + branch_tool()
         if 'graph' in workflow:
-            tools = tools + branch_tool() + graph_tool()
+            tools = tools + branch_tool()
+            if expose_graph_tools:
+                tools = tools + graph_tool()
         tool_description = PARALLEL_TOOL_PROMPT.format(description=convert_tools_to_description(tools))
         base_system = (
             "You are a household robot assistant completing tasks in a virtual home. "
@@ -125,11 +135,19 @@ I've uploaded a python code repository in the directory /testbed. Consider the f
             "  - Cool then place: find object → take → go to fridge → cool → go to target → put\n"
         )
         if workflow == 'alfworld_graph':
-            graph_guidance = (
-                "\n\nContextGraph tools: use `branch` to split multi-object tasks. "
-                "If a branch finds info another branch needs (e.g. container contents), "
-                "call `merge` to save it as a shared node; use `add_edge` to link objects to containers.\n"
-            )
+            if expose_graph_tools:
+                graph_guidance = (
+                    "\n\nContextGraph tools: use `branch` to split multi-object tasks. "
+                    "If a branch finds info another branch needs (e.g. container contents), "
+                    "call `merge` to save it as a shared node; use `add_edge` to link objects to containers.\n"
+                )
+            else:
+                graph_guidance = (
+                    "\n\nA controller may temporarily enter [GRAPH MERGE MODE]. "
+                    "Only in that marked mode, follow the supplied JSON response "
+                    "schema instead of the normal XML action protocol. When the "
+                    "controller restores environment mode, resume XML actions.\n"
+                )
         else:
             graph_guidance = ""
         system_prompt = base_system + graph_guidance + '\n\n' + tool_description
@@ -147,7 +165,9 @@ I've uploaded a python code repository in the directory /testbed. Consider the f
         if 'branch' in workflow:
             tools = tools + branch_tool()
         if 'graph' in workflow:
-            tools = tools + branch_tool() + graph_tool()
+            tools = tools + branch_tool()
+            if expose_graph_tools:
+                tools = tools + graph_tool()
         tool_description = PARALLEL_TOOL_PROMPT.format(description=convert_tools_to_description(tools))
         system_prompt = (
             "You are a science agent acting in the ScienceWorld text simulator. "
@@ -162,11 +182,19 @@ I've uploaded a python code repository in the directory /testbed. Consider the f
             "Focus on the relevant object when the task asks you to identify, measure, or test it."
         )
         if workflow == 'scienceworld_graph':
-            system_prompt += (
-                " Use ContextGraph operations only when they preserve useful state: branch for a "
-                "genuine independent subgoal, add_edge for a meaningful dependency, merge for "
-                "combining experimental evidence, and prune for obsolete or disproven state."
-            )
+            if expose_graph_tools:
+                system_prompt += (
+                    " Use ContextGraph operations only when they preserve useful state: branch for a "
+                    "genuine independent subgoal, add_edge for a meaningful dependency, merge for "
+                    "combining experimental evidence, and prune for obsolete or disproven state."
+                )
+            else:
+                system_prompt += (
+                    " A controller may temporarily enter [GRAPH MERGE MODE]. Only "
+                    "in that marked mode, follow the supplied JSON response schema "
+                    "instead of the normal XML action protocol. When environment "
+                    "mode is restored, resume XML actions."
+                )
         user_prompt = f"Task and initial observation:\n\n{problem_statement}"
         chat = [
             {'role': 'system', 'content': system_prompt + '\n\n' + tool_description},
