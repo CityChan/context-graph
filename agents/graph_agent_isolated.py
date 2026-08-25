@@ -367,6 +367,13 @@ async def process_item(
         preview_chars=int(
             getattr(config.plugin, "graph_controller_preview_chars", 360)
         ),
+        min_completion_tokens=int(
+            getattr(
+                config.plugin,
+                "graph_controller_min_completion_tokens",
+                256,
+            )
+        ),
     )
     branch_node_map = {}  # branch_name -> subtask_node_id
     branch_subgraph_stats = {}  # branch_name -> child graph stats (for logging)
@@ -859,6 +866,12 @@ async def process_item(
             working_memory_turns.append(observation_turn)
         session_message.append({'role': 'user', 'content': fitted_observation})
 
+        # Preserve the terminal observation, then stop before a same-turn
+        # consolidation checkpoint can reject an already successful episode.
+        if getattr(env, 'is_finish', False) or getattr(env, 'finish', False):
+            natural_finish = True
+            break
+
         # ── Forced consolidation checkpoint ──
         # Every `consolidation_interval` main turns, inject a checkpoint
         # asking the policy to emit a graph op or <pass>. <pass> is valid
@@ -899,6 +912,17 @@ async def process_item(
                     observation_budget_skips += 1
                     pre_finalize_token_limit = bool(final_answer_reserve)
                     break
+                if not graph_controller.has_completion_budget(
+                    remaining_generation_tokens(agent['main']),
+                    protected_tokens=protected_final_answer_budget,
+                ):
+                    agent['main'].rollback(k=1)
+                    consolidation_stats['budget_skips'] += 1
+                    print(
+                        '[GRAPH CONTROLLER SKIP] insufficient completion '
+                        'token budget'
+                    )
+                    continue
                 observation_budget_truncations += int(
                     fitted_controller_prompt != controller_prompt
                 )

@@ -117,6 +117,7 @@ def make_config(args: argparse.Namespace, workflow: str):
                 ),
                 "graph_controller_max_candidates": args.graph_controller_max_candidates,
                 "graph_controller_preview_chars": args.graph_controller_preview_chars,
+                "graph_controller_min_completion_tokens": 256,
                 "lambda_compact": 0.1,
                 "lambda_cost": 0.005,
                 "scienceworld_max_steps": args.max_turn,

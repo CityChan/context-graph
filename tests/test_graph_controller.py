@@ -98,3 +98,15 @@ def test_interactive_prompt_hides_graph_xml_tools_in_controller_mode():
     assert "Merge multiple context nodes" in legacy[0]["content"]
     assert "Merge multiple context nodes" not in controlled[0]["content"]
     assert "Execute an action in the household environment" in controlled[0]["content"]
+
+
+def test_controller_requires_budget_for_a_complete_structured_decision():
+    controller = GraphActionController(min_completion_tokens=256)
+
+    assert controller.has_completion_budget(320, protected_tokens=64)
+    assert not controller.has_completion_budget(319, protected_tokens=64)
+
+
+def test_controller_rejects_too_small_completion_budget_configuration():
+    with pytest.raises(ValueError, match="min_completion_tokens"):
+        GraphActionController(min_completion_tokens=9)

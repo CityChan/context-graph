@@ -72,11 +72,32 @@ class GraphActionController:
     has changed.
     """
 
-    def __init__(self, *, max_candidates: int = 12, preview_chars: int = 360):
+    def __init__(
+        self,
+        *,
+        max_candidates: int = 12,
+        preview_chars: int = 360,
+        min_completion_tokens: int = 256,
+    ):
         if max_candidates < 2:
             raise ValueError("max_candidates must be at least 2")
+        if min_completion_tokens < 10:
+            raise ValueError("min_completion_tokens must be at least 10")
         self.max_candidates = int(max_candidates)
         self.preview_chars = max(int(preview_chars), 80)
+        self.min_completion_tokens = int(min_completion_tokens)
+
+    def has_completion_budget(
+        self,
+        remaining_tokens: int,
+        *,
+        protected_tokens: int = 0,
+    ) -> bool:
+        """Return whether a checkpoint can finish one structured decision."""
+        available = max(int(remaining_tokens), 0) - max(
+            int(protected_tokens), 0
+        )
+        return available >= self.min_completion_tokens
 
     @staticmethod
     def graph_hash(graph: ContextGraph) -> str:
