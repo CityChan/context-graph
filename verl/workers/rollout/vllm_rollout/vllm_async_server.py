@@ -46,6 +46,7 @@ import vllm.entrypoints.cli.serve
 import zmq
 from ray.actor import ActorHandle
 from vllm import SamplingParams
+from vllm.sampling_params import GuidedDecodingParams
 from vllm.engine.arg_utils import AsyncEngineArgs
 from vllm.entrypoints.openai.api_server import (
     build_app,
@@ -82,6 +83,7 @@ from verl.workers.rollout.vllm_rollout.utils import (
     VLLM_LORA_PATH,
     get_vllm_max_lora_rank,
 )
+from agents.structured_outputs import build_vllm_guided_decoding
 
 logger = logging.getLogger(__file__)
 logger.setLevel(logging.INFO)
@@ -489,6 +491,16 @@ class vLLMHttpServerBase:
                   f"(prompt {len(prompt_ids)} tokens >= max_model_len "
                   f"{self.config.max_model_len}); returning empty TokenOutput")
             return TokenOutput(token_ids=[], log_probs=[], stop_reason="aborted")
+        structured_outputs = sampling_params.pop("structured_outputs", None)
+        if structured_outputs is not None:
+            if sampling_params.get("guided_decoding") is not None:
+                raise ValueError(
+                    "structured_outputs and guided_decoding cannot both be set"
+                )
+            sampling_params["guided_decoding"] = build_vllm_guided_decoding(
+                structured_outputs,
+                GuidedDecodingParams,
+            )
         sampling_params = SamplingParams(**sampling_params)
         prompt_ids = _qwen2_5_vl_dedup_image_tokens(prompt_ids, self.model_config.processor)
         prompt = TokensPrompt(

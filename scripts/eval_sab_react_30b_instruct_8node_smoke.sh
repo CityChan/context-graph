@@ -253,6 +253,7 @@ SAB_VAL_MAX_TURN=${SAB_VAL_MAX_TURN:-4}
 SAB_TURN_MAX_NEW_TOKENS=${SAB_TURN_MAX_NEW_TOKENS:-512}
 SAB_DATA_SEED=${SAB_DATA_SEED:-42}
 SAB_METHOD=${SAB_METHOD:-react}
+SAB_CTXGRAPH_PROTOCOL=${SAB_CTXGRAPH_PROTOCOL:-legacy}
 case "$SAB_METHOD" in
   react)
     SAB_METHOD_LABEL=ReAct
@@ -280,6 +281,24 @@ case "$SAB_METHOD" in
     ;;
   *)
     echo "ERROR: SAB_METHOD must be react, fold, or ctxgraph; got $SAB_METHOD"
+    exit 1
+    ;;
+esac
+case "$SAB_CTXGRAPH_PROTOCOL" in
+  legacy)
+    SAB_STRUCTURED_GRAPH_CONTROLLER=false
+    SAB_CONTROLLER_OWNED_TOOL_FORMATTING=false
+    ;;
+  controller)
+    if [ "$SAB_METHOD" != "ctxgraph" ]; then
+      echo "ERROR: SAB_CTXGRAPH_PROTOCOL=controller requires SAB_METHOD=ctxgraph"
+      exit 1
+    fi
+    SAB_STRUCTURED_GRAPH_CONTROLLER=true
+    SAB_CONTROLLER_OWNED_TOOL_FORMATTING=true
+    ;;
+  *)
+    echo "ERROR: SAB_CTXGRAPH_PROTOCOL must be legacy or controller; got $SAB_CTXGRAPH_PROTOCOL"
     exit 1
     ;;
 esac
@@ -316,7 +335,7 @@ else
 fi
 
 TS=$(date +%Y%m%d_%H%M%S)
-EXPERIMENT_NAME=${EXPERIMENT_NAME:-eval_${SAB_METHOD}_sab_30b_instruct_${NUM_NODES}n_${SAB_RUN_TAG}_${TS}}
+EXPERIMENT_NAME=${EXPERIMENT_NAME:-eval_${SAB_METHOD}_${SAB_CTXGRAPH_PROTOCOL}_sab_30b_instruct_${NUM_NODES}n_${SAB_RUN_TAG}_${TS}}
 
 TRAINER_DEBUG_OVERRIDES=()
 if [ "$SAB_DUMP_VALIDATION" = "1" ]; then
@@ -393,6 +412,7 @@ echo "  Train samples:  $SAB_TRAIN_MAX_SAMPLES (trainer init only; val_only=True
 echo "  Length caps:    prompt=$SAB_PROMPT_LENGTH response=$SAB_RESPONSE_LENGTH max_tokens_per_gpu=$SAB_MAX_TOKEN_LEN_PER_GPU"
 echo "  Turn caps:      val_max_turn=$SAB_VAL_MAX_TURN turn_max_new_tokens=$SAB_TURN_MAX_NEW_TOKENS"
 echo "  Qwen thinking:  $QWEN_ENABLE_THINKING"
+echo "  Graph protocol: $SAB_CTXGRAPH_PROTOCOL structured_controller=$SAB_STRUCTURED_GRAPH_CONTROLLER controller_formatting=$SAB_CONTROLLER_OWNED_TOOL_FORMATTING"
 echo "  Evaluation:     real=$SAB_REAL_EVAL dump_validation=$SAB_DUMP_VALIDATION ${SAB_VALIDATION_DATA_DIR:+dir=$SAB_VALIDATION_DATA_DIR}"
 if [ "$CODE_BENCHMARK_PROFILE" = "discoverybench" ]; then
   echo "  Discovery HMS:  real=$DISCOVERYBENCH_REAL_EVAL judge=$DISCOVERYBENCH_JUDGE_MODEL results=$DISCOVERYBENCH_RESULTS_DIR"
@@ -416,6 +436,10 @@ fi
 # verl wants a train_files path too even with val_only=True; reuse the same file.
 TRAIN_PARQUET="$VAL_PARQUET"
 probe "SAB parquet: $VAL_PARQUET"
+if [ "$SAB_STRUCTURED_GRAPH_CONTROLLER" = "true" ]; then
+  probe "checking vLLM guided-decoding support"
+  python -c "from agents.graph_controller import merge_decision_schema; from vllm import SamplingParams; from vllm.sampling_params import GuidedDecodingParams; p=SamplingParams(guided_decoding=GuidedDecodingParams(json=merge_decision_schema([0,1]))); assert p.guided_decoding.json; print('vLLM guided decoding: ok')"
+fi
 
 if [ "$CODE_BENCHMARK_PROFILE" = "sab" ] && [ "$SAB_REAL_EVAL" = "1" ]; then
   if [ ! -f "$PROJECT_ROOT/gpt4_visual_judge.py" ]; then
@@ -658,6 +682,8 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   +actor_rollout_ref.rollout.plugin.lambda_compact=0.2 \
   +actor_rollout_ref.rollout.plugin.lambda_cost=$SAB_LAMBDA_COST \
   +actor_rollout_ref.rollout.plugin.consolidation_interval=5 \
+  +actor_rollout_ref.rollout.plugin.structured_graph_controller=$SAB_STRUCTURED_GRAPH_CONTROLLER \
+  +actor_rollout_ref.rollout.plugin.controller_owned_tool_formatting=$SAB_CONTROLLER_OWNED_TOOL_FORMATTING \
   +actor_rollout_ref.rollout.plugin.uniqueness_weight=0.10 \
   +actor_rollout_ref.rollout.plugin.auto_bind_branch_edges=True \
   +actor_rollout_ref.rollout.plugin.auto_bind_min_overlap=0.05 \

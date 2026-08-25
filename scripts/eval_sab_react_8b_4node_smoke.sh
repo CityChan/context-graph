@@ -220,6 +220,7 @@ else
   SAB_TURN_MAX_NEW_TOKENS=${SAB_TURN_MAX_NEW_TOKENS:-512}
 fi
 SAB_METHOD=${SAB_METHOD:-react}
+SAB_CTXGRAPH_PROTOCOL=${SAB_CTXGRAPH_PROTOCOL:-legacy}
 case "$SAB_METHOD" in
   react)
     SAB_METHOD_LABEL=ReAct
@@ -250,6 +251,24 @@ case "$SAB_METHOD" in
     exit 1
     ;;
 esac
+case "$SAB_CTXGRAPH_PROTOCOL" in
+  legacy)
+    SAB_STRUCTURED_GRAPH_CONTROLLER=false
+    SAB_CONTROLLER_OWNED_TOOL_FORMATTING=false
+    ;;
+  controller)
+    if [ "$SAB_METHOD" != "ctxgraph" ]; then
+      echo "ERROR: SAB_CTXGRAPH_PROTOCOL=controller requires SAB_METHOD=ctxgraph"
+      exit 1
+    fi
+    SAB_STRUCTURED_GRAPH_CONTROLLER=true
+    SAB_CONTROLLER_OWNED_TOOL_FORMATTING=true
+    ;;
+  *)
+    echo "ERROR: SAB_CTXGRAPH_PROTOCOL must be legacy or controller; got $SAB_CTXGRAPH_PROTOCOL"
+    exit 1
+    ;;
+esac
 SAB_MAX_SESSION=${SAB_MAX_SESSION:-4}
 if [ "$SAB_RUN_TAG" = "formal" ]; then
   SAB_BRANCH_LEN=${SAB_BRANCH_LEN:-32768}
@@ -277,7 +296,7 @@ else
 fi
 
 TS=$(date +%Y%m%d_%H%M%S)
-EXPERIMENT_NAME="eval_${SAB_METHOD}_sab_8b_4n_${SAB_RUN_TAG}_${TS}"
+EXPERIMENT_NAME="eval_${SAB_METHOD}_${SAB_CTXGRAPH_PROTOCOL}_sab_8b_4n_${SAB_RUN_TAG}_${TS}"
 TRAINER_DEBUG_OVERRIDES=()
 if [ "$SAB_DUMP_VALIDATION" = "1" ]; then
   SAB_VALIDATION_DATA_DIR=${SAB_VALIDATION_DATA_DIR:-${SCRATCH:-/scratch/09281/chc_1996}/sab_validation_generations/$EXPERIMENT_NAME}
@@ -331,6 +350,7 @@ echo "  Sample caps:    val=$SAB_VAL_MAX_SAMPLES train=$SAB_TRAIN_MAX_SAMPLES se
 echo "  Token caps:     prompt=$SAB_PROMPT_LENGTH response=$SAB_RESPONSE_LENGTH max_token_gpu=$SAB_MAX_TOKEN_LEN_PER_GPU"
 echo "  Turn caps:      val_max_turn=$SAB_VAL_MAX_TURN turn_max_new_tokens=$SAB_TURN_MAX_NEW_TOKENS"
 echo "  Method config:  agent_loop=$SAB_AGENT_LOOP workflow=$SAB_WORKFLOW process_reward=$SAB_PROCESS_REWARD"
+echo "  Graph protocol: $SAB_CTXGRAPH_PROTOCOL structured_controller=$SAB_STRUCTURED_GRAPH_CONTROLLER controller_formatting=$SAB_CONTROLLER_OWNED_TOOL_FORMATTING"
 echo "  SAB_REAL_EVAL:  $SAB_REAL_EVAL"
 echo "  Ray bootstrap:  port=$RAY_PORT raylet_wait=${RAY_raylet_start_wait_time_s}s status_timeout=${RAY_STATUS_TIMEOUT_SECONDS}s tmp=$RAY_TMPDIR_ROOT"
 echo "  Debug:          SAB_DEBUG_IO=$SAB_DEBUG_IO SAB_DUMP_VALIDATION=$SAB_DUMP_VALIDATION no_output_hint_after=$SAB_NO_OUTPUT_HINT_AFTER ${SAB_VALIDATION_DATA_DIR:+validation_dir=$SAB_VALIDATION_DATA_DIR}"
@@ -348,6 +368,10 @@ if [ ! -f "$VAL_PARQUET" ]; then
 fi
 # verl wants a train_files path too even with val_only=True; reuse the same file.
 TRAIN_PARQUET="$VAL_PARQUET"
+if [ "$SAB_STRUCTURED_GRAPH_CONTROLLER" = "true" ]; then
+  probe "checking vLLM guided-decoding support"
+  python -c "from agents.graph_controller import merge_decision_schema; from vllm import SamplingParams; from vllm.sampling_params import GuidedDecodingParams; p=SamplingParams(guided_decoding=GuidedDecodingParams(json=merge_decision_schema([0,1]))); assert p.guided_decoding.json; print('vLLM guided decoding: ok')"
+fi
 probe "SAB parquet: $VAL_PARQUET"
 
 if [ "$SAB_REAL_EVAL" = "1" ]; then
@@ -589,6 +613,8 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   +actor_rollout_ref.rollout.plugin.lambda_compact=0.2 \
   +actor_rollout_ref.rollout.plugin.lambda_cost=$SAB_LAMBDA_COST \
   +actor_rollout_ref.rollout.plugin.consolidation_interval=5 \
+  +actor_rollout_ref.rollout.plugin.structured_graph_controller=$SAB_STRUCTURED_GRAPH_CONTROLLER \
+  +actor_rollout_ref.rollout.plugin.controller_owned_tool_formatting=$SAB_CONTROLLER_OWNED_TOOL_FORMATTING \
   +actor_rollout_ref.rollout.plugin.uniqueness_weight=0.10 \
   +actor_rollout_ref.rollout.plugin.auto_bind_branch_edges=True \
   +actor_rollout_ref.rollout.plugin.auto_bind_min_overlap=0.05 \

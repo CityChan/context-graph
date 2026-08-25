@@ -16,6 +16,7 @@ from typing import Any, Optional
 import asyncio, httpx
 from envs.local_search import LocalSearch
 from envs.alfworld_env import ALFWorldEnv
+from .structured_outputs import normalize_structured_outputs
 
 
 def select_env(ability, config, extra_info=None):
@@ -178,12 +179,7 @@ class CallLLM(LLMClass):  # Call LLM in Verl RL env
     async def _create_completion(self, input_ids, **kwargs):
         from uuid import uuid4
 
-        if kwargs.pop('structured_outputs', None) is not None:
-            raise NotImplementedError(
-                "Controller-constrained graph decoding is not wired to the "
-                "internal VERL rollout server; use CallAPI or disable the "
-                "structured graph controller."
-            )
+        structured_outputs = kwargs.pop('structured_outputs', None)
 
         max_len = kwargs.pop('max_len', None) or self.config.prompt_length + self.config.response_length
         max_len = min(max_len, self.config.prompt_length + self.config.response_length)
@@ -214,6 +210,14 @@ class CallLLM(LLMClass):  # Call LLM in Verl RL env
             int(sampling_params.get('max_tokens', max_new_tokens)),
             max_new_tokens,
         )
+        if structured_outputs is not None:
+            if sampling_params.get('guided_decoding') is not None:
+                raise ValueError(
+                    "structured_outputs and guided_decoding cannot both be set"
+                )
+            sampling_params['structured_outputs'] = (
+                normalize_structured_outputs(structured_outputs)
+            )
 
         output = await self.server_manager.generate(
             request_id=uid,

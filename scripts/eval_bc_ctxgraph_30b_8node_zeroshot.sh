@@ -109,6 +109,7 @@ export NCCL_P2P_LEVEL=NVL
 PROJECT_ROOT=/work/09281/chc_1996/vista/context-graph
 MODEL_PATH=${MODEL_PATH:-Qwen/Qwen3-30B-A3B-Thinking-2507}
 EMBED_MODEL=${EMBED_MODEL:-Qwen/Qwen3-Embedding-8B}
+CTXGRAPH_PROTOCOL=${CTXGRAPH_PROTOCOL:-legacy}
 export HF_HOME=${HF_HOME:-/work/09281/chc_1996/vista/cache}
 export HF_HUB_CACHE=${HF_HUB_CACHE:-$HF_HOME/hub}
 cd "$PROJECT_ROOT"
@@ -124,6 +125,20 @@ if [ "$NUM_NODES" -ne 8 ]; then
   echo "Expected 8 nodes (set #SBATCH -N 8 or use idev -N 8), got $NUM_NODES"
   exit 1
 fi
+case "$CTXGRAPH_PROTOCOL" in
+  legacy)
+    STRUCTURED_GRAPH_CONTROLLER=false
+    CONTROLLER_OWNED_TOOL_FORMATTING=false
+    ;;
+  controller)
+    STRUCTURED_GRAPH_CONTROLLER=true
+    CONTROLLER_OWNED_TOOL_FORMATTING=true
+    ;;
+  *)
+    echo "ERROR: CTXGRAPH_PROTOCOL must be legacy or controller; got $CTXGRAPH_PROTOCOL"
+    exit 1
+    ;;
+esac
 
 if [ -n "${WANDB_API_KEY:-}" ]; then
   TRAINER_LOGGER='["console","wandb"]'
@@ -134,7 +149,7 @@ else
 fi
 
 TS=$(date +%Y%m%d_%H%M%S)
-EXPERIMENT_NAME="eval_ctxgraph_bc_30b_8n_zeroshot_${TS}"
+EXPERIMENT_NAME="eval_ctxgraph_${CTXGRAPH_PROTOCOL}_bc_30b_8n_zeroshot_${TS}"
 
 probe() { printf '+++ [%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 
@@ -146,6 +161,7 @@ echo "  Trainer model:  $MODEL_PATH"
 echo "  Embedder model: $EMBED_MODEL"
 echo "  Experiment: $EXPERIMENT_NAME"
 echo "  Logger: ${probe_msg}"
+echo "  Graph protocol: $CTXGRAPH_PROTOCOL structured_controller=$STRUCTURED_GRAPH_CONTROLLER controller_formatting=$CONTROLLER_OWNED_TOOL_FORMATTING"
 echo "  Started: $(date)"
 echo "=============================================================="
 
@@ -160,6 +176,10 @@ for f in "$TRAIN_PARQUET" "$VAL_PARQUET"; do
     exit 1
   fi
 done
+if [ "$STRUCTURED_GRAPH_CONTROLLER" = "true" ]; then
+  probe "checking vLLM guided-decoding support"
+  python -c "from agents.graph_controller import merge_decision_schema; from vllm import SamplingParams; from vllm.sampling_params import GuidedDecodingParams; p=SamplingParams(guided_decoding=GuidedDecodingParams(json=merge_decision_schema([0,1]))); assert p.guided_decoding.json; print('vLLM guided decoding: ok')"
+fi
 # HF corpus + embedding datasets (will use HF cache from \$HF_HOME/hub)
 CORPUS_DATASET="Tevatron/browsecomp-plus-corpus"
 CORPUS_EMBEDDING_DATASET="miaolu3/browsecomp-plus"
@@ -388,6 +408,8 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   +actor_rollout_ref.rollout.plugin.lambda_compact=0.2 \
   +actor_rollout_ref.rollout.plugin.lambda_cost=0.02 \
   +actor_rollout_ref.rollout.plugin.consolidation_interval=5 \
+  +actor_rollout_ref.rollout.plugin.structured_graph_controller=$STRUCTURED_GRAPH_CONTROLLER \
+  +actor_rollout_ref.rollout.plugin.controller_owned_tool_formatting=$CONTROLLER_OWNED_TOOL_FORMATTING \
   +actor_rollout_ref.rollout.plugin.max_traj=4 \
   +actor_rollout_ref.rollout.plugin.must_finish=False \
   +actor_rollout_ref.rollout.plugin.double_check=False \
