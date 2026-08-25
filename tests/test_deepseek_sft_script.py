@@ -5,6 +5,7 @@ SCRIPT = Path("scripts/generate_ctxgraph_sft_deepseek_v4_flash_0731_9node.sh")
 INTERACTIVE_SCRIPT = Path("scripts/generate_ctxgraph_sft_deepseek_v4_interactive_8node.sh")
 FULL_INTERACTIVE_SUBMIT = Path("scripts/submit_full_ctxgraph_sft_deepseek_v4_interactive.sh")
 IDEV4_SCRIPT = Path("scripts/smoke_interactive_ctxgraph_deepseek_v4_4node_idev.sh")
+EVAL_INTERACTIVE = Path("scripts/eval_interactive.py")
 
 
 def test_deepseek_sft_script_uses_open_checkpoint_and_scratch():
@@ -85,6 +86,13 @@ def test_deepseek_interactive_script_covers_both_train_domains_and_strict_trace(
     assert "SHARED_HF_HOME" not in text
     assert "SHARED_HF_HUB_CACHE" not in text
     assert "vLLM latest:" in text
+
+
+def test_structured_preflight_has_room_to_finish_json_and_reports_truncation():
+    text = EVAL_INTERACTIVE.read_text(encoding="utf-8")
+    assert '"max_completion_tokens": 256' in text
+    assert 'choice.finish_reason == "length"' in text
+    assert "Structured-output preflight returned invalid JSON" in text
 
 
 def test_deepseek_interactive_script_supports_array_chunking():

@@ -212,7 +212,10 @@ async def preflight(args: argparse.Namespace, workflow: str) -> None:
         request: dict[str, Any] = {
             "model": args.model_name,
             "messages": [{"role": "user", "content": "Reply with OK."}],
-            "max_completion_tokens": 32,
+            # A free-form summary string can exceed 32 tokens even for this
+            # tiny probe. Keep enough room for the grammar to reach a valid
+            # terminal state instead of truncating inside a JSON string.
+            "max_completion_tokens": 256,
         }
         if WORKFLOWS[workflow] == "graph" and args.structured_graph_controller:
             schema = merge_decision_schema([0, 1])
@@ -238,8 +241,20 @@ async def preflight(args: argparse.Namespace, workflow: str) -> None:
         if not response.choices:
             raise RuntimeError("Model API returned no choices")
         if WORKFLOWS[workflow] == "graph" and args.structured_graph_controller:
-            content = response.choices[0].message.content or ""
-            decision = json.loads(content)
+            choice = response.choices[0]
+            content = choice.message.content or ""
+            if choice.finish_reason == "length":
+                raise RuntimeError(
+                    "Structured-output preflight exhausted its token budget: "
+                    f"content={content!r}"
+                )
+            try:
+                decision = json.loads(content)
+            except json.JSONDecodeError as exc:
+                raise RuntimeError(
+                    "Structured-output preflight returned invalid JSON "
+                    f"(finish_reason={choice.finish_reason!r}): content={content!r}"
+                ) from exc
             if sorted(decision.get("candidate_indices", [])) != [0, 1]:
                 raise RuntimeError(
                     "Structured-output preflight returned invalid candidate indices"
