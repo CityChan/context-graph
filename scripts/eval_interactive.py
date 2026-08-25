@@ -112,6 +112,9 @@ def make_config(args: argparse.Namespace, workflow: str):
                 "structured_graph_controller": bool(
                     graph and args.structured_graph_controller
                 ),
+                "controller_owned_tool_formatting": bool(
+                    graph and args.structured_graph_controller
+                ),
                 "graph_controller_max_candidates": args.graph_controller_max_candidates,
                 "graph_controller_preview_chars": args.graph_controller_preview_chars,
                 "lambda_compact": 0.1,
@@ -179,6 +182,7 @@ async def eval_one(row: dict[str, Any], args: argparse.Namespace, tokenizer) -> 
             result["graph_trace"] = fields.get("graph_trace")
             result["graph_state"] = fields.get("graph_state", "")
             result["graph_rewards"] = fields.get("graph_rewards", {})
+            result["tool_format_repairs"] = fields.get("tool_format_repairs", [])
     except Exception as exc:
         result["error"] = repr(exc)
     finally:

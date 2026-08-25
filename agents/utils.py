@@ -524,6 +524,26 @@ class AgentContext:
         self.log_probs[turn_idx] = [0.0] * len(self.chat_ids[turn_idx])
         self.token_mask[turn_idx] = [False] * len(self.chat_ids[turn_idx])
 
+    def replace_assistant_turn(self, turn_idx, new_content, *, audit_info=None):
+        """Replace a controller-canonicalized assistant turn safely.
+
+        Generated token IDs and log probabilities describe the raw response,
+        not the repaired representation. Retokenize the canonical turn and
+        mask it from online policy-gradient updates; API-generated SFT is built
+        later from the canonical ``messages`` field.
+        """
+        assert self.chat[turn_idx]['role'] == 'assistant', \
+            f"Expected assistant turn at {turn_idx}"
+        self.chat[turn_idx]['content'] = new_content
+        self.chat_ids[turn_idx] = self.get_turn_context(turn_idx)
+        self.log_probs[turn_idx] = [0.0] * len(self.chat_ids[turn_idx])
+        self.token_mask[turn_idx] = [False] * len(self.chat_ids[turn_idx])
+        if audit_info is not None:
+            existing = self.additional_info[turn_idx]
+            merged = dict(existing) if isinstance(existing, dict) else {}
+            merged.update(audit_info)
+            self.additional_info[turn_idx] = merged
+
     def get_metrics(self):
         if self.metrics is None:
             return {}
@@ -563,6 +583,7 @@ class Agent(AgentContext):
         self.llm_client = llm_client
         self.retry_cjk = getattr(config.plugin, "retry_cjk", 0)
         self.info_cache = {}
+        self.tool_format_repairs = []
 
     async def step(self, max_new_tokens=None, retry_cjk=0, completion_kwargs=None):
         prompt = self.context()
@@ -581,6 +602,29 @@ class Agent(AgentContext):
             return None
         response = completion["choices"][0]["message"]["content"]
         self.append({'role': 'assistant', 'content': response}, completion)
+        if getattr(self.config.plugin, "controller_owned_tool_formatting", False):
+            from .tool_protocol import canonicalize_tool_call_text
+
+            canonical, repairs = canonicalize_tool_call_text(response)
+            if repairs:
+                raw_response = response
+                response = canonical
+                repair_record = {
+                    "turn_idx": len(self.chat) - 1,
+                    "raw_response": raw_response,
+                    "canonical_response": canonical,
+                    "repairs": repairs,
+                }
+                self.tool_format_repairs.append(repair_record)
+                self.replace_assistant_turn(
+                    len(self.chat) - 1,
+                    canonical,
+                    audit_info={
+                        "tool_format_repaired": True,
+                        "raw_assistant_content": raw_response,
+                        "tool_format_repairs": repairs,
+                    },
+                )
         return response
 
     async def react(self, run_action, max_turn=64, max_tokens=None, session_timeout=60 * 60,

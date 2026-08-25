@@ -1295,6 +1295,12 @@ async def process_item(
         event.get('source') == 'model'
         for event in graph_trace_payload['events']
     )
+    tool_format_repair_log = [
+        {"agent": agent_name, **repair}
+        for agent_name, agent_instance in agent.items()
+        for repair in agent_instance.tool_format_repairs
+    ]
+    env.stats['tool_format_repairs'] = len(tool_format_repair_log)
 
     if getattr(env, 'is_finish', False) or getattr(env, 'finish', False):
         mask_rollout = False
@@ -1463,6 +1469,7 @@ async def process_item(
                 'graph_state': graph.to_state_text(),
                 'graph_trace': graph_trace_payload,
                 'graph_rewards': graph_rewards,
+                'tool_format_repairs': copy.deepcopy(tool_format_repair_log),
                 'isolated_subgraph_stats': branch_subgraph_stats,
             }
         )

@@ -221,6 +221,7 @@ def result_to_sft_row(
         "graph_structural_ops": structural_ops,
         "graph_invalid_ops": invalid_ops,
         "graph_controller_errors": controller_errors,
+        "tool_format_repairs": int(stats.get("tool_format_repairs", 0) or 0),
         "graph_consolidation_invalid": consolidation_invalid,
         "graph_consolidation_pass_invalid": consolidation_pass_invalid,
         "graph_nodes": int(stats.get("graph_n_nodes", 0) or 0),
