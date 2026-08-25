@@ -20,6 +20,7 @@ from transformers import AutoTokenizer
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from agents.graph_controller import merge_decision_schema
 from agents.utils import CallAPI, TaskContext
 from verl import DataProto
 
@@ -214,21 +215,7 @@ async def preflight(args: argparse.Namespace, workflow: str) -> None:
             "max_completion_tokens": 32,
         }
         if WORKFLOWS[workflow] == "graph" and args.structured_graph_controller:
-            schema = {
-                "type": "object",
-                "properties": {
-                    "candidate_indices": {
-                        "type": "array",
-                        "items": {"type": "integer", "enum": [0, 1]},
-                        "minItems": 2,
-                        "maxItems": 2,
-                        "uniqueItems": True,
-                    },
-                    "summary": {"type": "string", "minLength": 1},
-                },
-                "required": ["candidate_indices", "summary"],
-                "additionalProperties": False,
-            }
+            schema = merge_decision_schema([0, 1])
             request["messages"] = [{
                 "role": "user",
                 "content": (

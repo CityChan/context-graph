@@ -34,7 +34,7 @@ def test_controller_exposes_indices_and_resolves_frozen_legal_ids():
     assert [candidate.node_id for candidate in snapshot.candidates] == ["n2", "n3"]
     schema = controller.merge_schema(snapshot)
     assert schema["properties"]["candidate_indices"]["items"]["enum"] == [0, 1]
-    assert schema["properties"]["candidate_indices"]["uniqueItems"] is True
+    assert "uniqueItems" not in schema["properties"]["candidate_indices"]
 
     args = controller.resolve_merge(
         graph,
@@ -49,6 +49,16 @@ def test_controller_exposes_indices_and_resolves_frozen_legal_ids():
         "summary": "The apple must be found and cooled.",
     }
 
+    duplicate_args = controller.resolve_merge(
+        graph,
+        snapshot,
+        json.dumps({
+            "candidate_indices": [1, 1, 0],
+            "summary": "The same evidence selection is canonicalized.",
+        }),
+    )
+    assert duplicate_args["node_ids"] == "n3,n2"
+
 
 def test_controller_rejects_stale_snapshot_and_invalid_decision():
     graph = _graph_with_evidence()
@@ -60,6 +70,13 @@ def test_controller_rejects_stale_snapshot_and_invalid_decision():
             graph,
             snapshot,
             '{"candidate_indices":[0],"summary":"too small"}',
+        )
+
+    with pytest.raises(GraphControllerError, match="two unique"):
+        controller.resolve_merge(
+            graph,
+            snapshot,
+            '{"candidate_indices":[0,0],"summary":"duplicate only"}',
         )
 
     graph.add_node("new evidence", NodeType.OBSERVATION)

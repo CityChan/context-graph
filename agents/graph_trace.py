@@ -337,7 +337,8 @@ def _model_operation_errors(event: dict[str, Any]) -> list[str]:
                 if not isinstance(selected, list):
                     errors.append("controller decision has no candidate index list")
                 else:
-                    resolved = [by_index.get(index) for index in selected]
+                    canonical_selected = list(dict.fromkeys(selected))
+                    resolved = [by_index.get(index) for index in canonical_selected]
                     if any(node_id is None for node_id in resolved) or resolved != node_ids:
                         errors.append("controller candidate mapping does not match merge sources")
                 if str(decision.get("summary", "")).strip() != str(args.get("summary", "")).strip():

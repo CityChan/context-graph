@@ -14,6 +14,26 @@ class GraphControllerError(ValueError):
     """Raised when a constrained graph decision cannot be safely executed."""
 
 
+def merge_decision_schema(indices: list[int]) -> dict[str, Any]:
+    """Build the shared runtime/preflight schema for a merge decision."""
+    if len(indices) < 2:
+        raise GraphControllerError("fewer than two merge candidates")
+    return {
+        "type": "object",
+        "properties": {
+            "candidate_indices": {
+                "type": "array",
+                "items": {"type": "integer", "enum": indices},
+                "minItems": 2,
+                "maxItems": min(6, len(indices)),
+            },
+            "summary": {"type": "string", "minLength": 1},
+        },
+        "required": ["candidate_indices", "summary"],
+        "additionalProperties": False,
+    }
+
+
 @dataclass(frozen=True)
 class MergeCandidate:
     index: int
@@ -45,9 +65,11 @@ class GraphActionController:
     """Expose semantic merge choices while owning format and node legality.
 
     The model sees stable candidate indices rather than graph node IDs. A
-    dynamic JSON schema constrains the selection to 2--6 unique candidates and
-    requires a non-empty summary. The snapshot hash prevents a decision from
-    being applied after the graph has changed.
+    dynamic JSON schema constrains the selection to 2--6 candidates and
+    requires a non-empty summary. The controller canonicalizes duplicate
+    indices because llguidance does not implement JSON Schema ``uniqueItems``.
+    The snapshot hash prevents a decision from being applied after the graph
+    has changed.
     """
 
     def __init__(self, *, max_candidates: int = 12, preview_chars: int = 360):
@@ -89,23 +111,7 @@ class GraphActionController:
 
     def merge_schema(self, snapshot: MergeCandidateSnapshot) -> dict[str, Any]:
         indices = [candidate.index for candidate in snapshot.candidates]
-        if len(indices) < 2:
-            raise GraphControllerError("fewer than two merge candidates")
-        return {
-            "type": "object",
-            "properties": {
-                "candidate_indices": {
-                    "type": "array",
-                    "items": {"type": "integer", "enum": indices},
-                    "minItems": 2,
-                    "maxItems": min(6, len(indices)),
-                    "uniqueItems": True,
-                },
-                "summary": {"type": "string", "minLength": 1},
-            },
-            "required": ["candidate_indices", "summary"],
-            "additionalProperties": False,
-        }
+        return merge_decision_schema(indices)
 
     def merge_prompt(self, snapshot: MergeCandidateSnapshot, *, turn_id: int) -> str:
         if len(snapshot.candidates) < 2:
@@ -149,8 +155,13 @@ class GraphActionController:
             raise GraphControllerError("merge requires 2 to 6 candidate indices")
         if any(isinstance(index, bool) or not isinstance(index, int) for index in indices):
             raise GraphControllerError("candidate indices must be integers")
-        if len(indices) != len(set(indices)):
-            raise GraphControllerError("candidate indices must be unique")
+        # vLLM may select llguidance for this schema, and llguidance 1.7.6
+        # rejects the JSON Schema ``uniqueItems`` keyword. Own uniqueness in
+        # the controller instead: preserve the model's first-choice order and
+        # reject only if fewer than two semantic choices remain.
+        indices = list(dict.fromkeys(indices))
+        if len(indices) < 2:
+            raise GraphControllerError("merge requires at least two unique candidates")
         by_index = {candidate.index: candidate for candidate in snapshot.candidates}
         if any(index not in by_index for index in indices):
             raise GraphControllerError("candidate index is not in the frozen snapshot")
