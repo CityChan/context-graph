@@ -234,6 +234,8 @@ class AgentLoopRewardManager(AbstractRewardManager):
                       "graph_n_nodes", "graph_n_edges", "graph_n_active",
                       "graph_op_attempts", "graph_explicit_ops",
                       "graph_invalid_ops", "graph_invalid_op_rate",
+                      "controller_mode_rejections",
+                      "controller_mode_rejection_rate",
                       "main_turn", "is_branch", "branch_success",
                       "main_context_tokens", "working_context_limit",
                       "concise_main", "scope_judge", "overlong", "no_finish",

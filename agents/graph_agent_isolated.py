@@ -389,6 +389,7 @@ async def process_item(
     session_start_time = time.time()
     iteration = 0
     main_turn_count = 0   # counts only main-agent turns (not branch internals)
+    controller_mode_rejections = 0
     consolidation_stats = {
         'attempts': 0, 'ops': 0, 'pass_valid': 0, 'pass_invalid': 0,
         'invalid': 0, 'budget_skips': 0, 'controller_errors': 0,
@@ -475,23 +476,27 @@ async def process_item(
             and fn_call is not None
             and fn_call['function'] in GRAPH_OPS
         ):
+            controller_mode_rejections += 1
             trace_before = graph_trace.capture(graph)
-            observation = GraphOpResult(
-                "[Error] Graph operations are available only in controller-owned "
-                f"merge checkpoints.\n\n{graph.to_state_text()}",
-                False,
+            observation = (
+                "[CONTROLLER MODE REJECTION] Graph-management XML is not an "
+                "environment tool. Continue with search, open_page, branch, or "
+                "finish. Graph changes are accepted only as controller-requested "
+                "JSON inside [GRAPH MERGE MODE]."
             )
-            graph.record_graph_op(False)
             graph_trace.record(
                 graph, trace_before, turn_id=main_turn_count,
-                source="model", op=fn_call['function'],
+                source="model", op="controller_mode_rejection",
                 args=fn_call.get('arguments', {}), success=False,
-                error=str(observation).split("\n", 1)[0],
+                error=f"out-of-mode graph action: {fn_call['function']}",
                 assistant_content=response,
-                decision_context={"mode": "environment"},
+                decision_context={
+                    "mode": "environment",
+                    "rejected_op": fn_call['function'],
+                },
             )
             print(
-                f'[GRAPH CONTROLLER MODE VIOLATION] '
+                f'[GRAPH CONTROLLER MODE REJECTION] '
                 f'{fn_call["function"]} outside checkpoint'
             )
 
@@ -1274,6 +1279,10 @@ async def process_item(
     env.stats['graph_invalid_op_rate'] = (
         graph.invalid_op_count / graph.graph_op_attempt_count
         if graph.graph_op_attempt_count else 0.0
+    )
+    env.stats['controller_mode_rejections'] = controller_mode_rejections
+    env.stats['controller_mode_rejection_rate'] = (
+        controller_mode_rejections / main_turn_count if main_turn_count else 0.0
     )
     env.stats['graph_n_summaries'] = graph_rewards.get('n_summaries', 0)
     env.stats['graph_reward'] = graph_rewards.get('graph_reward', score[1])

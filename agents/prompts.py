@@ -88,8 +88,18 @@ I've uploaded a python code repository in the directory /testbed. Consider the f
         graph_tools = graph_tool() if expose_graph_tools else []
         tool_description = PARALLEL_TOOL_PROMPT.format(
             description=convert_tools_to_description(search_tool() + branch_tool() + graph_tools))
-        system_prompt = SEARCH_SYSTEM_PROMPT_GRAPH + '\n\n' + tool_description
-        problem_statement = SEARCH_USER_PROMPT_GRAPH.format(Question=problem_statement)
+        graph_system_prompt = (
+            SEARCH_SYSTEM_PROMPT_GRAPH
+            if expose_graph_tools
+            else SEARCH_SYSTEM_PROMPT_GRAPH_CONTROLLER
+        )
+        graph_user_prompt = (
+            SEARCH_USER_PROMPT_GRAPH
+            if expose_graph_tools
+            else SEARCH_USER_PROMPT_GRAPH_CONTROLLER
+        )
+        system_prompt = graph_system_prompt + '\n\n' + tool_description
+        problem_statement = graph_user_prompt.format(Question=problem_statement)
         user_prompt = problem_statement
         chat = [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}]
         return chat
@@ -97,10 +107,20 @@ I've uploaded a python code repository in the directory /testbed. Consider the f
         graph_tools = graph_tool() if expose_graph_tools else []
         tool_description = PARALLEL_TOOL_PROMPT.format(
             description=convert_tools_to_description(search_tool() + branch_tool() + graph_tools))
-        system_prompt = SEARCH_SYSTEM_PROMPT_GRAPH + '\n\n' + tool_description
+        graph_system_prompt = (
+            SEARCH_SYSTEM_PROMPT_GRAPH
+            if expose_graph_tools
+            else SEARCH_SYSTEM_PROMPT_GRAPH_CONTROLLER
+        )
+        graph_user_prompt = (
+            SEARCH_USER_PROMPT_GRAPH
+            if expose_graph_tools
+            else SEARCH_USER_PROMPT_GRAPH_CONTROLLER
+        )
+        system_prompt = graph_system_prompt + '\n\n' + tool_description
         problem_statement = ("The following are multiple questions you need to answer. You should find answers for all of them. After collecting the answers, submit them using the `finish` tool. In the `answer` field, include responses for every question, wrapped with <qn></qn> tags. For example: "
                                 "<parameter=answer> <q1>Answer to q1</q1> <q2>Answer to q2</q2> <q3>Answer to q3</q3> ... </parameter>.\n\n") + problem_statement
-        problem_statement = SEARCH_USER_PROMPT_GRAPH.format(Question=problem_statement)
+        problem_statement = graph_user_prompt.format(Question=problem_statement)
         user_prompt = problem_statement
         chat = [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}]
         return chat
@@ -1186,4 +1206,33 @@ Now you are MAIN. `MODE: MAIN`. Read the system prompt's MAIN workflow, then:
 2. Branch sub-tasks to explore different angles
 3. Use merge/prune/add_edge to manage your context graph; use pass only when a consolidation checkpoint permits it
 4. Synthesize and report your final answer
+'''
+
+
+SEARCH_SYSTEM_PROMPT_GRAPH_CONTROLLER = '''You are a graph-structured research agent. The harness maintains your ContextGraph automatically from search observations and branch reports.
+
+You operate in two strictly separated protocols:
+
+1. **Environment mode** is the default. Use exactly one of the XML tools exposed below: `search`, `open_page`, `branch`, `return`, or `finish`. Never emit graph-management XML actions in environment mode.
+2. **Controller merge mode** begins only when a user message contains `[GRAPH MERGE MODE]`. In that mode, ignore the normal XML protocol and return only the JSON object required by the supplied response schema. Do not wrap the JSON in XML or Markdown. After `[ENVIRONMENT MODE RESTORED]`, immediately resume the environment XML protocol.
+
+Global rules:
+- Never simulate tool output; always use a provided tool.
+- After each action, use the reported ContextGraph state as read-only working memory.
+- Decompose independent research questions with `branch`, verify important claims, and cite retrieved evidence.
+- Never give up because an early search is weak; revise the query or open a new branch.
+- Submit the best supported concise answer with `finish`.
+'''
+
+
+SEARCH_USER_PROMPT_GRAPH_CONTROLLER = '''Answer the question through search and focused branch delegation. During normal execution, use only the XML tools exposed in the system prompt; the ContextGraph is controller-owned and read-only.
+
+Question: {Question}
+
+Final answer content:
+Exact Answer: {{your succinct final answer}}
+Explanation: {{explanation with [docid] citations}}
+Confidence: {{0% to 100%}}
+
+Use `finish` to submit your best-effort answer. If the harness explicitly enters `[GRAPH MERGE MODE]`, return only the JSON object required by that checkpoint; otherwise never emit graph-management actions.
 '''

@@ -100,6 +100,27 @@ def test_interactive_prompt_hides_graph_xml_tools_in_controller_mode():
     assert "Execute an action in the household environment" in controlled[0]["content"]
 
 
+def test_search_prompt_removes_normal_mode_graph_instructions_for_controller():
+    legacy = create_chat("identify the person", "search_graph")
+    controlled = create_chat(
+        "identify the person",
+        "search_graph",
+        expose_graph_tools=False,
+    )
+
+    legacy_text = "\n".join(turn["content"] for turn in legacy)
+    controlled_text = "\n".join(turn["content"] for turn in controlled)
+
+    assert "<function=merge>" in legacy_text
+    assert "<function=merge>" not in controlled_text
+    assert "<function=prune>" not in controlled_text
+    assert "Use merge/prune/add_edge" not in controlled_text
+    assert "[GRAPH MERGE MODE]" in controlled_text
+    assert "controller-owned" in controlled_text
+    assert ": search ----" in controlled_text
+    assert ": branch ----" in controlled_text
+
+
 def test_controller_requires_budget_for_a_complete_structured_decision():
     controller = GraphActionController(min_completion_tokens=256)
 

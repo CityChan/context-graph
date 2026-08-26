@@ -34,6 +34,27 @@ def test_sab_code_graph_agent_executes_controller_owned_checkpoints():
     assert "env.stats['structured_graph_controller']" in source
 
 
+def test_controller_mode_rejections_do_not_pollute_graph_invalid_ops():
+    for path in (
+        "agents/graph_agent_isolated.py",
+        "agents/graph_agent_code_isolated.py",
+    ):
+        source = _read(path)
+        rejection_block = source.split(
+            "controller_mode_rejections += 1", 1
+        )[1].split(
+            "elif fn_call is not None and fn_call['function'] in GRAPH_OPS", 1
+        )[0]
+        assert "graph.record_graph_op(False)" not in rejection_block
+        assert "[GRAPH CONTROLLER MODE REJECTION]" in rejection_block
+        assert "env.stats['controller_mode_rejections']" in source
+        assert "env.stats['controller_mode_rejection_rate']" in source
+
+    reward_manager = _read("verl/workers/reward_manager/agent.py")
+    assert '"controller_mode_rejections"' in reward_manager
+    assert '"controller_mode_rejection_rate"' in reward_manager
+
+
 def test_sab_8b_eval_has_opt_in_controller_protocol():
     source = _read("scripts/eval_sab_react_8b_4node_smoke.sh")
     assert "SAB_CTXGRAPH_PROTOCOL=${SAB_CTXGRAPH_PROTOCOL:-legacy}" in source
