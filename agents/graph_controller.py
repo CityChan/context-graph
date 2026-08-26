@@ -1,4 +1,4 @@
-"""Controller-owned, structured ContextGraph consolidation decisions."""
+"""Controller-owned, structured ContextGraph action decisions."""
 
 from __future__ import annotations
 
@@ -34,6 +34,48 @@ def merge_decision_schema(indices: list[int]) -> dict[str, Any]:
     }
 
 
+def graph_action_schema(
+    indices: list[int],
+    *,
+    allow_pass: bool = False,
+) -> dict[str, Any]:
+    """Build a constrained schema for the complete graph action space.
+
+    The schema deliberately stays flat: the deployed llguidance backend does
+    not reliably support conditional JSON Schema constructs. Action-specific
+    arity and field validation therefore remain controller-owned.
+    """
+    if not indices:
+        raise GraphControllerError("no graph action candidates")
+    actions = ["prune", "select"]
+    if len(indices) >= 2:
+        actions = ["merge", "prune", "add_edge", "select"]
+    if allow_pass:
+        actions.append("pass")
+    return {
+        "type": "object",
+        "properties": {
+            "action": {
+                "type": "string",
+                "enum": actions,
+            },
+            "candidate_indices": {
+                "type": "array",
+                "items": {"type": "integer", "enum": indices},
+                "minItems": 0,
+                "maxItems": min(6, len(indices)),
+            },
+            "summary": {"type": "string"},
+            "relation": {
+                "type": "string",
+                "enum": ["causal", "semantic", "temporal"],
+            },
+        },
+        "required": ["action", "candidate_indices", "summary", "relation"],
+        "additionalProperties": False,
+    }
+
+
 @dataclass(frozen=True)
 class MergeCandidate:
     index: int
@@ -62,14 +104,14 @@ class MergeCandidateSnapshot:
 
 
 class GraphActionController:
-    """Expose semantic merge choices while owning format and node legality.
+    """Expose semantic graph choices while owning format and node legality.
 
     The model sees stable candidate indices rather than graph node IDs. A
-    dynamic JSON schema constrains the selection to 2--6 candidates and
-    requires a non-empty summary. The controller canonicalizes duplicate
+    dynamic JSON schema allows merge, prune, add_edge, select, and pass. The
+    controller validates each action's fields and canonicalizes duplicate merge
     indices because llguidance does not implement JSON Schema ``uniqueItems``.
-    The snapshot hash prevents a decision from being applied after the graph
-    has changed.
+    The snapshot hash prevents a decision from being applied after the graph has
+    changed.
     """
 
     def __init__(
@@ -134,6 +176,15 @@ class GraphActionController:
         indices = [candidate.index for candidate in snapshot.candidates]
         return merge_decision_schema(indices)
 
+    def action_schema(
+        self,
+        snapshot: MergeCandidateSnapshot,
+        *,
+        allow_pass: bool = False,
+    ) -> dict[str, Any]:
+        indices = [candidate.index for candidate in snapshot.candidates]
+        return graph_action_schema(indices, allow_pass=allow_pass)
+
     def merge_prompt(self, snapshot: MergeCandidateSnapshot, *, turn_id: int) -> str:
         if len(snapshot.candidates) < 2:
             raise GraphControllerError("fewer than two merge candidates")
@@ -151,8 +202,143 @@ class GraphActionController:
             f"Candidates:\n{candidate_lines}"
         )
 
-    def structured_outputs(self, snapshot: MergeCandidateSnapshot) -> dict[str, Any]:
-        return {"json": self.merge_schema(snapshot)}
+    def action_prompt(
+        self,
+        snapshot: MergeCandidateSnapshot,
+        *,
+        turn_id: int,
+        allow_pass: bool,
+    ) -> str:
+        if not snapshot.candidates:
+            raise GraphControllerError("no graph action candidates")
+        candidate_lines = "\n".join(
+            f"  {candidate.index}: [{candidate.node_type}] {candidate.content}"
+            for candidate in snapshot.candidates
+        )
+        pass_rule = (
+            "pass is currently legal because the graph is saturated."
+            if allow_pass
+            else "pass is currently illegal because the graph is not saturated."
+        )
+        return (
+            f"[GRAPH ACTION MODE turn={int(turn_id)}]\n"
+            "The controller has frozen the legal evidence candidates below. "
+            "Choose the single graph action that best preserves task-relevant "
+            "evidence; do not merge or connect unrelated evidence. Actions: "
+            "merge uses 2-6 indices and a meaningful summary; prune uses one "
+            "irrelevant/redundant index; add_edge uses exactly two ordered "
+            "indices (source, target) and a causal/semantic/temporal relation; "
+            "select uses one index to shift focus; pass uses no indices. "
+            f"{pass_rule} For fields unused by an action, emit an empty summary "
+            "and relation=semantic. Return only the JSON object required by the "
+            "response schema. Do not emit XML or an environment action.\n"
+            f"Candidates:\n{candidate_lines}"
+        )
+
+    def structured_outputs(
+        self,
+        snapshot: MergeCandidateSnapshot,
+        *,
+        allow_pass: bool = False,
+    ) -> dict[str, Any]:
+        return {
+            "json": self.action_schema(snapshot, allow_pass=allow_pass),
+        }
+
+    @staticmethod
+    def _parse_decision(response: str) -> dict[str, Any]:
+        try:
+            decision = json.loads(response)
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise GraphControllerError(
+                "structured graph response is not valid JSON"
+            ) from exc
+        if not isinstance(decision, dict):
+            raise GraphControllerError("structured graph response is not an object")
+        return decision
+
+    @staticmethod
+    def _resolve_indices(
+        snapshot: MergeCandidateSnapshot,
+        indices: Any,
+    ) -> tuple[list[int], dict[int, MergeCandidate]]:
+        if not isinstance(indices, list):
+            raise GraphControllerError("candidate_indices is not an array")
+        if any(isinstance(index, bool) or not isinstance(index, int) for index in indices):
+            raise GraphControllerError("candidate indices must be integers")
+        by_index = {candidate.index: candidate for candidate in snapshot.candidates}
+        if any(index not in by_index for index in indices):
+            raise GraphControllerError("candidate index is not in the frozen snapshot")
+        return indices, by_index
+
+    def resolve_action(
+        self,
+        graph: ContextGraph,
+        snapshot: MergeCandidateSnapshot,
+        response: str,
+        *,
+        allow_pass: bool,
+    ) -> dict[str, Any]:
+        """Resolve a constrained decision to the existing graph handler API."""
+        if self.graph_hash(graph) != snapshot.graph_hash:
+            raise GraphControllerError("graph changed after candidate snapshot")
+        decision = self._parse_decision(response)
+        action = decision.get("action")
+        if action not in {"merge", "prune", "add_edge", "select", "pass"}:
+            raise GraphControllerError("unknown graph action")
+        indices, by_index = self._resolve_indices(
+            snapshot, decision.get("candidate_indices")
+        )
+
+        if action == "pass":
+            if indices:
+                raise GraphControllerError("pass requires no candidate indices")
+            if not allow_pass:
+                raise GraphControllerError("pass is illegal while graph is not saturated")
+            return {"function": "pass", "arguments": {}}
+
+        if action == "merge":
+            if not 2 <= len(indices) <= 6:
+                raise GraphControllerError("merge requires 2 to 6 candidate indices")
+            # Preserve first-choice order while owning uniqueness in Python.
+            indices = list(dict.fromkeys(indices))
+            if len(indices) < 2:
+                raise GraphControllerError("merge requires at least two unique candidates")
+            summary = decision.get("summary")
+            if not isinstance(summary, str) or not summary.strip():
+                raise GraphControllerError("merge summary is empty")
+            return {
+                "function": "merge",
+                "arguments": {
+                    "node_ids": ",".join(by_index[index].node_id for index in indices),
+                    "summary": summary.strip(),
+                },
+            }
+
+        required_arity = 2 if action == "add_edge" else 1
+        if len(indices) != required_arity:
+            raise GraphControllerError(
+                f"{action} requires exactly {required_arity} candidate "
+                f"{'indices' if required_arity > 1 else 'index'}"
+            )
+        if action == "add_edge":
+            if indices[0] == indices[1]:
+                raise GraphControllerError("add_edge requires distinct candidates")
+            relation = decision.get("relation")
+            if relation not in {"causal", "semantic", "temporal"}:
+                raise GraphControllerError("add_edge relation is invalid")
+            return {
+                "function": "add_edge",
+                "arguments": {
+                    "source": by_index[indices[0]].node_id,
+                    "target": by_index[indices[1]].node_id,
+                    "relation": relation,
+                },
+            }
+        return {
+            "function": action,
+            "arguments": {"node_id": by_index[indices[0]].node_id},
+        }
 
     def resolve_merge(
         self,
@@ -162,12 +348,7 @@ class GraphActionController:
     ) -> dict[str, str]:
         if self.graph_hash(graph) != snapshot.graph_hash:
             raise GraphControllerError("graph changed after candidate snapshot")
-        try:
-            decision = json.loads(response)
-        except (TypeError, json.JSONDecodeError) as exc:
-            raise GraphControllerError("structured merge response is not valid JSON") from exc
-        if not isinstance(decision, dict):
-            raise GraphControllerError("structured merge response is not an object")
+        decision = self._parse_decision(response)
         indices = decision.get("candidate_indices")
         summary = decision.get("summary")
         if not isinstance(indices, list):

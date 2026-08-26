@@ -407,7 +407,7 @@ async def process_item(
                 "[CONTROLLER MODE REJECTION] Graph-management XML is not an "
                 "environment tool. Continue with python_exec, branch, return, or "
                 "finish. Graph changes are accepted only as controller-requested "
-                "JSON inside [GRAPH MERGE MODE]."
+                "JSON inside [GRAPH ACTION MODE]."
             )
             print(
                 f'[GRAPH CONTROLLER MODE REJECTION] '
@@ -622,13 +622,15 @@ async def process_item(
             and structured_graph_controller
         ):
             candidate_snapshot = graph_controller.snapshot(graph)
-            if len(candidate_snapshot.candidates) < 2:
+            if not candidate_snapshot.candidates:
                 consolidation_stats['candidate_skips'] += 1
-                print('[GRAPH CONTROLLER SKIP] fewer than two legal merge candidates')
+                print('[GRAPH CONTROLLER SKIP] no legal graph candidates')
             else:
-                controller_prompt = graph_controller.merge_prompt(
+                allow_pass = graph.is_saturated()
+                controller_prompt = graph_controller.action_prompt(
                     candidate_snapshot,
                     turn_id=main_turn_count,
+                    allow_pass=allow_pass,
                 )
                 agent['main'].append({'role': 'user', 'content': controller_prompt})
                 if not graph_controller.has_completion_budget(
@@ -648,7 +650,8 @@ async def process_item(
                     0,
                     completion_kwargs={
                         "structured_outputs": graph_controller.structured_outputs(
-                            candidate_snapshot
+                            candidate_snapshot,
+                            allow_pass=allow_pass,
                         )
                     },
                 )
@@ -663,19 +666,28 @@ async def process_item(
                 consolidation_stats['attempts'] += 1
                 iteration += 1
                 try:
-                    merge_args = graph_controller.resolve_merge(
+                    graph_call = graph_controller.resolve_action(
                         graph,
                         candidate_snapshot,
                         controller_response,
+                        allow_pass=allow_pass,
                     )
-                    controller_observation = handle_merge(
-                        graph,
-                        {"function": "merge", "arguments": merge_args},
-                    )
-                    if not controller_observation.success:
-                        raise GraphControllerError(
-                            str(controller_observation).split("\n", 1)[0]
+                    controller_action = graph_call['function']
+                    if controller_action == 'pass':
+                        controller_observation = GraphOpResult(
+                            'Pass accepted: graph is saturated.', True
                         )
+                    else:
+                        controller_observation = {
+                            'merge': handle_merge,
+                            'prune': handle_prune,
+                            'add_edge': handle_add_edge,
+                            'select': handle_select,
+                        }[controller_action](graph, graph_call)
+                        if not controller_observation.success:
+                            raise GraphControllerError(
+                                str(controller_observation).split("\n", 1)[0]
+                            )
                 except GraphControllerError as exc:
                     consolidation_stats['controller_errors'] += 1
                     if process_reward and is_train:
@@ -685,20 +697,31 @@ async def process_item(
                         )
                     print(f'[GRAPH CONTROLLER ERROR] {exc}')
                     controller_ack = (
-                        "[GRAPH MERGE REJECTED] The controller could not safely "
+                        "[GRAPH ACTION REJECTED] The controller could not safely "
                         "apply this decision; continue the environment task."
                     )
                 else:
-                    graph.record_graph_op(True)
-                    consolidation_stats['ops'] += 1
-                    if process_reward and is_train:
+                    if controller_action == 'pass':
+                        consolidation_stats['pass_valid'] += 1
+                    else:
+                        graph.record_graph_op(True)
+                        consolidation_stats['ops'] += 1
+                    if (
+                        controller_action != 'pass'
+                        and process_reward
+                        and is_train
+                    ):
                         agent['main'].set_process_reward(
                             controller_turn_idx,
                             consolidation_op_reward,
                         )
-                    print(f'[GRAPH CONTROLLER MERGE] {controller_observation[:100]}')
+                    print(
+                        f'[GRAPH CONTROLLER {controller_action.upper()}] '
+                        f'{controller_observation[:100]}'
+                    )
                     controller_ack = (
-                        f"[GRAPH MERGE APPLIED] {controller_observation[:300]}"
+                        f"[GRAPH ACTION APPLIED: {controller_action}] "
+                        f"{controller_observation[:300]}"
                     )
 
                 controller_ack = (

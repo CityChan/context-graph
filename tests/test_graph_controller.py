@@ -60,6 +60,100 @@ def test_controller_exposes_indices_and_resolves_frozen_legal_ids():
     assert duplicate_args["node_ids"] == "n3,n2"
 
 
+def test_controller_exposes_and_resolves_complete_action_space():
+    graph = _graph_with_evidence()
+    controller = GraphActionController()
+    snapshot = controller.snapshot(graph)
+    schema = controller.action_schema(snapshot, allow_pass=True)
+
+    assert schema["properties"]["action"]["enum"] == [
+        "merge", "prune", "add_edge", "select", "pass",
+    ]
+    assert "oneOf" not in schema
+    assert "uniqueItems" not in schema["properties"]["candidate_indices"]
+
+    def resolve(action, indices, summary="", relation="semantic", allow_pass=False):
+        return controller.resolve_action(
+            graph,
+            snapshot,
+            json.dumps({
+                "action": action,
+                "candidate_indices": indices,
+                "summary": summary,
+                "relation": relation,
+            }),
+            allow_pass=allow_pass,
+        )
+
+    assert resolve("merge", [0, 1], "combined evidence") == {
+        "function": "merge",
+        "arguments": {
+            "node_ids": "n2,n3",
+            "summary": "combined evidence",
+        },
+    }
+    assert resolve("prune", [0]) == {
+        "function": "prune", "arguments": {"node_id": "n2"},
+    }
+    assert resolve("select", [1]) == {
+        "function": "select", "arguments": {"node_id": "n3"},
+    }
+    assert resolve("add_edge", [1, 0], relation="causal") == {
+        "function": "add_edge",
+        "arguments": {
+            "source": "n3", "target": "n2", "relation": "causal",
+        },
+    }
+    assert resolve("pass", [], allow_pass=True) == {
+        "function": "pass", "arguments": {},
+    }
+
+
+def test_controller_rejects_action_specific_invalid_fields():
+    graph = _graph_with_evidence()
+    controller = GraphActionController()
+    snapshot = controller.snapshot(graph)
+
+    def response(action, indices, summary="", relation="semantic"):
+        return json.dumps({
+            "action": action,
+            "candidate_indices": indices,
+            "summary": summary,
+            "relation": relation,
+        })
+
+    with pytest.raises(GraphControllerError, match="pass is illegal"):
+        controller.resolve_action(
+            graph, snapshot, response("pass", []), allow_pass=False,
+        )
+    with pytest.raises(GraphControllerError, match="exactly 2"):
+        controller.resolve_action(
+            graph, snapshot, response("add_edge", [0]), allow_pass=False,
+        )
+    with pytest.raises(GraphControllerError, match="distinct"):
+        controller.resolve_action(
+            graph, snapshot, response("add_edge", [0, 0]), allow_pass=False,
+        )
+    with pytest.raises(GraphControllerError, match="exactly 1"):
+        controller.resolve_action(
+            graph, snapshot, response("prune", [0, 1]), allow_pass=False,
+        )
+
+
+def test_controller_action_prompt_discloses_legality_and_all_actions():
+    graph = _graph_with_evidence()
+    controller = GraphActionController()
+    prompt = controller.action_prompt(
+        controller.snapshot(graph), turn_id=5, allow_pass=False,
+    )
+
+    assert "[GRAPH ACTION MODE turn=5]" in prompt
+    assert all(action in prompt for action in (
+        "merge", "prune", "add_edge", "select", "pass",
+    ))
+    assert "pass is currently illegal" in prompt
+
+
 def test_controller_rejects_stale_snapshot_and_invalid_decision():
     graph = _graph_with_evidence()
     controller = GraphActionController()
@@ -115,7 +209,7 @@ def test_search_prompt_removes_normal_mode_graph_instructions_for_controller():
     assert "<function=merge>" not in controlled_text
     assert "<function=prune>" not in controlled_text
     assert "Use merge/prune/add_edge" not in controlled_text
-    assert "[GRAPH MERGE MODE]" in controlled_text
+    assert "[GRAPH ACTION MODE]" in controlled_text
     assert "controller-owned" in controlled_text
     assert ": search ----" in controlled_text
     assert ": branch ----" in controlled_text

@@ -320,7 +320,7 @@ def _model_operation_errors(event: dict[str, Any]) -> list[str]:
         if len(created) != 1 or created[0].get("metadata", {}).get("merged_from") != node_ids:
             errors.append("merge summary provenance does not match its sources")
         decision_context = event.get("decision_context") or {}
-        if decision_context.get("mode") == "controller_merge":
+        if decision_context.get("mode") in {"controller_merge", "controller_action"}:
             if decision_context.get("graph_hash") != event.get("before_hash"):
                 errors.append("controller snapshot hash does not match the merge pre-state")
             candidates = decision_context.get("candidates")
@@ -358,4 +358,38 @@ def _model_operation_errors(event: dict[str, Any]) -> list[str]:
     elif op == "pass":
         if event.get("before_hash") != event.get("after_hash"):
             errors.append("pass unexpectedly mutated the graph")
+
+    decision_context = event.get("decision_context") or {}
+    if decision_context.get("mode") == "controller_action":
+        if decision_context.get("graph_hash") != event.get("before_hash"):
+            errors.append("controller snapshot hash does not match the action pre-state")
+        candidates = decision_context.get("candidates")
+        decision = decision_context.get("decision")
+        if not isinstance(candidates, list) or not isinstance(decision, dict):
+            errors.append("controller action decision context is incomplete")
+        else:
+            if decision.get("action") != op:
+                errors.append("controller action does not match executed operation")
+            selected = decision.get("candidate_indices")
+            if not isinstance(selected, list):
+                errors.append("controller action has no candidate index list")
+            else:
+                by_index = {
+                    candidate.get("index"): candidate.get("node_id")
+                    for candidate in candidates
+                    if isinstance(candidate, dict)
+                }
+                resolved = [by_index.get(index) for index in selected]
+                expected = {
+                    "prune": [args.get("node_id")],
+                    "select": [args.get("node_id")],
+                    "add_edge": [args.get("source"), args.get("target")],
+                    "pass": [],
+                }.get(op)
+                if expected is not None and resolved != expected:
+                    errors.append(
+                        "controller candidate mapping does not match action arguments"
+                    )
+            if op == "pass" and not decision_context.get("allow_pass"):
+                errors.append("controller pass was not legal at the checkpoint")
     return errors

@@ -163,7 +163,7 @@ I've uploaded a python code repository in the directory /testbed. Consider the f
                 )
             else:
                 graph_guidance = (
-                    "\n\nA controller may temporarily enter [GRAPH MERGE MODE]. "
+                    "\n\nA controller may temporarily enter [GRAPH ACTION MODE]. "
                     "Only in that marked mode, follow the supplied JSON response "
                     "schema instead of the normal XML action protocol. When the "
                     "controller restores environment mode, resume XML actions.\n"
@@ -210,7 +210,7 @@ I've uploaded a python code repository in the directory /testbed. Consider the f
                 )
             else:
                 system_prompt += (
-                    " A controller may temporarily enter [GRAPH MERGE MODE]. Only "
+                    " A controller may temporarily enter [GRAPH ACTION MODE]. Only "
                     "in that marked mode, follow the supplied JSON response schema "
                     "instead of the normal XML action protocol. When environment "
                     "mode is restored, resume XML actions."
@@ -1214,7 +1214,7 @@ SEARCH_SYSTEM_PROMPT_GRAPH_CONTROLLER = '''You are a graph-structured research a
 You operate in two strictly separated protocols:
 
 1. **Environment mode** is the default. Use exactly one of the XML tools exposed below: `search`, `open_page`, `branch`, `return`, or `finish`. Never emit graph-management XML actions in environment mode.
-2. **Controller merge mode** begins only when a user message contains `[GRAPH MERGE MODE]`. In that mode, ignore the normal XML protocol and return only the JSON object required by the supplied response schema. Do not wrap the JSON in XML or Markdown. After `[ENVIRONMENT MODE RESTORED]`, immediately resume the environment XML protocol.
+2. **Controller action mode** begins only when a user message contains `[GRAPH ACTION MODE]`. In that mode, ignore the normal XML protocol and return only the JSON object required by the supplied response schema. Do not wrap the JSON in XML or Markdown. After `[ENVIRONMENT MODE RESTORED]`, immediately resume the environment XML protocol.
 
 Global rules:
 - Never simulate tool output; always use a provided tool.
@@ -1234,5 +1234,5 @@ Exact Answer: {{your succinct final answer}}
 Explanation: {{explanation with [docid] citations}}
 Confidence: {{0% to 100%}}
 
-Use `finish` to submit your best-effort answer. If the harness explicitly enters `[GRAPH MERGE MODE]`, return only the JSON object required by that checkpoint; otherwise never emit graph-management actions.
+Use `finish` to submit your best-effort answer. If the harness explicitly enters `[GRAPH ACTION MODE]`, return only the JSON object required by that checkpoint; otherwise never emit graph-management actions.
 '''

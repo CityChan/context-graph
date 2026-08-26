@@ -54,7 +54,7 @@ def parse_args() -> argparse.Namespace:
         action=argparse.BooleanOptionalAction,
         default=True,
         help=(
-            "Use controller-owned JSON-schema merge checkpoints for graph "
+            "Use controller-owned JSON-schema action checkpoints for graph "
             "workflows (disable only for legacy XML comparisons)."
         ),
     )

@@ -91,7 +91,7 @@ _CODE_GRAPH_CONTROLLER_ADDENDUM = """
 # Branching + controller-owned graph state
 The harness maintains a ContextGraph from your branch reports and tool observations.
 Do not emit graph-management XML actions during normal task execution. A controller
-may temporarily enter `[GRAPH MERGE MODE]`; only in that marked mode, return the JSON
+may temporarily enter `[GRAPH ACTION MODE]`; only in that marked mode, return the JSON
 object required by the supplied response schema. After `[ENVIRONMENT MODE RESTORED]`,
 resume the normal XML protocol using only `python_exec`, `branch`, `return`, or `finish`.
 """

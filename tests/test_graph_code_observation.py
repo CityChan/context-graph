@@ -97,7 +97,7 @@ def test_sab_controller_prompt_hides_legacy_graph_tools():
     assert ": add_edge ----" not in system_prompt
     assert ": select ----" not in system_prompt
     assert ": prune ----" not in system_prompt
-    assert "[GRAPH MERGE MODE]" in system_prompt
+    assert "[GRAPH ACTION MODE]" in system_prompt
     assert "supplied response schema" in system_prompt
     for tool_name in ("merge", "add_edge", "select", "prune"):
         assert f": {tool_name} ----" in legacy_system

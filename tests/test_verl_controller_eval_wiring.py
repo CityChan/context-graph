@@ -30,7 +30,9 @@ def test_sab_code_graph_agent_executes_controller_owned_checkpoints():
     assert "expose_graph_tools=not structured_graph_controller" in source
     assert '"structured_outputs": graph_controller.structured_outputs(' in source
     assert "and not structured_graph_controller" in source
-    assert "[GRAPH CONTROLLER MERGE]" in source
+    assert "graph_controller.action_prompt(" in source
+    assert "graph_controller.resolve_action(" in source
+    assert "[GRAPH CONTROLLER {controller_action.upper()}]" in source
     assert "env.stats['structured_graph_controller']" in source
 
 

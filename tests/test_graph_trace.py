@@ -96,15 +96,18 @@ def test_graph_trace_audits_controller_index_to_node_mapping():
         args={"node_ids": f"{first},{second}", "summary": summary},
         success=True,
         decision_context={
-            "mode": "controller_merge",
+            "mode": "controller_action",
+            "allow_pass": False,
             "graph_hash": snapshot_hash(before),
             "candidates": [
                 {"index": 0, "node_id": first},
                 {"index": 1, "node_id": second},
             ],
             "decision": {
+                "action": "merge",
                 "candidate_indices": [0, 1],
                 "summary": summary,
+                "relation": "semantic",
             },
         },
     )
