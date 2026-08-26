@@ -58,11 +58,13 @@ from typing import Any, Union
 
 from verl import DataProto
 from .utils import Agent, select_env, truncate_text, is_weird, TaskContext, run_action, AgentLoopOutput, AgentLoopMetrics
+from .finalizer import remaining_generation_tokens, step_preserving_final_answer
 from .rollout_status import classify_rollout_status
 from .prompts import BRANCH_MESSAGE, SUMMARY_PROMPT_CODE
 from .prompts_code import create_chat_code
 from .verifier import judge_scope
 from .context_graph import ContextGraph, GraphOpResult, NodeType, NodeStatus, EdgeRelation
+from .graph_controller import GraphActionController, GraphControllerError
 from .graph_observation import record_tool_observation
 
 
@@ -252,7 +254,16 @@ async def process_item(
         print(f"[Error] during environment init: {str(e)}")
 
     workflow = _get(item.non_tensor_batch['extra_info']).get('workflow', None) or getattr(config.plugin, "workflow", "code_graph")
-    user_prompt = create_chat_code(env.instance_info['problem_statement'], workflow, item, env=env)
+    structured_graph_controller = bool(
+        getattr(config.plugin, "structured_graph_controller", False)
+    )
+    user_prompt = create_chat_code(
+        env.instance_info['problem_statement'],
+        workflow,
+        item,
+        env=env,
+        expose_graph_tools=not structured_graph_controller,
+    )
 
     branch_prompt = BRANCH_MESSAGE
     summary_prompt = SUMMARY_PROMPT_CODE
@@ -301,6 +312,21 @@ async def process_item(
     graph = ContextGraph(tokenizer, namespace_prefix="n")
     query_text = env.instance_info['problem_statement']
     root_id = graph.add_node(query_text, NodeType.QUERY)
+    graph_controller = GraphActionController(
+        max_candidates=int(
+            getattr(config.plugin, "graph_controller_max_candidates", 12)
+        ),
+        preview_chars=int(
+            getattr(config.plugin, "graph_controller_preview_chars", 360)
+        ),
+        min_completion_tokens=int(
+            getattr(
+                config.plugin,
+                "graph_controller_min_completion_tokens",
+                256,
+            )
+        ),
+    )
     branch_node_map = {}  # branch_name -> subtask_node_id
     branch_subgraph_stats = {}  # branch_name -> child graph stats (for logging)
 
@@ -316,7 +342,9 @@ async def process_item(
     iteration = 0
     main_turn_count = 0   # counts only main-agent turns (not branch internals)
     consolidation_stats = {
-        'attempts': 0, 'ops': 0, 'pass_valid': 0, 'pass_invalid': 0, 'invalid': 0,
+        'attempts': 0, 'ops': 0, 'pass_valid': 0, 'pass_invalid': 0,
+        'invalid': 0, 'budget_skips': 0, 'controller_errors': 0,
+        'candidate_skips': 0,
     }
     mask_rollout = True
     timed_out = False
@@ -368,7 +396,23 @@ async def process_item(
         fn_call = extract_fn_call(response)
 
         # ── Graph operations on parent graph ──
-        if fn_call is not None and fn_call['function'] in GRAPH_OPS:
+        if (
+            structured_graph_controller
+            and fn_call is not None
+            and fn_call['function'] in GRAPH_OPS
+        ):
+            observation = GraphOpResult(
+                "[Error] Graph operations are available only in controller-owned "
+                f"merge checkpoints.\n\n{graph.to_state_text()}",
+                False,
+            )
+            graph.record_graph_op(False)
+            print(
+                f'[GRAPH CONTROLLER MODE VIOLATION] '
+                f'{fn_call["function"]} outside checkpoint'
+            )
+
+        elif fn_call is not None and fn_call['function'] in GRAPH_OPS:
             handler = {
                 'merge': handle_merge,
                 'add_edge': handle_add_edge,
@@ -559,10 +603,117 @@ async def process_item(
         # asking the policy to emit a graph op or <pass>. <pass> is valid
         # (reward-neutral) only when the graph is saturated; otherwise
         # penalized. See ContextGraph.is_saturated() for thresholds.
-        if (consolidation_interval > 0
+        checkpoint_due = (consolidation_interval > 0
                 and main_turn_count > 0
                 and main_turn_count % consolidation_interval == 0
-                and iteration < max_turn):
+                and iteration < max_turn)
+        checkpoint_budget_error = (
+            graph.graph_op_budget_error() if checkpoint_due else None
+        )
+        if checkpoint_due and checkpoint_budget_error:
+            consolidation_stats['budget_skips'] += 1
+            print(f'[CONSOL SKIP] {checkpoint_budget_error}')
+
+        if (
+            checkpoint_due
+            and checkpoint_budget_error is None
+            and structured_graph_controller
+        ):
+            candidate_snapshot = graph_controller.snapshot(graph)
+            if len(candidate_snapshot.candidates) < 2:
+                consolidation_stats['candidate_skips'] += 1
+                print('[GRAPH CONTROLLER SKIP] fewer than two legal merge candidates')
+            else:
+                controller_prompt = graph_controller.merge_prompt(
+                    candidate_snapshot,
+                    turn_id=main_turn_count,
+                )
+                agent['main'].append({'role': 'user', 'content': controller_prompt})
+                if not graph_controller.has_completion_budget(
+                    remaining_generation_tokens(agent['main'])
+                ):
+                    agent['main'].rollback(k=1)
+                    consolidation_stats['budget_skips'] += 1
+                    print(
+                        '[GRAPH CONTROLLER SKIP] insufficient completion '
+                        'token budget'
+                    )
+                    continue
+                session_message.append({'role': 'user', 'content': controller_prompt})
+
+                controller_response = await step_preserving_final_answer(
+                    agent['main'],
+                    0,
+                    completion_kwargs={
+                        "structured_outputs": graph_controller.structured_outputs(
+                            candidate_snapshot
+                        )
+                    },
+                )
+                if controller_response is None:
+                    consolidation_stats['controller_errors'] += 1
+                    print('[GRAPH CONTROLLER ERROR] structured completion returned no response')
+                    break
+                session_message.append({
+                    'role': 'assistant', 'content': controller_response,
+                })
+                controller_turn_idx = len(agent['main'].chat) - 1
+                consolidation_stats['attempts'] += 1
+                iteration += 1
+                try:
+                    merge_args = graph_controller.resolve_merge(
+                        graph,
+                        candidate_snapshot,
+                        controller_response,
+                    )
+                    controller_observation = handle_merge(
+                        graph,
+                        {"function": "merge", "arguments": merge_args},
+                    )
+                    if not controller_observation.success:
+                        raise GraphControllerError(
+                            str(controller_observation).split("\n", 1)[0]
+                        )
+                except GraphControllerError as exc:
+                    consolidation_stats['controller_errors'] += 1
+                    if process_reward and is_train:
+                        agent['main'].set_process_reward(
+                            controller_turn_idx,
+                            consolidation_invalid_penalty,
+                        )
+                    print(f'[GRAPH CONTROLLER ERROR] {exc}')
+                    controller_ack = (
+                        "[GRAPH MERGE REJECTED] The controller could not safely "
+                        "apply this decision; continue the environment task."
+                    )
+                else:
+                    graph.record_graph_op(True)
+                    consolidation_stats['ops'] += 1
+                    if process_reward and is_train:
+                        agent['main'].set_process_reward(
+                            controller_turn_idx,
+                            consolidation_op_reward,
+                        )
+                    print(f'[GRAPH CONTROLLER MERGE] {controller_observation[:100]}')
+                    controller_ack = (
+                        f"[GRAPH MERGE APPLIED] {controller_observation[:300]}"
+                    )
+
+                controller_ack = (
+                    f"{controller_ack}\n\n[Latest ContextGraph state]\n"
+                    f"{graph.to_state_text()}\n\n"
+                    "[ENVIRONMENT MODE RESTORED] Continue the task normally. "
+                    "Your next response must use only python_exec, branch, return, "
+                    "or finish in the normal XML format."
+                )
+                agent['main'].append({'role': 'user', 'content': controller_ack})
+                session_message.append({'role': 'user', 'content': controller_ack})
+
+        if (
+            checkpoint_due
+            and checkpoint_budget_error is None
+            and not structured_graph_controller
+        ):
             is_sat = graph.is_saturated()
             n_active = len(graph.active_nodes)
             n_edges = len(graph.active_edges)
@@ -698,6 +849,10 @@ async def process_item(
     env.stats['consol_pass_valid'] = consolidation_stats['pass_valid']
     env.stats['consol_pass_invalid'] = consolidation_stats['pass_invalid']
     env.stats['consol_invalid'] = consolidation_stats['invalid']
+    env.stats['consol_budget_skips'] = consolidation_stats['budget_skips']
+    env.stats['consol_controller_errors'] = consolidation_stats['controller_errors']
+    env.stats['consol_candidate_skips'] = consolidation_stats['candidate_skips']
+    env.stats['structured_graph_controller'] = int(structured_graph_controller)
     # Rates (denominator-safe; 0 when no consolidation fired)
     _ca = max(consolidation_stats['attempts'], 1)
     env.stats['consol_op_rate'] = consolidation_stats['ops'] / _ca

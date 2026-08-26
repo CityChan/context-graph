@@ -79,3 +79,25 @@ def test_sab_branch_workflows_require_initial_delegation_only_for_branch_methods
     assert first_call_contract not in react_chat[1]["content"]
     assert first_call_contract in fold_chat[1]["content"]
     assert first_call_contract in graph_chat[1]["content"]
+
+
+def test_sab_controller_prompt_hides_legacy_graph_tools():
+    legacy_system = create_chat_code("analyze data", "code_graph")[0]["content"]
+    chat = create_chat_code(
+        "analyze data",
+        "code_graph",
+        expose_graph_tools=False,
+    )
+    system_prompt = chat[0]["content"]
+
+    assert "`python_exec`" in system_prompt
+    assert "`branch`" in system_prompt
+    assert "`finish`" in system_prompt
+    assert ": merge ----" not in system_prompt
+    assert ": add_edge ----" not in system_prompt
+    assert ": select ----" not in system_prompt
+    assert ": prune ----" not in system_prompt
+    assert "[GRAPH MERGE MODE]" in system_prompt
+    assert "supplied response schema" in system_prompt
+    for tool_name in ("merge", "add_edge", "select", "prune"):
+        assert f": {tool_name} ----" in legacy_system

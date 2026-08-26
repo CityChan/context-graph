@@ -86,6 +86,17 @@ Use these to keep the active working set small and well-connected. Variables (da
 """
 
 
+_CODE_GRAPH_CONTROLLER_ADDENDUM = """
+
+# Branching + controller-owned graph state
+The harness maintains a ContextGraph from your branch reports and tool observations.
+Do not emit graph-management XML actions during normal task execution. A controller
+may temporarily enter `[GRAPH MERGE MODE]`; only in that marked mode, return the JSON
+object required by the supplied response schema. After `[ENVIRONMENT MODE RESTORED]`,
+resume the normal XML protocol using only `python_exec`, `branch`, `return`, or `finish`.
+"""
+
+
 _DISCOVERYBENCH_ADDENDUM = """
 
 # DiscoveryBench result requirements
@@ -163,15 +174,27 @@ def _build_env_block(env) -> str:
     return "\n".join(lines)
 
 
-def _build_user_prompt_code(instruction: str, workflow: str, env=None) -> str:
-    tools = get_tools_for_workflow(workflow)
+def _build_user_prompt_code(
+    instruction: str,
+    workflow: str,
+    env=None,
+    *,
+    expose_graph_tools: bool = True,
+) -> str:
+    tools = get_tools_for_workflow(
+        workflow, expose_graph_tools=expose_graph_tools
+    )
     tool_desc = convert_tools_to_description(tools)
 
     sys_prompt = _CODE_SYSTEM_PROMPT.format(tool_descriptions=tool_desc)
     if workflow in ('code_branch', 'code_graph'):
         sys_prompt += _CODE_BRANCH_ADDENDUM
     if workflow == 'code_graph':
-        sys_prompt += _CODE_GRAPH_ADDENDUM
+        sys_prompt += (
+            _CODE_GRAPH_ADDENDUM
+            if expose_graph_tools
+            else _CODE_GRAPH_CONTROLLER_ADDENDUM
+        )
     if env is not None and "DiscoveryBench" in str(getattr(env, "ability", "")):
         sys_prompt += _DISCOVERYBENCH_ADDENDUM
 
@@ -201,11 +224,23 @@ def _build_user_prompt_code(instruction: str, workflow: str, env=None) -> str:
     ]
 
 
-def create_chat_code(problem_statement: str, workflow: str, item=None, env=None):
+def create_chat_code(
+    problem_statement: str,
+    workflow: str,
+    item=None,
+    env=None,
+    *,
+    expose_graph_tools: bool = True,
+):
     """Entry point matching prompts.create_chat signature.
 
     `env` (optional) is the initialized ScienceAgentEnv; when supplied, the
     user prompt is augmented with the real workdir layout (cwd, input file
     paths, output target) so the agent does not guess paths.
     """
-    return _build_user_prompt_code(problem_statement, workflow, env=env)
+    return _build_user_prompt_code(
+        problem_statement,
+        workflow,
+        env=env,
+        expose_graph_tools=expose_graph_tools,
+    )

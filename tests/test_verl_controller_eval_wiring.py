@@ -24,6 +24,16 @@ def test_call_llm_forwards_structured_outputs_without_mutating_base_sampling():
     assert "structured_outputs and guided_decoding cannot both be set" in source
 
 
+def test_sab_code_graph_agent_executes_controller_owned_checkpoints():
+    source = _read("agents/graph_agent_code_isolated.py")
+    assert "GraphActionController" in source
+    assert "expose_graph_tools=not structured_graph_controller" in source
+    assert '"structured_outputs": graph_controller.structured_outputs(' in source
+    assert "and not structured_graph_controller" in source
+    assert "[GRAPH CONTROLLER MERGE]" in source
+    assert "env.stats['structured_graph_controller']" in source
+
+
 def test_sab_8b_eval_has_opt_in_controller_protocol():
     source = _read("scripts/eval_sab_react_8b_4node_smoke.sh")
     assert "SAB_CTXGRAPH_PROTOCOL=${SAB_CTXGRAPH_PROTOCOL:-legacy}" in source

@@ -77,7 +77,11 @@ def finish_tool() -> dict:
 
 # ── Workflow assembly ──
 
-def get_tools_for_workflow(workflow: str) -> list[dict]:
+def get_tools_for_workflow(
+    workflow: str,
+    *,
+    expose_graph_tools: bool = True,
+) -> list[dict]:
     """Return the tool list a given workflow exposes to the LLM.
 
     Note: branch_tool() and graph_tool() each return a LIST of tools
@@ -90,5 +94,6 @@ def get_tools_for_workflow(workflow: str) -> list[dict]:
     if workflow == 'code_branch':
         return base + branch_tool()
     if workflow == 'code_graph':
-        return base + branch_tool() + graph_tool()
+        tools = base + branch_tool()
+        return tools + graph_tool() if expose_graph_tools else tools
     raise ValueError(f"Unknown code workflow: {workflow}")
