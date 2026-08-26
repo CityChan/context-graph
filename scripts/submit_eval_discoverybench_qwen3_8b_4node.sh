@@ -8,7 +8,16 @@ PROJECT_ROOT=${PROJECT_ROOT:-/work/09281/chc_1996/vista/context-graph}
 DISCOVERYBENCH_METHODS=${DISCOVERYBENCH_METHODS:-react,fold,ctxgraph}
 DISCOVERYBENCH_TIME_LIMIT=${DISCOVERYBENCH_TIME_LIMIT:-08:00:00}
 DISCOVERYBENCH_VAL_MAX_SAMPLES=${DISCOVERYBENCH_VAL_MAX_SAMPLES:-239}
+DISCOVERYBENCH_CTXGRAPH_PROTOCOL=${DISCOVERYBENCH_CTXGRAPH_PROTOCOL:-controller}
 EVAL_SCRIPT=scripts/eval_discoverybench_qwen3_8b_4node.sh
+
+case "$DISCOVERYBENCH_CTXGRAPH_PROTOCOL" in
+  legacy|controller) ;;
+  *)
+    echo "ERROR: DISCOVERYBENCH_CTXGRAPH_PROTOCOL must be legacy or controller; got $DISCOVERYBENCH_CTXGRAPH_PROTOCOL" >&2
+    exit 2
+    ;;
+esac
 
 cd "$PROJECT_ROOT"
 mkdir -p logs
@@ -22,26 +31,31 @@ method_enabled() {
 
 submit_method() {
   local method=$1
+  local method_protocol=legacy
+  if [ "$method" = "ctxgraph" ]; then
+    method_protocol=$DISCOVERYBENCH_CTXGRAPH_PROTOCOL
+  fi
   local output
   local job_id
 
   output=$(sbatch \
-    --job-name="eval-db-${method}-8b-4n" \
-    --output="logs/eval-db-${method}-8b-4n.%j.out" \
-    --error="logs/eval-db-${method}-8b-4n.%j.err" \
+    --job-name="eval-db-${method}-${method_protocol}-8b-4n" \
+    --output="logs/eval-db-${method}-${method_protocol}-8b-4n.%j.out" \
+    --error="logs/eval-db-${method}-${method_protocol}-8b-4n.%j.err" \
     --time="$DISCOVERYBENCH_TIME_LIMIT" \
-    --export="ALL,DISCOVERYBENCH_METHOD=$method,DISCOVERYBENCH_VAL_MAX_SAMPLES=$DISCOVERYBENCH_VAL_MAX_SAMPLES" \
+    --export="ALL,DISCOVERYBENCH_METHOD=$method,SAB_CTXGRAPH_PROTOCOL=$method_protocol,DISCOVERYBENCH_VAL_MAX_SAMPLES=$DISCOVERYBENCH_VAL_MAX_SAMPLES" \
     "$EVAL_SCRIPT")
   job_id=$(printf '%s\n' "$output" | grep -Eo '[0-9]+' | tail -n 1)
   if [ -z "$job_id" ]; then
     echo "ERROR: could not parse job id from: $output" >&2
     exit 1
   fi
-  printf '%-10s job=%s nodes=4 limit=%s samples=%s\n' \
-    "$method" "$job_id" "$DISCOVERYBENCH_TIME_LIMIT" "$DISCOVERYBENCH_VAL_MAX_SAMPLES"
+  printf '%-10s job=%s protocol=%s nodes=4 limit=%s samples=%s\n' \
+    "$method" "$job_id" "$method_protocol" "$DISCOVERYBENCH_TIME_LIMIT" "$DISCOVERYBENCH_VAL_MAX_SAMPLES"
 }
 
 echo "Submitting Qwen3-8B DiscoveryBench zero-shot suite: methods=$DISCOVERYBENCH_METHODS"
+echo "ContextGraph protocol: $DISCOVERYBENCH_CTXGRAPH_PROTOCOL"
 
 for method in react fold ctxgraph; do
   if method_enabled "$method"; then

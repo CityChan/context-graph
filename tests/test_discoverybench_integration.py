@@ -186,6 +186,10 @@ def test_discoverybench_scripts_wire_all_three_agents_and_real_hms():
     assert "MODEL_PATH:-Qwen/Qwen3-8B" in full_8b
     assert "DISCOVERYBENCH_VAL_MAX_SAMPLES:-239" in full_8b
     assert "SAB_ROLLOUT_QUANTIZATION:-none" in full_8b
+    assert "SAB_CTXGRAPH_PROTOCOL=${SAB_CTXGRAPH_PROTOCOL:-legacy}" in full_8b
+    assert "DISCOVERYBENCH_CTXGRAPH_PROTOCOL=${DISCOVERYBENCH_CTXGRAPH_PROTOCOL:-controller}" in submit_8b
+    assert "method_protocol=legacy" in submit_8b
+    assert "SAB_CTXGRAPH_PROTOCOL=$method_protocol" in submit_8b
     assert 'if [ "$SAB_ROLLOUT_QUANTIZATION" != "none" ]' in shared
     for method in ("react", "fold", "ctxgraph"):
         assert method in submit_8b
