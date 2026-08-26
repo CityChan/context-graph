@@ -93,6 +93,32 @@ def test_matched_suite_submitters_apply_controller_protocol_only_to_ctxgraph():
     assert 'BC_CTXGRAPH_PROTOCOL="$method_protocol"' in bc
 
 
+def test_gaia_submitter_and_runners_support_controller_protocol_and_sample_caps():
+    submitter = _read("scripts/submit_gaia_benchmark_8b_5node.sh")
+    assert "GAIA_CTXGRAPH_PROTOCOL=${GAIA_CTXGRAPH_PROTOCOL:-controller}" in submitter
+    assert "method_protocol=legacy" in submitter
+    assert 'if [ "$method" = "ctxgraph" ]' in submitter
+    assert "BC_CTXGRAPH_PROTOCOL=$method_protocol" in submitter
+    assert "TRAIN_MAX_SAMPLES=$GAIA_TRAIN_MAX_SAMPLES" in submitter
+    assert "VAL_MAX_SAMPLES=$GAIA_VAL_MAX_SAMPLES" in submitter
+    assert 'if [ "$DRY_RUN" = "1" ]' in submitter
+
+    runners = (
+        "scripts/train_bc_baseline_8b_4node_24h_v3_32k.sh",
+        "scripts/train_bc_foldagent_8b_paperfaithful_5node_48h.sh",
+        "scripts/train_bc_ctxgraph_8b_paperfaithful_5node_48h.sh",
+    )
+    for path in runners:
+        source = _read(path)
+        assert 'data.train_max_samples="$TRAIN_MAX_SAMPLES"' in source
+        assert 'data.val_max_samples="$VAL_MAX_SAMPLES"' in source
+
+    ctxgraph = _read("scripts/train_bc_ctxgraph_8b_paperfaithful_5node_48h.sh")
+    assert "BC_CTXGRAPH_PROTOCOL=${BC_CTXGRAPH_PROTOCOL:-legacy}" in ctxgraph
+    assert "plugin.structured_graph_controller=\"$BC_STRUCTURED_GRAPH_CONTROLLER\"" in ctxgraph
+    assert "plugin.controller_owned_tool_formatting=\"$BC_CONTROLLER_OWNED_TOOL_FORMATTING\"" in ctxgraph
+
+
 def test_browsecomp_30b_contextgraph_evals_have_controller_protocol():
     for path in (
         "scripts/eval_bc_ctxgraph_30b_instruct_8node_zeroshot.sh",

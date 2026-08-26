@@ -134,6 +134,8 @@ RUN_TAG=${RUN_TAG:-4n_24h_v3_32k}
 EXPERIMENT_NAME=${EXPERIMENT_NAME:-"train_baseline_bc_8b_${RUN_TAG}_${TS}"}
 TRAIN_DATA_FILE=${TRAIN_DATA_FILE:-data/bc_train.parquet}
 VAL_DATA_FILE=${VAL_DATA_FILE:-data/bc_test.parquet}
+TRAIN_MAX_SAMPLES=${TRAIN_MAX_SAMPLES:--1}
+VAL_MAX_SAMPLES=${VAL_MAX_SAMPLES:--1}
 TRAINER_VAL_ONLY=${TRAINER_VAL_ONLY:-False}
 VAL_BEFORE_TRAIN=${VAL_BEFORE_TRAIN:-True}
 TOTAL_TRAINING_STEPS=${TOTAL_TRAINING_STEPS:-30}
@@ -461,6 +463,8 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   actor_rollout_ref.actor.kl_loss_coef="$ACTOR_KL_LOSS_COEF" \
   data.train_files="$TRAIN_DATA_FILE" \
   data.val_files="$VAL_DATA_FILE" \
+  data.train_max_samples="$TRAIN_MAX_SAMPLES" \
+  data.val_max_samples="$VAL_MAX_SAMPLES" \
   data.train_batch_size="$TRAIN_BATCH_SIZE" \
   data.max_prompt_length="$PROMPT_LENGTH" \
   data.max_response_length="$RESPONSE_LENGTH" \

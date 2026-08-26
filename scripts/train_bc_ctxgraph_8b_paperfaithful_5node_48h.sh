@@ -132,7 +132,10 @@ RUN_TAG=${RUN_TAG:-paperfaithful_5n_48h}
 EXPERIMENT_NAME=${EXPERIMENT_NAME:-"train_ctxgraph_bc_8b_${RUN_TAG}_${TS}"}
 TRAIN_DATA_FILE=${TRAIN_DATA_FILE:-data/bc_train.parquet}
 VAL_DATA_FILE=${VAL_DATA_FILE:-data/bc_test.parquet}
+TRAIN_MAX_SAMPLES=${TRAIN_MAX_SAMPLES:--1}
+VAL_MAX_SAMPLES=${VAL_MAX_SAMPLES:--1}
 TRAINER_VAL_ONLY=${TRAINER_VAL_ONLY:-False}
+BC_CTXGRAPH_PROTOCOL=${BC_CTXGRAPH_PROTOCOL:-legacy}
 PROMPT_LENGTH=${PROMPT_LENGTH:-8192}
 RESPONSE_LENGTH=${RESPONSE_LENGTH:-32768}
 CONTEXT_LENGTH=${CONTEXT_LENGTH:-40960}
@@ -154,6 +157,21 @@ FINAL_ANSWER_RESERVE=${FINAL_ANSWER_RESERVE:-2048}
 FINAL_ANSWER_SAFETY_MARGIN=${FINAL_ANSWER_SAFETY_MARGIN:-64}
 TRAIN_LR=${TRAIN_LR:-2e-6}
 USE_KL_LOSS=${USE_KL_LOSS:-True}
+
+case "$BC_CTXGRAPH_PROTOCOL" in
+  legacy)
+    BC_STRUCTURED_GRAPH_CONTROLLER=false
+    BC_CONTROLLER_OWNED_TOOL_FORMATTING=false
+    ;;
+  controller)
+    BC_STRUCTURED_GRAPH_CONTROLLER=true
+    BC_CONTROLLER_OWNED_TOOL_FORMATTING=true
+    ;;
+  *)
+    echo "ERROR: BC_CTXGRAPH_PROTOCOL must be legacy or controller; got $BC_CTXGRAPH_PROTOCOL"
+    exit 1
+    ;;
+esac
 ACTOR_KL_LOSS_COEF=${ACTOR_KL_LOSS_COEF:-0.0005}
 ALGORITHM_KL_COEF=${ALGORITHM_KL_COEF:-0.005}
 CLIP_RATIO_LOW=${CLIP_RATIO_LOW:-0.2}
@@ -427,6 +445,7 @@ echo "=============================================================="
 echo "  Launching ContextGraph FoldGRPO + v5 (Qwen3-8B dense, 5 nodes [1 search + 4 trainer], $TOTAL_TRAINING_STEPS steps, BS=$TRAIN_BATCH_SIZE, rollout_n=$ROLLOUT_N, ppo_mini/rank=$PPO_MINI_BATCH_SIZE, context=$CONTEXT_LENGTH [48h], BrowseComp-Plus)"
 echo "  Optimization: lr=$TRAIN_LR use_kl_loss=$USE_KL_LOSS clip=[$CLIP_RATIO_LOW,$CLIP_RATIO_HIGH]"
 echo "  CG-specific (kept): workflow=search_graph, process_reward=[flat,scope,graph], lambda_compact=0.2, lambda_cost=0.02, consolidation K=5"
+echo "  Graph protocol: $BC_CTXGRAPH_PROTOCOL structured_controller=$BC_STRUCTURED_GRAPH_CONTROLLER controller_formatting=$BC_CONTROLLER_OWNED_TOOL_FORMATTING"
 echo "  v5 add-ons: uniqueness_weight=0.10 (Improvement #1), auto_bind_branch_edges=True with min_overlap=0.05 (Improvement #3)"
 echo "  vLLM gpu_memory_utilization=0.6 + FSDP CPU offload"
 echo "  val_before_train=$VAL_BEFORE_TRAIN, save_freq=$SAVE_FREQ, val every $TEST_FREQ steps"
@@ -471,6 +490,8 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   algorithm.foldgrpo_process_reward_mode=relative_extrema \
   data.train_files="$TRAIN_DATA_FILE" \
   data.val_files="$VAL_DATA_FILE" \
+  data.train_max_samples="$TRAIN_MAX_SAMPLES" \
+  data.val_max_samples="$VAL_MAX_SAMPLES" \
   data.train_batch_size="$TRAIN_BATCH_SIZE" \
   data.max_prompt_length="$PROMPT_LENGTH" \
   data.max_response_length="$RESPONSE_LENGTH" \
@@ -482,6 +503,8 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   actor_rollout_ref.actor.entropy_from_logits_with_chunking="$ENTROPY_FROM_LOGITS_WITH_CHUNKING" \
   actor_rollout_ref.model.enable_gradient_checkpointing=True \
   +actor_rollout_ref.rollout.plugin.workflow=search_graph \
+  +actor_rollout_ref.rollout.plugin.structured_graph_controller="$BC_STRUCTURED_GRAPH_CONTROLLER" \
+  +actor_rollout_ref.rollout.plugin.controller_owned_tool_formatting="$BC_CONTROLLER_OWNED_TOOL_FORMATTING" \
   +actor_rollout_ref.rollout.plugin.max_turn="$MAX_TURN" \
   +actor_rollout_ref.rollout.plugin.retry_cjk=10 \
   +actor_rollout_ref.rollout.plugin.turn_max_new_tokens="$TURN_MAX_NEW_TOKENS" \
