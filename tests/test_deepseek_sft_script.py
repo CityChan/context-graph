@@ -54,6 +54,11 @@ def test_deepseek_server_scripts_pin_vista_cuda_and_local_jit_caches():
         assert "export CUDA_HOME=$CUDA_HOME" in text
 
 
+def test_deepseek_interactive_preflight_allows_slow_vllm_import():
+    text = INTERACTIVE_SCRIPT.read_text(encoding="utf-8")
+    assert "PREFLIGHT_TIMEOUT_SECONDS=${PREFLIGHT_TIMEOUT_SECONDS:-600}" in text
+
+
 def test_deepseek_server_scripts_default_hf_cache_to_scratch():
     for path in (SCRIPT, INTERACTIVE_SCRIPT):
         text = path.read_text(encoding="utf-8")
