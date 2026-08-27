@@ -14,6 +14,23 @@ class GraphControllerError(ValueError):
     """Raised when a constrained graph decision cannot be safely executed."""
 
 
+def graph_checkpoint_due(
+    main_turn_count: int,
+    max_turn: int,
+    consolidation_interval: int,
+    initial_consolidation_turn: int = 0,
+) -> bool:
+    """Return whether this main turn should request one graph action."""
+    turn = int(main_turn_count)
+    if turn <= 0 or turn >= int(max_turn):
+        return False
+    initial = max(int(initial_consolidation_turn), 0)
+    interval = max(int(consolidation_interval), 0)
+    return (initial > 0 and turn == initial) or (
+        interval > 0 and turn % interval == 0
+    )
+
+
 def merge_decision_schema(indices: list[int]) -> dict[str, Any]:
     """Build the shared runtime/preflight schema for a merge decision."""
     if len(indices) < 2:

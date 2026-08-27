@@ -81,7 +81,11 @@ def test_deepseek_interactive_script_covers_both_train_domains_and_strict_trace(
     assert "deepseek-ai/DeepSeek-V4-Flash-0731" in text
     assert '--reasoning-effort "$REASONING_EFFORT"' in text
     assert "CONSOLIDATION_INTERVAL=${CONSOLIDATION_INTERVAL:-8}" in text
+    assert "INITIAL_CONSOLIDATION_TURN=${INITIAL_CONSOLIDATION_TURN:-}" in text
+    assert 'if [ "$DOMAIN" = "scienceworld" ]' in text
+    assert "INITIAL_CONSOLIDATION_TURN=2" in text
     assert '--consolidation-interval "$CONSOLIDATION_INTERVAL"' in text
+    assert '--initial-consolidation-turn "$INITIAL_CONSOLIDATION_TURN"' in text
     assert "--structured-graph-controller" in text
     assert "--require-graph-trace" in text
     assert "--min-graph-quality-score 1.0" in text

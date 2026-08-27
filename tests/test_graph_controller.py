@@ -3,7 +3,11 @@ import json
 import pytest
 
 from agents.context_graph import ContextGraph, EdgeRelation, NodeType
-from agents.graph_controller import GraphActionController, GraphControllerError
+from agents.graph_controller import (
+    GraphActionController,
+    GraphControllerError,
+    graph_checkpoint_due,
+)
 from agents.prompts import create_chat
 
 
@@ -225,3 +229,12 @@ def test_controller_requires_budget_for_a_complete_structured_decision():
 def test_controller_rejects_too_small_completion_budget_configuration():
     with pytest.raises(ValueError, match="min_completion_tokens"):
         GraphActionController(min_completion_tokens=9)
+
+
+def test_checkpoint_schedule_supports_one_early_action_then_regular_interval():
+    due_turns = [
+        turn for turn in range(1, 25)
+        if graph_checkpoint_due(turn, 70, 8, initial_consolidation_turn=2)
+    ]
+    assert due_turns == [2, 8, 16, 24]
+    assert not graph_checkpoint_due(70, 70, 8, initial_consolidation_turn=2)

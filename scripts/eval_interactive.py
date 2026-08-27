@@ -49,6 +49,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--response-length", type=int, default=16384)
     parser.add_argument("--max-turn", type=int, default=70)
     parser.add_argument("--consolidation-interval", type=int, default=8)
+    parser.add_argument("--initial-consolidation-turn", type=int, default=0)
     parser.add_argument(
         "--structured-graph-controller",
         action=argparse.BooleanOptionalAction,
@@ -109,6 +110,9 @@ def make_config(args: argparse.Namespace, workflow: str):
                 "enable_summary": False,
                 "enable_retrieval_memory": graph,
                 "consolidation_interval": args.consolidation_interval if graph else 0,
+                "initial_consolidation_turn": (
+                    args.initial_consolidation_turn if graph else 0
+                ),
                 "structured_graph_controller": bool(
                     graph and args.structured_graph_controller
                 ),

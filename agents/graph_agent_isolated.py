@@ -52,7 +52,11 @@ from .rollout_status import classify_rollout_status
 from .prompts import create_chat, BRANCH_MESSAGE_SEARCH, BRANCH_MESSAGE, SUMMARY_PROMPT_CODE, SUMMARY_PROMPT_SEARCH
 from .verifier import judge_scope
 from .context_graph import ContextGraph, GraphOpResult, NodeType, NodeStatus, EdgeRelation
-from .graph_controller import GraphActionController, GraphControllerError
+from .graph_controller import (
+    GraphActionController,
+    GraphControllerError,
+    graph_checkpoint_due,
+)
 from .graph_trace import GraphTraceRecorder
 
 
@@ -330,6 +334,9 @@ async def process_item(
     # graph.is_saturated() returns True. 0 disables consolidation entirely
     # (back to v2 behavior).
     consolidation_interval = getattr(config.plugin, "consolidation_interval", 0)
+    initial_consolidation_turn = getattr(
+        config.plugin, "initial_consolidation_turn", 0
+    )
     final_answer_reserve = max(
         int(getattr(config.plugin, "final_answer_reserve", 0) or 0), 0
     )
@@ -882,10 +889,12 @@ async def process_item(
         # asking the policy to emit a graph op or <pass>. <pass> is valid
         # (reward-neutral) only when the graph is saturated; otherwise
         # penalized. See ContextGraph.is_saturated() for thresholds.
-        checkpoint_due = (consolidation_interval > 0
-                and main_turn_count > 0
-                and main_turn_count % consolidation_interval == 0
-                and iteration < max_turn)
+        checkpoint_due = graph_checkpoint_due(
+            main_turn_count,
+            max_turn,
+            consolidation_interval,
+            initial_consolidation_turn,
+        )
         checkpoint_budget_error = (
             graph.graph_op_budget_error() if checkpoint_due else None
         )
