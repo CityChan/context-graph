@@ -254,6 +254,7 @@ SAB_TURN_MAX_NEW_TOKENS=${SAB_TURN_MAX_NEW_TOKENS:-512}
 SAB_DATA_SEED=${SAB_DATA_SEED:-42}
 SAB_METHOD=${SAB_METHOD:-react}
 SAB_CTXGRAPH_PROTOCOL=${SAB_CTXGRAPH_PROTOCOL:-legacy}
+SAB_CONTROLLER_ACTION_POLICY=${SAB_CONTROLLER_ACTION_POLICY:-structural}
 case "$SAB_METHOD" in
   react)
     SAB_METHOD_LABEL=ReAct
@@ -281,6 +282,13 @@ case "$SAB_METHOD" in
     ;;
   *)
     echo "ERROR: SAB_METHOD must be react, fold, or ctxgraph; got $SAB_METHOD"
+    exit 1
+    ;;
+esac
+case "$SAB_CONTROLLER_ACTION_POLICY" in
+  balanced|structural) ;;
+  *)
+    echo "ERROR: SAB_CONTROLLER_ACTION_POLICY must be balanced or structural; got $SAB_CONTROLLER_ACTION_POLICY"
     exit 1
     ;;
 esac
@@ -412,7 +420,7 @@ echo "  Train samples:  $SAB_TRAIN_MAX_SAMPLES (trainer init only; val_only=True
 echo "  Length caps:    prompt=$SAB_PROMPT_LENGTH response=$SAB_RESPONSE_LENGTH max_tokens_per_gpu=$SAB_MAX_TOKEN_LEN_PER_GPU"
 echo "  Turn caps:      val_max_turn=$SAB_VAL_MAX_TURN turn_max_new_tokens=$SAB_TURN_MAX_NEW_TOKENS"
 echo "  Qwen thinking:  $QWEN_ENABLE_THINKING"
-echo "  Graph protocol: $SAB_CTXGRAPH_PROTOCOL structured_controller=$SAB_STRUCTURED_GRAPH_CONTROLLER controller_formatting=$SAB_CONTROLLER_OWNED_TOOL_FORMATTING"
+echo "  Graph protocol: $SAB_CTXGRAPH_PROTOCOL structured_controller=$SAB_STRUCTURED_GRAPH_CONTROLLER controller_formatting=$SAB_CONTROLLER_OWNED_TOOL_FORMATTING action_policy=$SAB_CONTROLLER_ACTION_POLICY"
 echo "  Evaluation:     real=$SAB_REAL_EVAL dump_validation=$SAB_DUMP_VALIDATION ${SAB_VALIDATION_DATA_DIR:+dir=$SAB_VALIDATION_DATA_DIR}"
 if [ "$CODE_BENCHMARK_PROFILE" = "discoverybench" ]; then
   echo "  Discovery HMS:  real=$DISCOVERYBENCH_REAL_EVAL judge=$DISCOVERYBENCH_JUDGE_MODEL results=$DISCOVERYBENCH_RESULTS_DIR"
@@ -684,6 +692,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   +actor_rollout_ref.rollout.plugin.consolidation_interval=5 \
   +actor_rollout_ref.rollout.plugin.structured_graph_controller=$SAB_STRUCTURED_GRAPH_CONTROLLER \
   +actor_rollout_ref.rollout.plugin.controller_owned_tool_formatting=$SAB_CONTROLLER_OWNED_TOOL_FORMATTING \
+  +actor_rollout_ref.rollout.plugin.controller_action_policy=$SAB_CONTROLLER_ACTION_POLICY \
   +actor_rollout_ref.rollout.plugin.uniqueness_weight=0.10 \
   +actor_rollout_ref.rollout.plugin.auto_bind_branch_edges=True \
   +actor_rollout_ref.rollout.plugin.auto_bind_min_overlap=0.05 \

@@ -51,10 +51,13 @@ def test_controller_mode_rejections_do_not_pollute_graph_invalid_ops():
         assert "[GRAPH CONTROLLER MODE REJECTION]" in rejection_block
         assert "env.stats['controller_mode_rejections']" in source
         assert "env.stats['controller_mode_rejection_rate']" in source
+        assert "controller_action_policy" in source
+        assert "env.stats['controller_structural_policy']" in source
 
     reward_manager = _read("verl/workers/reward_manager/agent.py")
     assert '"controller_mode_rejections"' in reward_manager
     assert '"controller_mode_rejection_rate"' in reward_manager
+    assert '"controller_structural_policy"' in reward_manager
 
 
 def test_sab_8b_eval_has_opt_in_controller_protocol():
@@ -63,6 +66,7 @@ def test_sab_8b_eval_has_opt_in_controller_protocol():
     assert "SAB_CTXGRAPH_PROTOCOL=controller requires SAB_METHOD=ctxgraph" in source
     assert "plugin.structured_graph_controller=$SAB_STRUCTURED_GRAPH_CONTROLLER" in source
     assert "plugin.controller_owned_tool_formatting=$SAB_CONTROLLER_OWNED_TOOL_FORMATTING" in source
+    assert "plugin.controller_action_policy=$SAB_CONTROLLER_ACTION_POLICY" in source
     assert "GuidedDecodingParams" in source
 
 
@@ -72,6 +76,7 @@ def test_browsecomp_8b_eval_has_opt_in_controller_protocol():
     assert "BC_CTXGRAPH_PROTOCOL=controller requires BC_METHOD=contextgraph" in source
     assert "plugin.structured_graph_controller=$BC_STRUCTURED_GRAPH_CONTROLLER" in source
     assert "plugin.controller_owned_tool_formatting=$BC_CONTROLLER_OWNED_TOOL_FORMATTING" in source
+    assert "plugin.controller_action_policy=$BC_CONTROLLER_ACTION_POLICY" in source
     assert "GuidedDecodingParams" in source
 
 
@@ -81,6 +86,7 @@ def test_sab_30b_eval_and_submitter_preserve_protocol_identity():
     assert "SAB_CTXGRAPH_PROTOCOL=${SAB_CTXGRAPH_PROTOCOL:-legacy}" in runner
     assert "plugin.structured_graph_controller=$SAB_STRUCTURED_GRAPH_CONTROLLER" in runner
     assert "plugin.controller_owned_tool_formatting=$SAB_CONTROLLER_OWNED_TOOL_FORMATTING" in runner
+    assert "plugin.controller_action_policy=$SAB_CONTROLLER_ACTION_POLICY" in runner
     assert 'SAB_CTXGRAPH_PROTOCOL="$SAB_CTXGRAPH_PROTOCOL"' in submitter
     assert "${SAB_METHOD}_${SAB_CTXGRAPH_PROTOCOL}_sab" in submitter
 
@@ -93,6 +99,19 @@ def test_matched_suite_submitters_apply_controller_protocol_only_to_ctxgraph():
         assert "method_protocol=" in source
     assert 'SAB_CTXGRAPH_PROTOCOL="$method_protocol"' in sab
     assert 'BC_CTXGRAPH_PROTOCOL="$method_protocol"' in bc
+    assert "BC_CTXGRAPH_PROTOCOL=${BC_CTXGRAPH_PROTOCOL:-controller}" in bc
+
+
+def test_discovery_submitter_enables_structural_controller_policy():
+    submitter = _read("scripts/submit_eval_discoverybench_qwen3_8b_4node.sh")
+    assert (
+        "DISCOVERYBENCH_CONTROLLER_ACTION_POLICY="
+        "${DISCOVERYBENCH_CONTROLLER_ACTION_POLICY:-structural}"
+    ) in submitter
+    assert (
+        "SAB_CONTROLLER_ACTION_POLICY="
+        "$DISCOVERYBENCH_CONTROLLER_ACTION_POLICY"
+    ) in submitter
 
 
 def test_gaia_submitter_and_runners_support_controller_protocol_and_sample_caps():
@@ -101,6 +120,7 @@ def test_gaia_submitter_and_runners_support_controller_protocol_and_sample_caps(
     assert "method_protocol=legacy" in submitter
     assert 'if [ "$method" = "ctxgraph" ]' in submitter
     assert "BC_CTXGRAPH_PROTOCOL=$method_protocol" in submitter
+    assert "BC_CONTROLLER_ACTION_POLICY=$GAIA_CONTROLLER_ACTION_POLICY" in submitter
     assert "TRAIN_MAX_SAMPLES=$GAIA_TRAIN_MAX_SAMPLES" in submitter
     assert "VAL_MAX_SAMPLES=$GAIA_VAL_MAX_SAMPLES" in submitter
     assert 'if [ "$DRY_RUN" = "1" ]' in submitter
@@ -119,6 +139,7 @@ def test_gaia_submitter_and_runners_support_controller_protocol_and_sample_caps(
     assert "BC_CTXGRAPH_PROTOCOL=${BC_CTXGRAPH_PROTOCOL:-legacy}" in ctxgraph
     assert "plugin.structured_graph_controller=\"$BC_STRUCTURED_GRAPH_CONTROLLER\"" in ctxgraph
     assert "plugin.controller_owned_tool_formatting=\"$BC_CONTROLLER_OWNED_TOOL_FORMATTING\"" in ctxgraph
+    assert "plugin.controller_action_policy=\"$BC_CONTROLLER_ACTION_POLICY\"" in ctxgraph
 
 
 def test_browsecomp_30b_contextgraph_evals_have_controller_protocol():

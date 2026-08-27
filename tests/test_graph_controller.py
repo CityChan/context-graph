@@ -158,6 +158,61 @@ def test_controller_action_prompt_discloses_legality_and_all_actions():
     assert "pass is currently illegal" in prompt
 
 
+def test_structural_policy_removes_multi_candidate_select_escape_hatch():
+    graph = _graph_with_evidence()
+    controller = GraphActionController()
+    snapshot = controller.snapshot(graph)
+    schema = controller.action_schema(
+        snapshot,
+        allow_pass=True,
+        action_policy="structural",
+    )
+
+    assert schema["properties"]["action"]["enum"] == [
+        "merge", "prune", "add_edge", "pass",
+    ]
+    prompt = controller.action_prompt(
+        snapshot,
+        turn_id=5,
+        allow_pass=False,
+        action_policy="structural",
+    )
+    assert "structural consolidation checkpoint" in prompt
+    assert "select uses" not in prompt
+
+    with pytest.raises(GraphControllerError, match="unavailable"):
+        controller.resolve_action(
+            graph,
+            snapshot,
+            json.dumps({
+                "action": "select",
+                "candidate_indices": [0],
+                "summary": "",
+                "relation": "semantic",
+            }),
+            allow_pass=False,
+            action_policy="structural",
+        )
+
+
+def test_structural_policy_keeps_select_when_only_one_candidate_exists():
+    graph = ContextGraph(namespace_prefix="n")
+    root = graph.add_node("task", NodeType.QUERY)
+    graph.add_node(
+        "one observation",
+        NodeType.OBSERVATION,
+        parent_id=root,
+        edge_relation=EdgeRelation.TEMPORAL,
+    )
+    controller = GraphActionController()
+    schema = controller.action_schema(
+        controller.snapshot(graph),
+        action_policy="structural",
+    )
+
+    assert schema["properties"]["action"]["enum"] == ["prune", "select"]
+
+
 def test_controller_rejects_stale_snapshot_and_invalid_decision():
     graph = _graph_with_evidence()
     controller = GraphActionController()

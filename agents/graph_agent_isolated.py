@@ -337,6 +337,14 @@ async def process_item(
     initial_consolidation_turn = getattr(
         config.plugin, "initial_consolidation_turn", 0
     )
+    controller_action_policy = str(
+        getattr(config.plugin, "controller_action_policy", "balanced")
+    ).strip().lower()
+    if controller_action_policy not in {"balanced", "structural"}:
+        raise ValueError(
+            "controller_action_policy must be balanced or structural; got "
+            f"{controller_action_policy}"
+        )
     final_answer_reserve = max(
         int(getattr(config.plugin, "final_answer_reserve", 0) or 0), 0
     )
@@ -917,6 +925,7 @@ async def process_item(
                     candidate_snapshot,
                     turn_id=main_turn_count,
                     allow_pass=allow_pass,
+                    action_policy=controller_action_policy,
                 )
                 fitted_controller_prompt = append_observation_preserving_final_answer(
                     agent['main'],
@@ -953,6 +962,7 @@ async def process_item(
                         "structured_outputs": graph_controller.structured_outputs(
                             candidate_snapshot,
                             allow_pass=allow_pass,
+                            action_policy=controller_action_policy,
                         )
                     },
                 )
@@ -991,6 +1001,7 @@ async def process_item(
                         candidate_snapshot,
                         controller_response,
                         allow_pass=allow_pass,
+                        action_policy=controller_action_policy,
                     )
                     controller_action = graph_call['function']
                     if controller_action == 'pass':
@@ -1333,6 +1344,9 @@ async def process_item(
     env.stats['consol_controller_errors'] = consolidation_stats['controller_errors']
     env.stats['consol_candidate_skips'] = consolidation_stats['candidate_skips']
     env.stats['structured_graph_controller'] = int(structured_graph_controller)
+    env.stats['controller_structural_policy'] = int(
+        controller_action_policy == "structural"
+    )
     # Rates (denominator-safe; 0 when no consolidation fired)
     _ca = max(consolidation_stats['attempts'], 1)
     env.stats['consol_op_rate'] = consolidation_stats['ops'] / _ca

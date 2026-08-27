@@ -221,6 +221,7 @@ else
 fi
 SAB_METHOD=${SAB_METHOD:-react}
 SAB_CTXGRAPH_PROTOCOL=${SAB_CTXGRAPH_PROTOCOL:-legacy}
+SAB_CONTROLLER_ACTION_POLICY=${SAB_CONTROLLER_ACTION_POLICY:-structural}
 case "$SAB_METHOD" in
   react)
     SAB_METHOD_LABEL=ReAct
@@ -248,6 +249,13 @@ case "$SAB_METHOD" in
     ;;
   *)
     echo "ERROR: SAB_METHOD must be react, fold, or ctxgraph; got $SAB_METHOD"
+    exit 1
+    ;;
+esac
+case "$SAB_CONTROLLER_ACTION_POLICY" in
+  balanced|structural) ;;
+  *)
+    echo "ERROR: SAB_CONTROLLER_ACTION_POLICY must be balanced or structural; got $SAB_CONTROLLER_ACTION_POLICY"
     exit 1
     ;;
 esac
@@ -350,7 +358,7 @@ echo "  Sample caps:    val=$SAB_VAL_MAX_SAMPLES train=$SAB_TRAIN_MAX_SAMPLES se
 echo "  Token caps:     prompt=$SAB_PROMPT_LENGTH response=$SAB_RESPONSE_LENGTH max_token_gpu=$SAB_MAX_TOKEN_LEN_PER_GPU"
 echo "  Turn caps:      val_max_turn=$SAB_VAL_MAX_TURN turn_max_new_tokens=$SAB_TURN_MAX_NEW_TOKENS"
 echo "  Method config:  agent_loop=$SAB_AGENT_LOOP workflow=$SAB_WORKFLOW process_reward=$SAB_PROCESS_REWARD"
-echo "  Graph protocol: $SAB_CTXGRAPH_PROTOCOL structured_controller=$SAB_STRUCTURED_GRAPH_CONTROLLER controller_formatting=$SAB_CONTROLLER_OWNED_TOOL_FORMATTING"
+echo "  Graph protocol: $SAB_CTXGRAPH_PROTOCOL structured_controller=$SAB_STRUCTURED_GRAPH_CONTROLLER controller_formatting=$SAB_CONTROLLER_OWNED_TOOL_FORMATTING action_policy=$SAB_CONTROLLER_ACTION_POLICY"
 echo "  SAB_REAL_EVAL:  $SAB_REAL_EVAL"
 echo "  Ray bootstrap:  port=$RAY_PORT raylet_wait=${RAY_raylet_start_wait_time_s}s status_timeout=${RAY_STATUS_TIMEOUT_SECONDS}s tmp=$RAY_TMPDIR_ROOT"
 echo "  Debug:          SAB_DEBUG_IO=$SAB_DEBUG_IO SAB_DUMP_VALIDATION=$SAB_DUMP_VALIDATION no_output_hint_after=$SAB_NO_OUTPUT_HINT_AFTER ${SAB_VALIDATION_DATA_DIR:+validation_dir=$SAB_VALIDATION_DATA_DIR}"
@@ -615,6 +623,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   +actor_rollout_ref.rollout.plugin.consolidation_interval=5 \
   +actor_rollout_ref.rollout.plugin.structured_graph_controller=$SAB_STRUCTURED_GRAPH_CONTROLLER \
   +actor_rollout_ref.rollout.plugin.controller_owned_tool_formatting=$SAB_CONTROLLER_OWNED_TOOL_FORMATTING \
+  +actor_rollout_ref.rollout.plugin.controller_action_policy=$SAB_CONTROLLER_ACTION_POLICY \
   +actor_rollout_ref.rollout.plugin.uniqueness_weight=0.10 \
   +actor_rollout_ref.rollout.plugin.auto_bind_branch_edges=True \
   +actor_rollout_ref.rollout.plugin.auto_bind_min_overlap=0.05 \

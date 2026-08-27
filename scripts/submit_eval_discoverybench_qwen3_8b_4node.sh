@@ -9,12 +9,20 @@ DISCOVERYBENCH_METHODS=${DISCOVERYBENCH_METHODS:-react,fold,ctxgraph}
 DISCOVERYBENCH_TIME_LIMIT=${DISCOVERYBENCH_TIME_LIMIT:-08:00:00}
 DISCOVERYBENCH_VAL_MAX_SAMPLES=${DISCOVERYBENCH_VAL_MAX_SAMPLES:-239}
 DISCOVERYBENCH_CTXGRAPH_PROTOCOL=${DISCOVERYBENCH_CTXGRAPH_PROTOCOL:-controller}
+DISCOVERYBENCH_CONTROLLER_ACTION_POLICY=${DISCOVERYBENCH_CONTROLLER_ACTION_POLICY:-structural}
 EVAL_SCRIPT=scripts/eval_discoverybench_qwen3_8b_4node.sh
 
 case "$DISCOVERYBENCH_CTXGRAPH_PROTOCOL" in
   legacy|controller) ;;
   *)
     echo "ERROR: DISCOVERYBENCH_CTXGRAPH_PROTOCOL must be legacy or controller; got $DISCOVERYBENCH_CTXGRAPH_PROTOCOL" >&2
+    exit 2
+    ;;
+esac
+case "$DISCOVERYBENCH_CONTROLLER_ACTION_POLICY" in
+  balanced|structural) ;;
+  *)
+    echo "ERROR: DISCOVERYBENCH_CONTROLLER_ACTION_POLICY must be balanced or structural; got $DISCOVERYBENCH_CONTROLLER_ACTION_POLICY" >&2
     exit 2
     ;;
 esac
@@ -43,7 +51,7 @@ submit_method() {
     --output="logs/eval-db-${method}-${method_protocol}-8b-4n.%j.out" \
     --error="logs/eval-db-${method}-${method_protocol}-8b-4n.%j.err" \
     --time="$DISCOVERYBENCH_TIME_LIMIT" \
-    --export="ALL,DISCOVERYBENCH_METHOD=$method,SAB_CTXGRAPH_PROTOCOL=$method_protocol,DISCOVERYBENCH_VAL_MAX_SAMPLES=$DISCOVERYBENCH_VAL_MAX_SAMPLES" \
+    --export="ALL,DISCOVERYBENCH_METHOD=$method,SAB_CTXGRAPH_PROTOCOL=$method_protocol,SAB_CONTROLLER_ACTION_POLICY=$DISCOVERYBENCH_CONTROLLER_ACTION_POLICY,DISCOVERYBENCH_VAL_MAX_SAMPLES=$DISCOVERYBENCH_VAL_MAX_SAMPLES" \
     "$EVAL_SCRIPT")
   job_id=$(printf '%s\n' "$output" | grep -Eo '[0-9]+' | tail -n 1)
   if [ -z "$job_id" ]; then
@@ -55,7 +63,7 @@ submit_method() {
 }
 
 echo "Submitting Qwen3-8B DiscoveryBench zero-shot suite: methods=$DISCOVERYBENCH_METHODS"
-echo "ContextGraph protocol: $DISCOVERYBENCH_CTXGRAPH_PROTOCOL"
+echo "ContextGraph protocol: $DISCOVERYBENCH_CTXGRAPH_PROTOCOL action_policy=$DISCOVERYBENCH_CONTROLLER_ACTION_POLICY"
 
 for method in react fold ctxgraph; do
   if method_enabled "$method"; then

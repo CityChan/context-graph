@@ -9,7 +9,8 @@ BC_METHODS=${BC_METHODS:-baseline,foldagent,contextgraph}
 BC_JOB_MODEL_TAG=${BC_JOB_MODEL_TAG:-8b}
 BC_EXPERIMENT_MODEL_TAG=${BC_EXPERIMENT_MODEL_TAG:-8b}
 BC_EVAL_TIME=${BC_EVAL_TIME:-01:00:00}
-BC_CTXGRAPH_PROTOCOL=${BC_CTXGRAPH_PROTOCOL:-legacy}
+BC_CTXGRAPH_PROTOCOL=${BC_CTXGRAPH_PROTOCOL:-controller}
+BC_CONTROLLER_ACTION_POLICY=${BC_CONTROLLER_ACTION_POLICY:-structural}
 cd "$PROJECT_ROOT"
 mkdir -p logs
 
@@ -21,7 +22,7 @@ method_enabled() {
 }
 
 echo "Submitting BC-P eval: model=$MODEL_PATH methods=$BC_METHODS nodes=4 time=$BC_EVAL_TIME"
-echo "ContextGraph protocol: $BC_CTXGRAPH_PROTOCOL"
+echo "ContextGraph protocol: $BC_CTXGRAPH_PROTOCOL action_policy=$BC_CONTROLLER_ACTION_POLICY"
 
 for method in baseline foldagent contextgraph; do
   if ! method_enabled "$method"; then
@@ -32,6 +33,7 @@ for method in baseline foldagent contextgraph; do
   job_id=$(MODEL_PATH="$MODEL_PATH" \
     BC_METHOD="$method" \
     BC_CTXGRAPH_PROTOCOL="$method_protocol" \
+    BC_CONTROLLER_ACTION_POLICY="$BC_CONTROLLER_ACTION_POLICY" \
     BC_EXPERIMENT_MODEL_TAG="$BC_EXPERIMENT_MODEL_TAG" \
     BC_CONTEXT_LENGTH=65536 \
     BC_PROMPT_LENGTH=8192 \

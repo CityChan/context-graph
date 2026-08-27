@@ -94,6 +94,12 @@ Do not emit graph-management XML actions during normal task execution. A control
 may temporarily enter `[GRAPH ACTION MODE]`; only in that marked mode, return the JSON
 object required by the supplied response schema. After `[ENVIRONMENT MODE RESTORED]`,
 resume the normal XML protocol using only `python_exec`, `branch`, `return`, or `finish`.
+
+Treat controller checkpoints as part of the scientific workflow, not as a formatting
+exercise. Consolidate complementary analyses, connect real data or derivation lineage,
+and prune demonstrated dead ends. Use `select` only for a genuine change of analytical
+focus, never merely because it is the least destructive choice. Continue the deep
+inspect-plan-execute-verify workflow after every checkpoint.
 """
 
 

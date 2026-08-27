@@ -2,6 +2,7 @@ from agents.prompts import (
     SEARCH_SYSTEM_PROMPT_GRAPH_CONTROLLER,
     SEARCH_USER_PROMPT_GRAPH_CONTROLLER,
 )
+from agents.prompts_code import _CODE_GRAPH_CONTROLLER_ADDENDUM
 
 
 def test_controller_prompt_restores_deep_research_workflow():
@@ -34,3 +35,10 @@ def test_controller_prompt_keeps_graph_protocol_isolated():
     assert "Never emit graph-management XML actions" in combined
     assert "<function=merge>" not in combined
     assert "<function=prune>" not in combined
+
+
+def test_code_controller_prompt_keeps_deep_scientific_workflow():
+    assert "scientific workflow" in _CODE_GRAPH_CONTROLLER_ADDENDUM
+    assert "Consolidate complementary analyses" in _CODE_GRAPH_CONTROLLER_ADDENDUM
+    assert "select` only for a genuine change" in _CODE_GRAPH_CONTROLLER_ADDENDUM
+    assert "inspect-plan-execute-verify" in _CODE_GRAPH_CONTROLLER_ADDENDUM

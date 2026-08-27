@@ -144,10 +144,18 @@ BC_SEARCH_TIMEOUT_SECONDS=${BC_SEARCH_TIMEOUT_SECONDS:-600}
 BC_METHOD=${BC_METHOD:-baseline}
 BC_EXPERIMENT_MODEL_TAG=${BC_EXPERIMENT_MODEL_TAG:-8b}
 BC_CTXGRAPH_PROTOCOL=${BC_CTXGRAPH_PROTOCOL:-legacy}
+BC_CONTROLLER_ACTION_POLICY=${BC_CONTROLLER_ACTION_POLICY:-structural}
 
 case "$BC_EXPERIMENT_MODEL_TAG" in
   *[!A-Za-z0-9_-]*)
     echo "ERROR: BC_EXPERIMENT_MODEL_TAG may contain only letters, numbers, underscores, and hyphens"
+    exit 1
+    ;;
+esac
+case "$BC_CONTROLLER_ACTION_POLICY" in
+  balanced|structural) ;;
+  *)
+    echo "ERROR: BC_CONTROLLER_ACTION_POLICY must be balanced or structural; got $BC_CONTROLLER_ACTION_POLICY"
     exit 1
     ;;
 esac
@@ -233,7 +241,7 @@ echo "  Embedder model: $EMBED_MODEL"
 echo "  Experiment: $EXPERIMENT_NAME"
 echo "  Logger: ${probe_msg}"
 echo "  Caps: val_samples=$BC_VAL_MAX_SAMPLES prompt=$BC_PROMPT_LENGTH response=$BC_RESPONSE_LENGTH total_context=$BC_MAX_TOKEN_LEN_PER_GPU max_turn=$BC_MAX_TURN final_answer_reserve=$BC_FINAL_ANSWER_RESERVE"
-echo "  Graph protocol: $BC_CTXGRAPH_PROTOCOL structured_controller=$BC_STRUCTURED_GRAPH_CONTROLLER controller_formatting=$BC_CONTROLLER_OWNED_TOOL_FORMATTING"
+echo "  Graph protocol: $BC_CTXGRAPH_PROTOCOL structured_controller=$BC_STRUCTURED_GRAPH_CONTROLLER controller_formatting=$BC_CONTROLLER_OWNED_TOOL_FORMATTING action_policy=$BC_CONTROLLER_ACTION_POLICY"
 if [ ${#LONG_CONTEXT_ARGS[@]} -gt 0 ]; then
   echo "  Long context: YaRN factor=$BC_YARN_FACTOR original=$BC_YARN_ORIGINAL_LENGTH (HF actor + vLLM)"
 fi
@@ -514,6 +522,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   +actor_rollout_ref.rollout.plugin.consolidation_interval="$CONSOLIDATION_INTERVAL" \
   +actor_rollout_ref.rollout.plugin.structured_graph_controller=$BC_STRUCTURED_GRAPH_CONTROLLER \
   +actor_rollout_ref.rollout.plugin.controller_owned_tool_formatting=$BC_CONTROLLER_OWNED_TOOL_FORMATTING \
+  +actor_rollout_ref.rollout.plugin.controller_action_policy=$BC_CONTROLLER_ACTION_POLICY \
   +actor_rollout_ref.rollout.plugin.max_traj=4 \
   +actor_rollout_ref.rollout.plugin.must_finish=False \
   +actor_rollout_ref.rollout.plugin.double_check=False \

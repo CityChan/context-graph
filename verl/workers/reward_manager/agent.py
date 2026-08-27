@@ -236,6 +236,7 @@ class AgentLoopRewardManager(AbstractRewardManager):
                       "graph_invalid_ops", "graph_invalid_op_rate",
                       "controller_mode_rejections",
                       "controller_mode_rejection_rate",
+                      "controller_structural_policy",
                       "main_turn", "is_branch", "branch_success",
                       "main_context_tokens", "working_context_limit",
                       "concise_main", "scope_judge", "overlong", "no_finish",

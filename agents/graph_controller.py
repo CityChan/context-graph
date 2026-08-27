@@ -55,6 +55,7 @@ def graph_action_schema(
     indices: list[int],
     *,
     allow_pass: bool = False,
+    action_policy: str = "balanced",
 ) -> dict[str, Any]:
     """Build a constrained schema for the complete graph action space.
 
@@ -64,9 +65,20 @@ def graph_action_schema(
     """
     if not indices:
         raise GraphControllerError("no graph action candidates")
+    if action_policy not in {"balanced", "structural"}:
+        raise GraphControllerError(
+            f"unknown graph controller action policy: {action_policy}"
+        )
     actions = ["prune", "select"]
     if len(indices) >= 2:
         actions = ["merge", "prune", "add_edge", "select"]
+        if action_policy == "structural":
+            # At a real consolidation checkpoint, ``select`` is an easy
+            # no-op that dense models overuse to avoid committing to a graph
+            # improvement. Keep it for one-candidate focus recovery, but
+            # require a structural mutation once multiple evidence nodes are
+            # available.
+            actions.remove("select")
     if allow_pass:
         actions.append("pass")
     return {
@@ -198,9 +210,14 @@ class GraphActionController:
         snapshot: MergeCandidateSnapshot,
         *,
         allow_pass: bool = False,
+        action_policy: str = "balanced",
     ) -> dict[str, Any]:
         indices = [candidate.index for candidate in snapshot.candidates]
-        return graph_action_schema(indices, allow_pass=allow_pass)
+        return graph_action_schema(
+            indices,
+            allow_pass=allow_pass,
+            action_policy=action_policy,
+        )
 
     def merge_prompt(self, snapshot: MergeCandidateSnapshot, *, turn_id: int) -> str:
         if len(snapshot.candidates) < 2:
@@ -225,9 +242,16 @@ class GraphActionController:
         *,
         turn_id: int,
         allow_pass: bool,
+        action_policy: str = "balanced",
     ) -> str:
         if not snapshot.candidates:
             raise GraphControllerError("no graph action candidates")
+        schema = self.action_schema(
+            snapshot,
+            allow_pass=allow_pass,
+            action_policy=action_policy,
+        )
+        allowed_actions = schema["properties"]["action"]["enum"]
         candidate_lines = "\n".join(
             f"  {candidate.index}: [{candidate.node_type}] {candidate.content}"
             for candidate in snapshot.candidates
@@ -237,15 +261,31 @@ class GraphActionController:
             if allow_pass
             else "pass is currently illegal because the graph is not saturated."
         )
+        structural_rule = (
+            "This is a structural consolidation checkpoint: choose merge, "
+            "prune, or add_edge based on the evidence."
+            if action_policy == "structural" and len(snapshot.candidates) >= 2
+            else "Choose the most useful available graph action."
+        )
+        action_descriptions = {
+            "merge": "merge uses 2-6 indices and a meaningful summary",
+            "prune": "prune uses one demonstrated irrelevant/redundant index",
+            "add_edge": (
+                "add_edge uses exactly two ordered indices (source, target) "
+                "and a causal/semantic/temporal relation"
+            ),
+            "select": "select uses one index for a genuine focus shift",
+            "pass": "pass uses no indices",
+        }
+        action_help = "; ".join(
+            action_descriptions[action] for action in allowed_actions
+        )
         return (
             f"[GRAPH ACTION MODE turn={int(turn_id)}]\n"
             "The controller has frozen the legal evidence candidates below. "
             "Choose the single graph action that best preserves task-relevant "
-            "evidence; do not merge or connect unrelated evidence. Actions: "
-            "merge uses 2-6 indices and a meaningful summary; prune uses one "
-            "irrelevant/redundant index; add_edge uses exactly two ordered "
-            "indices (source, target) and a causal/semantic/temporal relation; "
-            "select uses one index to shift focus; pass uses no indices. "
+            "evidence; do not merge or connect unrelated evidence. "
+            f"{structural_rule} Available actions: {action_help}. "
             f"{pass_rule} For fields unused by an action, emit an empty summary "
             "and relation=semantic. Return only the JSON object required by the "
             "response schema. Do not emit XML or an environment action.\n"
@@ -257,9 +297,14 @@ class GraphActionController:
         snapshot: MergeCandidateSnapshot,
         *,
         allow_pass: bool = False,
+        action_policy: str = "balanced",
     ) -> dict[str, Any]:
         return {
-            "json": self.action_schema(snapshot, allow_pass=allow_pass),
+            "json": self.action_schema(
+                snapshot,
+                allow_pass=allow_pass,
+                action_policy=action_policy,
+            ),
         }
 
     @staticmethod
@@ -295,6 +340,7 @@ class GraphActionController:
         response: str,
         *,
         allow_pass: bool,
+        action_policy: str = "balanced",
     ) -> dict[str, Any]:
         """Resolve a constrained decision to the existing graph handler API."""
         if self.graph_hash(graph) != snapshot.graph_hash:
@@ -303,6 +349,18 @@ class GraphActionController:
         action = decision.get("action")
         if action not in {"merge", "prune", "add_edge", "select", "pass"}:
             raise GraphControllerError("unknown graph action")
+        if action == "pass" and not allow_pass:
+            raise GraphControllerError("pass is illegal while graph is not saturated")
+        allowed_actions = self.action_schema(
+            snapshot,
+            allow_pass=allow_pass,
+            action_policy=action_policy,
+        )["properties"]["action"]["enum"]
+        if action not in allowed_actions:
+            raise GraphControllerError(
+                f"graph action {action!r} is unavailable under the "
+                f"{action_policy} policy"
+            )
         indices, by_index = self._resolve_indices(
             snapshot, decision.get("candidate_indices")
         )
