@@ -90,9 +90,12 @@ def test_deepseek_interactive_script_covers_both_train_domains_and_strict_trace(
 
 def test_structured_preflight_has_room_to_finish_json_and_reports_truncation():
     text = EVAL_INTERACTIVE.read_text(encoding="utf-8")
+    assert "from agents.graph_controller import graph_action_schema" in text
+    assert "schema = graph_action_schema([0, 1])" in text
     assert '"max_completion_tokens": 256' in text
     assert 'choice.finish_reason == "length"' in text
     assert "Structured-output preflight returned invalid JSON" in text
+    assert "Structured-output preflight returned a non-merge action" in text
 
 
 def test_deepseek_interactive_script_supports_array_chunking():

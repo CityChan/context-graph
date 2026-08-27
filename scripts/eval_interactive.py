@@ -20,7 +20,7 @@ from transformers import AutoTokenizer
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from agents.graph_controller import merge_decision_schema
+from agents.graph_controller import graph_action_schema
 from agents.utils import CallAPI, TaskContext
 from verl import DataProto
 
@@ -223,12 +223,12 @@ async def preflight(args: argparse.Namespace, workflow: str) -> None:
             "max_completion_tokens": 256,
         }
         if WORKFLOWS[workflow] == "graph" and args.structured_graph_controller:
-            schema = merge_decision_schema([0, 1])
+            schema = graph_action_schema([0, 1])
             request["messages"] = [{
                 "role": "user",
                 "content": (
-                    "Return JSON selecting candidate indices 0 and 1 with a "
-                    "short non-empty summary."
+                    "Return JSON with action=merge, candidate_indices=[0,1], "
+                    "a short non-empty summary, and relation=semantic."
                 ),
             }]
             extra_body: dict[str, Any] = {
@@ -264,9 +264,17 @@ async def preflight(args: argparse.Namespace, workflow: str) -> None:
                 raise RuntimeError(
                     "Structured-output preflight returned invalid candidate indices"
                 )
+            if decision.get("action") != "merge":
+                raise RuntimeError(
+                    "Structured-output preflight returned a non-merge action"
+                )
             if not str(decision.get("summary", "")).strip():
                 raise RuntimeError(
                     "Structured-output preflight returned an empty summary"
+                )
+            if decision.get("relation") != "semantic":
+                raise RuntimeError(
+                    "Structured-output preflight returned an invalid relation"
                 )
     finally:
         await client.close()
