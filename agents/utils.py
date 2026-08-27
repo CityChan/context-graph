@@ -26,6 +26,9 @@ def select_env(ability, config, extra_info=None):
     elif 'ScienceWorld' in ability:
         from envs.scienceworld_env import ScienceWorldEnv
         EnvClass = ScienceWorldEnv
+    elif 'AppWorld' in ability:
+        from envs.appworld_env import AppWorldEnv
+        EnvClass = AppWorldEnv
     elif 'LocalSearch' in ability or 'GAIA' in ability:
         EnvClass = LocalSearch
     elif 'ScienceAgentBench' in ability:
@@ -38,7 +41,7 @@ def select_env(ability, config, extra_info=None):
     else:
         raise ValueError(
             f"Unknown ability: {ability}. Supported: ALFWorld@*, LocalSearch, GAIA, "
-            "ScienceWorld@*, ScienceAgentBench, DiscoveryBench."
+            "ScienceWorld@*, AppWorld@train, ScienceAgentBench, DiscoveryBench."
         )
     return EnvClass
 

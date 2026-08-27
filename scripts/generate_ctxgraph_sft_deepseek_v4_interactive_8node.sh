@@ -8,11 +8,11 @@
 #SBATCH --cpus-per-task=72
 #SBATCH -t 12:00:00
 #SBATCH -A AST24021
-#SBATCH --array=0-1
+#SBATCH --array=0-2
 
 # Production multi-turn ContextGraph trajectory generation with DeepSeek-V4.
-# Array task 0 curates ALFWorld train episodes; task 1 curates ScienceWorld
-# train episodes. All eight GH200 nodes serve the MoE teacher; neither domain
+# Array task 0 curates ALFWorld train episodes, task 1 ScienceWorld train
+# episodes, and task 2 AppWorld train episodes. All eight GH200 nodes serve the MoE teacher; none
 # needs the BrowseComp retrieval server used by the nine-node search pipeline.
 set -euo pipefail
 
@@ -21,6 +21,7 @@ MODEL_ID=${MODEL_ID:-deepseek-ai/DeepSeek-V4-Flash-0731}
 STUDENT_TOKENIZER_ID=${STUDENT_TOKENIZER_ID:-Qwen/Qwen3.6-27B}
 SERVER_CONDA_ENV=${SERVER_CONDA_ENV:-deepseek_v4}
 AGENT_CONDA_ENV=${AGENT_CONDA_ENV:-cxtgraph}
+APPWORLD_CONDA_ENV=${APPWORLD_CONDA_ENV:-appworld_cxtgraph}
 DEEPSEEK_CUDA_HOME=${DEEPSEEK_CUDA_HOME:-/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8}
 DEEPSEEK_MATH_LIB_ROOT=${DEEPSEEK_MATH_LIB_ROOT:-/home1/apps/nvidia/Linux_aarch64/25.3/math_libs/12.8}
 DEEPSEEK_CUDA_MATH_INCLUDE=${DEEPSEEK_CUDA_MATH_INCLUDE:-$DEEPSEEK_MATH_LIB_ROOT/targets/sbsa-linux/include}
@@ -45,6 +46,7 @@ TEMPERATURE=${TEMPERATURE:-1.0}
 TOP_P=${TOP_P:-0.95}
 REASONING_EFFORT=${REASONING_EFFORT:-non-thinking}
 SCIENCEWORLD_VERSION=${SCIENCEWORLD_VERSION:-1.2.3}
+APPWORLD_NUM_WORKERS=${APPWORLD_NUM_WORKERS:-1}
 PREFLIGHT_ONLY=${PREFLIGHT_ONLY:-0}
 PREFLIGHT_TIMEOUT_SECONDS=${PREFLIGHT_TIMEOUT_SECONDS:-600}
 RUN_TAG=${RUN_TAG:-${SLURM_ARRAY_JOB_ID:-${SLURM_JOB_ID:-local}}_${SLURM_ARRAY_TASK_ID:-0}}
@@ -52,19 +54,20 @@ ARRAY_CHUNK_MODE=${ARRAY_CHUNK_MODE:-0}
 
 if [ -n "${DOMAIN:-}" ]; then
   case "$DOMAIN" in
-    alfworld|scienceworld) ;;
-    *) echo "ERROR: DOMAIN must be alfworld or scienceworld"; exit 2 ;;
+    alfworld|scienceworld|appworld) ;;
+    *) echo "ERROR: DOMAIN must be alfworld, scienceworld, or appworld"; exit 2 ;;
   esac
 else
   case "${SLURM_ARRAY_TASK_ID:-0}" in
     0) DOMAIN=alfworld ;;
     1) DOMAIN=scienceworld ;;
-    *) echo "ERROR: array index must be 0 or 1"; exit 2 ;;
+    2) DOMAIN=appworld ;;
+    *) echo "ERROR: array index must be 0, 1, or 2"; exit 2 ;;
   esac
 fi
 
 if [ -z "$INITIAL_CONSOLIDATION_TURN" ]; then
-  if [ "$DOMAIN" = "scienceworld" ]; then
+  if [ "$DOMAIN" = "scienceworld" ] || [ "$DOMAIN" = "appworld" ]; then
     INITIAL_CONSOLIDATION_TURN=2
   else
     INITIAL_CONSOLIDATION_TURN=0
@@ -87,6 +90,7 @@ RAW_OUTPUT_DIR=$ARTIFACT_ROOT/raw
 SFT_OUTPUT=$ARTIFACT_ROOT/contextgraph_sft_train.parquet
 SFT_VALIDATION_OUTPUT=$ARTIFACT_ROOT/contextgraph_sft_validation.parquet
 SCIENCEWORLD_DEPS=${SCIENCEWORLD_DEPS:-$SCRATCH/contextgraph_deps/scienceworld-$SCIENCEWORLD_VERSION}
+APPWORLD_ROOT=${APPWORLD_ROOT:-$SCRATCH/contextgraph_deps/appworld}
 
 resolve_snapshot() {
   local repo_id=$1
@@ -119,6 +123,9 @@ require_scratch_path() {
 
 require_scratch_path HF_HOME "$HF_HOME"
 require_scratch_path HF_HUB_CACHE "$HF_HUB_CACHE"
+if [ "$DOMAIN" = "appworld" ]; then
+  require_scratch_path APPWORLD_ROOT "$APPWORLD_ROOT"
+fi
 
 if [ -n "${MODEL_PATH:-}" ]; then
   test -s "$MODEL_PATH/config.json" || { echo "ERROR: invalid MODEL_PATH=$MODEL_PATH"; exit 2; }
@@ -265,8 +272,12 @@ for attempt in $(seq 1 1800); do
 done
 test "$SERVER_READY" -eq 1 || { echo "ERROR: vLLM health timeout; inspect $VLLM_LOG"; exit 3; }
 
+RUNNER_CONDA_ENV=$AGENT_CONDA_ENV
+if [ "$DOMAIN" = "appworld" ]; then
+  RUNNER_CONDA_ENV=$APPWORLD_CONDA_ENV
+fi
 set +u
-conda activate "$AGENT_CONDA_ENV"
+conda activate "$RUNNER_CONDA_ENV"
 set -u
 if [ "$DOMAIN" = "alfworld" ]; then
   export ALFWORLD_DATA=${ALFWORLD_DATA:-$HOME/.cache/alfworld}
@@ -274,7 +285,7 @@ if [ "$DOMAIN" = "alfworld" ]; then
   python scripts/make_alfworld_data.py --mode real --n_train "$((START_INDEX + MAX_SAMPLES))" --n_val 1 --seed 42
   DATA_PATH=data/alfworld_graph_real_train.parquet
   WORKFLOW=alfworld_graph
-else
+elif [ "$DOMAIN" = "scienceworld" ]; then
   if [ ! -s "$SCIENCEWORLD_DEPS/scienceworld/scienceworld.jar" ]; then
     mkdir -p "$SCIENCEWORLD_DEPS"
     python -m pip install --target "$SCIENCEWORLD_DEPS" --no-deps "scienceworld==$SCIENCEWORLD_VERSION" py4j
@@ -284,6 +295,14 @@ else
   python scripts/make_scienceworld_data.py --n-train "$((START_INDEX + MAX_SAMPLES))" --n-val 1 --seed 42
   DATA_PATH=data/scienceworld_graph_train.parquet
   WORKFLOW=scienceworld_graph
+else
+  export APPWORLD_ROOT
+  export APPWORLD_EXPERIMENT_NAME="contextgraph_sft_${RUN_TAG}"
+  python -c "import sys; assert sys.version_info >= (3, 11), 'AppWorld requires Python 3.11+'; from appworld import AppWorld, load_task_ids; n=len(load_task_ids('train')); assert n > 0, 'AppWorld train split is empty; run appworld download data'; print(f'AppWorld preflight: train_tasks={n}')" || { echo "ERROR: prepare conda env $APPWORLD_CONDA_ENV with ContextGraph dependencies plus AppWorld, and install data under $APPWORLD_ROOT"; exit 2; }
+  python scripts/make_appworld_data.py --n-train "$((START_INDEX + MAX_SAMPLES))" --seed 42
+  DATA_PATH=data/appworld_graph_train.parquet
+  WORKFLOW=appworld_graph
+  NUM_WORKERS=$APPWORLD_NUM_WORKERS
 fi
 
 export OPENAI_API_KEY=dummy

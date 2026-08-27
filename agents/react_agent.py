@@ -189,6 +189,8 @@ async def process_item(
             'gen_uid': gen_uid,
         },
     )
+    if hasattr(env, 'close'):
+        env.close()
     return out
 
 

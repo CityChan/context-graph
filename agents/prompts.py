@@ -1,4 +1,4 @@
-from .tool_spec import convert_tools_to_description, codeact_tool, search_tool, branch_tool, graph_tool, alfworld_tool, scienceworld_tool, TOOL_PROMPT, PARALLEL_TOOL_PROMPT
+from .tool_spec import convert_tools_to_description, codeact_tool, search_tool, branch_tool, graph_tool, alfworld_tool, scienceworld_tool, appworld_tool, TOOL_PROMPT, PARALLEL_TOOL_PROMPT
 
 
 def create_chat(
@@ -179,6 +179,43 @@ I've uploaded a python code repository in the directory /testbed. Consider the f
             "</function>"
         )
         chat = [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}]
+        return chat
+    elif workflow in ('appworld', 'appworld_branch', 'appworld_graph'):
+        tools = appworld_tool()
+        if 'branch' in workflow:
+            tools = tools + branch_tool()
+        if 'graph' in workflow:
+            tools = tools + branch_tool()
+            if expose_graph_tools:
+                tools = tools + graph_tool()
+        tool_description = PARALLEL_TOOL_PROMPT.format(description=convert_tools_to_description(tools))
+        system_prompt = (
+            "You are an agent completing a realistic AppWorld task through Python API calls. "
+            "Use the persistent `apis` object to inspect API documentation, read current app state, "
+            "and perform the requested operations. Never guess identifiers or hidden state: query them. "
+            "Print only values needed for the next decision. Variables persist across action calls. "
+            "Output exactly one XML tool call per turn, with Python in the `code` parameter and no prose "
+            "or markdown outside the call. Keep code focused and respect the environment's safety limits. "
+            "Call the supervisor completion API only after verifying that the requested state is achieved; "
+            "AppWorld then terminates and evaluates the final application state."
+        )
+        if workflow == 'appworld_graph':
+            if expose_graph_tools:
+                system_prompt += (
+                    " Use ContextGraph operations for genuine subgoals and durable state only: branch for "
+                    "independent app investigations, add_edge for dependencies, merge for verified findings, "
+                    "and prune for stale or disproven state."
+                )
+            else:
+                system_prompt += (
+                    " A controller may temporarily enter [GRAPH ACTION MODE]. Only in that marked mode, "
+                    "follow the supplied JSON response schema instead of the normal XML action protocol. "
+                    "When environment mode is restored, resume XML actions."
+                )
+        chat = [
+            {'role': 'system', 'content': system_prompt + '\n\n' + tool_description},
+            {'role': 'user', 'content': f"Task:\n\n{problem_statement}"},
+        ]
         return chat
     elif workflow in ('scienceworld', 'scienceworld_branch', 'scienceworld_graph'):
         tools = scienceworld_tool()

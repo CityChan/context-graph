@@ -641,4 +641,6 @@ async def process_item(
         idx = [0] + sorted(random.sample(range(1, len(outs)), k=max_traj - 1))
         outs = [outs[i] for i in idx]
 
+    if hasattr(env, 'close'):
+        env.close()
     return outs

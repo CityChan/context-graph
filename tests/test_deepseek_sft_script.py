@@ -73,11 +73,12 @@ def test_deepseek_sft_script_keeps_eval_splits_out_by_default():
     assert "--min-structural-graph-ops 1" in text
 
 
-def test_deepseek_interactive_script_covers_both_train_domains_and_strict_trace():
+def test_deepseek_interactive_script_covers_three_train_domains_and_strict_trace():
     text = INTERACTIVE_SCRIPT.read_text(encoding="utf-8")
-    assert "#SBATCH --array=0-1" in text
+    assert "#SBATCH --array=0-2" in text
     assert "alfworld_graph" in text
     assert "scienceworld_graph" in text
+    assert "appworld_graph" in text
     assert "deepseek-ai/DeepSeek-V4-Flash-0731" in text
     assert '--reasoning-effort "$REASONING_EFFORT"' in text
     assert "CONSOLIDATION_INTERVAL=${CONSOLIDATION_INTERVAL:-8}" in text

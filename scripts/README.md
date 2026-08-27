@@ -45,7 +45,7 @@ ALFWorld uses `envs/alfworld_env.py` and does not need a search server.
 
 ## Multi-turn ContextGraph SFT
 
-- `eval_interactive.py`: shared API trajectory runner for ALFWorld and ScienceWorld.
+- `eval_interactive.py`: shared API trajectory runner for ALFWorld, ScienceWorld, and AppWorld.
   Graph workflows default to controller-owned action checkpoints: the controller
   freezes a bounded legal-node snapshot, vLLM constrains the teacher to a JSON
   schema over legal graph actions and candidate indices, and normal environment turns do
@@ -62,10 +62,16 @@ ALFWorld uses `envs/alfworld_env.py` and does not need a search server.
   the existing `deepseek_v4` inference environment; the SDPA smoke deliberately
   does not install or import the external `flash-attn` extension.
 - `smoke_interactive_ctxgraph_qwen36_27b_1node.sh`: two-domain Qwen3.6-27B smoke.
-- `generate_ctxgraph_sft_deepseek_v4_interactive_8node.sh`: two-domain DeepSeek-V4
-  production teacher job; array 0 is ALFWorld and array 1 is ScienceWorld.
+- `generate_ctxgraph_sft_deepseek_v4_interactive_8node.sh`: three-domain DeepSeek-V4
+  production teacher job; array 0 is ALFWorld, array 1 is ScienceWorld, and array 2 is AppWorld.
 - `smoke_interactive_ctxgraph_deepseek_v4_4node_idev.sh`: conservative TP=4,
   32K-context DeepSeek-V4 smoke for an existing four-GH200 allocation.
+- `make_appworld_data.py`: builds deterministic, train-only AppWorld task rows without
+  materializing protected task content. AppWorld uses the optional Python 3.11+
+  `appworld_cxtgraph` environment and stores its installed data under `$SCRATCH`.
+- `setup_appworld_sft_env.sh`: one-time AppWorld 0.2 environment/data setup and
+  official verification. `submit_full_ctxgraph_sft_appworld_deepseek_v4.sh` previews
+  or submits restart-safe, serial-environment train shards.
 
 ## Removed Surface
 

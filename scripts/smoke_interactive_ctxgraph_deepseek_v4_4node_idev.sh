@@ -2,7 +2,7 @@
 # Run a conservative DeepSeek-V4-Flash-0731 ContextGraph smoke inside an
 # existing four-GH200 Vista idev allocation. The underlying production script
 # discovers all four allocated nodes, starts a Ray TP=4 + expert-parallel vLLM
-# server, and runs one interactive domain. Run ALFWorld and ScienceWorld
+# server, and runs one interactive domain. Run ALFWorld, ScienceWorld, and AppWorld
 # sequentially by overriding DOMAIN.
 set -euo pipefail
 

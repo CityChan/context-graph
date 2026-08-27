@@ -490,6 +490,31 @@ def scienceworld_tool():
     }]
 
 
+def appworld_tool():
+    """Python action tool for AppWorld tasks."""
+    return [{
+        'type': 'function',
+        'function': {
+            'name': 'action',
+            'description': (
+                'Execute Python code in the persistent AppWorld task environment. '
+                'Use the provided `apis` object to inspect API documentation and call app APIs. '
+                'Print values that you need to observe. Submit completion through the supervisor API only after the requested state is achieved.'
+            ),
+            'parameters': {
+                'type': 'object',
+                'properties': {
+                    'code': {
+                        'type': 'string',
+                        'description': 'One or more lines of Python code to execute. Variables persist across action calls.',
+                    },
+                },
+                'required': ['code'],
+            },
+        },
+    }]
+
+
 TOOL_PROMPT = """
 You have access to the following functions:
 

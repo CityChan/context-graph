@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Small API-based evaluator for ALFWorld and ScienceWorld trajectories."""
+"""Small API-based evaluator for interactive ContextGraph trajectories."""
 
 from __future__ import annotations
 
@@ -32,6 +32,9 @@ WORKFLOWS = {
     "scienceworld": "react",
     "scienceworld_branch": "fold",
     "scienceworld_graph": "graph",
+    "appworld": "react",
+    "appworld_branch": "fold",
+    "appworld_graph": "graph",
 }
 
 
