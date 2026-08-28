@@ -85,7 +85,8 @@ def test_new_vllm_lora_api_uses_native_disk_loader_and_tensor_compatibility():
     preflight = _read("scripts/check_vllm_eval_compat.py")
     assert "VLLMHijack.hijack()" in preflight
     assert 'importlib.import_module("verl.workers.rollout.vllm_rollout.vllm_rollout")' in preflight
-    assert "vLLM eval/LoRA/rollout imports: ok" in preflight
+    assert "validate_worker_wrapper_constructor()" in preflight
+    assert "vLLM eval/LoRA/rollout imports and worker constructor: ok" in preflight
 
 
 def test_fp8_private_api_mismatch_is_lazy_for_bf16_rollouts():
@@ -95,6 +96,17 @@ def test_fp8_private_api_mismatch_is_lazy_for_bf16_rollouts():
     assert "_FP8_IMPORT_ERROR = e" in import_block
     assert 'if getattr(vllm_config, "quant_config", None) is None:' in source
     assert "_require_fp8_support()" in source
+
+
+def test_vllm_worker_wrapper_supports_legacy_and_current_constructors():
+    source = _read("verl/workers/rollout/vllm_rollout/vllm_rollout.py")
+    assert "inspect.signature(WorkerWrapperBase).parameters" in source
+    assert 'if "vllm_config" in parameters:' in source
+    assert 'if "rpc_rank" in parameters:' in source
+    assert 'kwargs["global_rank"] = 0' in source
+    assert "WorkerWrapperBase(**_worker_wrapper_init_kwargs(self.vllm_config))" in source
+    assert "from vllm.v1.serial_utils import run_method as vllm_run_method" in source
+    assert "return vllm_run_method(self.inference_engine, method, args, kwargs)" in source
 
 
 def test_browsecomp_runners_isolate_search_and_trainer_dataset_caches():

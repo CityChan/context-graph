@@ -28,6 +28,7 @@ When working with Megatron:
 
 import asyncio
 import getpass
+import inspect
 import logging
 import os
 import shutil
@@ -65,6 +66,11 @@ try:
 except ModuleNotFoundError:
     # https://github.com/vllm-project/vllm/commit/6a113d9aed8221a9c234535958e70e34ab6cac5b
     from vllm.v1.worker.worker_base import WorkerWrapperBase
+
+try:
+    from vllm.v1.serial_utils import run_method as vllm_run_method
+except ImportError:
+    from vllm.utils import run_method as vllm_run_method
 
 from packaging import version as vs
 
@@ -106,6 +112,29 @@ def _check_vllm_version_for_sleep_level():
         logger.warning("Could not determine vLLM version, assuming an older version for sleep_level configuration.")
         return False
     return vs.parse(current_version) >= vs.parse(minver)
+
+
+def _worker_wrapper_init_kwargs(vllm_config: Any) -> dict[str, Any]:
+    """Build constructor kwargs for both legacy and current vLLM wrappers."""
+    parameters = inspect.signature(WorkerWrapperBase).parameters
+    if "vllm_config" in parameters:
+        return {"vllm_config": vllm_config}
+    if "rpc_rank" in parameters:
+        # Each external executor controls one local vLLM worker, so its RPC
+        # and vLLM-global ranks are both zero. vLLM >= 0.27 receives the
+        # actual config later through init_worker(all_kwargs).
+        kwargs: dict[str, Any] = {"rpc_rank": 0}
+        if "global_rank" in parameters:
+            kwargs["global_rank"] = 0
+        return kwargs
+    raise RuntimeError(
+        f"Unsupported vLLM WorkerWrapperBase signature: {inspect.signature(WorkerWrapperBase)}"
+    )
+
+
+def validate_worker_wrapper_constructor() -> None:
+    """Fail fast if the installed vLLM wrapper has an unknown constructor."""
+    _worker_wrapper_init_kwargs(None)
 
 
 # https://github.com/vllm-project/vllm/issues/13175
@@ -212,7 +241,7 @@ class vLLMAsyncRollout(BaseRollout):
                 apply_vllm_fp8_patches()
             else:
                 raise ValueError(f"Currently only support fp8 quantization, got: {self.config.quantization}")
-        self.inference_engine = WorkerWrapperBase(vllm_config=self.vllm_config)
+        self.inference_engine = WorkerWrapperBase(**_worker_wrapper_init_kwargs(self.vllm_config))
         self.inference_engine.init_worker(all_kwargs)
 
     def _load_model(self, *args, **kwargs):
@@ -225,7 +254,7 @@ class vLLMAsyncRollout(BaseRollout):
         elif method == "load_model":
             return self._load_model(*args, **kwargs)
         else:
-            return self.inference_engine.execute_method(method, *args, **kwargs)
+            return vllm_run_method(self.inference_engine, method, args, kwargs)
 
     async def resume(self, tags: list[str]):
         """Resume rollout weights or kv cache in GPU memory.
