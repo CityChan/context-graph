@@ -515,6 +515,8 @@ probe "trainer cache: $TRAINER_CACHE_DIR"
 probe "checking Transformers support for $MODEL_PATH"
 python scripts/check_hf_model_support.py "$MODEL_PATH"
 probe "Transformers model support check passed"
+probe "checking vLLM eval/LoRA bridge"
+python scripts/check_vllm_eval_compat.py
 probe "LD_LIBRARY_PATH=$LD_LIBRARY_PATH"
 probe "LD_PRELOAD=$LD_PRELOAD"
 

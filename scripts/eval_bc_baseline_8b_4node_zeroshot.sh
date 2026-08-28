@@ -87,6 +87,19 @@ export NCCL_HOSTID="${SLURMD_NODENAME:-$(hostname -s)}"
 export PATH="${CONDA_PREFIX}/bin:${PATH}"
 hash -r
 
+if [ "$CONDA_ENV_NAME" = "deepseek_v4" ]; then
+  LIBGOMP_PATH=${CONDA_PREFIX}/lib/libgomp.so.1
+  if [ ! -f "$LIBGOMP_PATH" ]; then
+    LIBGOMP_PATH=$(gcc -print-file-name=libgomp.so.1)
+  fi
+  TORCH_GLOBAL_DEPS_PATH=$(python -c 'import importlib.util, pathlib; spec=importlib.util.find_spec("torch"); print(pathlib.Path(spec.origin).parent / "lib" / "libtorch_global_deps.so") if spec and spec.origin else print("")')
+  if [ ! -f "$LIBGOMP_PATH" ] || [ ! -f "$TORCH_GLOBAL_DEPS_PATH" ]; then
+    echo "ERROR: could not locate deepseek_v4 TLS preload libraries"
+    exit 1
+  fi
+  export LD_PRELOAD="$LIBGOMP_PATH:$TORCH_GLOBAL_DEPS_PATH"
+fi
+
 export PATH=/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/bin:${PATH}
 export LD_LIBRARY_PATH=${CONDA_PREFIX}/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/targets/sbsa-linux/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/lib64:${LD_LIBRARY_PATH:-}
 export LIBRARY_PATH=/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/targets/sbsa-linux/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/lib64:${LIBRARY_PATH:-}
@@ -142,6 +155,7 @@ BC_SESSION_TIMEOUT=${BC_SESSION_TIMEOUT:-600}
 BC_TURN_MAX_NEW_TOKENS=${BC_TURN_MAX_NEW_TOKENS:-768}
 BC_FINAL_ANSWER_RESERVE=${BC_FINAL_ANSWER_RESERVE:-1024}
 BC_MAX_SESSION=${BC_MAX_SESSION:-10}
+BC_ROLLOUT_N=${BC_ROLLOUT_N:-8}
 BC_SEARCH_TIMEOUT_SECONDS=${BC_SEARCH_TIMEOUT_SECONDS:-600}
 BC_METHOD=${BC_METHOD:-baseline}
 BC_EXPERIMENT_MODEL_TAG=${BC_EXPERIMENT_MODEL_TAG:-8b}
@@ -299,6 +313,8 @@ if [ "$BC_STRUCTURED_GRAPH_CONTROLLER" = "true" ]; then
   probe "checking vLLM structured-output support"
   python scripts/check_vllm_structured_outputs.py
 fi
+probe "checking vLLM eval/LoRA bridge"
+python scripts/check_vllm_eval_compat.py
 
 # ── Pre-flight: 8B + embedder weights must be present (offline) ──
 probe "checking model caches"
@@ -339,6 +355,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$SEARCH_NODE" bash -c "
   export PYTHONPATH=$PROJECT_ROOT:\${PYTHONPATH:-}
   export HF_HOME=$HF_HOME
   export HF_HUB_CACHE=$HF_HUB_CACHE
+  export HF_DATASETS_CACHE=$HF_HOME/datasets
   unset HF_HUB_OFFLINE TRANSFORMERS_OFFLINE  # search server needs HF Hub for BC load_dataset (cache still preferred)
   export NUM_GPUS=1
   export MAX_BATCH_SIZE=128
@@ -505,7 +522,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   actor_rollout_ref.rollout.response_length=${BC_RESPONSE_LENGTH} \
   actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu=${BC_MAX_TOKEN_LEN_PER_GPU} \
   actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
-  actor_rollout_ref.rollout.n=8 \
+  actor_rollout_ref.rollout.n=${BC_ROLLOUT_N} \
   actor_rollout_ref.rollout.agent.num_workers=1 \
   actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=1 \
   actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=1 \

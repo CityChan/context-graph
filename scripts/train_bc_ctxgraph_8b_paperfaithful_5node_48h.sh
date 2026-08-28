@@ -87,6 +87,19 @@ export NCCL_HOSTID="${SLURMD_NODENAME:-$(hostname -s)}"
 export PATH="${CONDA_PREFIX}/bin:${PATH}"
 hash -r
 
+if [ "$CONDA_ENV_NAME" = "deepseek_v4" ]; then
+  LIBGOMP_PATH=${CONDA_PREFIX}/lib/libgomp.so.1
+  if [ ! -f "$LIBGOMP_PATH" ]; then
+    LIBGOMP_PATH=$(gcc -print-file-name=libgomp.so.1)
+  fi
+  TORCH_GLOBAL_DEPS_PATH=$(python -c 'import importlib.util, pathlib; spec=importlib.util.find_spec("torch"); print(pathlib.Path(spec.origin).parent / "lib" / "libtorch_global_deps.so") if spec and spec.origin else print("")')
+  if [ ! -f "$LIBGOMP_PATH" ] || [ ! -f "$TORCH_GLOBAL_DEPS_PATH" ]; then
+    echo "ERROR: could not locate deepseek_v4 TLS preload libraries"
+    exit 1
+  fi
+  export LD_PRELOAD="$LIBGOMP_PATH:$TORCH_GLOBAL_DEPS_PATH"
+fi
+
 export PATH=/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/bin:${PATH}
 export LD_LIBRARY_PATH=${CONDA_PREFIX}/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/targets/sbsa-linux/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/lib64:${LD_LIBRARY_PATH:-}
 export LIBRARY_PATH=/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/targets/sbsa-linux/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/lib64:${LIBRARY_PATH:-}
@@ -286,6 +299,12 @@ if [ ! -d "$EMBED_CACHE_DIR_DS" ]; then
   exit 1
 fi
 probe "BC parquets + HF datasets ok"
+if [ "$BC_STRUCTURED_GRAPH_CONTROLLER" = "true" ]; then
+  probe "checking vLLM structured-output support"
+  python scripts/check_vllm_structured_outputs.py
+fi
+probe "checking vLLM eval/LoRA bridge"
+python scripts/check_vllm_eval_compat.py
 
 # ── Pre-flight: 8B + embedder weights must be present (offline) ──
 probe "checking model caches"
@@ -331,6 +350,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$SEARCH_NODE" bash -c "
   export PYTHONPATH=$PROJECT_ROOT:\${PYTHONPATH:-}
   export HF_HOME=$HF_HOME
   export HF_HUB_CACHE=$HF_HUB_CACHE
+  export HF_DATASETS_CACHE=$HF_HOME/datasets
   export HF_HUB_OFFLINE=1
   export HF_DATASETS_OFFLINE=1
   export TRANSFORMERS_OFFLINE=1

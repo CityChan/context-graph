@@ -15,9 +15,12 @@
 
 from msgspec import field
 from packaging import version as vs
-from vllm.lora.models import LoRAModel
+try:
+    # Newer vLLM releases moved LoRAModel out of the removed ``models`` module.
+    from vllm.lora.lora_model import LoRAModel
+except ModuleNotFoundError:  # pragma: no cover - exercised by older Vista envs
+    from vllm.lora.models import LoRAModel
 from vllm.lora.request import LoRARequest
-from vllm.lora.utils import get_adapter_absolute_path
 from vllm.lora.worker_manager import LRUCacheWorkerLoRAManager
 
 from verl.third_party.vllm import get_version
@@ -31,6 +34,10 @@ class TensorLoRARequest(LoRARequest):
 class VLLMHijack:
     @staticmethod
     def hijack():
+        if getattr(LRUCacheWorkerLoRAManager, "_verl_tensor_lora_hijacked", False):
+            return
+        native_load_adapter = LRUCacheWorkerLoRAManager._load_adapter
+
         def hijack__load_adapter(self, lora_request: TensorLoRARequest) -> LoRAModel:
             """
             based on vllm.lora.worker_manager.WorkerLoRAManager._load_adapter, support load adapter with lora tensors
@@ -40,29 +47,18 @@ class VLLMHijack:
             To synchronize the LoRA tensors of the actor model, we need to find a workaround to enable VLLM to
             load memory-based LoRA tensors.
             """
+            # Static on-disk adapters should use the installed vLLM loader. Its
+            # LoRA API changes frequently, while this shim is only needed for
+            # VERL's in-memory actor-to-rollout weight synchronization.
+            if not isinstance(lora_request, TensorLoRARequest):
+                return native_load_adapter(self, lora_request)
+
             try:
-                supported_lora_modules = self._adapter_manager.supported_lora_modules
-                packed_modules_mapping = self._adapter_manager.packed_modules_mapping
-                expected_lora_modules: list[str] = []
-                for module in supported_lora_modules:
-                    if module in packed_modules_mapping:
-                        expected_lora_modules.extend(packed_modules_mapping[module])
-                    else:
-                        expected_lora_modules.append(module)
-
-                expected_lora_modules = list(set(expected_lora_modules))
-
-                lora_tensors = None
                 from vllm.lora.peft_helper import PEFTHelper
 
-                if isinstance(lora_request, TensorLoRARequest):
-                    peft_config = lora_request.peft_config
-                    lora_tensors = lora_request.lora_tensors
-                    peft_helper = PEFTHelper.from_dict(peft_config)
-                else:
-                    lora_path = get_adapter_absolute_path(lora_request.lora_path)
-
-                    peft_helper = PEFTHelper.from_local_dir(lora_path, self.max_position_embeddings)
+                peft_config = lora_request.peft_config
+                lora_tensors = lora_request.lora_tensors
+                peft_helper = PEFTHelper.from_dict(peft_config)
 
                 # Validates the LoRA configuration against requirements before
                 # loading weights, throwing an exception if validation fails.
@@ -74,8 +70,24 @@ class VLLMHijack:
                 hf_to_vllm_mapper = None
                 if hasattr(model, "hf_to_vllm_mapper") and model.hf_to_vllm_mapper is not None:
                     hf_to_vllm_mapper = model.hf_to_vllm_mapper
+                    if hasattr(hf_to_vllm_mapper, "get_rename_mapper"):
+                        hf_to_vllm_mapper = hf_to_vllm_mapper.get_rename_mapper()
 
-                if isinstance(lora_request, TensorLoRARequest):
+                try:
+                    # Current vLLM API (including 0.27.x).
+                    lora = self._lora_model_cls.from_lora_tensors(
+                        lora_model_id=lora_request.lora_int_id,
+                        tensors=lora_tensors,
+                        peft_helper=peft_helper,
+                        device="cpu",
+                        dtype=self.lora_config.lora_dtype,
+                        model_vocab_size=self.vocab_size,
+                        weights_mapper=hf_to_vllm_mapper,
+                    )
+                except TypeError as exc:
+                    if "model_vocab_size" not in str(exc):
+                        raise
+                    # Compatibility with the older cxtgraph vLLM API.
                     lora = self._lora_model_cls.from_lora_tensors(
                         lora_model_id=lora_request.lora_int_id,
                         tensors=lora_tensors,
@@ -83,19 +95,6 @@ class VLLMHijack:
                         device="cpu",
                         dtype=self.lora_config.lora_dtype,
                         embeddings=None,
-                        target_embedding_padding=self.vocab_size + self.lora_config.lora_extra_vocab_size,
-                        embedding_modules=self.embedding_modules,
-                        embedding_padding_modules=self.embedding_padding_modules,
-                        weights_mapper=hf_to_vllm_mapper,
-                    )
-                else:
-                    lora = self._lora_model_cls.from_local_checkpoint(
-                        lora_path,
-                        expected_lora_modules,
-                        peft_helper=peft_helper,
-                        lora_model_id=lora_request.lora_int_id,
-                        device="cpu",
-                        dtype=self.lora_config.lora_dtype,
                         target_embedding_padding=self.vocab_size + self.lora_config.lora_extra_vocab_size,
                         embedding_modules=self.embedding_modules,
                         embedding_padding_modules=self.embedding_padding_modules,
@@ -115,6 +114,7 @@ class VLLMHijack:
             setattr(target_cls, target_method_name, hooking_method)
 
         do_hijack(LRUCacheWorkerLoRAManager, "_load_adapter", hijack__load_adapter)
+        LRUCacheWorkerLoRAManager._verl_tensor_lora_hijacked = True
 
 
 def is_version_ge(pkg: str = "vllm", minver: str = "0.7.3"):

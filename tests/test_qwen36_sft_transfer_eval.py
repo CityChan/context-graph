@@ -61,3 +61,38 @@ def test_paired_transfer_submitter_is_matched_and_complete():
     assert 'BC_EVAL_TIME="$BC_EVAL_TIME"' in source
     assert 'DISCOVERYBENCH_TIME_LIMIT="$DISCOVERYBENCH_TIME_LIMIT"' in source
     assert "DRY_RUN=${DRY_RUN:-0}" in source
+
+
+def test_idev_transfer_runner_uses_current_allocation_and_one_sample_default():
+    source = _read("scripts/eval_qwen36_27b_sft_transfer_idev.sh")
+    assert 'EVAL_MAX_SAMPLES=${EVAL_MAX_SAMPLES:-1}' in source
+    assert 'scontrol show hostnames "$SLURM_JOB_NODELIST"' in source
+    assert "sbatch" not in source
+    assert "BENCHMARK=${BENCHMARK:-bc}" in source
+    assert "VARIANT=${VARIANT:-base}" in source
+    assert "BC_CTXGRAPH_PROTOCOL=controller" in source
+    assert "BC_ROLLOUT_N=1" in source
+    assert "SAB_CTXGRAPH_PROTOCOL=controller" in source
+    assert "TRAINER_VAL_ONLY=True" in source
+
+
+def test_new_vllm_lora_api_uses_native_disk_loader_and_tensor_compatibility():
+    source = _read("verl/utils/vllm/utils.py")
+    assert "from vllm.lora.lora_model import LoRAModel" in source
+    assert "return native_load_adapter(self, lora_request)" in source
+    assert "model_vocab_size=self.vocab_size" in source
+    assert 'if "model_vocab_size" not in str(exc)' in source
+    preflight = _read("scripts/check_vllm_eval_compat.py")
+    assert "VLLMHijack.hijack()" in preflight
+    assert "vLLM eval/LoRA bridge: ok" in preflight
+
+
+def test_browsecomp_runners_isolate_search_and_trainer_dataset_caches():
+    for path in (
+        "scripts/eval_bc_baseline_8b_4node_zeroshot.sh",
+        "scripts/train_bc_ctxgraph_8b_paperfaithful_5node_48h.sh",
+    ):
+        source = _read(path)
+        assert "export HF_DATASETS_CACHE=$HF_HOME/datasets" in source
+        assert 'if [ "$CONDA_ENV_NAME" = "deepseek_v4" ]' in source
+        assert 'export LD_PRELOAD="$LIBGOMP_PATH:$TORCH_GLOBAL_DEPS_PATH"' in source
