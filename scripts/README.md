@@ -55,9 +55,10 @@ ALFWorld uses `envs/alfworld_env.py` and does not need a search server.
   redundant graph control, groups tasks across splits, and writes multi-turn SFT Parquet.
 - `smoke_train_contextgraph_sft_qwen36_27b_4node_idev.sh`: performs one real
   Qwen3.6-27B multi-turn SFT optimizer step on four GH200 nodes and verifies the
-  four checkpoint shards. It defaults to LoRA rank 32, PyTorch SDPA, and 4-way
-  FSDP2 data parallelism. The single accepted trajectory is repeated once per
-  rank only for this optimizer-path smoke.
+  four checkpoint shards. It defaults to LoRA rank 32, PyTorch SDPA, exact
+  per-message assistant loss masking for Qwen3.6, and 4-way FSDP2 data
+  parallelism. The single accepted trajectory is repeated once per rank only
+  for this optimizer-path smoke.
 - `../requirements_qwen36_sft.txt`: minimal pure-Python training additions for
   the existing `deepseek_v4` inference environment; the SDPA smoke deliberately
   does not install or import the external `flash-attn` extension.
