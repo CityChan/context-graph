@@ -13,7 +13,7 @@ def test_qwen36_training_smoke_runs_a_real_multiturn_optimizer_step():
     assert "data.multiturn.enable=True" in text
     assert "data.multiturn.loss_mask_mode=assistant_tokens" in text
     assert "trainer.total_training_steps=\"$TOTAL_TRAINING_STEPS\"" in text
-    assert "trainer.save_freq=1" in text
+    assert 'trainer.save_freq="$SAVE_FREQ"' in text
     assert "contextgraph_sft_train.parquet" in text
 
 
@@ -60,6 +60,19 @@ def test_qwen36_training_smoke_uses_deepseek_env_without_external_flash_attn():
     assert "peft==0.18.1" in requirements
     assert "torchdata==0.11.0" in requirements
     assert "import verl.trainer.fsdp_sft_trainer" in text
+
+
+def test_qwen36_training_supports_full_dataset_epochs_and_auto_steps():
+    text = SCRIPT.read_text(encoding="utf-8")
+    assert "FULL_DATASET=${FULL_DATASET:-0}" in text
+    assert 'TRAIN_FILES="[$TRAIN_FILE]"' in text
+    assert "TRAIN_MAX_SAMPLES=${TRAIN_MAX_SAMPLES:--1}" in text
+    assert "STEPS_PER_EPOCH=$((ROWS_PER_RANK / LOCAL_BATCH_SIZE))" in text
+    assert "TOTAL_TRAINING_STEPS=${TOTAL_TRAINING_STEPS:-$MAX_TRAINING_STEPS}" in text
+    assert 'trainer.total_epochs="$TOTAL_EPOCHS"' in text
+    assert 'data.val_files="$VAL_FILES"' in text
+    assert "full-dataset training requires an independent VAL_FILE" in text
+    assert "qwen36_27b_sft_$DEFAULT_RUN_KIND" in text
 
 
 def test_contextgraph_sft_checker_requires_loss_tokens():

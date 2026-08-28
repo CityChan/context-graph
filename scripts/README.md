@@ -58,7 +58,9 @@ ALFWorld uses `envs/alfworld_env.py` and does not need a search server.
   four checkpoint shards. It defaults to LoRA rank 32, PyTorch SDPA, in-memory
   Qwen3.6 generation blocks with an exact full-render offset fallback, and 4-way
   FSDP2 data parallelism. The single accepted trajectory is repeated once per
-  rank only for this optimizer-path smoke.
+  rank only for this optimizer-path smoke. Set `FULL_DATASET=1` to disable the
+  repeated smoke row, require the sibling validation parquet, and automatically
+  compute `floor(train_rows / global_batch) * TOTAL_EPOCHS` optimizer steps.
 - `../requirements_qwen36_sft.txt`: minimal pure-Python training additions for
   the existing `deepseek_v4` inference environment; the SDPA smoke deliberately
   does not install or import the external `flash-attn` extension.

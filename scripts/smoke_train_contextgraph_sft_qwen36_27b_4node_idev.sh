@@ -11,9 +11,14 @@ MODEL_ID=${MODEL_ID:-Qwen/Qwen3.6-27B}
 TRAIN_CONDA_ENV=${TRAIN_CONDA_ENV:-deepseek_v4}
 EXPECTED_NUM_NODES=${EXPECTED_NUM_NODES:-4}
 MAX_LENGTH=${MAX_LENGTH:-8192}
-TOTAL_TRAINING_STEPS=${TOTAL_TRAINING_STEPS:-1}
+FULL_DATASET=${FULL_DATASET:-0}
+TOTAL_EPOCHS=${TOTAL_EPOCHS:-1}
+TOTAL_TRAINING_STEPS=${TOTAL_TRAINING_STEPS:-}
 TRAIN_BATCH_SIZE=${TRAIN_BATCH_SIZE:-4}
 MICRO_BATCH_SIZE=${MICRO_BATCH_SIZE:-1}
+TRAIN_MAX_SAMPLES=${TRAIN_MAX_SAMPLES:-}
+VAL_MAX_SAMPLES=${VAL_MAX_SAMPLES:-}
+SAVE_FREQ=${SAVE_FREQ:-}
 LORA_RANK=${LORA_RANK:-32}
 LORA_ALPHA=${LORA_ALPHA:-64}
 TRAIN_LR=${TRAIN_LR:-1e-5}
@@ -21,7 +26,20 @@ ATTN_IMPLEMENTATION=${ATTN_IMPLEMENTATION:-sdpa}
 MASTER_PORT=${MASTER_PORT:-29517}
 PREFLIGHT_ONLY=${PREFLIGHT_ONLY:-0}
 DATA_PREFLIGHT_TIMEOUT=${DATA_PREFLIGHT_TIMEOUT:-300}
-RUN_TAG=${RUN_TAG:-${SLURM_JOB_ID:-idev}_qwen36_27b_sft_smoke}
+
+case "$FULL_DATASET" in
+  0|1) ;;
+  *) echo "ERROR: FULL_DATASET must be 0 or 1, got $FULL_DATASET"; exit 2 ;;
+esac
+if ! [[ "$TOTAL_EPOCHS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "ERROR: TOTAL_EPOCHS must be a positive integer, got $TOTAL_EPOCHS"
+  exit 2
+fi
+DEFAULT_RUN_KIND=smoke
+if [ "$FULL_DATASET" = "1" ]; then
+  DEFAULT_RUN_KIND=full
+fi
+RUN_TAG=${RUN_TAG:-${SLURM_JOB_ID:-idev}_qwen36_27b_sft_$DEFAULT_RUN_KIND}
 
 : "${SCRATCH:?SCRATCH must point to the Vista scratch filesystem}"
 # Use SFT-specific overrides so an inherited login-shell HF_HOME under /work
@@ -66,6 +84,21 @@ if [ -z "${TRAIN_FILE:-}" ] || [ ! -s "$TRAIN_FILE" ]; then
   echo "Set TRAIN_FILE=/absolute/path/to/contextgraph_sft_train.parquet."
   exit 2
 fi
+if [ -z "${VAL_FILE:-}" ]; then
+  CANDIDATE_VAL_FILE=$(dirname "$TRAIN_FILE")/contextgraph_sft_validation.parquet
+  if [ -s "$CANDIDATE_VAL_FILE" ]; then
+    VAL_FILE=$CANDIDATE_VAL_FILE
+  elif [ "$FULL_DATASET" = "1" ]; then
+    echo "ERROR: full-dataset training requires an independent VAL_FILE; expected $CANDIDATE_VAL_FILE"
+    exit 2
+  else
+    VAL_FILE=$TRAIN_FILE
+  fi
+fi
+if [ ! -s "$VAL_FILE" ]; then
+  echo "ERROR: VAL_FILE is missing or empty: $VAL_FILE"
+  exit 2
+fi
 
 require_scratch_path() {
   local name=$1
@@ -79,6 +112,8 @@ require_scratch_path MODEL_PATH "$MODEL_PATH"
 require_scratch_path HF_HOME "$HF_HOME"
 require_scratch_path HF_HUB_CACHE "$HF_HUB_CACHE"
 require_scratch_path CHECKPOINT_ROOT "$CHECKPOINT_ROOT"
+require_scratch_path TRAIN_FILE "$TRAIN_FILE"
+require_scratch_path VAL_FILE "$VAL_FILE"
 
 activate_train_env() {
   set +u
@@ -123,11 +158,11 @@ if [ "${SFT_TRAIN_WORKER:-0}" = "1" ]; then
   cd "$PROJECT_ROOT"
   exec torchrun --nnodes="$NUM_NODES" --nproc-per-node=1 --node-rank="$SLURM_PROCID" --master-addr="$MASTER_ADDR" --master-port="$MASTER_PORT" -m verl.trainer.fsdp_sft_trainer \
     data.train_files="$TRAIN_FILES" \
-    data.val_files="$TRAIN_FILES" \
+    data.val_files="$VAL_FILES" \
     data.train_batch_size="$TRAIN_BATCH_SIZE" \
     data.micro_batch_size_per_gpu="$MICRO_BATCH_SIZE" \
-    data.train_max_samples="$NUM_NODES" \
-    data.val_max_samples="$NUM_NODES" \
+    data.train_max_samples="$TRAIN_MAX_SAMPLES" \
+    data.val_max_samples="$VAL_MAX_SAMPLES" \
     data.multiturn.enable=True \
     data.multiturn.loss_mask_mode=assistant_tokens \
     data.max_length="$MAX_LENGTH" \
@@ -148,10 +183,10 @@ if [ "${SFT_TRAIN_WORKER:-0}" = "1" ]; then
     trainer.project_name=contextgraph-sft \
     trainer.experiment_name="$RUN_TAG" \
     trainer.default_local_dir="$CHECKPOINT_ROOT" \
-    trainer.total_epochs=1 \
+    trainer.total_epochs="$TOTAL_EPOCHS" \
     trainer.total_training_steps="$TOTAL_TRAINING_STEPS" \
     trainer.logger='["console"]' \
-    trainer.save_freq=1 \
+    trainer.save_freq="$SAVE_FREQ" \
     trainer.test_freq=-1 \
     trainer.nnodes="$NUM_NODES" \
     trainer.n_gpus_per_node=1 \
@@ -172,19 +207,64 @@ if [ "$NUM_NODES" -ne "$EXPECTED_NUM_NODES" ]; then
   exit 2
 fi
 MASTER_ADDR=$(getent hosts "${NODELIST[0]}" | awk '{print $1}')
-TRAIN_FILES="[$TRAIN_FILE,$TRAIN_FILE,$TRAIN_FILE,$TRAIN_FILE]"
-export MODEL_PATH TRAIN_FILE TRAIN_FILES CHECKPOINT_ROOT NUM_NODES MASTER_ADDR MASTER_PORT ATTN_IMPLEMENTATION
+if [ $((TRAIN_BATCH_SIZE % NUM_NODES)) -ne 0 ]; then
+  echo "ERROR: TRAIN_BATCH_SIZE=$TRAIN_BATCH_SIZE must be divisible by NUM_NODES=$NUM_NODES"
+  exit 2
+fi
+if [ "$FULL_DATASET" = "1" ]; then
+  TRAIN_FILES="[$TRAIN_FILE]"
+  VAL_FILES="[$VAL_FILE]"
+  TRAIN_MAX_SAMPLES=${TRAIN_MAX_SAMPLES:--1}
+  VAL_MAX_SAMPLES=${VAL_MAX_SAMPLES:--1}
+  SAVE_FREQ=${SAVE_FREQ:-25}
+else
+  TRAIN_FILES="[$TRAIN_FILE,$TRAIN_FILE,$TRAIN_FILE,$TRAIN_FILE]"
+  VAL_FILES="$TRAIN_FILES"
+  TRAIN_MAX_SAMPLES=${TRAIN_MAX_SAMPLES:-$NUM_NODES}
+  VAL_MAX_SAMPLES=${VAL_MAX_SAMPLES:-$NUM_NODES}
+  SAVE_FREQ=${SAVE_FREQ:-1}
+fi
+
+TRAIN_ROWS=$(python -c "import pandas as pd; print(len(pd.read_parquet('$TRAIN_FILE')))" )
+if ! [[ "$TRAIN_ROWS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "ERROR: could not determine positive TRAIN_ROWS for $TRAIN_FILE"
+  exit 2
+fi
+EFFECTIVE_TRAIN_ROWS=$TRAIN_ROWS
+if [ "$TRAIN_MAX_SAMPLES" -gt 0 ] && [ "$TRAIN_MAX_SAMPLES" -lt "$EFFECTIVE_TRAIN_ROWS" ]; then
+  EFFECTIVE_TRAIN_ROWS=$TRAIN_MAX_SAMPLES
+fi
+LOCAL_BATCH_SIZE=$((TRAIN_BATCH_SIZE / NUM_NODES))
+ROWS_PER_RANK=$((EFFECTIVE_TRAIN_ROWS / NUM_NODES))
+STEPS_PER_EPOCH=$((ROWS_PER_RANK / LOCAL_BATCH_SIZE))
+if [ "$STEPS_PER_EPOCH" -lt 1 ]; then
+  echo "ERROR: dataset has too few effective rows ($EFFECTIVE_TRAIN_ROWS) for global batch $TRAIN_BATCH_SIZE"
+  exit 2
+fi
+MAX_TRAINING_STEPS=$((STEPS_PER_EPOCH * TOTAL_EPOCHS))
+TOTAL_TRAINING_STEPS=${TOTAL_TRAINING_STEPS:-$MAX_TRAINING_STEPS}
+if ! [[ "$TOTAL_TRAINING_STEPS" =~ ^[1-9][0-9]*$ ]] || [ "$TOTAL_TRAINING_STEPS" -gt "$MAX_TRAINING_STEPS" ]; then
+  echo "ERROR: TOTAL_TRAINING_STEPS must be 1..$MAX_TRAINING_STEPS for $TOTAL_EPOCHS epochs, got $TOTAL_TRAINING_STEPS"
+  exit 2
+fi
+export MODEL_PATH TRAIN_FILE VAL_FILE TRAIN_FILES VAL_FILES CHECKPOINT_ROOT NUM_NODES MASTER_ADDR MASTER_PORT ATTN_IMPLEMENTATION
+export TRAIN_MAX_SAMPLES VAL_MAX_SAMPLES SAVE_FREQ TOTAL_EPOCHS TOTAL_TRAINING_STEPS
 
 mkdir -p "$PROJECT_ROOT/logs" "$CHECKPOINT_ROOT"
 cd "$PROJECT_ROOT"
 activate_train_env
 
-echo "Qwen3.6-27B ContextGraph SFT training smoke"
+RUN_MODE=smoke
+if [ "$FULL_DATASET" = "1" ]; then
+  RUN_MODE=full-dataset
+fi
+echo "Qwen3.6-27B ContextGraph SFT training ($RUN_MODE)"
 echo "Model: $MODEL_PATH"
-echo "Data: $TRAIN_FILE"
+echo "Train data: $TRAIN_FILE rows=$TRAIN_ROWS effective_rows=$EFFECTIVE_TRAIN_ROWS"
+echo "Validation data: $VAL_FILE max_samples=$VAL_MAX_SAMPLES"
 echo "Nodes: ${NODELIST[*]}"
 echo "Parallelism: FSDP2 world=$NUM_NODES, Ulysses SP=1, DP=$NUM_NODES"
-echo "Training: steps=$TOTAL_TRAINING_STEPS max_length=$MAX_LENGTH LoRA rank=$LORA_RANK attention=$ATTN_IMPLEMENTATION"
+echo "Training: epochs=$TOTAL_EPOCHS steps_per_epoch=$STEPS_PER_EPOCH total_steps=$TOTAL_TRAINING_STEPS global_batch=$TRAIN_BATCH_SIZE max_length=$MAX_LENGTH LoRA rank=$LORA_RANK attention=$ATTN_IMPLEMENTATION"
 echo "Checkpoint: $CHECKPOINT_ROOT"
 
 echo "Preflight: validating and tokenizing one SFT row (timeout=${DATA_PREFLIGHT_TIMEOUT}s)"
@@ -197,7 +277,7 @@ if [ "$PREFLIGHT_ONLY" = "1" ]; then
   exit 0
 fi
 
-echo "Launching one real SFT optimizer step"
+echo "Launching real SFT optimizer steps"
 srun --overlap --nodes="$NUM_NODES" --ntasks="$NUM_NODES" --ntasks-per-node=1 env SFT_TRAIN_WORKER=1 bash "$SCRIPT_PATH"
 
 STEP_DIR="$CHECKPOINT_ROOT/global_step_$TOTAL_TRAINING_STEPS"
