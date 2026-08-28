@@ -53,11 +53,9 @@ def main() -> None:
             "max_length": args.max_length,
             "truncation": "right",
             "pad_mode": "right",
-            # Qwen3.6's bundled template does not expose Jinja generation
-            # blocks, so Transformers cannot return a native assistant mask.
-            # The dataset's prefix-difference path still produces an exact
-            # assistant-only mask without changing the tokenizer template.
-            "loss_mask_mode": "per_message",
+            # MultiTurnSFTDataset adds generation blocks to the bundled
+            # Qwen3.6 template in memory, with full-render offsets as fallback.
+            "loss_mask_mode": "assistant_tokens",
         }
     )
     stage("construct one-row multi-turn dataset")

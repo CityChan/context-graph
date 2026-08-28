@@ -11,7 +11,7 @@ def test_qwen36_training_smoke_runs_a_real_multiturn_optimizer_step():
     assert "Qwen/Qwen3.6-27B" in text
     assert "verl.trainer.fsdp_sft_trainer" in text
     assert "data.multiturn.enable=True" in text
-    assert "data.multiturn.loss_mask_mode=per_message" in text
+    assert "data.multiturn.loss_mask_mode=assistant_tokens" in text
     assert "trainer.total_training_steps=\"$TOTAL_TRAINING_STEPS\"" in text
     assert "trainer.save_freq=1" in text
     assert "contextgraph_sft_train.parquet" in text
@@ -70,7 +70,7 @@ def test_contextgraph_sft_checker_requires_loss_tokens():
     assert 'stage("load tokenizer")' in text
     assert 'stage("tokenize first sample")' in text
     assert "local_files_only=True" in text
-    assert '"loss_mask_mode": "per_message"' in text
+    assert '"loss_mask_mode": "assistant_tokens"' in text
 
 
 def test_multiturn_sft_uses_renderable_conversation_prefixes():
@@ -84,3 +84,4 @@ def test_multiturn_sft_uses_renderable_conversation_prefixes():
     assert 'self.loss_mask_mode in ["per_message", "assistant_tokens"]' in text
     assert "return_assistant_tokens_mask=True" in text
     assert 'if self.loss_mask_mode == "assistant_tokens":' in text
+    assert "assistant_token_mask_from_offsets" in text

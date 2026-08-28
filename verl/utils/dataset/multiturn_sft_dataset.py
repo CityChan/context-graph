@@ -32,6 +32,10 @@ from transformers import PreTrainedTokenizer, ProcessorMixin
 from verl.models.transformers.qwen2_vl import get_rope_index
 from verl.utils import hf_tokenizer
 from verl.utils.chat_template import extract_system_prompt_and_generation
+from verl.utils.dataset.assistant_mask import (
+    assistant_token_mask_from_offsets,
+    chat_template_with_generation_blocks,
+)
 from verl.utils.dataset.dataset_utils import DatasetPadMode
 from verl.utils.dataset.vision_utils import process_image, process_video
 from verl.utils.fs import copy_local_path_from_hdfs
@@ -111,6 +115,20 @@ class MultiTurnSFTDataset(Dataset):
             tokenizer = hf_tokenizer(tokenizer)
         self.tokenizer: PreTrainedTokenizer = tokenizer
         self.processor = processor
+
+        if self.loss_mask_mode == "assistant_tokens":
+            template = self.apply_chat_template_kwargs.get(
+                "chat_template", getattr(self.tokenizer, "chat_template", None)
+            )
+            patched_template = chat_template_with_generation_blocks(template)
+            if patched_template != template:
+                self.apply_chat_template_kwargs = {
+                    **self.apply_chat_template_kwargs,
+                    "chat_template": patched_template,
+                }
+                logger.info(
+                    "Added generation blocks to the chat template for native assistant masking."
+                )
 
         self._download()
         self._read_files_and_process()
@@ -275,24 +293,35 @@ class MultiTurnSFTDataset(Dataset):
         input_ids = inputs.pop("input_ids")
         attention_mask = inputs.pop("attention_mask")
         assistant_masks = inputs.pop("assistant_masks", inputs.pop("assistant_mask", None))
-        if assistant_masks is None:
-            raise ValueError(
-                "Chat template did not return an assistant token mask; "
-                "use a template with Jinja generation blocks or loss_mask_mode=per_message."
-            )
         if input_ids.ndim == 2:
             input_ids = input_ids[0]
         if attention_mask.ndim == 2:
             attention_mask = attention_mask[0]
-        loss_mask = torch.as_tensor(assistant_masks, dtype=attention_mask.dtype)
-        if loss_mask.ndim == 2:
-            loss_mask = loss_mask[0]
+        has_assistant = any(message.get("role") == "assistant" for message in messages)
+        native_mask_is_empty = assistant_masks is None or not bool(torch.as_tensor(assistant_masks).any())
+        if has_assistant and native_mask_is_empty:
+            loss_mask = assistant_token_mask_from_offsets(
+                tokenizer=self.tokenizer,
+                processor=processor,
+                messages=messages,
+                tools=tools,
+                apply_chat_template_kwargs=apply_chat_template_kwargs,
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+            )
+        else:
+            if assistant_masks is None:
+                loss_mask = torch.zeros_like(attention_mask)
+            else:
+                loss_mask = torch.as_tensor(assistant_masks, dtype=attention_mask.dtype)
+                if loss_mask.ndim == 2:
+                    loss_mask = loss_mask[0]
         if input_ids.shape != attention_mask.shape or input_ids.shape != loss_mask.shape:
             raise ValueError(
                 "Chat template returned mismatched input, attention, and assistant mask shapes: "
                 f"{input_ids.shape}, {attention_mask.shape}, {loss_mask.shape}."
             )
-        if any(message.get("role") == "assistant" for message in messages) and not bool(loss_mask.any()):
+        if has_assistant and not bool(loss_mask.any()):
             raise ValueError("Chat template returned an empty assistant token mask for a conversation with responses.")
         multi_modal_inputs = {}
         for key, value in inputs.items():
