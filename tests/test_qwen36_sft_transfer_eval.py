@@ -84,7 +84,17 @@ def test_new_vllm_lora_api_uses_native_disk_loader_and_tensor_compatibility():
     assert 'if "model_vocab_size" not in str(exc)' in source
     preflight = _read("scripts/check_vllm_eval_compat.py")
     assert "VLLMHijack.hijack()" in preflight
-    assert "vLLM eval/LoRA bridge: ok" in preflight
+    assert 'importlib.import_module("verl.workers.rollout.vllm_rollout.vllm_rollout")' in preflight
+    assert "vLLM eval/LoRA/rollout imports: ok" in preflight
+
+
+def test_fp8_private_api_mismatch_is_lazy_for_bf16_rollouts():
+    source = _read("verl/utils/vllm/vllm_fp8_utils.py")
+    import_block = source.split("try:", 1)[1].split("logger =", 1)[0]
+    assert 'raise ImportError("FP8 quantization not available")' not in import_block
+    assert "_FP8_IMPORT_ERROR = e" in import_block
+    assert 'if getattr(vllm_config, "quant_config", None) is None:' in source
+    assert "_require_fp8_support()" in source
 
 
 def test_browsecomp_runners_isolate_search_and_trainer_dataset_caches():

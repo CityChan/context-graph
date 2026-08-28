@@ -20,11 +20,17 @@ from unittest.mock import patch
 import torch
 import vllm
 
+_FP8_IMPORT_ERROR: ImportError | None = None
 try:
     from vllm.model_executor.layers.fused_moe.layer import FusedMoE
     from vllm.model_executor.layers.linear import LinearBase
 except ImportError as e:
-    raise ImportError("FP8 quantization not available") from e
+    # FP8 helpers are imported by every vLLM rollout, including ordinary
+    # BF16 models. New vLLM releases may move these private classes, so keep
+    # the non-FP8 path importable and fail only if FP8 is actually requested.
+    _FP8_IMPORT_ERROR = e
+    FusedMoE = ()
+    LinearBase = ()
 
 logger = logging.getLogger(__name__)
 
@@ -49,10 +55,18 @@ class FP8State:
 fp8_state: FP8State = FP8State()
 
 
+def _require_fp8_support() -> None:
+    if _FP8_IMPORT_ERROR is not None:
+        raise ImportError("FP8 quantization helpers are incompatible with the installed vLLM") from _FP8_IMPORT_ERROR
+
+
 def is_fp8_model(vllm_config):
+    if getattr(vllm_config, "quant_config", None) is None:
+        return False
     from vllm.model_executor.layers.quantization.fp8 import Fp8Config
 
     if hasattr(vllm_config, "quant_config") and isinstance(vllm_config.quant_config, Fp8Config):
+        _require_fp8_support()
         return True
 
     return False
@@ -190,6 +204,7 @@ def quant_weights(weights, model, quant_config, dtype=torch.bfloat16):
 
 
 def load_quanted_weights(weights, model_runner):
+    _require_fp8_support()
     model = model_runner.model
     quant_config = model_runner.vllm_config.quant_config
     vllm_dtype = model_runner.vllm_config.model_config.dtype
@@ -454,6 +469,7 @@ def process_weights_after_loading_moe_for_vllm11(self, layer) -> None:
 
 
 def apply_vllm_fp8_patches():
+    _require_fp8_support()
     logger.info("Applying vllm fp8 patches for blockwise quantization")
     func1_path = "vllm.model_executor.layers.quantization.fp8.Fp8LinearMethod.process_weights_after_loading"
     patcher1 = patch(
