@@ -49,4 +49,15 @@ def test_paired_transfer_submitter_is_matched_and_complete():
     assert "LORA_RANK=${LORA_RANK:-32}" in source
     assert "LORA_ALPHA=${LORA_ALPHA:-64}" in source
     assert "EVAL_MAX_SAMPLES=${EVAL_MAX_SAMPLES:--1}" in source
+    assert "DEFAULT_EVAL_TIME=00:30:00" in source
+    assert "DEFAULT_EVAL_TIME=01:30:00" in source
+    assert "GAIA_EVAL_TIME=${GAIA_EVAL_TIME:-$DEFAULT_EVAL_TIME}" in source
+    assert "BC_EVAL_TIME=${BC_EVAL_TIME:-$DEFAULT_EVAL_TIME}" in source
+    assert (
+        "DISCOVERYBENCH_TIME_LIMIT="
+        "${DISCOVERYBENCH_TIME_LIMIT:-$DEFAULT_EVAL_TIME}"
+    ) in source
+    assert 'GAIA_EVAL_TIME="$GAIA_EVAL_TIME"' in source
+    assert 'BC_EVAL_TIME="$BC_EVAL_TIME"' in source
+    assert 'DISCOVERYBENCH_TIME_LIMIT="$DISCOVERYBENCH_TIME_LIMIT"' in source
     assert "DRY_RUN=${DRY_RUN:-0}" in source
