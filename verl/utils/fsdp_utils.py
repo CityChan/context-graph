@@ -514,8 +514,15 @@ def apply_fsdp2(model, fsdp_kwargs, config):
 
     if isinstance(fsdp_transformer_layer_cls_to_wrap, str):
         fsdp_transformer_layer_cls_to_wrap = [fsdp_transformer_layer_cls_to_wrap]
+    elif fsdp_transformer_layer_cls_to_wrap is not None:
+        # Transformers may expose _no_split_modules as a list, tuple, or set.
+        # Normalize it before validation instead of assuming subscriptability.
+        fsdp_transformer_layer_cls_to_wrap = list(fsdp_transformer_layer_cls_to_wrap)
 
-    assert len(fsdp_transformer_layer_cls_to_wrap) > 0 and fsdp_transformer_layer_cls_to_wrap[0] is not None
+    if not fsdp_transformer_layer_cls_to_wrap or any(
+        layer_class is None for layer_class in fsdp_transformer_layer_cls_to_wrap
+    ):
+        raise ValueError("FSDP2 requires at least one valid transformer layer class to wrap.")
 
     modules = []
     for name, module in model.named_modules():

@@ -3,6 +3,7 @@ from pathlib import Path
 
 TRAINER = Path("verl/trainer/fsdp_sft_trainer.py")
 CONFIG = Path("verl/trainer/config/sft_trainer.yaml")
+FSDP_UTILS = Path("verl/utils/fsdp_utils.py")
 
 
 def test_fsdp_sft_attention_backend_is_configurable():
@@ -21,3 +22,11 @@ def test_fsdp2_skips_the_legacy_fsdp1_wrap_policy_builder():
     fsdp2_branch = trainer.index('elif fsdp_strategy == "fsdp2":', strategy)
 
     assert fsdp1_branch < wrap_policy < fsdp2_branch
+
+
+def test_fsdp2_accepts_set_valued_no_split_modules():
+    fsdp_utils = FSDP_UTILS.read_text(encoding="utf-8")
+    apply_fsdp2 = fsdp_utils[fsdp_utils.index("def apply_fsdp2(") : fsdp_utils.index("def get_shard_placement_fn(")]
+
+    assert "list(fsdp_transformer_layer_cls_to_wrap)" in apply_fsdp2
+    assert "fsdp_transformer_layer_cls_to_wrap[0]" not in apply_fsdp2
