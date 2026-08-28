@@ -8,12 +8,12 @@ def _read(path: str) -> str:
     return (ROOT / path).read_text(encoding="utf-8")
 
 
-def test_vllm_server_adapts_wire_schema_to_v010_guided_decoding():
+def test_vllm_server_adapts_wire_schema_to_native_structured_outputs():
     source = _read("verl/workers/rollout/vllm_rollout/vllm_async_server.py")
-    assert "from vllm.sampling_params import GuidedDecodingParams" in source
+    assert "from vllm.sampling_params import StructuredOutputsParams" in source
     assert 'sampling_params.pop("structured_outputs", None)' in source
-    assert "build_vllm_guided_decoding(" in source
-    assert 'sampling_params["guided_decoding"]' in source
+    assert "build_vllm_structured_outputs(" in source
+    assert 'sampling_params["structured_outputs"]' in source
 
 
 def test_call_llm_forwards_structured_outputs_without_mutating_base_sampling():
@@ -67,7 +67,7 @@ def test_sab_8b_eval_has_opt_in_controller_protocol():
     assert "plugin.structured_graph_controller=$SAB_STRUCTURED_GRAPH_CONTROLLER" in source
     assert "plugin.controller_owned_tool_formatting=$SAB_CONTROLLER_OWNED_TOOL_FORMATTING" in source
     assert "plugin.controller_action_policy=$SAB_CONTROLLER_ACTION_POLICY" in source
-    assert "GuidedDecodingParams" in source
+    assert "check_vllm_structured_outputs.py" in source
 
 
 def test_browsecomp_8b_eval_has_opt_in_controller_protocol():
@@ -77,7 +77,7 @@ def test_browsecomp_8b_eval_has_opt_in_controller_protocol():
     assert "plugin.structured_graph_controller=$BC_STRUCTURED_GRAPH_CONTROLLER" in source
     assert "plugin.controller_owned_tool_formatting=$BC_CONTROLLER_OWNED_TOOL_FORMATTING" in source
     assert "plugin.controller_action_policy=$BC_CONTROLLER_ACTION_POLICY" in source
-    assert "GuidedDecodingParams" in source
+    assert "check_vllm_structured_outputs.py" in source
 
 
 def test_sab_30b_eval_and_submitter_preserve_protocol_identity():
@@ -123,6 +123,8 @@ def test_gaia_submitter_and_runners_support_controller_protocol_and_sample_caps(
     assert "BC_CONTROLLER_ACTION_POLICY=$GAIA_CONTROLLER_ACTION_POLICY" in submitter
     assert "TRAIN_MAX_SAMPLES=$GAIA_TRAIN_MAX_SAMPLES" in submitter
     assert "VAL_MAX_SAMPLES=$GAIA_VAL_MAX_SAMPLES" in submitter
+    assert 'datasets_cache="/tmp/hf_datasets_cache_${job_name}_${STAMP}"' in submitter
+    assert "HF_DATASETS_CACHE=$datasets_cache" in submitter
     assert 'if [ "$DRY_RUN" = "1" ]' in submitter
 
     runners = (
@@ -151,4 +153,4 @@ def test_browsecomp_30b_contextgraph_evals_have_controller_protocol():
         assert "CTXGRAPH_PROTOCOL=${CTXGRAPH_PROTOCOL:-legacy}" in source
         assert "plugin.structured_graph_controller=$STRUCTURED_GRAPH_CONTROLLER" in source
         assert "plugin.controller_owned_tool_formatting=$CONTROLLER_OWNED_TOOL_FORMATTING" in source
-        assert "GuidedDecodingParams" in source
+        assert "check_vllm_structured_outputs.py" in source

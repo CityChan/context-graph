@@ -296,8 +296,8 @@ if [ ! -d "$EMBED_CACHE_DIR_DS" ]; then
 fi
 probe "BC parquets + HF datasets ok"
 if [ "$BC_STRUCTURED_GRAPH_CONTROLLER" = "true" ]; then
-  probe "checking vLLM guided-decoding support"
-  python -c "from agents.graph_controller import merge_decision_schema; from vllm import SamplingParams; from vllm.sampling_params import GuidedDecodingParams; p=SamplingParams(guided_decoding=GuidedDecodingParams(json=merge_decision_schema([0,1]))); assert p.guided_decoding.json; print('vLLM guided decoding: ok')"
+  probe "checking vLLM structured-output support"
+  python scripts/check_vllm_structured_outputs.py
 fi
 
 # ── Pre-flight: 8B + embedder weights must be present (offline) ──

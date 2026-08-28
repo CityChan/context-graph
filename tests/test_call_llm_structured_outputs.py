@@ -1,25 +1,25 @@
 import pytest
 
 from agents.structured_outputs import (
-    build_vllm_guided_decoding,
+    build_vllm_structured_outputs,
     normalize_structured_outputs,
 )
 
 
-class _GuidedDecodingParams:
+class _StructuredOutputsParams:
     def __init__(self, *, json):
         self.json = json
 
 
-def test_vllm_adapter_builds_guided_decoding_only_at_server_boundary():
+def test_vllm_adapter_builds_structured_outputs_only_at_server_boundary():
     schema = {"type": "object", "required": ["choice"]}
-    guided = build_vllm_guided_decoding(
+    structured = build_vllm_structured_outputs(
         {"json": schema},
-        _GuidedDecodingParams,
+        _StructuredOutputsParams,
     )
-    assert isinstance(guided, _GuidedDecodingParams)
-    assert guided.json == schema
-    assert guided.json is not schema
+    assert isinstance(structured, _StructuredOutputsParams)
+    assert structured.json == schema
+    assert structured.json is not schema
 
 
 @pytest.mark.parametrize(

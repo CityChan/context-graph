@@ -178,8 +178,8 @@ for f in "$TRAIN_PARQUET" "$VAL_PARQUET"; do
   fi
 done
 if [ "$STRUCTURED_GRAPH_CONTROLLER" = "true" ]; then
-  probe "checking vLLM guided-decoding support"
-  python -c "from agents.graph_controller import merge_decision_schema; from vllm import SamplingParams; from vllm.sampling_params import GuidedDecodingParams; p=SamplingParams(guided_decoding=GuidedDecodingParams(json=merge_decision_schema([0,1]))); assert p.guided_decoding.json; print('vLLM guided decoding: ok')"
+  probe "checking vLLM structured-output support"
+  python scripts/check_vllm_structured_outputs.py
 fi
 # HF corpus + embedding datasets (will use HF cache from \$HF_HOME/hub)
 CORPUS_DATASET="Tevatron/browsecomp-plus-corpus"

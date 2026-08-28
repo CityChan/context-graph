@@ -462,8 +462,8 @@ fi
 TRAIN_PARQUET="$VAL_PARQUET"
 probe "SAB parquet: $VAL_PARQUET"
 if [ "$SAB_STRUCTURED_GRAPH_CONTROLLER" = "true" ]; then
-  probe "checking vLLM guided-decoding support"
-  python -c "from agents.graph_controller import merge_decision_schema; from vllm import SamplingParams; from vllm.sampling_params import GuidedDecodingParams; p=SamplingParams(guided_decoding=GuidedDecodingParams(json=merge_decision_schema([0,1]))); assert p.guided_decoding.json; print('vLLM guided decoding: ok')"
+  probe "checking vLLM structured-output support"
+  python scripts/check_vllm_structured_outputs.py
 fi
 
 if [ "$CODE_BENCHMARK_PROFILE" = "sab" ] && [ "$SAB_REAL_EVAL" = "1" ]; then

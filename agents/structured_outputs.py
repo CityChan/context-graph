@@ -7,16 +7,14 @@ import json
 from typing import Any, TypeVar
 
 
-GuidedDecodingT = TypeVar("GuidedDecodingT")
+StructuredOutputsT = TypeVar("StructuredOutputsT")
 
 
 def normalize_structured_outputs(value: Any) -> dict[str, Any]:
     """Validate the controller envelope while keeping it Ray-serializable.
 
-    External vLLM's OpenAI server accepts ``structured_outputs={"json": ...}``,
-    while the vendored VERL stack uses vLLM 0.10.1 offline ``SamplingParams``.
-    The agent loop therefore transports this small plain dictionary across Ray
-    and converts it to ``GuidedDecodingParams`` inside the rollout server.
+    The agent loop transports this small plain dictionary across Ray and the
+    rollout server converts it to vLLM's native ``StructuredOutputsParams``.
     """
     if not isinstance(value, dict):
         raise TypeError("structured_outputs must be a dictionary")
@@ -31,10 +29,10 @@ def normalize_structured_outputs(value: Any) -> dict[str, Any]:
     return {"json": copy.deepcopy(schema)}
 
 
-def build_vllm_guided_decoding(
+def build_vllm_structured_outputs(
     value: Any,
-    guided_decoding_cls: type[GuidedDecodingT],
-) -> GuidedDecodingT:
-    """Convert the wire envelope to vLLM 0.10.1 GuidedDecodingParams."""
+    structured_outputs_cls: type[StructuredOutputsT],
+) -> StructuredOutputsT:
+    """Convert the wire envelope to vLLM ``StructuredOutputsParams``."""
     normalized = normalize_structured_outputs(value)
-    return guided_decoding_cls(json=normalized["json"])
+    return structured_outputs_cls(json=normalized["json"])
