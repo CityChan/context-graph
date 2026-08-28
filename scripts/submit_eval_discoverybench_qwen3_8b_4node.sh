@@ -10,6 +10,13 @@ DISCOVERYBENCH_TIME_LIMIT=${DISCOVERYBENCH_TIME_LIMIT:-02:00:00}
 DISCOVERYBENCH_VAL_MAX_SAMPLES=${DISCOVERYBENCH_VAL_MAX_SAMPLES:-239}
 DISCOVERYBENCH_CTXGRAPH_PROTOCOL=${DISCOVERYBENCH_CTXGRAPH_PROTOCOL:-controller}
 DISCOVERYBENCH_CONTROLLER_ACTION_POLICY=${DISCOVERYBENCH_CONTROLLER_ACTION_POLICY:-structural}
+DISCOVERYBENCH_JOB_MODEL_TAG=${DISCOVERYBENCH_JOB_MODEL_TAG:-8b}
+MODEL_PATH=${MODEL_PATH:-Qwen/Qwen3-8B}
+CONDA_ENV_NAME=${CONDA_ENV_NAME:-cxtgraph}
+LORA_ADAPTER_PATH=${LORA_ADAPTER_PATH:-}
+LORA_RANK=${LORA_RANK:-0}
+LORA_ALPHA=${LORA_ALPHA:-16}
+DRY_RUN=${DRY_RUN:-0}
 EVAL_SCRIPT=scripts/eval_discoverybench_qwen3_8b_4node.sh
 
 case "$DISCOVERYBENCH_CTXGRAPH_PROTOCOL" in
@@ -46,13 +53,21 @@ submit_method() {
   local output
   local job_id
 
-  output=$(sbatch \
-    --job-name="eval-db-${method}-${method_protocol}-8b-4n" \
-    --output="logs/eval-db-${method}-${method_protocol}-8b-4n.%j.out" \
-    --error="logs/eval-db-${method}-${method_protocol}-8b-4n.%j.err" \
+  local export_vars="ALL,MODEL_PATH=$MODEL_PATH,CONDA_ENV_NAME=$CONDA_ENV_NAME,LORA_ADAPTER_PATH=$LORA_ADAPTER_PATH,LORA_RANK=$LORA_RANK,LORA_ALPHA=$LORA_ALPHA,DISCOVERYBENCH_METHOD=$method,SAB_CTXGRAPH_PROTOCOL=$method_protocol,SAB_CONTROLLER_ACTION_POLICY=$DISCOVERYBENCH_CONTROLLER_ACTION_POLICY,DISCOVERYBENCH_VAL_MAX_SAMPLES=$DISCOVERYBENCH_VAL_MAX_SAMPLES"
+  local -a submit_args=(sbatch \
+    --job-name="eval-db-${method}-${method_protocol}-${DISCOVERYBENCH_JOB_MODEL_TAG}-4n" \
+    --output="logs/eval-db-${method}-${method_protocol}-${DISCOVERYBENCH_JOB_MODEL_TAG}-4n.%j.out" \
+    --error="logs/eval-db-${method}-${method_protocol}-${DISCOVERYBENCH_JOB_MODEL_TAG}-4n.%j.err" \
     --time="$DISCOVERYBENCH_TIME_LIMIT" \
-    --export="ALL,DISCOVERYBENCH_METHOD=$method,SAB_CTXGRAPH_PROTOCOL=$method_protocol,SAB_CONTROLLER_ACTION_POLICY=$DISCOVERYBENCH_CONTROLLER_ACTION_POLICY,DISCOVERYBENCH_VAL_MAX_SAMPLES=$DISCOVERYBENCH_VAL_MAX_SAMPLES" \
+    --export="$export_vars" \
     "$EVAL_SCRIPT")
+  if [ "$DRY_RUN" = "1" ]; then
+    printf 'DRY_RUN'
+    printf ' %q' "${submit_args[@]}"
+    printf '\n'
+    return
+  fi
+  output=$("${submit_args[@]}")
   job_id=$(printf '%s\n' "$output" | grep -Eo '[0-9]+' | tail -n 1)
   if [ -z "$job_id" ]; then
     echo "ERROR: could not parse job id from: $output" >&2
@@ -71,4 +86,6 @@ for method in react fold ctxgraph; do
   fi
 done
 
-squeue -u "${USER:-$(whoami)}" -o "%.18i %.9P %.38j %.2t %.10M %.10L %.6D %R"
+if [ "$DRY_RUN" = "0" ]; then
+  squeue -u "${USER:-$(whoami)}" -o "%.18i %.9P %.38j %.2t %.10M %.10L %.6D %R"
+fi

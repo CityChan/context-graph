@@ -73,6 +73,17 @@ def parse_args():
     merge_parser.add_argument(
         "--private", action="store_true", help="Whether to upload the model to a private Hugging Face repository"
     )
+    merge_parser.add_argument(
+        "--lora-adapter-only",
+        action="store_true",
+        help="Save only a PEFT LoRA adapter instead of also materializing the unchanged base model.",
+    )
+    merge_parser.add_argument(
+        "--lora-alpha",
+        type=int,
+        default=None,
+        help="LoRA alpha used during training. Required with --lora-adapter-only.",
+    )
 
     test_parser = subparsers.add_parser(
         "test", parents=[base_op_parser], help="Test merged model against a reference Hugging Face model"
@@ -120,6 +131,8 @@ class ModelMergerConfig:
     hf_model_config_path: Optional[str] = None
     hf_upload: bool = field(init=False)
     use_cpu_initialization: bool = False
+    lora_adapter_only: bool = False
+    lora_alpha: Optional[int] = None
 
     def __post_init__(self):
         self.hf_upload = self.operation == "merge" and bool(self.hf_upload_path)
@@ -139,6 +152,8 @@ def generate_config_from_args(args: argparse.Namespace) -> ModelMergerConfig:
         "local_dir": args.local_dir,
         "hf_model_config_path": os.path.join(args.local_dir, "huggingface"),
         "use_cpu_initialization": args.use_cpu_initialization,
+        "lora_adapter_only": getattr(args, "lora_adapter_only", False),
+        "lora_alpha": getattr(args, "lora_alpha", None),
     }
 
     if args.operation == "merge":
@@ -270,7 +285,7 @@ class BaseModelMerger(ABC):
         lora_rank = min(lora_params[lora_key].shape[0], lora_params[lora_key].shape[1])
         peft_dict = {
             "r": lora_rank,
-            "lora_alpha": 0,  # lora_alpha is not set. An error should be raised to inform the user to set it manually.
+            "lora_alpha": self.config.lora_alpha or 0,
             "target_modules": list(target_modules),
         }
         peft_config = peft.LoraConfig(**peft_dict).to_dict()
@@ -295,6 +310,17 @@ class BaseModelMerger(ABC):
         return lora_path
 
     def save_hf_model_and_tokenizer(self, state_dict: dict[str, torch.Tensor]):
+        if self.config.lora_adapter_only and (self.config.lora_alpha is None or self.config.lora_alpha <= 0):
+            raise ValueError("--lora-alpha must be a positive integer with --lora-adapter-only")
+
+        if self.config.lora_adapter_only:
+            lora_path = self.save_lora_adapter(state_dict)
+            if not lora_path:
+                raise ValueError("Checkpoint contains no LoRA parameters; cannot export an adapter")
+            print(f"Saving lora adapter to {lora_path}")
+            del state_dict
+            return
+
         auto_model_class = self.get_transformers_auto_model_class()
         with init_empty_weights():
             model = auto_model_class.from_config(

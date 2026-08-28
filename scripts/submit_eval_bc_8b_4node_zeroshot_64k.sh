@@ -3,7 +3,7 @@
 
 set -euo pipefail
 
-PROJECT_ROOT=/work/09281/chc_1996/vista/context-graph
+PROJECT_ROOT=${PROJECT_ROOT:-/work/09281/chc_1996/vista/context-graph}
 MODEL_PATH=${MODEL_PATH:-Qwen/Qwen3-8B}
 BC_METHODS=${BC_METHODS:-baseline,foldagent,contextgraph}
 BC_JOB_MODEL_TAG=${BC_JOB_MODEL_TAG:-8b}
@@ -11,6 +11,18 @@ BC_EXPERIMENT_MODEL_TAG=${BC_EXPERIMENT_MODEL_TAG:-8b}
 BC_EVAL_TIME=${BC_EVAL_TIME:-01:00:00}
 BC_CTXGRAPH_PROTOCOL=${BC_CTXGRAPH_PROTOCOL:-controller}
 BC_CONTROLLER_ACTION_POLICY=${BC_CONTROLLER_ACTION_POLICY:-structural}
+BC_CONTEXT_LENGTH=${BC_CONTEXT_LENGTH:-65536}
+BC_PROMPT_LENGTH=${BC_PROMPT_LENGTH:-8192}
+BC_RESPONSE_LENGTH=${BC_RESPONSE_LENGTH:-$((BC_CONTEXT_LENGTH - BC_PROMPT_LENGTH))}
+BC_FINAL_ANSWER_RESERVE=${BC_FINAL_ANSWER_RESERVE:-1024}
+BC_VAL_MAX_SAMPLES=${BC_VAL_MAX_SAMPLES:--1}
+CONDA_ENV_NAME=${CONDA_ENV_NAME:-cxtgraph}
+SEARCH_CONDA_ENV_NAME=${SEARCH_CONDA_ENV_NAME:-cxtgraph}
+LORA_ADAPTER_PATH=${LORA_ADAPTER_PATH:-}
+LORA_RANK=${LORA_RANK:-0}
+LORA_ALPHA=${LORA_ALPHA:-16}
+DRY_RUN=${DRY_RUN:-0}
+BC_CONTEXT_TAG="$((BC_CONTEXT_LENGTH / 1024))k"
 cd "$PROJECT_ROOT"
 mkdir -p logs
 
@@ -30,24 +42,21 @@ for method in baseline foldagent contextgraph; do
   fi
   method_protocol=legacy
   if [ "$method" = "contextgraph" ]; then method_protocol=$BC_CTXGRAPH_PROTOCOL; fi
-  job_id=$(MODEL_PATH="$MODEL_PATH" \
-    BC_METHOD="$method" \
-    BC_CTXGRAPH_PROTOCOL="$method_protocol" \
-    BC_CONTROLLER_ACTION_POLICY="$BC_CONTROLLER_ACTION_POLICY" \
-    BC_EXPERIMENT_MODEL_TAG="$BC_EXPERIMENT_MODEL_TAG" \
-    BC_CONTEXT_LENGTH=65536 \
-    BC_PROMPT_LENGTH=8192 \
-    BC_RESPONSE_LENGTH=57344 \
-    BC_YARN_FACTOR=2.0 \
-    BC_YARN_ORIGINAL_LENGTH=32768 \
-    BC_FINAL_ANSWER_RESERVE=1024 \
-    BC_VAL_MAX_SAMPLES=-1 \
-    sbatch --parsable \
-    --job-name="eval-bc-${BC_JOB_MODEL_TAG}-${method}-${method_protocol}-64k" \
-    --output="logs/eval-bc-${BC_JOB_MODEL_TAG}-${method}-${method_protocol}-64k.%j.out" \
-    --error="logs/eval-bc-${BC_JOB_MODEL_TAG}-${method}-${method_protocol}-64k.%j.err" \
+  export_vars="ALL,MODEL_PATH=$MODEL_PATH,BC_METHOD=$method,BC_CTXGRAPH_PROTOCOL=$method_protocol,BC_CONTROLLER_ACTION_POLICY=$BC_CONTROLLER_ACTION_POLICY,BC_EXPERIMENT_MODEL_TAG=$BC_EXPERIMENT_MODEL_TAG,BC_CONTEXT_LENGTH=$BC_CONTEXT_LENGTH,BC_PROMPT_LENGTH=$BC_PROMPT_LENGTH,BC_RESPONSE_LENGTH=$BC_RESPONSE_LENGTH,BC_YARN_FACTOR=2.0,BC_YARN_ORIGINAL_LENGTH=32768,BC_FINAL_ANSWER_RESERVE=$BC_FINAL_ANSWER_RESERVE,BC_VAL_MAX_SAMPLES=$BC_VAL_MAX_SAMPLES,CONDA_ENV_NAME=$CONDA_ENV_NAME,SEARCH_CONDA_ENV_NAME=$SEARCH_CONDA_ENV_NAME,LORA_ADAPTER_PATH=$LORA_ADAPTER_PATH,LORA_RANK=$LORA_RANK,LORA_ALPHA=$LORA_ALPHA"
+  submit_args=(sbatch --parsable \
+    --job-name="eval-bc-${BC_JOB_MODEL_TAG}-${method}-${method_protocol}-${BC_CONTEXT_TAG}" \
+    --output="logs/eval-bc-${BC_JOB_MODEL_TAG}-${method}-${method_protocol}-${BC_CONTEXT_TAG}.%j.out" \
+    --error="logs/eval-bc-${BC_JOB_MODEL_TAG}-${method}-${method_protocol}-${BC_CONTEXT_TAG}.%j.err" \
     --nodes=4 \
     --time="$BC_EVAL_TIME" \
+    --export="$export_vars" \
     scripts/eval_bc_baseline_8b_4node_zeroshot.sh)
+  if [ "$DRY_RUN" = "1" ]; then
+    printf 'DRY_RUN'
+    printf ' %q' "${submit_args[@]}"
+    printf '\n'
+    continue
+  fi
+  job_id=$(MODEL_PATH="$MODEL_PATH" BC_CTXGRAPH_PROTOCOL="$method_protocol" BC_EXPERIMENT_MODEL_TAG="$BC_EXPERIMENT_MODEL_TAG" "${submit_args[@]}")
   echo "$method: submitted job $job_id"
 done

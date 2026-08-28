@@ -79,8 +79,10 @@ fi
 JUDGE_MODEL=${JUDGE_MODEL:-gpt-5-nano}  # match upstream paper; override JUDGE_MODEL=gpt-4o-mini for cheaper runs
 
 # ── Conda + CUDA ──
+CONDA_ENV_NAME=${CONDA_ENV_NAME:-cxtgraph}
+SEARCH_CONDA_ENV_NAME=${SEARCH_CONDA_ENV_NAME:-cxtgraph}
 source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
-conda activate cxtgraph
+conda activate "$CONDA_ENV_NAME"
 export NCCL_HOSTID="${SLURMD_NODENAME:-$(hostname -s)}"
 export PATH="${CONDA_PREFIX}/bin:${PATH}"
 hash -r
@@ -158,6 +160,22 @@ FINAL_ANSWER_RESERVE=${FINAL_ANSWER_RESERVE:-2048}
 FINAL_ANSWER_SAFETY_MARGIN=${FINAL_ANSWER_SAFETY_MARGIN:-64}
 TRAIN_LR=${TRAIN_LR:-2e-6}
 USE_KL_LOSS=${USE_KL_LOSS:-True}
+LORA_ADAPTER_PATH=${LORA_ADAPTER_PATH:-}
+LORA_RANK=${LORA_RANK:-0}
+LORA_ALPHA=${LORA_ALPHA:-16}
+
+MODEL_LORA_ARGS=()
+if [ -n "$LORA_ADAPTER_PATH" ]; then
+  if [ ! -s "$LORA_ADAPTER_PATH/adapter_config.json" ] || [ ! -s "$LORA_ADAPTER_PATH/adapter_model.safetensors" ]; then
+    echo "ERROR: invalid LoRA adapter directory: $LORA_ADAPTER_PATH"
+    exit 1
+  fi
+  if ! [[ "$LORA_RANK" =~ ^[1-9][0-9]*$ ]] || ! [[ "$LORA_ALPHA" =~ ^[1-9][0-9]*$ ]]; then
+    echo "ERROR: LORA_RANK and LORA_ALPHA must be positive integers when LORA_ADAPTER_PATH is set"
+    exit 1
+  fi
+  MODEL_LORA_ARGS=(actor_rollout_ref.model.lora_adapter_path="$LORA_ADAPTER_PATH" actor_rollout_ref.model.lora_rank="$LORA_RANK" actor_rollout_ref.model.lora_alpha="$LORA_ALPHA")
+fi
 
 case "$BC_CTXGRAPH_PROTOCOL" in
   legacy)
@@ -207,6 +225,8 @@ echo "  Token budget: prompt=$PROMPT_LENGTH response=$RESPONSE_LENGTH active_con
 echo "  Job: ${SLURM_JOB_ID:-<idev>}   Head: $NODE0 ($NODE0_IP)"
 echo "  Worker(s): ${NODELIST[@]:1}"
 echo "  Trainer model:  $MODEL_PATH"
+echo "  LoRA adapter:   ${LORA_ADAPTER_PATH:-none} rank=$LORA_RANK alpha=$LORA_ALPHA"
+echo "  Trainer env:    $CONDA_ENV_NAME (search=$SEARCH_CONDA_ENV_NAME)"
 echo "  Embedder model: $EMBED_MODEL"
 echo "  Experiment: $EXPERIMENT_NAME"
 echo "  Logger: ${probe_msg}"
@@ -269,7 +289,11 @@ probe "BC parquets + HF datasets ok"
 
 # ── Pre-flight: 8B + embedder weights must be present (offline) ──
 probe "checking model caches"
-TRAINER_CACHE_DIR="$HF_HUB_CACHE/models--${MODEL_PATH//\//--}"
+if [ -d "$MODEL_PATH" ]; then
+  TRAINER_CACHE_DIR=$MODEL_PATH
+else
+  TRAINER_CACHE_DIR="$HF_HUB_CACHE/models--${MODEL_PATH//\//--}"
+fi
 EMBED_CACHE_DIR="$HF_HUB_CACHE/models--${EMBED_MODEL//\//--}"
 if [ ! -d "$TRAINER_CACHE_DIR" ]; then
   echo "ERROR: $MODEL_PATH not found at $TRAINER_CACHE_DIR"
@@ -302,7 +326,7 @@ SEARCH_LOG="$PROJECT_ROOT/logs/search-${SLURM_JOB_ID:-idev}-${RUN_TAG}-ctxgraph.
 probe "search server log: $SEARCH_LOG"
 srun --overlap --nodes=1 --ntasks=1 -w "$SEARCH_NODE" bash -c "
   source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
-  conda activate cxtgraph
+  conda activate $SEARCH_CONDA_ENV_NAME
   cd $PROJECT_ROOT
   export PYTHONPATH=$PROJECT_ROOT:\${PYTHONPATH:-}
   export HF_HOME=$HF_HOME
@@ -373,7 +397,7 @@ probe "ray stop sweep across $NUM_NODES nodes"
 for node in "${NODELIST[@]}"; do
   srun --overlap --nodes=1 --ntasks=1 -w "$node" bash -c '
     source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
-    conda activate cxtgraph
+    conda activate '"$CONDA_ENV_NAME"'
     ray stop -f >/dev/null 2>&1 || true
   ' || true
 done
@@ -391,7 +415,7 @@ probe "sanity imports done"
 probe "starting Ray head on $TRAINER_HEAD_NODE (NODELIST[1])"
 srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" bash -c '
   source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
-  conda activate cxtgraph
+  conda activate '"$CONDA_ENV_NAME"'
   export NCCL_HOSTID="${SLURMD_NODENAME:-$(hostname -s)}"
   export PATH="${CONDA_PREFIX}/bin:${PATH}"
   hash -r
@@ -416,7 +440,7 @@ for i in $(seq 2 $((NUM_NODES - 1))); do  # skip NODELIST[0]=search, [1]=head
   WORKER_NODE=${NODELIST[$i]}
   srun --overlap --nodes=1 --ntasks=1 -w "$WORKER_NODE" bash -c '
     source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
-    conda activate cxtgraph
+    conda activate '"$CONDA_ENV_NAME"'
     export NCCL_HOSTID="${SLURMD_NODENAME:-$(hostname -s)}"
     export PATH="${CONDA_PREFIX}/bin:${PATH}"
     hash -r
@@ -473,6 +497,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   actor_rollout_ref.rollout.calculate_log_probs=True \
   actor_rollout_ref.rollout.gpu_memory_utilization=0.6 \
   actor_rollout_ref.model.path="$MODEL_PATH" \
+  "${MODEL_LORA_ARGS[@]}" \
   "${LONG_CONTEXT_ARGS[@]}" \
   actor_rollout_ref.rollout.prompt_length="$PROMPT_LENGTH" \
   actor_rollout_ref.rollout.response_length="$RESPONSE_LENGTH" \

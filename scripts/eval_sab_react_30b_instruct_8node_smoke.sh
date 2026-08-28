@@ -214,10 +214,26 @@ export NCCL_P2P_LEVEL=NVL
 # ── Project paths ──
 PROJECT_ROOT=/work/09281/chc_1996/vista/context-graph
 MODEL_PATH=${MODEL_PATH:-Qwen/Qwen3-30B-A3B-Instruct-2507}
+LORA_ADAPTER_PATH=${LORA_ADAPTER_PATH:-}
+LORA_RANK=${LORA_RANK:-0}
+LORA_ALPHA=${LORA_ALPHA:-16}
 export HF_HOME=${HF_HOME:-/work/09281/chc_1996/vista/cache}
 export HF_HUB_CACHE=${HF_HUB_CACHE:-$HF_HOME/hub}
 cd "$PROJECT_ROOT"
 export PYTHONPATH="$PROJECT_ROOT:${PYTHONPATH:-}"
+
+MODEL_LORA_ARGS=()
+if [ -n "$LORA_ADAPTER_PATH" ]; then
+  if [ ! -s "$LORA_ADAPTER_PATH/adapter_config.json" ] || [ ! -s "$LORA_ADAPTER_PATH/adapter_model.safetensors" ]; then
+    echo "ERROR: invalid LoRA adapter directory: $LORA_ADAPTER_PATH"
+    exit 1
+  fi
+  if ! [[ "$LORA_RANK" =~ ^[1-9][0-9]*$ ]] || ! [[ "$LORA_ALPHA" =~ ^[1-9][0-9]*$ ]]; then
+    echo "ERROR: LORA_RANK and LORA_ALPHA must be positive integers when LORA_ADAPTER_PATH is set"
+    exit 1
+  fi
+  MODEL_LORA_ARGS=(actor_rollout_ref.model.lora_adapter_path="$LORA_ADAPTER_PATH" actor_rollout_ref.model.lora_rank="$LORA_RANK" actor_rollout_ref.model.lora_alpha="$LORA_ALPHA")
+fi
 
 # Per-trajectory sandbox workdir root (scratch is fastest on Vista)
 export SAB_WORKDIR_ROOT=${SAB_WORKDIR_ROOT:-${SCRATCH:-/scratch/09281/chc_1996}/sab_workdirs}
@@ -409,6 +425,7 @@ echo "  ZERO-SHOT EVAL: $SAB_METHOD_LABEL ($SAB_WORKFLOW) on $CODE_BENCHMARK_LAB
 echo "  Job: ${SLURM_JOB_ID:-<idev>}   Head: $NODE0 ($NODE0_IP)"
 echo "  Workers: ${NODELIST[@]:1}"
 echo "  Trainer model:  $MODEL_PATH"
+echo "  LoRA adapter:   ${LORA_ADAPTER_PATH:-none} rank=$LORA_RANK alpha=$LORA_ALPHA"
 echo "  Conda env:      $CONDA_ENV_NAME"
 echo "  Conda prefix:   $CONDA_PREFIX"
 echo "  Experiment:     $EXPERIMENT_NAME"
@@ -481,7 +498,11 @@ fi
 
 # ── Pre-flight: model weights must be cached (offline) ──
 probe "checking model cache"
-TRAINER_CACHE_DIR="$HF_HUB_CACHE/models--${MODEL_PATH//\//--}"
+if [ -d "$MODEL_PATH" ]; then
+  TRAINER_CACHE_DIR=$MODEL_PATH
+else
+  TRAINER_CACHE_DIR="$HF_HUB_CACHE/models--${MODEL_PATH//\//--}"
+fi
 if [ ! -d "$TRAINER_CACHE_DIR" ]; then
   echo "ERROR: $MODEL_PATH not cached at $TRAINER_CACHE_DIR"
   echo "       Login node: hf download $MODEL_PATH"
@@ -641,6 +662,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   actor_rollout_ref.rollout.calculate_log_probs=True \
   actor_rollout_ref.rollout.gpu_memory_utilization=$SAB_ROLLOUT_GPU_MEMORY_UTILIZATION \
   actor_rollout_ref.model.path="$MODEL_PATH" \
+  "${MODEL_LORA_ARGS[@]}" \
   actor_rollout_ref.rollout.prompt_length=$SAB_PROMPT_LENGTH \
   actor_rollout_ref.rollout.response_length=$SAB_RESPONSE_LENGTH \
   actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu=$SAB_MAX_TOKEN_LEN_PER_GPU \
