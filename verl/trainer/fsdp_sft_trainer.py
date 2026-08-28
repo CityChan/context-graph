@@ -287,15 +287,6 @@ class FSDPSFTTrainer:
             param_dtype=torch.bfloat16, reduce_dtype=torch.float32, buffer_dtype=torch.float32
         )
 
-        auto_wrap_policy = get_fsdp_wrap_policy(
-            self.model,
-            config=self.config.model.fsdp_config.wrap_policy,
-            is_lora=self.lora,
-        )
-
-        if self.device_mesh.get_rank() == 0:
-            print(auto_wrap_policy)
-
         if not self.config.model.fsdp_config.cpu_offload:
             cpu_offload = None
         else:
@@ -303,6 +294,13 @@ class FSDPSFTTrainer:
 
         fsdp_strategy = self.config.model.strategy
         if fsdp_strategy == "fsdp":
+            auto_wrap_policy = get_fsdp_wrap_policy(
+                self.model,
+                config=self.config.model.fsdp_config.wrap_policy,
+                is_lora=self.lora,
+            )
+            if self.device_mesh.get_rank() == 0:
+                print(auto_wrap_policy)
             self.fsdp_model = FSDP(
                 self.model,
                 cpu_offload=cpu_offload,
