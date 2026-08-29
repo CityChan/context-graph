@@ -13,6 +13,7 @@
 # limitations under the License.
 import argparse
 import asyncio
+import inspect
 import json
 import logging
 import os
@@ -69,6 +70,10 @@ from vllm.v1.engine.async_llm import AsyncLLM
 from vllm.v1.engine.core import EngineCoreProc
 from vllm.v1.engine.utils import CoreEngineProcManager
 from vllm.v1.executor.abstract import Executor
+
+_VLLM_SAMPLE_TOKENS_USES_GRAMMAR_OUTPUT = (
+    "grammar_output" in inspect.signature(Executor.sample_tokens).parameters
+)
 
 from verl.single_controller.ray import RayClassWithInitArgs
 from verl.utils.config import omega_conf_to_dataclass
@@ -167,16 +172,33 @@ class ExternalZeroMQDistributedExecutor(Executor):
                 future.set_exception(e)
             return future if non_block else future.result()
 
-        def sample_tokens(self, scheduler_output, output, non_block: bool = False):
-            future = Future()
-            try:
-                result = self.collective_rpc(
-                    "sample_tokens", args=(scheduler_output, output)
-                )
-                future.set_result(result[0])
-            except Exception as e:
-                future.set_exception(e)
-            return future if non_block else future.result()
+        if _VLLM_SAMPLE_TOKENS_USES_GRAMMAR_OUTPUT:
+
+            def sample_tokens(self, grammar_output, non_block: bool = False):
+                future = Future()
+                try:
+                    result = self.collective_rpc(
+                        "sample_tokens", args=(grammar_output,)
+                    )
+                    future.set_result(result[0])
+                except Exception as e:
+                    future.set_exception(e)
+                return future if non_block else future.result()
+
+        else:
+
+            def sample_tokens(
+                self, scheduler_output, output, non_block: bool = False
+            ):
+                future = Future()
+                try:
+                    result = self.collective_rpc(
+                        "sample_tokens", args=(scheduler_output, output)
+                    )
+                    future.set_result(result[0])
+                except Exception as e:
+                    future.set_exception(e)
+                return future if non_block else future.result()
 
 
 class vLLMHttpServerBase:

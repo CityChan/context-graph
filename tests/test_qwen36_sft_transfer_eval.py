@@ -156,6 +156,15 @@ def test_vllm_worker_wrapper_supports_legacy_and_current_constructors():
     assert "return vllm_run_method(self.inference_engine, method, args, kwargs)" in source
 
 
+def test_external_vllm_executor_supports_current_sample_tokens_contract():
+    source = _read("verl/workers/rollout/vllm_rollout/vllm_async_server.py")
+    assert "inspect.signature(Executor.sample_tokens).parameters" in source
+    assert '"grammar_output" in inspect.signature' in source
+    assert "def sample_tokens(self, grammar_output, non_block: bool = False)" in source
+    assert '"sample_tokens", args=(grammar_output,)' in source
+    assert "self, scheduler_output, output, non_block: bool = False" in source
+
+
 def test_browsecomp_runners_isolate_search_and_trainer_dataset_caches():
     for path in (
         "scripts/eval_bc_baseline_8b_4node_zeroshot.sh",
