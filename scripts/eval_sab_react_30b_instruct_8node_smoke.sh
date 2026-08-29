@@ -265,12 +265,22 @@ SAB_RESPONSE_LENGTH=${SAB_RESPONSE_LENGTH:-2048}
 SAB_MAX_TOKEN_LEN_PER_GPU=${SAB_MAX_TOKEN_LEN_PER_GPU:-18432}
 SAB_ROLLOUT_QUANTIZATION=${SAB_ROLLOUT_QUANTIZATION:-fp8}
 SAB_ROLLOUT_GPU_MEMORY_UTILIZATION=${SAB_ROLLOUT_GPU_MEMORY_UTILIZATION:-0.55}
+SAB_ROLLOUT_TENSOR_MODEL_PARALLEL_SIZE=${SAB_ROLLOUT_TENSOR_MODEL_PARALLEL_SIZE:-1}
 SAB_VAL_MAX_TURN=${SAB_VAL_MAX_TURN:-4}
 SAB_TURN_MAX_NEW_TOKENS=${SAB_TURN_MAX_NEW_TOKENS:-512}
 SAB_DATA_SEED=${SAB_DATA_SEED:-42}
 SAB_METHOD=${SAB_METHOD:-react}
 SAB_CTXGRAPH_PROTOCOL=${SAB_CTXGRAPH_PROTOCOL:-legacy}
 SAB_CONTROLLER_ACTION_POLICY=${SAB_CONTROLLER_ACTION_POLICY:-structural}
+
+if ! [[ "$SAB_ROLLOUT_TENSOR_MODEL_PARALLEL_SIZE" =~ ^[1-9][0-9]*$ ]]; then
+  echo "ERROR: SAB_ROLLOUT_TENSOR_MODEL_PARALLEL_SIZE must be a positive integer"
+  exit 1
+fi
+if (( NUM_NODES % SAB_ROLLOUT_TENSOR_MODEL_PARALLEL_SIZE != 0 )); then
+  echo "ERROR: NUM_NODES=$NUM_NODES must be divisible by SAB_ROLLOUT_TENSOR_MODEL_PARALLEL_SIZE=$SAB_ROLLOUT_TENSOR_MODEL_PARALLEL_SIZE"
+  exit 1
+fi
 case "$SAB_METHOD" in
   react)
     SAB_METHOD_LABEL=ReAct
@@ -643,7 +653,7 @@ ray status || echo "WARN: ray status check failed"
 echo "=============================================================="
 echo "  Launching $SAB_METHOD_LABEL ($SAB_WORKFLOW) ZERO-SHOT eval ($NUM_NODES nodes ${SAB_RUN_TAG^^}, $CODE_BENCHMARK_LABEL test cap=$SAB_VAL_MAX_SAMPLES)"
 echo "  default_agent_loop=$SAB_AGENT_LOOP  workflow=$SAB_WORKFLOW  process_reward=$SAB_PROCESS_REWARD"
-echo "  vLLM gpu_memory_utilization=$SAB_ROLLOUT_GPU_MEMORY_UTILIZATION quantization=$SAB_ROLLOUT_QUANTIZATION + FSDP CPU offload"
+echo "  vLLM TP=$SAB_ROLLOUT_TENSOR_MODEL_PARALLEL_SIZE gpu_memory_utilization=$SAB_ROLLOUT_GPU_MEMORY_UTILIZATION quantization=$SAB_ROLLOUT_QUANTIZATION + FSDP CPU offload"
 echo "  val_only=True (one val pass on $SAB_DATA_FILE then exit; no training)"
 echo "=============================================================="
 probe "launching trainer (model load + vLLM init typically ~10-15 min)"
@@ -668,7 +678,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   actor_rollout_ref.rollout.prompt_length=$SAB_PROMPT_LENGTH \
   actor_rollout_ref.rollout.response_length=$SAB_RESPONSE_LENGTH \
   actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu=$SAB_MAX_TOKEN_LEN_PER_GPU \
-  actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
+  actor_rollout_ref.rollout.tensor_model_parallel_size=$SAB_ROLLOUT_TENSOR_MODEL_PARALLEL_SIZE \
   actor_rollout_ref.rollout.n=1 \
   actor_rollout_ref.rollout.agent.num_workers=1 \
   actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=1 \

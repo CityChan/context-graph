@@ -156,6 +156,9 @@ BC_TURN_MAX_NEW_TOKENS=${BC_TURN_MAX_NEW_TOKENS:-768}
 BC_FINAL_ANSWER_RESERVE=${BC_FINAL_ANSWER_RESERVE:-1024}
 BC_MAX_SESSION=${BC_MAX_SESSION:-10}
 BC_ROLLOUT_N=${BC_ROLLOUT_N:-8}
+BC_ROLLOUT_TENSOR_MODEL_PARALLEL_SIZE=${BC_ROLLOUT_TENSOR_MODEL_PARALLEL_SIZE:-1}
+BC_ROLLOUT_GPU_MEMORY_UTILIZATION=${BC_ROLLOUT_GPU_MEMORY_UTILIZATION:-0.6}
+BC_TRAINER_NNODES=${BC_TRAINER_NNODES:-$((NUM_NODES - 1))}
 BC_SEARCH_TIMEOUT_SECONDS=${BC_SEARCH_TIMEOUT_SECONDS:-600}
 BC_METHOD=${BC_METHOD:-baseline}
 BC_EXPERIMENT_MODEL_TAG=${BC_EXPERIMENT_MODEL_TAG:-8b}
@@ -164,6 +167,20 @@ BC_CONTROLLER_ACTION_POLICY=${BC_CONTROLLER_ACTION_POLICY:-structural}
 LORA_ADAPTER_PATH=${LORA_ADAPTER_PATH:-}
 LORA_RANK=${LORA_RANK:-0}
 LORA_ALPHA=${LORA_ALPHA:-16}
+
+if ! [[ "$BC_ROLLOUT_TENSOR_MODEL_PARALLEL_SIZE" =~ ^[1-9][0-9]*$ ]] || \
+   ! [[ "$BC_TRAINER_NNODES" =~ ^[1-9][0-9]*$ ]]; then
+  echo "ERROR: BC_ROLLOUT_TENSOR_MODEL_PARALLEL_SIZE and BC_TRAINER_NNODES must be positive integers"
+  exit 1
+fi
+if [ "$BC_TRAINER_NNODES" -gt "$((NUM_NODES - 1))" ]; then
+  echo "ERROR: BC_TRAINER_NNODES=$BC_TRAINER_NNODES exceeds the $((NUM_NODES - 1)) trainer nodes available after reserving the search node"
+  exit 1
+fi
+if (( BC_TRAINER_NNODES % BC_ROLLOUT_TENSOR_MODEL_PARALLEL_SIZE != 0 )); then
+  echo "ERROR: BC_TRAINER_NNODES=$BC_TRAINER_NNODES must be divisible by BC_ROLLOUT_TENSOR_MODEL_PARALLEL_SIZE=$BC_ROLLOUT_TENSOR_MODEL_PARALLEL_SIZE"
+  exit 1
+fi
 
 MODEL_LORA_ARGS=()
 if [ -n "$LORA_ADAPTER_PATH" ]; then
@@ -498,7 +515,7 @@ ray status || echo "WARN: ray status check failed"
 echo "=============================================================="
 echo "  Launching $BC_METHOD ZERO-SHOT eval (4 nodes, total_context=$BC_MAX_TOKEN_LEN_PER_GPU, val_samples=$BC_VAL_MAX_SAMPLES)"
 echo "  agent_loop=$AGENT_LOOP workflow=$WORKFLOW process_reward=$PROCESS_REWARD"
-echo "  vLLM gpu_memory_utilization=0.6 + FSDP CPU offload"
+echo "  vLLM TP=$BC_ROLLOUT_TENSOR_MODEL_PARALLEL_SIZE gpu_memory_utilization=$BC_ROLLOUT_GPU_MEMORY_UTILIZATION + FSDP CPU offload on $BC_TRAINER_NNODES trainer nodes"
 echo "  val_only=True (one val pass on bc_test.parquet then exit; no training)"
 echo "=============================================================="
 probe "launching trainer (model load + vLLM init typically ~3-5 min)"
@@ -514,14 +531,14 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   actor_rollout_ref.rollout.mode=async \
   actor_rollout_ref.rollout.dtype=bfloat16 \
   actor_rollout_ref.rollout.calculate_log_probs=True \
-  actor_rollout_ref.rollout.gpu_memory_utilization=0.6 \
+  actor_rollout_ref.rollout.gpu_memory_utilization="$BC_ROLLOUT_GPU_MEMORY_UTILIZATION" \
   actor_rollout_ref.model.path="$MODEL_PATH" \
   "${MODEL_LORA_ARGS[@]}" \
   "${LONG_CONTEXT_ARGS[@]}" \
   actor_rollout_ref.rollout.prompt_length=${BC_PROMPT_LENGTH} \
   actor_rollout_ref.rollout.response_length=${BC_RESPONSE_LENGTH} \
   actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu=${BC_MAX_TOKEN_LEN_PER_GPU} \
-  actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
+  actor_rollout_ref.rollout.tensor_model_parallel_size="$BC_ROLLOUT_TENSOR_MODEL_PARALLEL_SIZE" \
   actor_rollout_ref.rollout.n=${BC_ROLLOUT_N} \
   actor_rollout_ref.rollout.agent.num_workers=1 \
   actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=1 \
@@ -575,7 +592,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   trainer.val_before_train=True \
   trainer.val_only=True \
   trainer.n_gpus_per_node=1 \
-  trainer.nnodes=$((NUM_NODES - 1)) \
+  trainer.nnodes="$BC_TRAINER_NNODES" \
   trainer.total_training_steps=1 \
   trainer.test_freq=999 \
   trainer.save_freq=999 \

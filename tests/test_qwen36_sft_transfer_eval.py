@@ -63,6 +63,12 @@ def test_paired_transfer_submitter_is_matched_and_complete():
     assert "DRY_RUN=${DRY_RUN:-0}" in source
     assert "TORCHDYNAMO_DISABLE=0" in source
     assert "VLLM_USE_AOT_COMPILE=1" in source
+    assert "ROLLOUT_TENSOR_MODEL_PARALLEL_SIZE=2" in source
+    assert "ROLLOUT_GPU_MEMORY_UTILIZATION=0.9" in source
+    assert "BC_ROLLOUT_TENSOR_MODEL_PARALLEL_SIZE=2" in source
+    assert "BC_TRAINER_NNODES=2" in source
+    assert "SAB_ROLLOUT_TENSOR_MODEL_PARALLEL_SIZE=2" in source
+    assert "SAB_ROLLOUT_QUANTIZATION=none" in source
 
 
 def test_idev_transfer_runner_uses_current_allocation_and_one_sample_default():
@@ -78,6 +84,27 @@ def test_idev_transfer_runner_uses_current_allocation_and_one_sample_default():
     assert "TRAINER_VAL_ONLY=True" in source
     assert "export TORCHDYNAMO_DISABLE=0" in source
     assert "export VLLM_USE_AOT_COMPILE=1" in source
+    assert "BC_ROLLOUT_TENSOR_MODEL_PARALLEL_SIZE=2" in source
+    assert "BC_ROLLOUT_GPU_MEMORY_UTILIZATION=0.9" in source
+    assert "BC_TRAINER_NNODES=2" in source
+    assert "ROLLOUT_TENSOR_MODEL_PARALLEL_SIZE=2" in source
+    assert "SAB_ROLLOUT_TENSOR_MODEL_PARALLEL_SIZE=2" in source
+    assert "SAB_ROLLOUT_QUANTIZATION=none" in source
+
+
+def test_transfer_eval_runners_expose_protocol_preserving_qwen_memory_knobs():
+    bc = _read("scripts/eval_bc_baseline_8b_4node_zeroshot.sh")
+    assert "actor_rollout_ref.rollout.gpu_memory_utilization=\"$BC_ROLLOUT_GPU_MEMORY_UTILIZATION\"" in bc
+    assert "actor_rollout_ref.rollout.tensor_model_parallel_size=\"$BC_ROLLOUT_TENSOR_MODEL_PARALLEL_SIZE\"" in bc
+    assert "trainer.nnodes=\"$BC_TRAINER_NNODES\"" in bc
+
+    gaia = _read("scripts/train_bc_ctxgraph_8b_paperfaithful_5node_48h.sh")
+    assert "actor_rollout_ref.rollout.gpu_memory_utilization=\"$ROLLOUT_GPU_MEMORY_UTILIZATION\"" in gaia
+    assert "actor_rollout_ref.rollout.tensor_model_parallel_size=\"$ROLLOUT_TENSOR_MODEL_PARALLEL_SIZE\"" in gaia
+    assert "trainer.nnodes=\"$TRAINER_NNODES\"" in gaia
+
+    discovery = _read("scripts/eval_sab_react_30b_instruct_8node_smoke.sh")
+    assert "actor_rollout_ref.rollout.tensor_model_parallel_size=$SAB_ROLLOUT_TENSOR_MODEL_PARALLEL_SIZE" in discovery
 
 
 def test_new_vllm_lora_api_uses_native_disk_loader_and_tensor_compatibility():
