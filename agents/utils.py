@@ -2,6 +2,7 @@ import os
 import time
 import copy
 import uuid
+from collections.abc import Mapping
 from unittest.mock import patch
 from itertools import groupby
 import re, unicodedata
@@ -171,6 +172,13 @@ def _normalize_token_ids(token_ids, *, source="tokenizer") -> list[int]:
     """
     if isinstance(token_ids, torch.Tensor):
         token_ids = token_ids.detach().cpu().tolist()
+
+    if isinstance(token_ids, Mapping):
+        if "input_ids" not in token_ids:
+            raise TypeError(
+                f"{source} returned {type(token_ids).__name__} without input_ids"
+            )
+        token_ids = token_ids["input_ids"]
 
     encoding_ids = getattr(token_ids, "ids", None)
     if encoding_ids is not None and not isinstance(token_ids, (list, tuple)):

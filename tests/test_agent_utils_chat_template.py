@@ -60,6 +60,16 @@ class _EncodingTokenizer(_UserRequiredTokenizer):
         return [_Encoding(tokens[:midpoint]), _Encoding(tokens[midpoint:])]
 
 
+class _BatchEncoding(dict):
+    """Small stand-in for transformers.BatchEncoding."""
+
+
+class _BatchEncodingTokenizer(_EncodingTokenizer):
+    def apply_chat_template(self, *args, **kwargs):
+        encodings = super().apply_chat_template(*args, **kwargs)
+        return _BatchEncoding(input_ids=encodings)
+
+
 def test_agent_context_defers_unrenderable_system_only_prefix():
     config = SimpleNamespace(
         prompt_length=128,
@@ -94,3 +104,20 @@ def test_agent_context_flattens_encoding_chat_template_output():
     assert context.chat_ids == [[], [10, 11, 20, 21]]
     assert context.context() == [10, 11, 20, 21, 99]
     assert all(isinstance(token_id, int) for token_id in context.context())
+
+
+def test_agent_context_extracts_batch_encoding_input_ids():
+    config = SimpleNamespace(
+        prompt_length=128,
+        response_length=128,
+        plugin=SimpleNamespace(),
+    )
+    chat = [
+        {"role": "system", "content": "system instructions"},
+        {"role": "user", "content": "task"},
+    ]
+
+    context = AgentContext(chat, _BatchEncodingTokenizer(), config, prompt_turn=2)
+
+    assert context.chat_ids == [[], [10, 11, 20, 21]]
+    assert context.context() == [10, 11, 20, 21, 99]
