@@ -5,6 +5,7 @@ import uuid
 from unittest.mock import patch
 from itertools import groupby
 import re, unicodedata
+from numbers import Integral
 from dataclasses import dataclass
 from typing import Callable, Dict, Optional
 from omegaconf import DictConfig
@@ -159,6 +160,38 @@ class LLMClass:
     async def create_completion(self, input_ids, **kwargs):
         raise NotImplemented
 
+
+def _normalize_token_ids(token_ids, *, source="tokenizer") -> list[int]:
+    """Convert tokenizer outputs to the flat integer IDs expected by vLLM.
+
+    Transformers' tokenizers backend may return ``tokenizers.Encoding``
+    objects (or lists of them) where older backends returned ``list[int]``.
+    Keep that backend difference at the tokenizer boundary instead of letting
+    non-integer objects reach vLLM's ``TokensPrompt`` validation.
+    """
+    if isinstance(token_ids, torch.Tensor):
+        token_ids = token_ids.detach().cpu().tolist()
+
+    encoding_ids = getattr(token_ids, "ids", None)
+    if encoding_ids is not None and not isinstance(token_ids, (list, tuple)):
+        token_ids = encoding_ids
+
+    if isinstance(token_ids, Integral) and not isinstance(token_ids, bool):
+        return [int(token_ids)]
+    if not isinstance(token_ids, (list, tuple)):
+        raise TypeError(
+            f"{source} returned unsupported token IDs of type "
+            f"{type(token_ids).__name__}; expected integers or Encoding.ids"
+        )
+
+    normalized = []
+    for item in token_ids:
+        if isinstance(item, Integral) and not isinstance(item, bool):
+            normalized.append(int(item))
+        else:
+            normalized.extend(_normalize_token_ids(item, source=source))
+    return normalized
+
 class CallLLM(LLMClass):  # Call LLM in Verl RL env
     def __init__(
         self,
@@ -182,6 +215,7 @@ class CallLLM(LLMClass):  # Call LLM in Verl RL env
     async def _create_completion(self, input_ids, **kwargs):
         from uuid import uuid4
 
+        input_ids = _normalize_token_ids(input_ids, source="agent prompt")
         structured_outputs = kwargs.pop('structured_outputs', None)
 
         max_len = kwargs.pop('max_len', None) or self.config.prompt_length + self.config.response_length
@@ -333,7 +367,10 @@ class CallAPI(LLMClass):  # Call external API (OpenAI)
                 response = await self.client.chat.completions.create(**request)
 
                 text = response.choices[0].message.content or ""
-                text_ids = self.tokenizer.encode(text, add_special_tokens=False)
+                text_ids = _normalize_token_ids(
+                    self.tokenizer.encode(text, add_special_tokens=False),
+                    source="tokenizer.encode",
+                )
 
                 return {
                     "choices": [{
@@ -390,7 +427,10 @@ def _chat_template_kwargs(config) -> dict:
 def _apply_chat_template(tokenizer, chat, config, **kwargs):
     template_kwargs = _chat_template_kwargs(config)
     template_kwargs.update(kwargs)
-    return tokenizer.apply_chat_template(chat, **template_kwargs)
+    rendered = tokenizer.apply_chat_template(chat, **template_kwargs)
+    if template_kwargs.get("tokenize", True):
+        return _normalize_token_ids(rendered, source="tokenizer.apply_chat_template")
+    return rendered
 
 
 def truncate_prompt(chat, prompt_length, tokenizer, prompt_turn, config=None):
@@ -398,9 +438,12 @@ def truncate_prompt(chat, prompt_length, tokenizer, prompt_turn, config=None):
     _cut_idx = 0
     while exceed_len > 0:  # truncate long user prompt
         print('[PROMPT] now exceed', exceed_len, 'work on cut turn', _cut_idx)
+        content_ids = _normalize_token_ids(
+            tokenizer.encode(chat[_cut_idx]['content'], add_special_tokens=False),
+            source="tokenizer.encode",
+        )
         chat[_cut_idx]['content'] = tokenizer.decode(
-            tokenizer.encode(chat[_cut_idx]['content'], add_special_tokens=False)[
-                exceed_len + 4:], add_special_tokens=False)
+            content_ids[exceed_len + 4:], add_special_tokens=False)
         exceed_len = len(_apply_chat_template(tokenizer, chat[:prompt_turn], config)) + 8 - prompt_length
         _cut_idx = _cut_idx + 1
         if _cut_idx >= prompt_turn:

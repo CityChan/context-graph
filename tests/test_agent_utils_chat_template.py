@@ -46,6 +46,20 @@ class _UserRequiredTokenizer:
         return "x " * len(tokens)
 
 
+class _Encoding:
+    """Small stand-in for tokenizers.Encoding."""
+
+    def __init__(self, ids):
+        self.ids = ids
+
+
+class _EncodingTokenizer(_UserRequiredTokenizer):
+    def apply_chat_template(self, *args, **kwargs):
+        tokens = super().apply_chat_template(*args, **kwargs)
+        midpoint = len(tokens) // 2
+        return [_Encoding(tokens[:midpoint]), _Encoding(tokens[midpoint:])]
+
+
 def test_agent_context_defers_unrenderable_system_only_prefix():
     config = SimpleNamespace(
         prompt_length=128,
@@ -62,3 +76,21 @@ def test_agent_context_defers_unrenderable_system_only_prefix():
     assert context.chat_ids == [[], [10, 11, 20, 21]]
     assert context.prompt_ids_len == 4
     assert context.context() == [10, 11, 20, 21, 99]
+
+
+def test_agent_context_flattens_encoding_chat_template_output():
+    config = SimpleNamespace(
+        prompt_length=128,
+        response_length=128,
+        plugin=SimpleNamespace(),
+    )
+    chat = [
+        {"role": "system", "content": "system instructions"},
+        {"role": "user", "content": "task"},
+    ]
+
+    context = AgentContext(chat, _EncodingTokenizer(), config, prompt_turn=2)
+
+    assert context.chat_ids == [[], [10, 11, 20, 21]]
+    assert context.context() == [10, 11, 20, 21, 99]
+    assert all(isinstance(token_id, int) for token_id in context.context())
