@@ -61,6 +61,8 @@ def test_paired_transfer_submitter_is_matched_and_complete():
     assert 'BC_EVAL_TIME="$BC_EVAL_TIME"' in source
     assert 'DISCOVERYBENCH_TIME_LIMIT="$DISCOVERYBENCH_TIME_LIMIT"' in source
     assert "DRY_RUN=${DRY_RUN:-0}" in source
+    assert "TORCHDYNAMO_DISABLE=0" in source
+    assert "VLLM_USE_AOT_COMPILE=1" in source
 
 
 def test_idev_transfer_runner_uses_current_allocation_and_one_sample_default():
@@ -74,6 +76,8 @@ def test_idev_transfer_runner_uses_current_allocation_and_one_sample_default():
     assert "BC_ROLLOUT_N=1" in source
     assert "SAB_CTXGRAPH_PROTOCOL=controller" in source
     assert "TRAINER_VAL_ONLY=True" in source
+    assert "export TORCHDYNAMO_DISABLE=0" in source
+    assert "export VLLM_USE_AOT_COMPILE=1" in source
 
 
 def test_new_vllm_lora_api_uses_native_disk_loader_and_tensor_compatibility():
@@ -86,7 +90,19 @@ def test_new_vllm_lora_api_uses_native_disk_loader_and_tensor_compatibility():
     assert "VLLMHijack.hijack()" in preflight
     assert 'importlib.import_module("verl.workers.rollout.vllm_rollout.vllm_rollout")' in preflight
     assert "validate_worker_wrapper_constructor()" in preflight
-    assert "vLLM eval/LoRA/rollout imports and worker constructor: ok" in preflight
+    assert "validate_qwen35_aot_configuration()" in preflight
+    assert "Qwen3.5/3.6 vLLM AOT startup requires TORCHDYNAMO_DISABLE=0" in preflight
+    assert "vLLM eval/LoRA/rollout imports, AOT config, and worker constructor: ok" in preflight
+
+
+def test_qwen36_eval_can_override_legacy_eager_runner_defaults():
+    for path in (
+        "scripts/eval_bc_baseline_8b_4node_zeroshot.sh",
+        "scripts/train_bc_ctxgraph_8b_paperfaithful_5node_48h.sh",
+        "scripts/eval_sab_react_30b_instruct_8node_smoke.sh",
+    ):
+        source = _read(path)
+        assert "export TORCHDYNAMO_DISABLE=${TORCHDYNAMO_DISABLE:-1}" in source
 
 
 def test_fp8_private_api_mismatch_is_lazy_for_bf16_rollouts():

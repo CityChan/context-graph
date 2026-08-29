@@ -60,6 +60,11 @@ export MODEL_PATH=$BASE_MODEL_PATH
 export CONDA_ENV_NAME SEARCH_CONDA_ENV_NAME
 export LORA_ADAPTER_PATH=$adapter_path LORA_RANK=$adapter_rank LORA_ALPHA
 export QWEN_ENABLE_THINKING=True
+# Qwen3.5/3.6 uses vLLM's AOT torch.compile path during the profile run.
+# Legacy benchmark runners default to eager execution for older backbones, so
+# explicitly override that default for this transfer evaluation.
+export TORCHDYNAMO_DISABLE=0
+export VLLM_USE_AOT_COMPILE=1
 
 echo "Qwen3.6-27B idev eval: benchmark=$BENCHMARK variant=$VARIANT samples=$EVAL_MAX_SAMPLES protocol=controller policy=$CONTROLLER_ACTION_POLICY nodes=${NODELIST[*]}"
 
