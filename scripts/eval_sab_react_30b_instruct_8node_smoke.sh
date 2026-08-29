@@ -691,7 +691,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
   actor_rollout_ref.actor.optim.lr=2e-6 \
   actor_rollout_ref.actor.optim.weight_decay=0.1 \
-  actor_rollout_ref.actor.use_kl_loss=True \
+  actor_rollout_ref.actor.use_kl_loss=False \
   actor_rollout_ref.actor.grad_clip=0.5 \
   actor_rollout_ref.actor.kl_loss_coef=0.0005 \
   data.train_files=$SAB_DATA_FILE \

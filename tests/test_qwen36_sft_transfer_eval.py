@@ -69,6 +69,7 @@ def test_paired_transfer_submitter_is_matched_and_complete():
     assert "BC_TRAINER_NNODES=2" in source
     assert "SAB_ROLLOUT_TENSOR_MODEL_PARALLEL_SIZE=2" in source
     assert "SAB_ROLLOUT_QUANTIZATION=none" in source
+    assert "USE_KL_LOSS=False" in source
 
 
 def test_idev_transfer_runner_uses_current_allocation_and_one_sample_default():
@@ -90,6 +91,7 @@ def test_idev_transfer_runner_uses_current_allocation_and_one_sample_default():
     assert "ROLLOUT_TENSOR_MODEL_PARALLEL_SIZE=2" in source
     assert "SAB_ROLLOUT_TENSOR_MODEL_PARALLEL_SIZE=2" in source
     assert "SAB_ROLLOUT_QUANTIZATION=none" in source
+    assert "USE_KL_LOSS=False" in source
 
 
 def test_transfer_eval_runners_expose_protocol_preserving_qwen_memory_knobs():
@@ -97,6 +99,7 @@ def test_transfer_eval_runners_expose_protocol_preserving_qwen_memory_knobs():
     assert "actor_rollout_ref.rollout.gpu_memory_utilization=\"$BC_ROLLOUT_GPU_MEMORY_UTILIZATION\"" in bc
     assert "actor_rollout_ref.rollout.tensor_model_parallel_size=\"$BC_ROLLOUT_TENSOR_MODEL_PARALLEL_SIZE\"" in bc
     assert "trainer.nnodes=\"$BC_TRAINER_NNODES\"" in bc
+    assert "actor_rollout_ref.actor.use_kl_loss=False" in bc
 
     gaia = _read("scripts/train_bc_ctxgraph_8b_paperfaithful_5node_48h.sh")
     assert "actor_rollout_ref.rollout.gpu_memory_utilization=\"$ROLLOUT_GPU_MEMORY_UTILIZATION\"" in gaia
@@ -105,6 +108,7 @@ def test_transfer_eval_runners_expose_protocol_preserving_qwen_memory_knobs():
 
     discovery = _read("scripts/eval_sab_react_30b_instruct_8node_smoke.sh")
     assert "actor_rollout_ref.rollout.tensor_model_parallel_size=$SAB_ROLLOUT_TENSOR_MODEL_PARALLEL_SIZE" in discovery
+    assert "actor_rollout_ref.actor.use_kl_loss=False" in discovery
 
 
 def test_new_vllm_lora_api_uses_native_disk_loader_and_tensor_compatibility():
