@@ -131,7 +131,7 @@ SCRIPT_PATH=$(readlink -f "$0")
 if [ "${SFT_PREFLIGHT_WORKER:-0}" = "1" ]; then
   activate_train_env
   cd "$PROJECT_ROOT"
-  python -c "import accelerate, codetiming, datasets, hydra, omegaconf, pandas, peft, pyarrow, qwen_vl_utils, tensordict, torch, torchdata, transformers; import verl.trainer.fsdp_sft_trainer; from transformers import AutoConfig; c=AutoConfig.from_pretrained('$MODEL_PATH', trust_remote_code=True, local_files_only=True); print('node preflight:', 'host='+__import__('socket').gethostname(), 'torch='+torch.__version__, 'transformers='+transformers.__version__, 'datasets='+datasets.__version__, 'model_type='+str(getattr(c, 'model_type', None)))"
+  python -c "import accelerate, codetiming, datasets, hydra, omegaconf, pandas, peft, pyarrow, tensordict, torch, torchdata, transformers; import verl.trainer.fsdp_sft_trainer; from transformers import AutoConfig; c=AutoConfig.from_pretrained('$MODEL_PATH', trust_remote_code=True, local_files_only=True); print('node preflight:', 'host='+__import__('socket').gethostname(), 'torch='+torch.__version__, 'transformers='+transformers.__version__, 'datasets='+datasets.__version__, 'model_type='+str(getattr(c, 'model_type', None)))"
   nvidia-smi --query-gpu=memory.used,memory.free --format=csv,noheader
   exit 0
 fi

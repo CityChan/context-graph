@@ -17,7 +17,19 @@ from typing import Optional
 
 import torch
 from PIL import Image
-from qwen_vl_utils import fetch_image, fetch_video
+
+
+def _load_qwen_vl_utils():
+    """Load the optional multimodal helpers only for image/video samples."""
+    try:
+        from qwen_vl_utils import fetch_image, fetch_video
+    except ModuleNotFoundError as exc:
+        if exc.name != "qwen_vl_utils":
+            raise
+        raise ModuleNotFoundError(
+            "qwen_vl_utils is required for image/video samples, but not for text-only datasets"
+        ) from exc
+    return fetch_image, fetch_video
 
 
 def process_image(image: dict | Image.Image, image_patch_size: int = 14) -> Image.Image:
@@ -28,6 +40,7 @@ def process_image(image: dict | Image.Image, image_patch_size: int = 14) -> Imag
         assert "image" not in image, "Cannot have both `bytes` and `image`"
         image["image"] = Image.open(BytesIO(image["bytes"]))
 
+    fetch_image, _ = _load_qwen_vl_utils()
     return fetch_image(image, image_patch_size=image_patch_size)
 
 
@@ -92,6 +105,7 @@ def process_video(
             if fps_max_frames is not None:
                 video["max_frames"] = fps_max_frames
 
+    _, fetch_video = _load_qwen_vl_utils()
     return fetch_video(
         video,
         image_patch_size=image_patch_size,
