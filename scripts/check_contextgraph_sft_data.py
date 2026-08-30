@@ -13,7 +13,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--data", required=True)
     parser.add_argument("--tokenizer", required=True)
     parser.add_argument("--max-length", type=int, default=8192)
-    parser.add_argument("--loss-mask-mode", choices=("per_message", "assistant_tokens"), default="assistant_tokens")
+    parser.add_argument(
+        "--loss-mask-mode", choices=("per_message", "assistant_tokens", "chatml"), default="assistant_tokens"
+    )
     return parser.parse_args()
 
 

@@ -12,7 +12,7 @@ def test_qwen3_8b_smoke_is_full_parameter_and_ignores_stale_model_path():
     assert "MODEL_ID=${MODEL_ID:-Qwen/Qwen3-8B}" in text
     assert "TRAIN_CONDA_ENV=${TRAIN_CONDA_ENV:-cxtgraph}" in text
     assert "export LORA_RANK=0" in text
-    assert "export LOSS_MASK_MODE=per_message" in text
+    assert "export LOSS_MASK_MODE=chatml" in text
     assert "TOTAL_TRAINING_STEPS=${TOTAL_TRAINING_STEPS:-1}" in text
     assert "models--Qwen--Qwen3-8B/snapshots" in text
     assert "export ALLOW_WORK_MODEL_CACHE=1" in text

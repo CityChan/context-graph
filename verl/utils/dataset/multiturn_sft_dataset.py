@@ -32,6 +32,7 @@ from transformers import PreTrainedTokenizer, ProcessorMixin
 from verl.models.transformers.qwen2_vl import get_rope_index
 from verl.utils import hf_tokenizer
 from verl.utils.chat_template import extract_system_prompt_and_generation
+from verl.utils.dataset.chatml_loss_mask import build_chatml_assistant_mask
 from verl.utils.dataset.dataset_utils import DatasetPadMode
 from verl.utils.dataset.vision_utils import process_image, process_video
 from verl.utils.fs import copy_local_path_from_hdfs
@@ -100,7 +101,7 @@ class MultiTurnSFTDataset(Dataset):
         self.loss_mask_mode = config.get(
             "loss_mask_mode", multiturn_config.get("loss_mask_mode", "per_message")
         )
-        assert self.loss_mask_mode in ["per_message", "assistant_tokens"]
+        assert self.loss_mask_mode in ["per_message", "assistant_tokens", "chatml"]
         assert self.truncation in ["error", "left", "right"]
 
         if not isinstance(parquet_files, list | ListConfig):
@@ -301,6 +302,62 @@ class MultiTurnSFTDataset(Dataset):
             multi_modal_inputs[key] = value
         return input_ids, loss_mask, attention_mask, multi_modal_inputs
 
+    def _process_chatml_conversation(
+        self,
+        messages: list[dict[str, Any]],
+        tools: Optional[list[dict[str, Any]]] = None,
+        enable_thinking: Optional[bool] = None,
+    ):
+        """Tokenize once and derive exact assistant spans from ChatML delimiters."""
+        processor = self.processor if self.processor is not None else self.tokenizer
+        apply_chat_template_kwargs = {**self.apply_chat_template_kwargs}
+        if enable_thinking is not None:
+            apply_chat_template_kwargs["enable_thinking"] = enable_thinking
+        inputs = dict(
+            processor.apply_chat_template(
+                messages,
+                tools=tools,
+                add_generation_prompt=False,
+                tokenize=True,
+                return_dict=True,
+                return_tensors="pt",
+                **apply_chat_template_kwargs,
+            )
+        )
+        input_ids = inputs.pop("input_ids")
+        attention_mask = inputs.pop("attention_mask")
+        if input_ids.ndim == 2:
+            input_ids = input_ids[0]
+        if attention_mask.ndim == 2:
+            attention_mask = attention_mask[0]
+
+        im_start_id = self.tokenizer.convert_tokens_to_ids("<|im_start|>")
+        im_end_id = self.tokenizer.convert_tokens_to_ids("<|im_end|>")
+        assistant_header_ids = self.tokenizer.encode("assistant\n", add_special_tokens=False)
+        if im_start_id is None or im_end_id is None:
+            raise ValueError("chatml loss masking requires <|im_start|> and <|im_end|> tokens")
+        mask_values, assistant_spans = build_chatml_assistant_mask(
+            input_ids.tolist(),
+            im_start_id=int(im_start_id),
+            im_end_id=int(im_end_id),
+            assistant_header_ids=assistant_header_ids,
+        )
+        expected_spans = sum(message.get("role") == "assistant" for message in messages)
+        if assistant_spans != expected_spans:
+            raise ValueError(
+                f"ChatML assistant span count mismatch: expected {expected_spans}, found {assistant_spans}"
+            )
+        loss_mask = torch.tensor(mask_values, dtype=attention_mask.dtype, device=attention_mask.device)
+        if expected_spans and not bool(loss_mask.any()):
+            raise ValueError("ChatML loss mask is empty for a conversation with assistant responses")
+
+        multi_modal_inputs = {}
+        for key, value in inputs.items():
+            if torch.is_tensor(value) and value.ndim > 0 and value.shape[0] == 1:
+                value = value[0]
+            multi_modal_inputs[key] = value
+        return input_ids, loss_mask, attention_mask, multi_modal_inputs
+
     def _build_messages(self, example: dict):
         """Replace <image> and <video> placeholder in messages with corresponding image and video
         which is required by processor.apply_chat_template.
@@ -356,6 +413,10 @@ class MultiTurnSFTDataset(Dataset):
         # 1. tokenize the conversation and build the assistant-only loss mask
         if self.loss_mask_mode == "assistant_tokens":
             input_ids, loss_mask, attention_mask, multi_modal_inputs = self._process_full_conversation(
+                messages=messages, tools=tools, enable_thinking=enable_thinking
+            )
+        elif self.loss_mask_mode == "chatml":
+            input_ids, loss_mask, attention_mask, multi_modal_inputs = self._process_chatml_conversation(
                 messages=messages, tools=tools, enable_thinking=enable_thinking
             )
         else:
