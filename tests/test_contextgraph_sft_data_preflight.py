@@ -10,3 +10,6 @@ def test_preflight_accepts_an_explicit_loss_mask_mode():
     assert '"--loss-mask-mode"' in text
     assert '"per_message", "assistant_tokens", "chatml"' in text
     assert '"loss_mask_mode": args.loss_mask_mode' in text
+    assert '"--all-samples"' in text
+    assert "failed to tokenize SFT row {index}" in text
+    assert '"samples_checked": len(input_token_counts)' in text

@@ -23,6 +23,7 @@ LOSS_MASK_MODE=${LOSS_MASK_MODE:-assistant_tokens}
 MASTER_PORT=${MASTER_PORT:-29517}
 PREFLIGHT_ONLY=${PREFLIGHT_ONLY:-0}
 DATA_PREFLIGHT_TIMEOUT=${DATA_PREFLIGHT_TIMEOUT:-300}
+DATA_PREFLIGHT_ALL=${DATA_PREFLIGHT_ALL:-0}
 RUN_TAG=${RUN_TAG:-${SLURM_JOB_ID:-idev}_qwen36_27b_sft_smoke}
 TRAIN_MAX_SAMPLES=${TRAIN_MAX_SAMPLES:-$EXPECTED_NUM_NODES}
 VAL_MAX_SAMPLES=${VAL_MAX_SAMPLES:-$EXPECTED_NUM_NODES}
@@ -210,8 +211,14 @@ echo "Parallelism: FSDP2 world=$NUM_NODES, Ulysses SP=1, DP=$NUM_NODES"
 echo "Training: steps=$TOTAL_TRAINING_STEPS max_length=$MAX_LENGTH LoRA rank=$LORA_RANK attention=$ATTN_IMPLEMENTATION loss_mask=$LOSS_MASK_MODE"
 echo "Checkpoint: $CHECKPOINT_ROOT"
 
-echo "Preflight: validating and tokenizing one SFT row (timeout=${DATA_PREFLIGHT_TIMEOUT}s)"
-timeout --foreground "${DATA_PREFLIGHT_TIMEOUT}s" python -u scripts/check_contextgraph_sft_data.py --data "$TRAIN_FILE" --tokenizer "$MODEL_PATH" --max-length "$MAX_LENGTH" --loss-mask-mode "$LOSS_MASK_MODE"
+if [ "$DATA_PREFLIGHT_ALL" = "1" ]; then
+  echo "Preflight: validating and tokenizing all SFT rows (timeout=${DATA_PREFLIGHT_TIMEOUT}s)"
+  echo "Preflight scope: all training rows"
+  timeout --foreground "${DATA_PREFLIGHT_TIMEOUT}s" python -u scripts/check_contextgraph_sft_data.py --data "$TRAIN_FILE" --tokenizer "$MODEL_PATH" --max-length "$MAX_LENGTH" --loss-mask-mode "$LOSS_MASK_MODE" --all-samples
+else
+  echo "Preflight: validating and tokenizing one SFT row (timeout=${DATA_PREFLIGHT_TIMEOUT}s)"
+  timeout --foreground "${DATA_PREFLIGHT_TIMEOUT}s" python -u scripts/check_contextgraph_sft_data.py --data "$TRAIN_FILE" --tokenizer "$MODEL_PATH" --max-length "$MAX_LENGTH" --loss-mask-mode "$LOSS_MASK_MODE"
+fi
 echo "Preflight: checking the training stack and GPU memory on all nodes"
 srun --overlap --nodes="$NUM_NODES" --ntasks="$NUM_NODES" --ntasks-per-node=1 env SFT_PREFLIGHT_WORKER=1 bash "$SCRIPT_PATH"
 

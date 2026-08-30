@@ -11,6 +11,7 @@ assert SPEC is not None and SPEC.loader is not None
 MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
 build_chatml_assistant_mask = MODULE.build_chatml_assistant_mask
+validate_chatml_assistant_spans = MODULE.validate_chatml_assistant_spans
 
 
 def test_marks_only_assistant_payloads_and_closing_tokens():
@@ -34,3 +35,14 @@ def test_marks_multiple_assistant_spans():
 def test_rejects_unclosed_assistant_span():
     with pytest.raises(ValueError, match="missing its <\\|im_end\\|> token"):
         build_chatml_assistant_mask([100, 7, 8, 20], im_start_id=100, im_end_id=101, assistant_header_ids=[7, 8])
+
+
+def test_accepts_templates_that_omit_historical_assistant_turns():
+    validate_chatml_assistant_spans(source_spans=20, rendered_spans=16)
+
+
+def test_rejects_missing_or_extra_rendered_assistant_spans():
+    with pytest.raises(ValueError, match="no rendered assistant spans"):
+        validate_chatml_assistant_spans(source_spans=1, rendered_spans=0)
+    with pytest.raises(ValueError, match="exceeds source messages"):
+        validate_chatml_assistant_spans(source_spans=1, rendered_spans=2)

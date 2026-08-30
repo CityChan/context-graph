@@ -19,6 +19,8 @@ export VAL_MAX_SAMPLES=-1
 export TOTAL_EPOCHS=1
 export SAVE_FREQ=-1
 export TRAIN_LR=${TRAIN_LR:-1e-5}
+export DATA_PREFLIGHT_ALL=1
+export DATA_PREFLIGHT_TIMEOUT=${DATA_PREFLIGHT_TIMEOUT:-1800}
 
 # Do not inherit generic smoke-run paths exported earlier in the same idev
 # shell. Formal overrides deliberately use their own variable names.

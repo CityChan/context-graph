@@ -69,9 +69,9 @@ def test_contextgraph_sft_checker_requires_loss_tokens():
     text = CHECKER.read_text(encoding="utf-8")
     assert 'required_columns = {"messages", "tools", "enable_thinking"}' in text
     assert 'sample["loss_mask"]' in text
-    assert "tokenized SFT sample has no assistant loss tokens" in text
+    assert "has no assistant loss tokens" in text
     assert 'stage("load tokenizer")' in text
-    assert 'stage("tokenize first sample")' in text
+    assert '"tokenize all samples" if args.all_samples else "tokenize first sample"' in text
     assert "local_files_only=True" in text
     assert '"loss_mask_mode": args.loss_mask_mode' in text
 

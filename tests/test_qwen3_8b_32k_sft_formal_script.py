@@ -20,6 +20,8 @@ def test_formal_32k_sft_uses_full_curated_split_and_full_parameters():
     assert "FORMAL_RUN_TAG" in text
     assert "FORMAL_CHECKPOINT_ROOT" in text
     assert "FORMAL_MERGED_MODEL_DIR" in text
+    assert "export DATA_PREFLIGHT_ALL=1" in text
+    assert "DATA_PREFLIGHT_TIMEOUT=${DATA_PREFLIGHT_TIMEOUT:-1800}" in text
 
 
 def test_formal_32k_sft_derives_steps_and_merges_final_checkpoint():

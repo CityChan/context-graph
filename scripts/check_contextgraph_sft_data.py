@@ -16,6 +16,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--loss-mask-mode", choices=("per_message", "assistant_tokens", "chatml"), default="assistant_tokens"
     )
+    parser.add_argument("--all-samples", action="store_true", help="Tokenize and validate every parquet row")
     return parser.parse_args()
 
 
@@ -59,21 +60,32 @@ def main() -> None:
             "loss_mask_mode": args.loss_mask_mode,
         }
     )
-    stage("construct one-row multi-turn dataset")
+    selected_samples = -1 if args.all_samples else 1
+    stage("construct full multi-turn dataset" if args.all_samples else "construct one-row multi-turn dataset")
     dataset = MultiTurnSFTDataset(
         parquet_files=str(data_path),
         tokenizer=tokenizer,
         config=config,
-        max_samples=1,
+        max_samples=selected_samples,
     )
-    stage("tokenize first sample")
-    sample = dataset[0]
-    input_tokens = int(sample["attention_mask"].sum().item())
-    loss_tokens = int(sample["loss_mask"].sum().item())
-    if input_tokens <= 0:
-        raise SystemExit("tokenized SFT sample has no input tokens")
-    if loss_tokens <= 0:
-        raise SystemExit("tokenized SFT sample has no assistant loss tokens")
+    stage("tokenize all samples" if args.all_samples else "tokenize first sample")
+    input_token_counts = []
+    loss_token_counts = []
+    for index in range(len(dataset)):
+        try:
+            sample = dataset[index]
+        except Exception as exc:
+            raise RuntimeError(f"failed to tokenize SFT row {index}") from exc
+        input_tokens = int(sample["attention_mask"].sum().item())
+        loss_tokens = int(sample["loss_mask"].sum().item())
+        if input_tokens <= 0:
+            raise SystemExit(f"tokenized SFT row {index} has no input tokens")
+        if loss_tokens <= 0:
+            raise SystemExit(f"tokenized SFT row {index} has no assistant loss tokens")
+        input_token_counts.append(input_tokens)
+        loss_token_counts.append(loss_tokens)
+        if args.all_samples and (index + 1) % 100 == 0:
+            print(f"SFT data preflight progress: {index + 1}/{len(dataset)}", flush=True)
 
     stage("complete")
     print(
@@ -84,8 +96,12 @@ def main() -> None:
                 "tokenizer": args.tokenizer,
                 "max_length": args.max_length,
                 "loss_mask_mode": args.loss_mask_mode,
-                "sample_input_tokens": input_tokens,
-                "sample_loss_tokens": loss_tokens,
+                "samples_checked": len(input_token_counts),
+                "sample_input_tokens": input_token_counts[0],
+                "sample_loss_tokens": loss_token_counts[0],
+                "max_input_tokens": max(input_token_counts),
+                "min_loss_tokens": min(loss_token_counts),
+                "max_loss_tokens": max(loss_token_counts),
             },
             indent=2,
         )

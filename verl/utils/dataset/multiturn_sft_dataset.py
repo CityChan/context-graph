@@ -32,7 +32,7 @@ from transformers import PreTrainedTokenizer, ProcessorMixin
 from verl.models.transformers.qwen2_vl import get_rope_index
 from verl.utils import hf_tokenizer
 from verl.utils.chat_template import extract_system_prompt_and_generation
-from verl.utils.dataset.chatml_loss_mask import build_chatml_assistant_mask
+from verl.utils.dataset.chatml_loss_mask import build_chatml_assistant_mask, validate_chatml_assistant_spans
 from verl.utils.dataset.dataset_utils import DatasetPadMode
 from verl.utils.dataset.vision_utils import process_image, process_video
 from verl.utils.fs import copy_local_path_from_hdfs
@@ -343,10 +343,7 @@ class MultiTurnSFTDataset(Dataset):
             assistant_header_ids=assistant_header_ids,
         )
         expected_spans = sum(message.get("role") == "assistant" for message in messages)
-        if assistant_spans != expected_spans:
-            raise ValueError(
-                f"ChatML assistant span count mismatch: expected {expected_spans}, found {assistant_spans}"
-            )
+        validate_chatml_assistant_spans(expected_spans, assistant_spans)
         loss_mask = torch.tensor(mask_values, dtype=attention_mask.dtype, device=attention_mask.device)
         if expected_spans and not bool(loss_mask.any()):
             raise ValueError("ChatML loss mask is empty for a conversation with assistant responses")
