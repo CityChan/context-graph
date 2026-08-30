@@ -86,7 +86,7 @@ from verl.utils.fsdp_utils import (
     replace_lora_wrapper,
 )
 from verl.utils.import_utils import import_external_libs
-from verl.utils.lora_adapter import assert_no_meta_lora_params
+from verl.utils.lora_adapter import assert_no_meta_lora_params, assert_no_meta_params
 from verl.utils.memory_utils import aggressive_empty_cache
 from verl.utils.model import compute_position_id_with_mask, convert_weight_keys
 from verl.utils.profiler import DistProfiler, DistProfilerExtension, ProfilerConfig, log_gpu_memory_usage, simple_timer
@@ -448,7 +448,11 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
                 actor_module = PeftModel.from_pretrained(
                     actor_module, local_adapter_path, is_trainable=True, low_cpu_mem_usage=True
                 )
-                assert_no_meta_lora_params(actor_module)
+                # Rank 0 is the FSDP source of truth and must load real adapter
+                # tensors. Other ranks intentionally keep an isomorphic meta
+                # module until FSDP materializes and synchronizes its states.
+                if self.device_mesh.get_coordinate()[-1] == 0:
+                    assert_no_meta_lora_params(actor_module)
                 peft_config = actor_module.peft_config["default"]
                 # Ensure task_type is TaskType enum, not string
                 if isinstance(peft_config.task_type, str):
@@ -559,6 +563,10 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
             actor_module_fsdp = actor_module
         else:
             raise NotImplementedError(f"not implement {fsdp_strategy}")
+
+        assert_no_meta_params(actor_module_fsdp, context=f"{role} FSDP initialization")
+        if self._is_lora:
+            print(f"LoRA adapter materialized after FSDP sync: rank={self.rank}")
 
         if enable_activation_offload:
             enable_activation_offloading(actor_module_fsdp, fsdp_strategy, enable_gradient_checkpointing)
@@ -1353,7 +1361,8 @@ class CriticWorker(Worker, DistProfilerExtension):
                 critic_module = PeftModel.from_pretrained(
                     critic_module, local_adapter_path, is_trainable=True, low_cpu_mem_usage=True
                 )
-                assert_no_meta_lora_params(critic_module)
+                if self.device_mesh.get_coordinate()[-1] == 0:
+                    assert_no_meta_lora_params(critic_module)
                 peft_config = critic_module.peft_config["default"]
                 # Ensure task_type is TaskType enum, not string
                 if isinstance(peft_config.task_type, str):
@@ -1449,6 +1458,10 @@ class CriticWorker(Worker, DistProfilerExtension):
             fsdp2_load_full_state_dict(critic_module, full_state, fsdp_mesh, offload_policy)
         else:
             raise NotImplementedError(f"Unknown strategy {config.strategy}")
+
+        assert_no_meta_params(critic_module, context="critic FSDP initialization")
+        if self._is_lora:
+            print(f"LoRA adapter materialized after critic FSDP sync: rank={self.rank}")
 
         if config.model.get("enable_activation_offload", False):
             enable_gradient_checkpointing = config.model.get("enable_gradient_checkpointing", False)

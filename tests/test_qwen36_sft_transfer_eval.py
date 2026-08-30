@@ -41,6 +41,7 @@ def test_pretrained_lora_loading_materializes_meta_rank_adapter_weights():
             return [("base_model.layers.0.q_proj.lora_A.default.weight", self)]
 
     module.assert_no_meta_lora_params(FakeModule(is_meta=False))
+    module.assert_no_meta_params(FakeModule(is_meta=False), context="test FSDP initialization")
 
     try:
         module.assert_no_meta_lora_params(FakeModule(is_meta=True))
@@ -49,12 +50,23 @@ def test_pretrained_lora_loading_materializes_meta_rank_adapter_weights():
     else:
         raise AssertionError("meta LoRA parameters must fail before FSDP wrapping")
 
+    try:
+        module.assert_no_meta_params(FakeModule(is_meta=True), context="test FSDP initialization")
+    except RuntimeError as exc:
+        assert "test FSDP initialization left 1 parameters" in str(exc)
+    else:
+        raise AssertionError("meta parameters must fail after FSDP synchronization")
+
     fsdp_workers = _read("verl/workers/fsdp_workers.py")
     transformer_impl = _read("verl/workers/engine/fsdp/transformer_impl.py")
     assert fsdp_workers.count("low_cpu_mem_usage=True") >= 2
-    assert fsdp_workers.count("assert_no_meta_lora_params(") >= 2
+    source_rank_check = "if self.device_mesh.get_coordinate()[-1] == 0:\n                    assert_no_meta_lora_params("
+    assert fsdp_workers.count(source_rank_check) >= 2
+    assert fsdp_workers.count("assert_no_meta_params(") >= 2
+    assert "LoRA adapter materialized after FSDP sync" in fsdp_workers
     assert "low_cpu_mem_usage=True" in transformer_impl
-    assert "assert_no_meta_lora_params(module)" in transformer_impl
+    assert "if self.device_mesh.get_coordinate()[-1] == 0:\n                assert_no_meta_lora_params(module)" in transformer_impl
+    assert "assert_no_meta_params(module, context=\"FSDP engine initialization\")" in transformer_impl
 
 
 def test_adapter_repair_is_non_overwriting_and_export_rejects_legacy_keys():
