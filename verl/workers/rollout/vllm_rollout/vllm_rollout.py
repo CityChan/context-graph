@@ -72,6 +72,11 @@ try:
 except ImportError:
     from vllm.utils import run_method as vllm_run_method
 
+try:
+    from vllm.v1.outputs import AsyncModelRunnerOutput
+except ImportError:
+    AsyncModelRunnerOutput = None
+
 from packaging import version as vs
 
 from verl import DataProto
@@ -135,6 +140,15 @@ def _worker_wrapper_init_kwargs(vllm_config: Any) -> dict[str, Any]:
 def validate_worker_wrapper_constructor() -> None:
     """Fail fast if the installed vLLM wrapper has an unknown constructor."""
     _worker_wrapper_init_kwargs(None)
+
+
+def _materialize_async_model_runner_output(result: Any) -> Any:
+    """Resolve vLLM async GPU outputs before crossing the ZMQ boundary."""
+    if AsyncModelRunnerOutput is not None and isinstance(
+        result, AsyncModelRunnerOutput
+    ):
+        return result.get_output()
+    return result
 
 
 # https://github.com/vllm-project/vllm/issues/13175
@@ -254,7 +268,8 @@ class vLLMAsyncRollout(BaseRollout):
         elif method == "load_model":
             return self._load_model(*args, **kwargs)
         else:
-            return vllm_run_method(self.inference_engine, method, args, kwargs)
+            result = vllm_run_method(self.inference_engine, method, args, kwargs)
+            return _materialize_async_model_runner_output(result)
 
     async def resume(self, tags: list[str]):
         """Resume rollout weights or kv cache in GPU memory.

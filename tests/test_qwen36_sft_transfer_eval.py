@@ -248,7 +248,16 @@ def test_vllm_worker_wrapper_supports_legacy_and_current_constructors():
     assert 'kwargs["global_rank"] = 0' in source
     assert "WorkerWrapperBase(**_worker_wrapper_init_kwargs(self.vllm_config))" in source
     assert "from vllm.v1.serial_utils import run_method as vllm_run_method" in source
-    assert "return vllm_run_method(self.inference_engine, method, args, kwargs)" in source
+    assert "result = vllm_run_method(self.inference_engine, method, args, kwargs)" in source
+
+
+def test_vllm_external_rpc_materializes_async_outputs_before_pickling():
+    source = _read("verl/workers/rollout/vllm_rollout/vllm_rollout.py")
+    assert "from vllm.v1.outputs import AsyncModelRunnerOutput" in source
+    assert "isinstance(" in source
+    assert "result, AsyncModelRunnerOutput" in source
+    assert "return result.get_output()" in source
+    assert "return _materialize_async_model_runner_output(result)" in source
 
 
 def test_external_vllm_executor_supports_current_sample_tokens_contract():
