@@ -61,6 +61,7 @@ from verl.utils.fsdp_utils import (
     offload_fsdp_optimizer,
     replace_lora_wrapper,
 )
+from verl.utils.lora_adapter import assert_no_meta_lora_params
 from verl.utils.model import convert_weight_keys, extract_multi_modal_inputs_tensordict
 from verl.utils.py_functional import convert_to_regular_types
 from verl.utils.torch_functional import logprobs_from_logits
@@ -254,7 +255,10 @@ class FSDPEngine(BaseEngine):
             # Copy adapter to local if needed
             local_adapter_path = copy_to_local(lora_adapter_path, use_shm=self.model_config.use_shm)
 
-            module = PeftModel.from_pretrained(module, local_adapter_path, is_trainable=True)
+            module = PeftModel.from_pretrained(
+                module, local_adapter_path, is_trainable=True, low_cpu_mem_usage=True
+            )
+            assert_no_meta_lora_params(module)
             peft_config = module.peft_config["default"]
             # Ensure task_type is TaskType enum, not string
             if isinstance(peft_config.task_type, str):

@@ -16,3 +16,14 @@ def normalize_lora_adapter_key(name: str, model_type: str | None = None) -> str:
             name = current_prefix + name.removeprefix(legacy_prefix)
 
     return name
+
+
+def assert_no_meta_lora_params(module) -> None:
+    """Fail when a loaded PEFT adapter still contains unmaterialized tensors."""
+    meta_params = [name for name, param in module.named_parameters() if "lora_" in name and param.is_meta]
+    if meta_params:
+        preview = ", ".join(meta_params[:5])
+        raise RuntimeError(
+            f"LoRA adapter load left {len(meta_params)} parameters on the meta device; "
+            f"the checkpoint weights were not materialized. First parameters: {preview}"
+        )

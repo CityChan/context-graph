@@ -27,6 +27,36 @@ def test_qwen35_lora_export_normalizes_legacy_text_layer_keys():
     assert normalize_lora_adapter_key(expected, model_type="qwen3_5") == expected
 
 
+def test_pretrained_lora_loading_materializes_meta_rank_adapter_weights():
+    module_path = Path("verl/utils/lora_adapter.py")
+    spec = importlib.util.spec_from_file_location("lora_adapter_utils", module_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    class FakeModule:
+        def __init__(self, is_meta):
+            self.is_meta = is_meta
+
+        def named_parameters(self):
+            return [("base_model.layers.0.q_proj.lora_A.default.weight", self)]
+
+    module.assert_no_meta_lora_params(FakeModule(is_meta=False))
+
+    try:
+        module.assert_no_meta_lora_params(FakeModule(is_meta=True))
+    except RuntimeError as exc:
+        assert "checkpoint weights were not materialized" in str(exc)
+    else:
+        raise AssertionError("meta LoRA parameters must fail before FSDP wrapping")
+
+    fsdp_workers = _read("verl/workers/fsdp_workers.py")
+    transformer_impl = _read("verl/workers/engine/fsdp/transformer_impl.py")
+    assert fsdp_workers.count("low_cpu_mem_usage=True") >= 2
+    assert fsdp_workers.count("assert_no_meta_lora_params(") >= 2
+    assert "low_cpu_mem_usage=True" in transformer_impl
+    assert "assert_no_meta_lora_params(module)" in transformer_impl
+
+
 def test_adapter_repair_is_non_overwriting_and_export_rejects_legacy_keys():
     repair = _read("scripts/repair_qwen35_lora_adapter.py")
     export = _read("scripts/export_contextgraph_sft_lora.sh")

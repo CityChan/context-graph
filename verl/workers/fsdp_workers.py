@@ -86,6 +86,7 @@ from verl.utils.fsdp_utils import (
     replace_lora_wrapper,
 )
 from verl.utils.import_utils import import_external_libs
+from verl.utils.lora_adapter import assert_no_meta_lora_params
 from verl.utils.memory_utils import aggressive_empty_cache
 from verl.utils.model import compute_position_id_with_mask, convert_weight_keys
 from verl.utils.profiler import DistProfiler, DistProfilerExtension, ProfilerConfig, log_gpu_memory_usage, simple_timer
@@ -444,7 +445,10 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
                 # Copy adapter to local if needed
                 local_adapter_path = copy_to_local(lora_adapter_path, use_shm=self.config.model.get("use_shm", False))
 
-                actor_module = PeftModel.from_pretrained(actor_module, local_adapter_path, is_trainable=True)
+                actor_module = PeftModel.from_pretrained(
+                    actor_module, local_adapter_path, is_trainable=True, low_cpu_mem_usage=True
+                )
+                assert_no_meta_lora_params(actor_module)
                 peft_config = actor_module.peft_config["default"]
                 # Ensure task_type is TaskType enum, not string
                 if isinstance(peft_config.task_type, str):
@@ -1346,7 +1350,10 @@ class CriticWorker(Worker, DistProfilerExtension):
                 # Copy adapter to local if needed
                 local_adapter_path = copy_to_local(lora_adapter_path, use_shm=self.config.model.get("use_shm", False))
 
-                critic_module = PeftModel.from_pretrained(critic_module, local_adapter_path, is_trainable=True)
+                critic_module = PeftModel.from_pretrained(
+                    critic_module, local_adapter_path, is_trainable=True, low_cpu_mem_usage=True
+                )
+                assert_no_meta_lora_params(critic_module)
                 peft_config = critic_module.peft_config["default"]
                 # Ensure task_type is TaskType enum, not string
                 if isinstance(peft_config.task_type, str):
