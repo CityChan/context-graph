@@ -140,6 +140,8 @@ def test_new_vllm_lora_api_uses_native_disk_loader_and_tensor_compatibility():
     assert "return native_load_adapter(self, lora_request)" in source
     assert "model_vocab_size=self.vocab_size" in source
     assert 'if "model_vocab_size" not in str(exc)' in source
+    assert 'getattr(lora, "extra_vocab_size", None)' in source
+    assert 'getattr(self.lora_config, "lora_extra_vocab_size", 0)' in source
     preflight = _read("scripts/check_vllm_eval_compat.py")
     assert "VLLMHijack.hijack()" in preflight
     assert 'importlib.import_module("verl.workers.rollout.vllm_rollout.vllm_rollout")' in preflight

@@ -103,10 +103,15 @@ class VLLMHijack:
             except Exception as e:
                 raise e
 
-            if lora.extra_vocab_size > self.lora_config.lora_extra_vocab_size:
+            # vLLM 0.27 removed ``extra_vocab_size`` from LoRAModel together
+            # with the legacy extra-vocabulary LoRA path. Keep the old safety
+            # check only for releases that still expose that metadata.
+            extra_vocab_size = getattr(lora, "extra_vocab_size", None)
+            configured_extra_vocab_size = getattr(self.lora_config, "lora_extra_vocab_size", 0)
+            if extra_vocab_size is not None and extra_vocab_size > configured_extra_vocab_size:
                 raise ValueError(
-                    f"LoRA added vocab size {lora.extra_vocab_size} is greater than lora_extra_vocab_size "
-                    f"{self.lora_config.lora_extra_vocab_size}."
+                    f"LoRA added vocab size {extra_vocab_size} is greater than lora_extra_vocab_size "
+                    f"{configured_extra_vocab_size}."
                 )
             return lora
 
