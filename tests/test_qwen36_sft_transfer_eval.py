@@ -108,6 +108,10 @@ def test_all_three_eval_runners_accept_the_same_lora_overrides():
 
 def test_paired_transfer_submitter_is_matched_and_complete():
     source = _read("scripts/submit_eval_qwen36_27b_sft_transfer.sh")
+    assert "CONDA_ENV_NAME=${CONDA_ENV_NAME:-cxtgraph}" in source
+    assert "SEARCH_CONDA_ENV_NAME=${SEARCH_CONDA_ENV_NAME:-cxtgraph}" in source
+    assert "CONDA_ENV_NAME=${CONDA_ENV_NAME:-deepseek_v4}" not in source
+    assert "formal Qwen3.6-27B eval must use cxtgraph" in source
     assert "qwen36_27b_scienceworld_step147_v2" in source
     assert "for variant in base sft" in source
     assert "BENCHMARKS=${BENCHMARKS:-gaia,bc,discovery}" in source
@@ -162,6 +166,10 @@ def test_scheduler_submitters_forward_memory_safe_lora_loading():
 
 def test_idev_transfer_runner_uses_current_allocation_and_one_sample_default():
     source = _read("scripts/eval_qwen36_27b_sft_transfer_idev.sh")
+    assert "CONDA_ENV_NAME=${CONDA_ENV_NAME:-cxtgraph}" in source
+    assert "SEARCH_CONDA_ENV_NAME=${SEARCH_CONDA_ENV_NAME:-cxtgraph}" in source
+    assert "CONDA_ENV_NAME=${CONDA_ENV_NAME:-deepseek_v4}" not in source
+    assert "formal Qwen3.6-27B eval must use cxtgraph" in source
     assert 'EVAL_MAX_SAMPLES=${EVAL_MAX_SAMPLES:-1}' in source
     assert 'scontrol show hostnames "$SLURM_JOB_NODELIST"' in source
     assert "sbatch" not in source

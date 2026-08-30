@@ -11,10 +11,14 @@ LORA_ALPHA=${LORA_ALPHA:-64}
 VARIANTS=${VARIANTS:-base,sft}
 BENCHMARKS=${BENCHMARKS:-gaia,bc,discovery}
 EVAL_MAX_SAMPLES=${EVAL_MAX_SAMPLES:--1}
-CONDA_ENV_NAME=${CONDA_ENV_NAME:-deepseek_v4}
+CONDA_ENV_NAME=${CONDA_ENV_NAME:-cxtgraph}
 SEARCH_CONDA_ENV_NAME=${SEARCH_CONDA_ENV_NAME:-cxtgraph}
 DRY_RUN=${DRY_RUN:-0}
 
+if [ "$CONDA_ENV_NAME" != "cxtgraph" ] || [ "$SEARCH_CONDA_ENV_NAME" != "cxtgraph" ]; then
+  echo "ERROR: formal Qwen3.6-27B eval must use cxtgraph for trainer and search" >&2
+  exit 2
+fi
 if ! [[ "$EVAL_MAX_SAMPLES" =~ ^(-1|[1-9][0-9]*)$ ]]; then
   echo "ERROR: EVAL_MAX_SAMPLES must be -1 or a positive integer" >&2
   exit 2

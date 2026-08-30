@@ -10,12 +10,16 @@ BENCHMARK=${BENCHMARK:-bc}
 VARIANT=${VARIANT:-base}
 EVAL_MAX_SAMPLES=${EVAL_MAX_SAMPLES:-1}
 CONTROLLER_ACTION_POLICY=${CONTROLLER_ACTION_POLICY:-structural}
-CONDA_ENV_NAME=${CONDA_ENV_NAME:-deepseek_v4}
+CONDA_ENV_NAME=${CONDA_ENV_NAME:-cxtgraph}
 SEARCH_CONDA_ENV_NAME=${SEARCH_CONDA_ENV_NAME:-cxtgraph}
 LORA_RANK=${LORA_RANK:-32}
 LORA_ALPHA=${LORA_ALPHA:-64}
 STAMP=${STAMP:-$(date +%Y%m%d_%H%M%S)}
 
+if [ "$CONDA_ENV_NAME" != "cxtgraph" ] || [ "$SEARCH_CONDA_ENV_NAME" != "cxtgraph" ]; then
+  echo "ERROR: formal Qwen3.6-27B eval must use cxtgraph for trainer and search"
+  exit 2
+fi
 if [ -z "${SLURM_JOB_NODELIST:-}" ]; then
   echo "ERROR: run this script inside an active idev allocation"
   exit 2
