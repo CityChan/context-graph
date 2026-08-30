@@ -17,6 +17,7 @@ LORA_RANK=${LORA_RANK:-32}
 LORA_ALPHA=${LORA_ALPHA:-64}
 TRAIN_LR=${TRAIN_LR:-1e-5}
 ATTN_IMPLEMENTATION=${ATTN_IMPLEMENTATION:-sdpa}
+LOSS_MASK_MODE=${LOSS_MASK_MODE:-assistant_tokens}
 MASTER_PORT=${MASTER_PORT:-29517}
 PREFLIGHT_ONLY=${PREFLIGHT_ONLY:-0}
 DATA_PREFLIGHT_TIMEOUT=${DATA_PREFLIGHT_TIMEOUT:-300}
@@ -147,7 +148,7 @@ if [ "${SFT_TRAIN_WORKER:-0}" = "1" ]; then
     data.train_max_samples="$TRAIN_MAX_SAMPLES" \
     data.val_max_samples="$VAL_MAX_SAMPLES" \
     data.multiturn.enable=True \
-    data.multiturn.loss_mask_mode=assistant_tokens \
+    data.multiturn.loss_mask_mode="$LOSS_MASK_MODE" \
     data.max_length="$MAX_LENGTH" \
     data.truncation=right \
     model.partial_pretrain="$MODEL_PATH" \
@@ -204,11 +205,11 @@ echo "Train data: $TRAIN_FILE (max_samples=$TRAIN_MAX_SAMPLES)"
 echo "Validation data: $VAL_FILE (max_samples=$VAL_MAX_SAMPLES)"
 echo "Nodes: ${NODELIST[*]}"
 echo "Parallelism: FSDP2 world=$NUM_NODES, Ulysses SP=1, DP=$NUM_NODES"
-echo "Training: steps=$TOTAL_TRAINING_STEPS max_length=$MAX_LENGTH LoRA rank=$LORA_RANK attention=$ATTN_IMPLEMENTATION"
+echo "Training: steps=$TOTAL_TRAINING_STEPS max_length=$MAX_LENGTH LoRA rank=$LORA_RANK attention=$ATTN_IMPLEMENTATION loss_mask=$LOSS_MASK_MODE"
 echo "Checkpoint: $CHECKPOINT_ROOT"
 
 echo "Preflight: validating and tokenizing one SFT row (timeout=${DATA_PREFLIGHT_TIMEOUT}s)"
-timeout --foreground "${DATA_PREFLIGHT_TIMEOUT}s" python -u scripts/check_contextgraph_sft_data.py --data "$TRAIN_FILE" --tokenizer "$MODEL_PATH" --max-length "$MAX_LENGTH"
+timeout --foreground "${DATA_PREFLIGHT_TIMEOUT}s" python -u scripts/check_contextgraph_sft_data.py --data "$TRAIN_FILE" --tokenizer "$MODEL_PATH" --max-length "$MAX_LENGTH" --loss-mask-mode "$LOSS_MASK_MODE"
 echo "Preflight: checking the training stack and GPU memory on all nodes"
 srun --overlap --nodes="$NUM_NODES" --ntasks="$NUM_NODES" --ntasks-per-node=1 env SFT_PREFLIGHT_WORKER=1 bash "$SCRIPT_PATH"
 

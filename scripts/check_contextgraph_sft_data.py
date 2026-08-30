@@ -13,6 +13,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--data", required=True)
     parser.add_argument("--tokenizer", required=True)
     parser.add_argument("--max-length", type=int, default=8192)
+    parser.add_argument("--loss-mask-mode", choices=("per_message", "assistant_tokens"), default="assistant_tokens")
     return parser.parse_args()
 
 
@@ -53,7 +54,7 @@ def main() -> None:
             "max_length": args.max_length,
             "truncation": "right",
             "pad_mode": "right",
-            "loss_mask_mode": "assistant_tokens",
+            "loss_mask_mode": args.loss_mask_mode,
         }
     )
     stage("construct one-row multi-turn dataset")
@@ -80,6 +81,7 @@ def main() -> None:
                 "rows": len(frame),
                 "tokenizer": args.tokenizer,
                 "max_length": args.max_length,
+                "loss_mask_mode": args.loss_mask_mode,
                 "sample_input_tokens": input_tokens,
                 "sample_loss_tokens": loss_tokens,
             },
