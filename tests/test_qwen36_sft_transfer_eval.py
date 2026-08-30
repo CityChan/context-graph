@@ -143,12 +143,17 @@ def test_paired_transfer_submitter_is_matched_and_complete():
     assert "rollout_load_format=safetensors" in source
     assert "rollout_layered_summon=True" in source
     assert "ROLLOUT_TENSOR_MODEL_PARALLEL_SIZE=2" in source
-    assert "ROLLOUT_GPU_MEMORY_UTILIZATION=0.9" in source
+    assert 'ROLLOUT_GPU_MEMORY_UTILIZATION="$rollout_gpu_memory_utilization"' in source
     assert "BC_ROLLOUT_TENSOR_MODEL_PARALLEL_SIZE=2" in source
     assert "BC_TRAINER_NNODES=2" in source
     assert "SAB_ROLLOUT_TENSOR_MODEL_PARALLEL_SIZE=2" in source
     assert "SAB_ROLLOUT_QUANTIZATION=none" in source
     assert "USE_KL_LOSS=False" in source
+    assert "rollout_gpu_memory_utilization=0.9" in source
+    assert "rollout_gpu_memory_utilization=0.95" in source
+    assert 'ROLLOUT_GPU_MEMORY_UTILIZATION="$rollout_gpu_memory_utilization"' in source
+    assert 'BC_ROLLOUT_GPU_MEMORY_UTILIZATION="$rollout_gpu_memory_utilization"' in source
+    assert 'SAB_ROLLOUT_GPU_MEMORY_UTILIZATION="$rollout_gpu_memory_utilization"' in source
 
 
 def test_scheduler_submitters_forward_memory_safe_lora_loading():
@@ -186,13 +191,27 @@ def test_idev_transfer_runner_uses_current_allocation_and_one_sample_default():
     assert "rollout_load_format=safetensors" in source
     assert "rollout_layered_summon=True" in source
     assert "BC_ROLLOUT_TENSOR_MODEL_PARALLEL_SIZE=2" in source
-    assert "BC_ROLLOUT_GPU_MEMORY_UTILIZATION=0.9" in source
+    assert "BC_ROLLOUT_GPU_MEMORY_UTILIZATION=$rollout_gpu_memory_utilization" in source
     assert "BC_TRAINER_NNODES=2" in source
     assert "ROLLOUT_TENSOR_MODEL_PARALLEL_SIZE=2" in source
     assert "SAB_ROLLOUT_TENSOR_MODEL_PARALLEL_SIZE=2" in source
     assert "SAB_ROLLOUT_QUANTIZATION=none" in source
     assert "USE_KL_LOSS=False" in source
     assert "qwen36_27b_scienceworld_step147_v2" in source
+    assert "rollout_gpu_memory_utilization=0.9" in source
+    assert "rollout_gpu_memory_utilization=0.95" in source
+
+
+def test_cxtgraph_qwen36_environment_rebuild_is_staged_and_recoverable():
+    source = _read("scripts/rebuild_cxtgraph_qwen36_eval_env.sh")
+    assert "active or queued Slurm jobs exist" in source
+    assert 'conda create -y -n "$STAGE_ENV" --clone "$SOURCE_ENV"' in source
+    assert "wandb==0.25.1" in source
+    assert 'preflight_env "$STAGE_ENV"' in source
+    assert 'conda create -y -n "$BACKUP_ENV" --clone "$TARGET_ENV"' in source
+    assert 'conda env remove -y -n "$TARGET_ENV"' in source
+    assert 'conda create -y -n "$TARGET_ENV" --clone "$STAGE_ENV"' in source
+    assert 'preflight_env "$TARGET_ENV"' in source
 
 
 def test_transfer_eval_runners_expose_protocol_preserving_qwen_memory_knobs():
