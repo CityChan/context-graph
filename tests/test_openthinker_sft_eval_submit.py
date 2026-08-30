@@ -28,3 +28,18 @@ def test_base_submitters_propagate_model_identity():
     assert "BC_EXPERIMENT_MODEL_TAG=${BC_EXPERIMENT_MODEL_TAG:-8b}" in bc_eval
     assert "MODEL_PATH=$GAIA_MODEL_PATH" in gaia_submit
     assert "GAIA_EXPERIMENT_MODEL_TAG" in gaia_submit
+
+
+def test_openthinker_idev_runner_is_single_sample_controller_smoke():
+    source = _read("scripts/eval_openthinker_sft_8b_idev.sh")
+
+    assert "OpenThinkerAgent-8B-ColdStartSFTForRL" in source
+    assert 'if [ "${#NODELIST[@]}" -ne 4 ]; then' in source
+    assert "export CONDA_ENV_NAME=deepseek_v4 SEARCH_CONDA_ENV_NAME=cxtgraph" in source
+    assert "export EXPECTED_NUM_NODES=4 BC_METHOD=contextgraph BC_CTXGRAPH_PROTOCOL=controller" in source
+    assert "EVAL_MAX_SAMPLES=${EVAL_MAX_SAMPLES:-1}" in source
+    assert "export BC_VAL_MAX_SAMPLES=$EVAL_MAX_SAMPLES BC_ROLLOUT_N=1" in source
+    assert "export BC_CONTEXT_LENGTH=32768 BC_PROMPT_LENGTH=8192 BC_RESPONSE_LENGTH=24576" in source
+    assert "export BC_ROLLOUT_TENSOR_MODEL_PARALLEL_SIZE=1" in source
+    assert "unset LORA_ADAPTER_PATH LORA_RANK LORA_ALPHA" in source
+    assert "exec bash scripts/eval_bc_baseline_8b_4node_zeroshot.sh" in source
