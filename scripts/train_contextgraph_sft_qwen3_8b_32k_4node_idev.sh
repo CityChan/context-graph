@@ -19,9 +19,13 @@ export VAL_MAX_SAMPLES=-1
 export TOTAL_EPOCHS=1
 export SAVE_FREQ=-1
 export TRAIN_LR=${TRAIN_LR:-1e-5}
-export RUN_TAG=${RUN_TAG:-${SLURM_JOB_ID:-idev}_qwen3_8b_contextgraph_sft_32k_fullparam}
-export CHECKPOINT_ROOT=${CHECKPOINT_ROOT:-$SCRATCH/contextgraph_sft_checkpoints/$RUN_TAG}
-export MERGED_MODEL_DIR=${MERGED_MODEL_DIR:-$SCRATCH/contextgraph_sft_models/$RUN_TAG}
+
+# Do not inherit generic smoke-run paths exported earlier in the same idev
+# shell. Formal overrides deliberately use their own variable names.
+unset RUN_TAG CHECKPOINT_ROOT MERGED_MODEL_DIR
+export RUN_TAG=${FORMAL_RUN_TAG:-${SLURM_JOB_ID:-idev}_qwen3_8b_contextgraph_sft_32k_fullparam}
+export CHECKPOINT_ROOT=${FORMAL_CHECKPOINT_ROOT:-$SCRATCH/contextgraph_sft_checkpoints/$RUN_TAG}
+export MERGED_MODEL_DIR=${FORMAL_MERGED_MODEL_DIR:-$SCRATCH/contextgraph_sft_models/$RUN_TAG}
 
 for file in "$TRAIN_FILE" "$VAL_FILE"; do
   if [ ! -s "$file" ]; then
