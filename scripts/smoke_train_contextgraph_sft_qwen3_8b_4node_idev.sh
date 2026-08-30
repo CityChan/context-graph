@@ -8,11 +8,22 @@ set -euo pipefail
 PROJECT_ROOT=${PROJECT_ROOT:-/work/09281/chc_1996/vista/context-graph}
 : "${SCRATCH:?SCRATCH must point to the Vista scratch filesystem}"
 
-# Never inherit a MODEL_PATH left over from another model evaluation. An
-# explicit QWEN3_8B_MODEL_PATH remains available for an offline snapshot.
+# Never inherit a MODEL_PATH left over from another model evaluation. Prefer
+# an explicit QWEN3_8B_MODEL_PATH; otherwise reuse the read-only Qwen3-8B cache
+# that supplied the successful zero-shot evaluations.
 unset MODEL_PATH
 if [ -n "${QWEN3_8B_MODEL_PATH:-}" ]; then
   export MODEL_PATH="$QWEN3_8B_MODEL_PATH"
+else
+  export WORK_MODEL_CACHE_ROOT=${WORK_MODEL_CACHE_ROOT:-/work/09281/chc_1996/vista/cache/hub/models--Qwen--Qwen3-8B/snapshots}
+  MODEL_PATH=$(find "$WORK_MODEL_CACHE_ROOT" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort | tail -n 1) || true
+  if [ -z "${MODEL_PATH:-}" ] || [ ! -s "$MODEL_PATH/config.json" ]; then
+    echo "ERROR: no Qwen3-8B snapshot found under $WORK_MODEL_CACHE_ROOT"
+    echo "Set QWEN3_8B_MODEL_PATH to a complete snapshot directory."
+    exit 2
+  fi
+  export MODEL_PATH
+  export ALLOW_WORK_MODEL_CACHE=1
 fi
 
 export MODEL_ID=${MODEL_ID:-Qwen/Qwen3-8B}

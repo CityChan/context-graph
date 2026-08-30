@@ -81,7 +81,19 @@ require_scratch_path() {
     *) echo "ERROR: $name must be stored under SCRATCH=$SCRATCH, got $value"; exit 2 ;;
   esac
 }
-require_scratch_path MODEL_PATH "$MODEL_PATH"
+require_model_path() {
+  case "$MODEL_PATH" in
+    "$SCRATCH"/*) return 0 ;;
+  esac
+  if [ "${ALLOW_WORK_MODEL_CACHE:-0}" = "1" ] && [ -n "${WORK_MODEL_CACHE_ROOT:-}" ]; then
+    case "$MODEL_PATH" in
+      "${WORK_MODEL_CACHE_ROOT%/}"/*) return 0 ;;
+    esac
+  fi
+  echo "ERROR: MODEL_PATH must be under SCRATCH or the explicitly allowed read-only cache: $MODEL_PATH"
+  exit 2
+}
+require_model_path
 require_scratch_path HF_HOME "$HF_HOME"
 require_scratch_path HF_HUB_CACHE "$HF_HUB_CACHE"
 require_scratch_path CHECKPOINT_ROOT "$CHECKPOINT_ROOT"
