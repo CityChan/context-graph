@@ -11,6 +11,8 @@ TRAIN_CONDA_ENV=${TRAIN_CONDA_ENV:-deepseek_v4}
 EXPECTED_NUM_NODES=${EXPECTED_NUM_NODES:-4}
 MAX_LENGTH=${MAX_LENGTH:-8192}
 TOTAL_TRAINING_STEPS=${TOTAL_TRAINING_STEPS:-1}
+TOTAL_EPOCHS=${TOTAL_EPOCHS:-1}
+SAVE_FREQ=${SAVE_FREQ:-1}
 TRAIN_BATCH_SIZE=${TRAIN_BATCH_SIZE:-4}
 MICRO_BATCH_SIZE=${MICRO_BATCH_SIZE:-1}
 LORA_RANK=${LORA_RANK:-32}
@@ -167,10 +169,10 @@ if [ "${SFT_TRAIN_WORKER:-0}" = "1" ]; then
     trainer.project_name=contextgraph-sft \
     trainer.experiment_name="$RUN_TAG" \
     trainer.default_local_dir="$CHECKPOINT_ROOT" \
-    trainer.total_epochs=1 \
+    trainer.total_epochs="$TOTAL_EPOCHS" \
     trainer.total_training_steps="$TOTAL_TRAINING_STEPS" \
     trainer.logger='["console"]' \
-    trainer.save_freq=1 \
+    trainer.save_freq="$SAVE_FREQ" \
     trainer.test_freq=-1 \
     trainer.nnodes="$NUM_NODES" \
     trainer.n_gpus_per_node=1 \
@@ -193,7 +195,7 @@ fi
 MASTER_ADDR=$(getent hosts "${NODELIST[0]}" | awk '{print $1}')
 TRAIN_FILES="[$TRAIN_FILE]"
 VAL_FILES="[$VAL_FILE]"
-export MODEL_PATH TRAIN_FILE VAL_FILE TRAIN_FILES VAL_FILES CHECKPOINT_ROOT NUM_NODES MASTER_ADDR MASTER_PORT ATTN_IMPLEMENTATION
+export MODEL_PATH TRAIN_FILE VAL_FILE TRAIN_FILES VAL_FILES CHECKPOINT_ROOT NUM_NODES MASTER_ADDR MASTER_PORT ATTN_IMPLEMENTATION TOTAL_TRAINING_STEPS TOTAL_EPOCHS SAVE_FREQ
 
 mkdir -p "$PROJECT_ROOT/logs" "$CHECKPOINT_ROOT"
 cd "$PROJECT_ROOT"
@@ -218,7 +220,7 @@ if [ "$PREFLIGHT_ONLY" = "1" ]; then
   exit 0
 fi
 
-echo "Launching one real SFT optimizer step"
+echo "Launching SFT training: epochs=$TOTAL_EPOCHS steps=$TOTAL_TRAINING_STEPS save_freq=$SAVE_FREQ"
 srun --overlap --nodes="$NUM_NODES" --ntasks="$NUM_NODES" --ntasks-per-node=1 env SFT_TRAIN_WORKER=1 bash "$SCRIPT_PATH"
 
 STEP_DIR="$CHECKPOINT_ROOT/global_step_$TOTAL_TRAINING_STEPS"

@@ -14,7 +14,8 @@ def test_qwen36_training_smoke_runs_a_real_multiturn_optimizer_step():
     assert "LOSS_MASK_MODE=${LOSS_MASK_MODE:-assistant_tokens}" in text
     assert 'data.multiturn.loss_mask_mode="$LOSS_MASK_MODE"' in text
     assert "trainer.total_training_steps=\"$TOTAL_TRAINING_STEPS\"" in text
-    assert "trainer.save_freq=1" in text
+    assert "SAVE_FREQ=${SAVE_FREQ:-1}" in text
+    assert 'trainer.save_freq="$SAVE_FREQ"' in text
     assert "contextgraph_sft_train.parquet" in text
 
 
