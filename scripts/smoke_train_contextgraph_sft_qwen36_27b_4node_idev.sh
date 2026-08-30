@@ -1,9 +1,8 @@
 #!/bin/bash
 
-# One real multi-turn SFT optimizer step for Qwen3.6-27B inside an existing
-# four-node Vista idev allocation. All four GH200s train one repeated smoke
-# sample with FSDP2 data parallelism and PyTorch SDPA. The default LoRA smoke
-# saves a real sharded checkpoint while avoiding an external flash-attn build.
+# Run a configurable multi-turn SFT smoke inside an existing four-node Vista
+# idev allocation. All four GH200s use FSDP2 data parallelism and PyTorch SDPA.
+# Model-specific entrypoints should set MODEL_ID and the fine-tuning defaults.
 set -euo pipefail
 
 PROJECT_ROOT=${PROJECT_ROOT:-/work/09281/chc_1996/vista/context-graph}
@@ -22,6 +21,8 @@ MASTER_PORT=${MASTER_PORT:-29517}
 PREFLIGHT_ONLY=${PREFLIGHT_ONLY:-0}
 DATA_PREFLIGHT_TIMEOUT=${DATA_PREFLIGHT_TIMEOUT:-300}
 RUN_TAG=${RUN_TAG:-${SLURM_JOB_ID:-idev}_qwen36_27b_sft_smoke}
+TRAIN_MAX_SAMPLES=${TRAIN_MAX_SAMPLES:-$EXPECTED_NUM_NODES}
+VAL_MAX_SAMPLES=${VAL_MAX_SAMPLES:-$EXPECTED_NUM_NODES}
 
 : "${SCRATCH:?SCRATCH must point to the Vista scratch filesystem}"
 # Use SFT-specific overrides so an inherited login-shell HF_HOME under /work
@@ -64,6 +65,11 @@ fi
 if [ -z "${TRAIN_FILE:-}" ] || [ ! -s "$TRAIN_FILE" ]; then
   echo "ERROR: no non-empty ContextGraph SFT parquet found under $DATA_ROOT"
   echo "Set TRAIN_FILE=/absolute/path/to/contextgraph_sft_train.parquet."
+  exit 2
+fi
+VAL_FILE=${VAL_FILE:-$TRAIN_FILE}
+if [ ! -s "$VAL_FILE" ]; then
+  echo "ERROR: VAL_FILE is missing or empty: $VAL_FILE"
   exit 2
 fi
 
@@ -123,11 +129,11 @@ if [ "${SFT_TRAIN_WORKER:-0}" = "1" ]; then
   cd "$PROJECT_ROOT"
   exec torchrun --nnodes="$NUM_NODES" --nproc-per-node=1 --node-rank="$SLURM_PROCID" --master-addr="$MASTER_ADDR" --master-port="$MASTER_PORT" -m verl.trainer.fsdp_sft_trainer \
     data.train_files="$TRAIN_FILES" \
-    data.val_files="$TRAIN_FILES" \
+    data.val_files="$VAL_FILES" \
     data.train_batch_size="$TRAIN_BATCH_SIZE" \
     data.micro_batch_size_per_gpu="$MICRO_BATCH_SIZE" \
-    data.train_max_samples="$NUM_NODES" \
-    data.val_max_samples="$NUM_NODES" \
+    data.train_max_samples="$TRAIN_MAX_SAMPLES" \
+    data.val_max_samples="$VAL_MAX_SAMPLES" \
     data.multiturn.enable=True \
     data.multiturn.loss_mask_mode=assistant_tokens \
     data.max_length="$MAX_LENGTH" \
@@ -172,16 +178,18 @@ if [ "$NUM_NODES" -ne "$EXPECTED_NUM_NODES" ]; then
   exit 2
 fi
 MASTER_ADDR=$(getent hosts "${NODELIST[0]}" | awk '{print $1}')
-TRAIN_FILES="[$TRAIN_FILE,$TRAIN_FILE,$TRAIN_FILE,$TRAIN_FILE]"
-export MODEL_PATH TRAIN_FILE TRAIN_FILES CHECKPOINT_ROOT NUM_NODES MASTER_ADDR MASTER_PORT ATTN_IMPLEMENTATION
+TRAIN_FILES="[$TRAIN_FILE]"
+VAL_FILES="[$VAL_FILE]"
+export MODEL_PATH TRAIN_FILE VAL_FILE TRAIN_FILES VAL_FILES CHECKPOINT_ROOT NUM_NODES MASTER_ADDR MASTER_PORT ATTN_IMPLEMENTATION
 
 mkdir -p "$PROJECT_ROOT/logs" "$CHECKPOINT_ROOT"
 cd "$PROJECT_ROOT"
 activate_train_env
 
-echo "Qwen3.6-27B ContextGraph SFT training smoke"
+echo "$MODEL_ID ContextGraph SFT training smoke"
 echo "Model: $MODEL_PATH"
-echo "Data: $TRAIN_FILE"
+echo "Train data: $TRAIN_FILE (max_samples=$TRAIN_MAX_SAMPLES)"
+echo "Validation data: $VAL_FILE (max_samples=$VAL_MAX_SAMPLES)"
 echo "Nodes: ${NODELIST[*]}"
 echo "Parallelism: FSDP2 world=$NUM_NODES, Ulysses SP=1, DP=$NUM_NODES"
 echo "Training: steps=$TOTAL_TRAINING_STEPS max_length=$MAX_LENGTH LoRA rank=$LORA_RANK attention=$ATTN_IMPLEMENTATION"
@@ -193,7 +201,7 @@ echo "Preflight: checking the training stack and GPU memory on all nodes"
 srun --overlap --nodes="$NUM_NODES" --ntasks="$NUM_NODES" --ntasks-per-node=1 env SFT_PREFLIGHT_WORKER=1 bash "$SCRIPT_PATH"
 
 if [ "$PREFLIGHT_ONLY" = "1" ]; then
-  echo "Qwen3.6-27B ContextGraph SFT training preflight passed."
+  echo "$MODEL_ID ContextGraph SFT training preflight passed."
   exit 0
 fi
 
@@ -215,4 +223,4 @@ if [ "$MODEL_SHARDS" -ne "$NUM_NODES" ]; then
   exit 3
 fi
 
-echo "Qwen3.6-27B ContextGraph SFT training smoke passed: checkpoint=$STEP_DIR shards=$MODEL_SHARDS"
+echo "$MODEL_ID ContextGraph SFT training smoke passed: checkpoint=$STEP_DIR shards=$MODEL_SHARDS"
