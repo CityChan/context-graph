@@ -2,13 +2,20 @@
 """Copy a legacy Qwen3.5 LoRA adapter while repairing its text-layer keys."""
 
 import argparse
+import importlib.util
 import json
 import shutil
 from pathlib import Path
 
-from safetensors.torch import load_file, save_file
 
-from verl.utils.lora_adapter import normalize_lora_adapter_key
+def load_key_normalizer():
+    module_path = Path(__file__).resolve().parents[1] / "verl" / "utils" / "lora_adapter.py"
+    spec = importlib.util.spec_from_file_location("contextgraph_lora_adapter", module_path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Cannot load LoRA key normalizer from {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.normalize_lora_adapter_key
 
 
 def parse_args() -> argparse.Namespace:
@@ -20,6 +27,9 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    from safetensors.torch import load_file, save_file
+
+    normalize_lora_adapter_key = load_key_normalizer()
     source = args.source.resolve()
     target = args.target.resolve()
     config_path = source / "adapter_config.json"

@@ -31,6 +31,8 @@ def test_adapter_repair_is_non_overwriting_and_export_rejects_legacy_keys():
     repair = _read("scripts/repair_qwen35_lora_adapter.py")
     export = _read("scripts/export_contextgraph_sft_lora.sh")
     assert "Target already exists; choose a new path" in repair
+    assert "from verl.utils.lora_adapter" not in repair
+    assert 'spec_from_file_location("contextgraph_lora_adapter"' in repair
     assert 'model_type="qwen3_5"' in repair
     assert "Legacy Qwen3.5 LoRA keys remain after repair" in repair
     assert "legacy Qwen3.5 LoRA keys remain" in export
