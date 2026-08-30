@@ -63,13 +63,18 @@ for variant in base sft; do
 
   adapter_path=
   adapter_rank=0
+  rollout_load_format=dummy
+  rollout_layered_summon=False
   if [ "$variant" = "sft" ]; then
     adapter_path=$LORA_ADAPTER_PATH
     adapter_rank=$LORA_RANK
+    # Avoid materializing a full 27B PEFT state dict during each worker wake-up.
+    rollout_load_format=safetensors
+    rollout_layered_summon=True
   fi
   job_tag="qwen36-27b-${variant}"
   experiment_tag="qwen36_27b_${variant}"
-  common_env=(MODEL_PATH="$BASE_MODEL_PATH" CONDA_ENV_NAME="$CONDA_ENV_NAME" SEARCH_CONDA_ENV_NAME="$SEARCH_CONDA_ENV_NAME" LORA_ADAPTER_PATH="$adapter_path" LORA_RANK="$adapter_rank" LORA_ALPHA="$LORA_ALPHA" QWEN_ENABLE_THINKING=True TORCHDYNAMO_DISABLE=0 VLLM_USE_AOT_COMPILE=1 DRY_RUN="$DRY_RUN")
+  common_env=(MODEL_PATH="$BASE_MODEL_PATH" CONDA_ENV_NAME="$CONDA_ENV_NAME" SEARCH_CONDA_ENV_NAME="$SEARCH_CONDA_ENV_NAME" LORA_ADAPTER_PATH="$adapter_path" LORA_RANK="$adapter_rank" LORA_ALPHA="$LORA_ALPHA" ROLLOUT_LOAD_FORMAT="$rollout_load_format" ROLLOUT_LAYERED_SUMMON="$rollout_layered_summon" QWEN_ENABLE_THINKING=True TORCHDYNAMO_DISABLE=0 VLLM_USE_AOT_COMPILE=1 DRY_RUN="$DRY_RUN")
 
   # Keep the 32K evaluation contract while sharding Qwen3.6's oversized
   # hybrid GDN/full-attention cache across two rollout GPUs.

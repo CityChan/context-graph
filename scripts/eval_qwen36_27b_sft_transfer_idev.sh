@@ -43,6 +43,8 @@ fi
 
 adapter_path=
 adapter_rank=0
+rollout_load_format=dummy
+rollout_layered_summon=False
 if [ "$VARIANT" = sft ]; then
   for required in adapter_config.json adapter_model.safetensors; do
     if [ ! -s "$LORA_ADAPTER_PATH/$required" ]; then
@@ -52,6 +54,10 @@ if [ "$VARIANT" = sft ]; then
   done
   adapter_path=$LORA_ADAPTER_PATH
   adapter_rank=$LORA_RANK
+  # Preload the frozen base in vLLM, then gather only LoRA tensors one FSDP
+  # layer at a time. A dummy base requires a full 27B state-dict sync here.
+  rollout_load_format=safetensors
+  rollout_layered_summon=True
 fi
 
 cd "$PROJECT_ROOT"
@@ -59,6 +65,7 @@ export HF_DATASETS_CACHE=${HF_DATASETS_CACHE:-/tmp/hf_datasets_cache_qwen36_idev
 export MODEL_PATH=$BASE_MODEL_PATH
 export CONDA_ENV_NAME SEARCH_CONDA_ENV_NAME
 export LORA_ADAPTER_PATH=$adapter_path LORA_RANK=$adapter_rank LORA_ALPHA
+export ROLLOUT_LOAD_FORMAT=$rollout_load_format ROLLOUT_LAYERED_SUMMON=$rollout_layered_summon
 export QWEN_ENABLE_THINKING=True
 # Qwen3.5/3.6 uses vLLM's AOT torch.compile path during the profile run.
 # Legacy benchmark runners default to eager execution for older backbones, so
@@ -70,7 +77,7 @@ export VLLM_USE_AOT_COMPILE=1
 # TP=1 for the unchanged 32K protocol. TP=2 halves both model and cache
 # residency per GPU; the higher utilization leaves enough room for that cache.
 
-echo "Qwen3.6-27B idev eval: benchmark=$BENCHMARK variant=$VARIANT samples=$EVAL_MAX_SAMPLES protocol=controller policy=$CONTROLLER_ACTION_POLICY nodes=${NODELIST[*]}"
+echo "Qwen3.6-27B idev eval: benchmark=$BENCHMARK variant=$VARIANT samples=$EVAL_MAX_SAMPLES protocol=controller policy=$CONTROLLER_ACTION_POLICY load_format=$ROLLOUT_LOAD_FORMAT layered_summon=$ROLLOUT_LAYERED_SUMMON nodes=${NODELIST[*]}"
 
 case "$BENCHMARK" in
   bc)

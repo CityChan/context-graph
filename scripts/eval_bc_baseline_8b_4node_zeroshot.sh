@@ -158,6 +158,8 @@ BC_MAX_SESSION=${BC_MAX_SESSION:-10}
 BC_ROLLOUT_N=${BC_ROLLOUT_N:-8}
 BC_ROLLOUT_TENSOR_MODEL_PARALLEL_SIZE=${BC_ROLLOUT_TENSOR_MODEL_PARALLEL_SIZE:-1}
 BC_ROLLOUT_GPU_MEMORY_UTILIZATION=${BC_ROLLOUT_GPU_MEMORY_UTILIZATION:-0.6}
+ROLLOUT_LOAD_FORMAT=${ROLLOUT_LOAD_FORMAT:-dummy}
+ROLLOUT_LAYERED_SUMMON=${ROLLOUT_LAYERED_SUMMON:-False}
 BC_TRAINER_NNODES=${BC_TRAINER_NNODES:-$((NUM_NODES - 1))}
 BC_SEARCH_TIMEOUT_SECONDS=${BC_SEARCH_TIMEOUT_SECONDS:-600}
 BC_METHOD=${BC_METHOD:-baseline}
@@ -192,7 +194,7 @@ if [ -n "$LORA_ADAPTER_PATH" ]; then
     echo "ERROR: LORA_RANK and LORA_ALPHA must be positive integers when LORA_ADAPTER_PATH is set"
     exit 1
   fi
-  MODEL_LORA_ARGS=(actor_rollout_ref.model.lora_adapter_path="$LORA_ADAPTER_PATH" actor_rollout_ref.model.lora_rank="$LORA_RANK" actor_rollout_ref.model.lora_alpha="$LORA_ALPHA")
+  MODEL_LORA_ARGS=(actor_rollout_ref.model.lora_adapter_path="$LORA_ADAPTER_PATH" actor_rollout_ref.model.lora_rank="$LORA_RANK" actor_rollout_ref.model.lora_alpha="$LORA_ALPHA" actor_rollout_ref.rollout.load_format="$ROLLOUT_LOAD_FORMAT" actor_rollout_ref.rollout.layered_summon="$ROLLOUT_LAYERED_SUMMON")
 fi
 
 case "$BC_EXPERIMENT_MODEL_TAG" in

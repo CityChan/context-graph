@@ -160,6 +160,8 @@ TRAIN_BATCH_SIZE=${TRAIN_BATCH_SIZE:-32}
 ROLLOUT_N=${ROLLOUT_N:-8}
 ROLLOUT_TENSOR_MODEL_PARALLEL_SIZE=${ROLLOUT_TENSOR_MODEL_PARALLEL_SIZE:-1}
 ROLLOUT_GPU_MEMORY_UTILIZATION=${ROLLOUT_GPU_MEMORY_UTILIZATION:-0.6}
+ROLLOUT_LOAD_FORMAT=${ROLLOUT_LOAD_FORMAT:-dummy}
+ROLLOUT_LAYERED_SUMMON=${ROLLOUT_LAYERED_SUMMON:-False}
 TRAINER_NNODES=${TRAINER_NNODES:-$((NUM_NODES - 1))}
 TOTAL_TRAINING_STEPS=${TOTAL_TRAINING_STEPS:-50}
 VAL_BEFORE_TRAIN=${VAL_BEFORE_TRAIN:-True}
@@ -204,7 +206,7 @@ if [ -n "$LORA_ADAPTER_PATH" ]; then
     echo "ERROR: LORA_RANK and LORA_ALPHA must be positive integers when LORA_ADAPTER_PATH is set"
     exit 1
   fi
-  MODEL_LORA_ARGS=(actor_rollout_ref.model.lora_adapter_path="$LORA_ADAPTER_PATH" actor_rollout_ref.model.lora_rank="$LORA_RANK" actor_rollout_ref.model.lora_alpha="$LORA_ALPHA")
+  MODEL_LORA_ARGS=(actor_rollout_ref.model.lora_adapter_path="$LORA_ADAPTER_PATH" actor_rollout_ref.model.lora_rank="$LORA_RANK" actor_rollout_ref.model.lora_alpha="$LORA_ALPHA" actor_rollout_ref.rollout.load_format="$ROLLOUT_LOAD_FORMAT" actor_rollout_ref.rollout.layered_summon="$ROLLOUT_LAYERED_SUMMON")
 fi
 
 case "$BC_CTXGRAPH_PROTOCOL" in

@@ -217,6 +217,8 @@ MODEL_PATH=${MODEL_PATH:-Qwen/Qwen3-30B-A3B-Instruct-2507}
 LORA_ADAPTER_PATH=${LORA_ADAPTER_PATH:-}
 LORA_RANK=${LORA_RANK:-0}
 LORA_ALPHA=${LORA_ALPHA:-16}
+ROLLOUT_LOAD_FORMAT=${ROLLOUT_LOAD_FORMAT:-dummy}
+ROLLOUT_LAYERED_SUMMON=${ROLLOUT_LAYERED_SUMMON:-False}
 export HF_HOME=${HF_HOME:-/work/09281/chc_1996/vista/cache}
 export HF_HUB_CACHE=${HF_HUB_CACHE:-$HF_HOME/hub}
 cd "$PROJECT_ROOT"
@@ -232,7 +234,7 @@ if [ -n "$LORA_ADAPTER_PATH" ]; then
     echo "ERROR: LORA_RANK and LORA_ALPHA must be positive integers when LORA_ADAPTER_PATH is set"
     exit 1
   fi
-  MODEL_LORA_ARGS=(actor_rollout_ref.model.lora_adapter_path="$LORA_ADAPTER_PATH" actor_rollout_ref.model.lora_rank="$LORA_RANK" actor_rollout_ref.model.lora_alpha="$LORA_ALPHA")
+  MODEL_LORA_ARGS=(actor_rollout_ref.model.lora_adapter_path="$LORA_ADAPTER_PATH" actor_rollout_ref.model.lora_rank="$LORA_RANK" actor_rollout_ref.model.lora_alpha="$LORA_ALPHA" actor_rollout_ref.rollout.load_format="$ROLLOUT_LOAD_FORMAT" actor_rollout_ref.rollout.layered_summon="$ROLLOUT_LAYERED_SUMMON")
 fi
 
 # Per-trajectory sandbox workdir root (scratch is fastest on Vista)

@@ -33,6 +33,8 @@ def test_all_three_eval_runners_accept_the_same_lora_overrides():
         assert 'actor_rollout_ref.model.lora_adapter_path="$LORA_ADAPTER_PATH"' in source
         assert 'actor_rollout_ref.model.lora_rank="$LORA_RANK"' in source
         assert 'actor_rollout_ref.model.lora_alpha="$LORA_ALPHA"' in source
+        assert 'actor_rollout_ref.rollout.load_format="$ROLLOUT_LOAD_FORMAT"' in source
+        assert 'actor_rollout_ref.rollout.layered_summon="$ROLLOUT_LAYERED_SUMMON"' in source
         assert '"${MODEL_LORA_ARGS[@]}"' in source
 
 
@@ -63,6 +65,10 @@ def test_paired_transfer_submitter_is_matched_and_complete():
     assert "DRY_RUN=${DRY_RUN:-0}" in source
     assert "TORCHDYNAMO_DISABLE=0" in source
     assert "VLLM_USE_AOT_COMPILE=1" in source
+    assert 'ROLLOUT_LOAD_FORMAT="$rollout_load_format"' in source
+    assert 'ROLLOUT_LAYERED_SUMMON="$rollout_layered_summon"' in source
+    assert "rollout_load_format=safetensors" in source
+    assert "rollout_layered_summon=True" in source
     assert "ROLLOUT_TENSOR_MODEL_PARALLEL_SIZE=2" in source
     assert "ROLLOUT_GPU_MEMORY_UTILIZATION=0.9" in source
     assert "BC_ROLLOUT_TENSOR_MODEL_PARALLEL_SIZE=2" in source
@@ -70,6 +76,19 @@ def test_paired_transfer_submitter_is_matched_and_complete():
     assert "SAB_ROLLOUT_TENSOR_MODEL_PARALLEL_SIZE=2" in source
     assert "SAB_ROLLOUT_QUANTIZATION=none" in source
     assert "USE_KL_LOSS=False" in source
+
+
+def test_scheduler_submitters_forward_memory_safe_lora_loading():
+    for path in (
+        "scripts/submit_eval_bc_8b_4node_zeroshot_64k.sh",
+        "scripts/submit_gaia_benchmark_8b_5node.sh",
+        "scripts/submit_eval_discoverybench_qwen3_8b_4node.sh",
+    ):
+        source = _read(path)
+        assert "ROLLOUT_LOAD_FORMAT=${ROLLOUT_LOAD_FORMAT:-dummy}" in source
+        assert "ROLLOUT_LAYERED_SUMMON=${ROLLOUT_LAYERED_SUMMON:-False}" in source
+        assert "ROLLOUT_LOAD_FORMAT=$ROLLOUT_LOAD_FORMAT" in source
+        assert "ROLLOUT_LAYERED_SUMMON=$ROLLOUT_LAYERED_SUMMON" in source
 
 
 def test_idev_transfer_runner_uses_current_allocation_and_one_sample_default():
@@ -85,6 +104,10 @@ def test_idev_transfer_runner_uses_current_allocation_and_one_sample_default():
     assert "TRAINER_VAL_ONLY=True" in source
     assert "export TORCHDYNAMO_DISABLE=0" in source
     assert "export VLLM_USE_AOT_COMPILE=1" in source
+    assert "export ROLLOUT_LOAD_FORMAT=$rollout_load_format" in source
+    assert "ROLLOUT_LAYERED_SUMMON=$rollout_layered_summon" in source
+    assert "rollout_load_format=safetensors" in source
+    assert "rollout_layered_summon=True" in source
     assert "BC_ROLLOUT_TENSOR_MODEL_PARALLEL_SIZE=2" in source
     assert "BC_ROLLOUT_GPU_MEMORY_UTILIZATION=0.9" in source
     assert "BC_TRAINER_NNODES=2" in source
