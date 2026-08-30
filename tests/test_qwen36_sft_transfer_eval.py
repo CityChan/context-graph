@@ -1,3 +1,4 @@
+import importlib.util
 from pathlib import Path
 
 
@@ -11,6 +12,29 @@ def test_model_merger_supports_adapter_only_export_with_explicit_alpha():
     assert '"--lora-alpha"' in source
     assert "self.config.lora_alpha or 0" in source
     assert "Checkpoint contains no LoRA parameters" in source
+
+
+def test_qwen35_lora_export_normalizes_legacy_text_layer_keys():
+    module_path = Path("verl/utils/lora_adapter.py")
+    spec = importlib.util.spec_from_file_location("lora_adapter_utils", module_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    normalize_lora_adapter_key = module.normalize_lora_adapter_key
+
+    legacy = "base_model.model.model.layers.0.self_attn.q_proj.lora_A.default.weight"
+    expected = "base_model.model.model.language_model.layers.0.self_attn.q_proj.lora_A.weight"
+    assert normalize_lora_adapter_key(legacy, model_type="qwen3_5") == expected
+    assert normalize_lora_adapter_key(expected, model_type="qwen3_5") == expected
+
+
+def test_adapter_repair_is_non_overwriting_and_export_rejects_legacy_keys():
+    repair = _read("scripts/repair_qwen35_lora_adapter.py")
+    export = _read("scripts/export_contextgraph_sft_lora.sh")
+    assert "Target already exists; choose a new path" in repair
+    assert 'model_type="qwen3_5"' in repair
+    assert "Legacy Qwen3.5 LoRA keys remain after repair" in repair
+    assert "legacy Qwen3.5 LoRA keys remain" in export
+    assert "qwen36_27b_scienceworld_step147_v2" in export
 
 
 def test_export_script_keeps_only_a_verified_lora_adapter():
@@ -40,6 +64,7 @@ def test_all_three_eval_runners_accept_the_same_lora_overrides():
 
 def test_paired_transfer_submitter_is_matched_and_complete():
     source = _read("scripts/submit_eval_qwen36_27b_sft_transfer.sh")
+    assert "qwen36_27b_scienceworld_step147_v2" in source
     assert "for variant in base sft" in source
     assert "BENCHMARKS=${BENCHMARKS:-gaia,bc,discovery}" in source
     assert "GAIA_METHODS=ctxgraph" in source
@@ -115,6 +140,7 @@ def test_idev_transfer_runner_uses_current_allocation_and_one_sample_default():
     assert "SAB_ROLLOUT_TENSOR_MODEL_PARALLEL_SIZE=2" in source
     assert "SAB_ROLLOUT_QUANTIZATION=none" in source
     assert "USE_KL_LOSS=False" in source
+    assert "qwen36_27b_scienceworld_step147_v2" in source
 
 
 def test_transfer_eval_runners_expose_protocol_preserving_qwen_memory_knobs():

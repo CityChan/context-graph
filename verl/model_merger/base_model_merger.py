@@ -29,6 +29,7 @@ from transformers import (
 )
 
 from verl.utils import hf_processor, hf_tokenizer
+from verl.utils.lora_adapter import normalize_lora_adapter_key
 
 try:
     from transformers import AutoModelForVision2Seq
@@ -276,9 +277,12 @@ class BaseModelMerger(ABC):
         lora_params = OrderedDict()
         target_modules = set()
         lora_key = None
+        model_type = getattr(self.model_config, "model_type", None)
 
         for name in lora_params_names:
-            lora_key = name.replace(".default.weight", ".weight")
+            lora_key = normalize_lora_adapter_key(name, model_type=model_type)
+            if lora_key in lora_params:
+                raise ValueError(f"Duplicate LoRA key after normalization: {lora_key}")
             target_modules.add(lora_key.split(".")[-3])
             lora_params[lora_key] = state_dict.pop(name)
 

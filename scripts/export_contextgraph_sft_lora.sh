@@ -5,7 +5,7 @@ set -euo pipefail
 
 PROJECT_ROOT=${PROJECT_ROOT:-/work/09281/chc_1996/vista/context-graph}
 CHECKPOINT_DIR=${CHECKPOINT_DIR:-${SCRATCH:-/scratch/09281/chc_1996}/contextgraph_sft_checkpoints/947686_qwen36_27b_sft_full/global_step_147}
-EXPORT_ROOT=${EXPORT_ROOT:-${SCRATCH:-/scratch/09281/chc_1996}/contextgraph_sft_exports/qwen36_27b_scienceworld_step147}
+EXPORT_ROOT=${EXPORT_ROOT:-${SCRATCH:-/scratch/09281/chc_1996}/contextgraph_sft_exports/qwen36_27b_scienceworld_step147_v2}
 LORA_ALPHA=${LORA_ALPHA:-64}
 CONDA_ENV_NAME=${CONDA_ENV_NAME:-deepseek_v4}
 ADAPTER_DIR=$EXPORT_ROOT/lora_adapter
@@ -43,6 +43,6 @@ for required in adapter_config.json adapter_model.safetensors; do
   fi
 done
 
-python -c 'import json,sys; path,expected=sys.argv[1],int(sys.argv[2]); config=json.load(open(path,encoding="utf-8")); assert config.get("lora_alpha")==expected,config; assert int(config.get("r",0))>0,config; print(json.dumps({"adapter":path,"r":config["r"],"lora_alpha":config["lora_alpha"]}))' "$ADAPTER_DIR/adapter_config.json" "$LORA_ALPHA"
+python -c 'import json,sys; from safetensors import safe_open; path,expected=sys.argv[1],int(sys.argv[2]); config=json.load(open(path+"/adapter_config.json",encoding="utf-8")); keys=list(safe_open(path+"/adapter_model.safetensors",framework="pt",device="cpu").keys()); legacy=[key for key in keys if key.startswith("base_model.model.model.layers.")]; assert config.get("lora_alpha")==expected,config; assert int(config.get("r",0))>0,config; assert keys,"adapter has no tensors"; assert not legacy,f"legacy Qwen3.5 LoRA keys remain: {legacy[:3]}"; print(json.dumps({"adapter":path,"r":config["r"],"lora_alpha":config["lora_alpha"],"tensor_count":len(keys)}))' "$ADAPTER_DIR" "$LORA_ALPHA"
 
 echo "ContextGraph SFT LoRA export passed: $ADAPTER_DIR"

@@ -5,7 +5,7 @@ set -euo pipefail
 
 PROJECT_ROOT=${PROJECT_ROOT:-/work/09281/chc_1996/vista/context-graph}
 BASE_MODEL_PATH=${BASE_MODEL_PATH:-${SCRATCH:-/scratch/09281/chc_1996}/hf_cache/hub/models--Qwen--Qwen3.6-27B/snapshots/6a9e13bd6fc8f0983b9b99948120bc37f49c13e9}
-LORA_ADAPTER_PATH=${LORA_ADAPTER_PATH:-${SCRATCH:-/scratch/09281/chc_1996}/contextgraph_sft_exports/qwen36_27b_scienceworld_step147/lora_adapter}
+LORA_ADAPTER_PATH=${LORA_ADAPTER_PATH:-${SCRATCH:-/scratch/09281/chc_1996}/contextgraph_sft_exports/qwen36_27b_scienceworld_step147_v2/lora_adapter}
 BENCHMARK=${BENCHMARK:-bc}
 VARIANT=${VARIANT:-base}
 EVAL_MAX_SAMPLES=${EVAL_MAX_SAMPLES:-1}
