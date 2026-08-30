@@ -126,7 +126,9 @@ def to_builtin(value: Any) -> Any:
     return value
 
 
-def audit_token_lengths(frame: pd.DataFrame, tokenizer_path: str, max_length: int) -> dict[str, Any]:
+def audit_token_lengths(
+    frame: pd.DataFrame, tokenizer_path: str, max_length: int
+) -> tuple[dict[str, Any], list[int]]:
     from transformers import AutoTokenizer
 
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_path, trust_remote_code=True, local_files_only=True)
@@ -143,6 +145,13 @@ def audit_token_lengths(frame: pd.DataFrame, tokenizer_path: str, max_length: in
         )
         lengths.append(len(token_ids))
     series = pd.Series(lengths, dtype="int64")
+    thresholds = {}
+    for threshold in (8192, 12288, 16384, 20480):
+        over_threshold = int((series > threshold).sum())
+        thresholds[str(threshold)] = {
+            "over": over_threshold,
+            "rate": float(over_threshold / len(series)),
+        }
     return {
         "samples": len(lengths),
         "min": int(series.min()),
@@ -154,7 +163,8 @@ def audit_token_lengths(frame: pd.DataFrame, tokenizer_path: str, max_length: in
         "max_length": max_length,
         "over_max_length": int((series > max_length).sum()),
         "over_max_length_rate": float((series > max_length).mean()),
-    }
+        "thresholds": thresholds,
+    }, lengths
 
 
 def main() -> None:
@@ -163,11 +173,18 @@ def main() -> None:
     output_dir = Path(args.output_dir)
     source_files = collect_source_files(data_root, args.run_prefix)
     training, validation, summary = assemble_dataset(source_files, args.validation_fraction, args.seed)
-    if args.tokenizer:
-        summary["train_token_lengths"] = audit_token_lengths(training, args.tokenizer, args.max_length)
-        summary["validation_token_lengths"] = audit_token_lengths(validation, args.tokenizer, args.max_length)
-
     output_dir.mkdir(parents=True, exist_ok=True)
+    if args.tokenizer:
+        train_token_stats, train_lengths = audit_token_lengths(training, args.tokenizer, args.max_length)
+        validation_token_stats, _ = audit_token_lengths(validation, args.tokenizer, args.max_length)
+        summary["train_token_lengths"] = train_token_stats
+        summary["validation_token_lengths"] = validation_token_stats
+        longest_indices = sorted(range(len(train_lengths)), key=train_lengths.__getitem__, reverse=True)[:4]
+        longest_output = output_dir / "contextgraph_sft_longest4.parquet"
+        training.iloc[longest_indices].to_parquet(longest_output, index=False)
+        summary["longest_smoke_output"] = str(longest_output)
+        summary["longest_smoke_lengths"] = [train_lengths[index] for index in longest_indices]
+
     train_output = output_dir / "contextgraph_sft_train.parquet"
     validation_output = output_dir / "contextgraph_sft_validation.parquet"
     manifest_output = output_dir / "manifest.json"

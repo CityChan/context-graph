@@ -52,3 +52,10 @@ def test_quality_gates_reject_invalid_graph_rows():
         assert "invalid_ops" in str(exc)
     else:
         raise AssertionError("invalid graph row was accepted")
+
+
+def test_length_audit_records_formal_thresholds_and_longest_smoke_output():
+    text = MODULE_PATH.read_text()
+    assert "for threshold in (8192, 12288, 16384, 20480)" in text
+    assert 'contextgraph_sft_longest4.parquet' in text
+    assert 'summary["longest_smoke_lengths"]' in text
