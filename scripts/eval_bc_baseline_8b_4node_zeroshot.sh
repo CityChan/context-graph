@@ -282,7 +282,19 @@ fi
 
 # ── Pre-flight: 8B + embedder weights must be present (offline) ──
 probe "checking model caches"
-TRAINER_CACHE_DIR="$HF_HUB_CACHE/models--${MODEL_PATH//\//--}"
+if [ -d "$MODEL_PATH" ]; then
+  TRAINER_CACHE_DIR="$MODEL_PATH"
+  if [ ! -s "$TRAINER_CACHE_DIR/config.json" ]; then
+    echo "ERROR: local MODEL_PATH is missing config.json: $TRAINER_CACHE_DIR"
+    exit 1
+  fi
+  if ! find "$TRAINER_CACHE_DIR" -maxdepth 1 -type f \( -name '*.safetensors' -o -name 'pytorch_model*.bin' \) -size +0c -print -quit | grep -q .; then
+    echo "ERROR: local MODEL_PATH has no non-empty Hugging Face weight files: $TRAINER_CACHE_DIR"
+    exit 1
+  fi
+else
+  TRAINER_CACHE_DIR="$HF_HUB_CACHE/models--${MODEL_PATH//\//--}"
+fi
 EMBED_CACHE_DIR="$HF_HUB_CACHE/models--${EMBED_MODEL//\//--}"
 if [ ! -d "$TRAINER_CACHE_DIR" ]; then
   echo "ERROR: $MODEL_PATH not found at $TRAINER_CACHE_DIR"
