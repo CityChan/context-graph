@@ -98,3 +98,46 @@ def test_cli_writes_controller_parquet_with_offline_teacher(tmp_path, monkeypatc
     assert len(frame) == 1
     assert frame.iloc[0]["action"] == "add_edge"
     assert manifest["all_replay_valid"] is True
+
+
+def test_cli_zero_max_samples_processes_complete_input(tmp_path, monkeypatch):
+    pytest.importorskip("pyarrow")
+    source = tmp_path / "miroverse.jsonl"
+    rejected = miroverse_record()
+    rejected["messages"] = rejected["messages"][:4]
+    source.write_text(
+        "\n".join(json.dumps(item) for item in [rejected, miroverse_record()]) + "\n",
+        encoding="utf-8",
+    )
+    output = tmp_path / "controller.parquet"
+    response = json.dumps(
+        {
+            "action": "add_edge",
+            "candidate_indices": [0, 1],
+            "summary": "",
+            "relation": "causal",
+        }
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "prepare_miroverse_contextgraph_controller_sft.py",
+            "--input",
+            str(source),
+            "--output",
+            str(output),
+            "--max-samples",
+            "0",
+            "--teacher-response",
+            response,
+        ],
+    )
+    from scripts.prepare_miroverse_contextgraph_controller_sft import main
+
+    main()
+    frame = pd.read_parquet(output)
+    manifest = json.loads(output.with_suffix(".manifest.json").read_text(encoding="utf-8"))
+    assert len(frame) == 1
+    assert manifest["accepted"] == 1
+    assert manifest["rejected"] == 1
+    assert manifest["all_replay_valid"] is True

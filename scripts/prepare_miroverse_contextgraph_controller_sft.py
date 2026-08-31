@@ -39,7 +39,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--input", required=True, help="MiroVerse JSONL or parquet file")
     parser.add_argument("--output", required=True, help="Output controller SFT parquet")
     parser.add_argument("--manifest", help="Optional JSON manifest path")
-    parser.add_argument("--max-samples", type=int, default=2)
+    parser.add_argument(
+        "--max-samples",
+        type=int,
+        default=2,
+        help="Maximum accepted rows; use 0 to process the complete input",
+    )
     parser.add_argument("--max-candidates", type=int, default=12)
     parser.add_argument("--preview-chars", type=int, default=360)
     parser.add_argument("--teacher-base-url", default="http://127.0.0.1:18000/v1")
@@ -310,8 +315,8 @@ def convert_record(
 
 def main() -> None:
     args = parse_args()
-    if args.max_samples <= 0:
-        raise ValueError("--max-samples must be positive")
+    if args.max_samples < 0:
+        raise ValueError("--max-samples must be non-negative")
     input_path = Path(args.input)
     output_path = Path(args.output)
     manifest_path = Path(args.manifest) if args.manifest else output_path.with_suffix(".manifest.json")
@@ -323,7 +328,7 @@ def main() -> None:
     rejected: list[dict[str, Any]] = []
     offline_responses = iter(args.teacher_response)
     for sample_index, record in enumerate(load_records(input_path)):
-        if len(rows) >= args.max_samples:
+        if args.max_samples and len(rows) >= args.max_samples:
             break
         try:
             question, answer, evidence = extract_evidence(record)
@@ -368,9 +373,9 @@ def main() -> None:
             )
         except Exception as exc:
             rejected.append({"sample_index": sample_index, "reason": str(exc)})
-    if len(rows) != args.max_samples:
+    if args.max_samples and len(rows) != args.max_samples:
         raise RuntimeError(
-            f"smoke required {args.max_samples} accepted rows, got {len(rows)}; "
+            f"requested {args.max_samples} accepted rows, got {len(rows)}; "
             f"rejections={rejected[:5]}"
         )
     output_path.parent.mkdir(parents=True, exist_ok=True)
