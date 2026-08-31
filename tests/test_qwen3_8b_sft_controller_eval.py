@@ -16,7 +16,9 @@ def test_browsecomp_runner_accepts_a_local_merged_hf_model():
 
 def test_sft_eval_matches_aug27_controller_protocol():
     text = WRAPPER.read_text(encoding="utf-8")
-    assert "unset MODEL_PATH EXPERIMENT_NAME" in text
+    assert "unset MODEL_PATH EXPERIMENT_NAME HF_HOME HF_HUB_CACHE" in text
+    assert "export HF_HOME=/work/09281/chc_1996/vista/cache" in text
+    assert "export HF_HUB_CACHE=$HF_HOME/hub" in text
     assert "contextgraph_sft_models" in text
     assert "export BC_METHOD=contextgraph" in text
     assert "export BC_CTXGRAPH_PROTOCOL=controller" in text

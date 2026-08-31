@@ -8,8 +8,11 @@ set -euo pipefail
 : "${SCRATCH:?SCRATCH must point to the Vista scratch filesystem}"
 PROJECT_ROOT=${PROJECT_ROOT:-/work/09281/chc_1996/vista/context-graph}
 
-# Ignore model/protocol values left over from earlier smoke or training runs.
-unset MODEL_PATH EXPERIMENT_NAME
+# Ignore model/protocol/cache values left over from earlier smoke or training
+# runs. The Aug-27 eval artefacts live in the established read-only work cache.
+unset MODEL_PATH EXPERIMENT_NAME HF_HOME HF_HUB_CACHE
+export HF_HOME=/work/09281/chc_1996/vista/cache
+export HF_HUB_CACHE=$HF_HOME/hub
 export MODEL_PATH=${SFT_EVAL_MODEL_PATH:-$SCRATCH/contextgraph_sft_models/954050_qwen3_8b_contextgraph_sft_32k_fullparam}
 export BC_METHOD=contextgraph
 export BC_CTXGRAPH_PROTOCOL=controller
