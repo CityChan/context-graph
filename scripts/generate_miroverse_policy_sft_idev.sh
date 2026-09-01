@@ -15,6 +15,7 @@ RUN_PREFLIGHT=${RUN_PREFLIGHT:-0}
 PREFLIGHT_ONLY=${PREFLIGHT_ONLY:-0}
 TOKENIZER_PATH=${TOKENIZER_PATH:-$SCRATCH/contextgraph_sft_models/957946_miroverse_qwen3_8b_lora32_4k_merged}
 MAX_LENGTH=${MAX_LENGTH:-32768}
+LOSS_MASK_MODE=${LOSS_MASK_MODE:-chatml}
 
 cd "$PROJECT_ROOT"
 source "$CONDA_ROOT/etc/profile.d/conda.sh"
@@ -29,8 +30,8 @@ fi
 if [[ "$RUN_PREFLIGHT" == "1" || "$PREFLIGHT_ONLY" == "1" ]]; then
   test -s "$TRAIN_FILE" || { echo "ERROR: missing policy train parquet: $TRAIN_FILE"; exit 2; }
   test -s "$VAL_FILE" || { echo "ERROR: missing policy validation parquet: $VAL_FILE"; exit 2; }
-  python -u scripts/check_contextgraph_sft_data.py --data "$TRAIN_FILE" --tokenizer "$TOKENIZER_PATH" --max-length "$MAX_LENGTH" --loss-mask-mode assistant_tokens --all-samples
-  python -u scripts/check_contextgraph_sft_data.py --data "$VAL_FILE" --tokenizer "$TOKENIZER_PATH" --max-length "$MAX_LENGTH" --loss-mask-mode assistant_tokens --all-samples
+  python -u scripts/check_contextgraph_sft_data.py --data "$TRAIN_FILE" --tokenizer "$TOKENIZER_PATH" --max-length "$MAX_LENGTH" --loss-mask-mode "$LOSS_MASK_MODE" --all-samples
+  python -u scripts/check_contextgraph_sft_data.py --data "$VAL_FILE" --tokenizer "$TOKENIZER_PATH" --max-length "$MAX_LENGTH" --loss-mask-mode "$LOSS_MASK_MODE" --all-samples
 fi
 
 echo "MiroVerse ContextGraph policy SFT complete: $OUTPUT_DIR"
