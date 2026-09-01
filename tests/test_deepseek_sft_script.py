@@ -25,6 +25,8 @@ def test_deepseek_sft_script_requires_v4_serving_features():
     assert "--tensor-parallel-size $TEACHER_TP" in text
     assert "REASONING_EFFORT=${REASONING_EFFORT:-non-thinking}" in text
     assert 'if [ "$PREFLIGHT_ONLY" = "1" ]' in text
+    assert "SERVER_LD_PRELOAD=${SERVER_LD_PRELOAD:-$TORCH_GLOBAL_DEPS}" in text
+    assert "export LD_PRELOAD=$SERVER_LD_PRELOAD OMP_NUM_THREADS=1" in text
 
 
 def test_deepseek_server_scripts_pin_vista_cuda_and_local_jit_caches():
