@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from collections import Counter
 from pathlib import Path
@@ -53,7 +54,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-num-seqs", type=int, default=64)
     parser.add_argument("--gpu-memory-utilization", type=float, default=0.85)
     parser.add_argument("--tensor-parallel-size", type=int, default=1)
-    parser.add_argument("--enforce-eager", action="store_true")
+    parser.add_argument(
+        "--enforce-eager",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Disable torch.compile/CUDA graphs by default for reliable validation",
+    )
     return parser.parse_args()
 
 
@@ -209,6 +215,10 @@ def _rate(records: list[dict[str, Any]], key: str) -> float:
 
 def main() -> None:
     args = parse_args()
+    cache_tag = os.environ.get("SLURM_JOB_ID", str(os.getpid()))
+    os.environ.setdefault("VLLM_CACHE_ROOT", f"/tmp/contextgraph-vllm-{cache_tag}")
+    os.environ.setdefault("TORCHINDUCTOR_CACHE_DIR", f"/tmp/contextgraph-inductor-{cache_tag}")
+    os.environ.setdefault("TRITON_CACHE_DIR", f"/tmp/contextgraph-triton-{cache_tag}")
     if args.max_samples < 0:
         raise SystemExit("--max-samples must be non-negative")
     data = pd.read_parquet(args.data)

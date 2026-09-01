@@ -1,0 +1,13 @@
+from pathlib import Path
+
+
+SCRIPT = Path("scripts/eval_miroverse_controller_sft_idev.sh")
+
+
+def test_idev_wrapper_uses_node_local_caches_and_eager_mode():
+    text = SCRIPT.read_text(encoding="utf-8")
+    assert "TORCHINDUCTOR_CACHE_DIR" in text
+    assert "TRITON_CACHE_DIR" in text
+    assert "VLLM_CACHE_ROOT" in text
+    assert "--enforce-eager" in text
+    assert "contextgraph_sft_validation.parquet" in text
