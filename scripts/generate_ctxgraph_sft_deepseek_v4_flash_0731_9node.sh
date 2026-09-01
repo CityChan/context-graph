@@ -48,6 +48,7 @@ RUN_TAG=${RUN_TAG:-${SLURM_JOB_ID:-local}}
 PREFLIGHT_ONLY=${PREFLIGHT_ONLY:-0}
 PREFLIGHT_TIMEOUT_SECONDS=${PREFLIGHT_TIMEOUT_SECONDS:-180}
 FULL_POLICY_CURATOR=${FULL_POLICY_CURATOR:-0}
+COLOCATE_SEARCH=${COLOCATE_SEARCH:-0}
 
 : "${SCRATCH:?SCRATCH must point to the Vista scratch filesystem}"
 HF_HOME=${DEEPSEEK_HF_HOME:-$SCRATCH/hf_cache}
@@ -203,14 +204,22 @@ if [ "$NUM_NODES" -ne "$EXPECTED_NUM_NODES" ]; then
   echo "ERROR: expected $EXPECTED_NUM_NODES nodes, got $NUM_NODES"
   exit 2
 fi
-if [ "$TEACHER_TP" -ne $((NUM_NODES - 1)) ]; then
-  echo "ERROR: TEACHER_TP=$TEACHER_TP must equal model node count $((NUM_NODES - 1))"
-  exit 2
-fi
-
 SEARCH_NODE=${NODELIST[0]}
 SEARCH_NODE_IP=$(getent hosts "$SEARCH_NODE" | awk '{print $1}')
-TEACHER_HEAD_NODE=${NODELIST[1]}
+if [ "$COLOCATE_SEARCH" = "1" ]; then
+  MODEL_NODE_START=0
+  if [ "$TEACHER_TP" -ne "$NUM_NODES" ]; then
+    echo "ERROR: colocated TEACHER_TP=$TEACHER_TP must equal node count $NUM_NODES"
+    exit 2
+  fi
+else
+  MODEL_NODE_START=1
+  if [ "$TEACHER_TP" -ne $((NUM_NODES - 1)) ]; then
+    echo "ERROR: TEACHER_TP=$TEACHER_TP must equal model node count $((NUM_NODES - 1))"
+    exit 2
+  fi
+fi
+TEACHER_HEAD_NODE=${NODELIST[$MODEL_NODE_START]}
 TEACHER_HEAD_IP=$(getent hosts "$TEACHER_HEAD_NODE" | awk '{print $1}')
 export NO_PROXY="${NO_PROXY:+$NO_PROXY,}127.0.0.1,localhost,$SEARCH_NODE,$SEARCH_NODE_IP,$TEACHER_HEAD_NODE,$TEACHER_HEAD_IP"
 export no_proxy=$NO_PROXY
@@ -218,8 +227,9 @@ export no_proxy=$NO_PROXY
 echo "Model ID:   $MODEL_ID"
 echo "Model path: $MODEL_PATH"
 echo "Tokenizer:  $STUDENT_TOKENIZER_PATH"
-echo "Server env: $SERVER_CONDA_ENV; TP=$TEACHER_TP; model nodes=${NODELIST[*]:1}"
+echo "Server env: $SERVER_CONDA_ENV; TP=$TEACHER_TP; model nodes=${NODELIST[*]:$MODEL_NODE_START}"
 echo "Search:     $SEARCH_NODE ($SEARCH_NODE_IP:$SEARCH_PORT)"
+echo "Search colocated with teacher: $COLOCATE_SEARCH"
 echo "Safetensors load strategy: $SAFETENSORS_LOAD_STRATEGY (threads=$SAFETENSORS_PREFETCH_NUM_THREADS)"
 echo "Output:     $ARTIFACT_ROOT"
 
@@ -227,7 +237,7 @@ STEP_PIDS=()
 cleanup() {
   set +e
   for pid in "${STEP_PIDS[@]}"; do kill "$pid" 2>/dev/null || true; done
-  for node in "${NODELIST[@]:1}"; do srun --overlap --nodes=1 --ntasks=1 -w "$node" bash -lc "source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh; conda activate $SERVER_CONDA_ENV; ray stop --force >/dev/null 2>&1 || true" >/dev/null 2>&1 & done
+  for ((i=MODEL_NODE_START; i<NUM_NODES; i++)); do node=${NODELIST[$i]}; srun --overlap --nodes=1 --ntasks=1 -w "$node" bash -lc "source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh; conda activate $SERVER_CONDA_ENV; ray stop --force >/dev/null 2>&1 || true" >/dev/null 2>&1 & done
   wait || true
 }
 trap cleanup EXIT
@@ -247,7 +257,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TEACHER_HEAD_NODE" bash -lc "source /wo
 STEP_PIDS+=("$!")
 sleep 8
 
-for i in $(seq 2 $((NUM_NODES - 1))); do
+for i in $(seq $((MODEL_NODE_START + 1)) $((NUM_NODES - 1))); do
   node=${NODELIST[$i]}
   worker_ip=$(getent hosts "$node" | awk '{print $1}')
   worker_log="$PROJECT_ROOT/logs/gen-cg-sft-dsv4-ray-worker-${i}.${SLURM_JOB_ID:-local}.log"
