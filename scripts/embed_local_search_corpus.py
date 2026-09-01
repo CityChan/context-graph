@@ -18,7 +18,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--max-length", type=int, default=2048)
     parser.add_argument("--device", default="cuda")
-    parser.add_argument("--attn-implementation", default="flash_attention_2")
+    parser.add_argument(
+        "--attn-implementation",
+        default="sdpa",
+        choices=("sdpa", "eager", "flash_attention_2"),
+        help="attention backend; sdpa does not require the optional flash-attn package",
+    )
     return parser.parse_args()
 
 
@@ -67,7 +72,7 @@ def main() -> None:
     tokenizer = AutoTokenizer.from_pretrained(args.model, padding_side="left")
     model = AutoModel.from_pretrained(
         args.model,
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
         attn_implementation=args.attn_implementation,
     ).to(args.device)
     model.eval()
@@ -105,6 +110,7 @@ def main() -> None:
         "rows": len(docids),
         "embedding_shape": list(corpus_embeddings.shape),
         "embedding_dtype": str(corpus_embeddings.dtype),
+        "attn_implementation": args.attn_implementation,
         "max_length": args.max_length,
         "normalized": True,
     }

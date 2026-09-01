@@ -23,6 +23,8 @@ def test_seed_wrapper_uses_miroverse_musique_and_scratch():
     assert "prepare_miroverse_search_policy_seeds.py" in text
     assert "prepare_miroverse_retrieval_corpus.py" in text
     assert "embed_local_search_corpus.py" in text
+    assert "EMBED_ATTN_IMPLEMENTATION=${EMBED_ATTN_IMPLEMENTATION:-sdpa}" in text
+    assert '--attn-implementation "$EMBED_ATTN_IMPLEMENTATION"' in text
 
 
 def test_smoke_submitter_enables_complete_policy_curator():
