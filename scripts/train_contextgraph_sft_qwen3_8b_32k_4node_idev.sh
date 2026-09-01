@@ -11,7 +11,7 @@ FORMAL_DATA_DIR=${FORMAL_DATA_DIR:-$SCRATCH/contextgraph_sft/qwen3_8b_formal_945
 
 export TRAIN_FILE=${TRAIN_FILE:-$FORMAL_DATA_DIR/contextgraph_sft_train.parquet}
 export VAL_FILE=${VAL_FILE:-$FORMAL_DATA_DIR/contextgraph_sft_validation.parquet}
-export MAX_LENGTH=32768
+export MAX_LENGTH=${MAX_LENGTH:-32768}
 export TRAIN_BATCH_SIZE=4
 export MICRO_BATCH_SIZE=1
 export TRAIN_MAX_SAMPLES=-1
