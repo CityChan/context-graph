@@ -1,6 +1,18 @@
 import json
+import subprocess
+import sys
 
 from scripts.prepare_miroverse_retrieval_corpus import build_corpus
+
+
+def test_script_can_be_executed_directly_from_repo_root():
+    result = subprocess.run(
+        [sys.executable, "scripts/prepare_miroverse_retrieval_corpus.py", "--help"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def call(server, tool, arguments, observation):

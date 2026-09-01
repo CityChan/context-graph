@@ -7,11 +7,14 @@ import argparse
 import hashlib
 import json
 import re
+import sys
 from collections import Counter
 from pathlib import Path
 from typing import Any, Iterable
 
 import pandas as pd
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from scripts.inspect_miroverse_policy_source import as_messages, load_records, mcp_calls
 
