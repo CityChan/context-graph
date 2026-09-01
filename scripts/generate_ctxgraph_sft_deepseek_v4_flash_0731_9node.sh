@@ -47,6 +47,7 @@ STUDENT_TOKENIZER_ID=${STUDENT_TOKENIZER_ID:-Qwen/Qwen3-8B}
 RUN_TAG=${RUN_TAG:-${SLURM_JOB_ID:-local}}
 PREFLIGHT_ONLY=${PREFLIGHT_ONLY:-0}
 PREFLIGHT_TIMEOUT_SECONDS=${PREFLIGHT_TIMEOUT_SECONDS:-180}
+FULL_POLICY_CURATOR=${FULL_POLICY_CURATOR:-0}
 
 : "${SCRATCH:?SCRATCH must point to the Vista scratch filesystem}"
 HF_HOME=${DEEPSEEK_HF_HOME:-$SCRATCH/hf_cache}
@@ -58,6 +59,7 @@ ARTIFACT_ROOT=${ARTIFACT_ROOT:-$SCRATCH/contextgraph_sft/deepseek_v4_flash_0731/
 RAW_OUTPUT_DIR=$ARTIFACT_ROOT/raw
 SFT_OUTPUT=$ARTIFACT_ROOT/contextgraph_sft_train.parquet
 SFT_VALIDATION_OUTPUT=$ARTIFACT_ROOT/contextgraph_sft_validation.parquet
+SFT_MANIFEST=$ARTIFACT_ROOT/manifest.json
 
 resolve_snapshot() {
   local repo_id=$1
@@ -285,5 +287,9 @@ set +u
 source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
 conda activate "$AGENT_CONDA_ENV"
 set -u
-python scripts/build_contextgraph_sft.py "$RESULT_FILE" --output "$SFT_OUTPUT" --validation-output "$SFT_VALIDATION_OUTPUT" --validation-fraction 0.05 --min-task-reward 1.0 --min-valid-graph-ops 1 --min-structural-graph-ops 1 --max-invalid-graph-ops 0 --require-graph-trace --min-graph-quality-score 1.0 --max-redundant-graph-ops 0 --teacher-provider local_vllm --teacher-model "$MODEL_ID"
+if [ "$FULL_POLICY_CURATOR" = "1" ]; then
+  python scripts/build_contextgraph_full_policy_sft.py "$RESULT_FILE" --output "$SFT_OUTPUT" --validation-output "$SFT_VALIDATION_OUTPUT" --manifest "$SFT_MANIFEST" --validation-fraction 0.05 --teacher-model "$MODEL_ID"
+else
+  python scripts/build_contextgraph_sft.py "$RESULT_FILE" --output "$SFT_OUTPUT" --validation-output "$SFT_VALIDATION_OUTPUT" --validation-fraction 0.05 --min-task-reward 1.0 --min-valid-graph-ops 1 --min-structural-graph-ops 1 --max-invalid-graph-ops 0 --require-graph-trace --min-graph-quality-score 1.0 --max-redundant-graph-ops 0 --teacher-provider local_vllm --teacher-model "$MODEL_ID"
+fi
 echo "DeepSeek ContextGraph SFT generation complete: $SFT_OUTPUT"

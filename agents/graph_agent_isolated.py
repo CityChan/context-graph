@@ -58,6 +58,7 @@ from .graph_controller import (
     graph_checkpoint_due,
 )
 from .graph_trace import GraphTraceRecorder
+from .trajectory_capture import serialize_agent_trajectories
 
 
 def print_chat(chat):
@@ -1297,6 +1298,7 @@ async def process_item(
     print(f'[GRAPH REWARD ISOLATED] {graph_rewards} | branch_subgraphs={branch_subgraph_stats}')
 
     outs = []
+    agent_trajectories = serialize_agent_trajectories(agent)
     env.stats['get_final_score'] = score[1]
     env.stats['traj_num'] = len(agent)
     main_response_tokens = max(len(agent['main'].context()) - init_len, 0)
@@ -1554,6 +1556,7 @@ async def process_item(
                 'graph_rewards': graph_rewards,
                 'tool_format_repairs': copy.deepcopy(tool_format_repair_log),
                 'isolated_subgraph_stats': branch_subgraph_stats,
+                'agent_trajectories': copy.deepcopy(agent_trajectories),
             }
         )
         outs.append(copy.deepcopy(out))

@@ -242,6 +242,7 @@ async def eval_one(row: dict[str, Any], args: argparse.Namespace, tokenizer) -> 
         })
         if args.save_messages:
             result["messages"] = extra_fields.get("messages", [])
+            result["agent_trajectories"] = extra_fields.get("agent_trajectories", [])
             result["graph_trace"] = extra_fields.get("graph_trace")
             result["graph_state"] = extra_fields.get("graph_state", "")
             result["graph_rewards"] = extra_fields.get("graph_rewards", {})
