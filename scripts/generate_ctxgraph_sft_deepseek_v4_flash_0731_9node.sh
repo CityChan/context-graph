@@ -173,6 +173,8 @@ export NVCC_PREPEND_FLAGS="-I$DEEPSEEK_CUDA_MATH_INCLUDE ${NVCC_PREPEND_FLAGS:-}
 DEEPSEEK_CACHE_TAG=${SLURM_JOB_ID:-local}_0
 export DG_JIT_CACHE_DIR=${DG_JIT_CACHE_DIR:-/tmp/contextgraph-deepgemm-$DEEPSEEK_CACHE_TAG}
 export VLLM_CACHE_ROOT=${VLLM_CACHE_ROOT:-/tmp/contextgraph-vllm-$DEEPSEEK_CACHE_TAG}
+export TRITON_CACHE_DIR=${TRITON_CACHE_DIR:-/tmp/contextgraph-triton-$DEEPSEEK_CACHE_TAG}
+export TORCHINDUCTOR_CACHE_DIR=${TORCHINDUCTOR_CACHE_DIR:-/tmp/contextgraph-inductor-$DEEPSEEK_CACHE_TAG}
 export FLASHINFER_WORKSPACE_BASE=${FLASHINFER_WORKSPACE_BASE:-/tmp}
 TORCH_GLOBAL_DEPS=$(python -c "import importlib.util,pathlib; s=importlib.util.find_spec('torch'); print(pathlib.Path(s.origin).parent/'lib'/'libtorch_global_deps.so')")
 SERVER_LD_PRELOAD=${SERVER_LD_PRELOAD:-$TORCH_GLOBAL_DEPS}
@@ -180,7 +182,7 @@ test -s "$SERVER_LD_PRELOAD" || { echo "ERROR: server preload library missing: $
 echo "DeepSeek toolchain: nvcc=$CUDACXX host_cxx=$(command -v "$CXX")"
 echo "CUDA math headers: $DEEPSEEK_CUDA_MATH_INCLUDE"
 echo "Server LD preload: $SERVER_LD_PRELOAD"
-echo "Node-local JIT caches: DG_JIT_CACHE_DIR=$DG_JIT_CACHE_DIR VLLM_CACHE_ROOT=$VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_BASE=$FLASHINFER_WORKSPACE_BASE"
+echo "Node-local JIT caches: DG_JIT_CACHE_DIR=$DG_JIT_CACHE_DIR VLLM_CACHE_ROOT=$VLLM_CACHE_ROOT TRITON_CACHE_DIR=$TRITON_CACHE_DIR TORCHINDUCTOR_CACHE_DIR=$TORCHINDUCTOR_CACHE_DIR FLASHINFER_WORKSPACE_BASE=$FLASHINFER_WORKSPACE_BASE"
 echo "Preflight: importing server packages and reading model config"
 timeout "$PREFLIGHT_TIMEOUT_SECONDS" python -u -c "print('preflight stage: import transformers', flush=True); import transformers; print('preflight stage: import vllm', flush=True); import vllm; print('preflight stage: read model config', flush=True); from packaging.version import Version; from transformers import AutoConfig; assert Version(vllm.__version__) >= Version('0.25.0'), 'DeepSeek-V4-Flash-0731 requires vLLM >= 0.25.0'; c=AutoConfig.from_pretrained('$MODEL_PATH', trust_remote_code=True, local_files_only=True); print('server preflight:', 'transformers='+transformers.__version__, 'vllm='+vllm.__version__, 'model_type='+str(getattr(c, 'model_type', None)), flush=True)" || { echo "ERROR: server package/model preflight failed or exceeded ${PREFLIGHT_TIMEOUT_SECONDS}s"; exit 2; }
 # vLLM 0.27 uses paged/grouped CLI help; plain --help intentionally omits
@@ -259,7 +261,7 @@ done
 curl --noproxy '*' -fsS "http://$SEARCH_NODE_IP:$SEARCH_PORT/health" >/dev/null
 
 RAY_HEAD_LOG="$PROJECT_ROOT/logs/gen-cg-sft-dsv4-ray-head.${SLURM_JOB_ID:-local}.log"
-srun --overlap --nodes=1 --ntasks=1 -w "$TEACHER_HEAD_NODE" bash -lc "source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh; conda activate $SERVER_CONDA_ENV; ray stop --force >/dev/null 2>&1 || true; export CUDA_HOME=$CUDA_HOME CUDACXX=$CUDACXX CC=$CC CXX=$CXX CUDAHOSTCXX=$CUDAHOSTCXX DG_JIT_CACHE_DIR=$DG_JIT_CACHE_DIR VLLM_CACHE_ROOT=$VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_BASE=$FLASHINFER_WORKSPACE_BASE; export PATH=$CUDA_HOME/bin:\$PATH LD_LIBRARY_PATH=$LD_LIBRARY_PATH LIBRARY_PATH=$LIBRARY_PATH CPATH=$CPATH C_INCLUDE_PATH=$C_INCLUDE_PATH CPLUS_INCLUDE_PATH=$CPLUS_INCLUDE_PATH; export NVCC_PREPEND_FLAGS=\"$NVCC_PREPEND_FLAGS\"; export LD_PRELOAD=$SERVER_LD_PRELOAD OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1; export HF_HOME=$HF_HOME HF_HUB_CACHE=$HF_HUB_CACHE; exec ray start --head --node-ip-address=$TEACHER_HEAD_IP --port=6379 --num-cpus=70 --num-gpus=1 --block" >"$RAY_HEAD_LOG" 2>&1 &
+srun --overlap --nodes=1 --ntasks=1 -w "$TEACHER_HEAD_NODE" bash -lc "source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh; conda activate $SERVER_CONDA_ENV; ray stop --force >/dev/null 2>&1 || true; export CUDA_HOME=$CUDA_HOME CUDACXX=$CUDACXX CC=$CC CXX=$CXX CUDAHOSTCXX=$CUDAHOSTCXX DG_JIT_CACHE_DIR=$DG_JIT_CACHE_DIR VLLM_CACHE_ROOT=$VLLM_CACHE_ROOT TRITON_CACHE_DIR=$TRITON_CACHE_DIR TORCHINDUCTOR_CACHE_DIR=$TORCHINDUCTOR_CACHE_DIR FLASHINFER_WORKSPACE_BASE=$FLASHINFER_WORKSPACE_BASE; export PATH=$CUDA_HOME/bin:\$PATH LD_LIBRARY_PATH=$LD_LIBRARY_PATH LIBRARY_PATH=$LIBRARY_PATH CPATH=$CPATH C_INCLUDE_PATH=$C_INCLUDE_PATH CPLUS_INCLUDE_PATH=$CPLUS_INCLUDE_PATH; export NVCC_PREPEND_FLAGS=\"$NVCC_PREPEND_FLAGS\"; export LD_PRELOAD=$SERVER_LD_PRELOAD OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1; export HF_HOME=$HF_HOME HF_HUB_CACHE=$HF_HUB_CACHE; exec ray start --head --node-ip-address=$TEACHER_HEAD_IP --port=6379 --num-cpus=70 --num-gpus=1 --block" >"$RAY_HEAD_LOG" 2>&1 &
 STEP_PIDS+=("$!")
 sleep 8
 
@@ -267,7 +269,7 @@ for i in $(seq $((MODEL_NODE_START + 1)) $((NUM_NODES - 1))); do
   node=${NODELIST[$i]}
   worker_ip=$(getent hosts "$node" | awk '{print $1}')
   worker_log="$PROJECT_ROOT/logs/gen-cg-sft-dsv4-ray-worker-${i}.${SLURM_JOB_ID:-local}.log"
-  srun --overlap --nodes=1 --ntasks=1 -w "$node" bash -lc "source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh; conda activate $SERVER_CONDA_ENV; ray stop --force >/dev/null 2>&1 || true; export CUDA_HOME=$CUDA_HOME CUDACXX=$CUDACXX CC=$CC CXX=$CXX CUDAHOSTCXX=$CUDAHOSTCXX DG_JIT_CACHE_DIR=$DG_JIT_CACHE_DIR VLLM_CACHE_ROOT=$VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_BASE=$FLASHINFER_WORKSPACE_BASE; export PATH=$CUDA_HOME/bin:\$PATH LD_LIBRARY_PATH=$LD_LIBRARY_PATH LIBRARY_PATH=$LIBRARY_PATH CPATH=$CPATH C_INCLUDE_PATH=$C_INCLUDE_PATH CPLUS_INCLUDE_PATH=$CPLUS_INCLUDE_PATH; export NVCC_PREPEND_FLAGS=\"$NVCC_PREPEND_FLAGS\"; export LD_PRELOAD=$SERVER_LD_PRELOAD OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1; export HF_HOME=$HF_HOME HF_HUB_CACHE=$HF_HUB_CACHE; exec ray start --address=$TEACHER_HEAD_IP:6379 --node-ip-address=$worker_ip --num-cpus=70 --num-gpus=1 --block" >"$worker_log" 2>&1 &
+  srun --overlap --nodes=1 --ntasks=1 -w "$node" bash -lc "source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh; conda activate $SERVER_CONDA_ENV; ray stop --force >/dev/null 2>&1 || true; export CUDA_HOME=$CUDA_HOME CUDACXX=$CUDACXX CC=$CC CXX=$CXX CUDAHOSTCXX=$CUDAHOSTCXX DG_JIT_CACHE_DIR=$DG_JIT_CACHE_DIR VLLM_CACHE_ROOT=$VLLM_CACHE_ROOT TRITON_CACHE_DIR=$TRITON_CACHE_DIR TORCHINDUCTOR_CACHE_DIR=$TORCHINDUCTOR_CACHE_DIR FLASHINFER_WORKSPACE_BASE=$FLASHINFER_WORKSPACE_BASE; export PATH=$CUDA_HOME/bin:\$PATH LD_LIBRARY_PATH=$LD_LIBRARY_PATH LIBRARY_PATH=$LIBRARY_PATH CPATH=$CPATH C_INCLUDE_PATH=$C_INCLUDE_PATH CPLUS_INCLUDE_PATH=$CPLUS_INCLUDE_PATH; export NVCC_PREPEND_FLAGS=\"$NVCC_PREPEND_FLAGS\"; export LD_PRELOAD=$SERVER_LD_PRELOAD OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1; export HF_HOME=$HF_HOME HF_HUB_CACHE=$HF_HUB_CACHE; exec ray start --address=$TEACHER_HEAD_IP:6379 --node-ip-address=$worker_ip --num-cpus=70 --num-gpus=1 --block" >"$worker_log" 2>&1 &
   STEP_PIDS+=("$!")
 done
 
@@ -278,14 +280,17 @@ for _ in $(seq 1 180); do
 done
 
 VLLM_LOG="$PROJECT_ROOT/logs/gen-cg-sft-dsv4-vllm.${SLURM_JOB_ID:-local}.log"
-srun --overlap --nodes=1 --ntasks=1 -w "$TEACHER_HEAD_NODE" bash -lc "source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh; conda activate $SERVER_CONDA_ENV; export CUDA_HOME=$CUDA_HOME CUDACXX=$CUDACXX CC=$CC CXX=$CXX CUDAHOSTCXX=$CUDAHOSTCXX DG_JIT_CACHE_DIR=$DG_JIT_CACHE_DIR VLLM_CACHE_ROOT=$VLLM_CACHE_ROOT FLASHINFER_WORKSPACE_BASE=$FLASHINFER_WORKSPACE_BASE; export PATH=$CUDA_HOME/bin:\$PATH LD_LIBRARY_PATH=$LD_LIBRARY_PATH LIBRARY_PATH=$LIBRARY_PATH CPATH=$CPATH C_INCLUDE_PATH=$C_INCLUDE_PATH CPLUS_INCLUDE_PATH=$CPLUS_INCLUDE_PATH; export NVCC_PREPEND_FLAGS=\"$NVCC_PREPEND_FLAGS\"; export LD_PRELOAD=$SERVER_LD_PRELOAD OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1; export HF_HOME=$HF_HOME HF_HUB_CACHE=$HF_HUB_CACHE HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 RAY_ADDRESS=$TEACHER_HEAD_IP:6379; exec vllm serve $MODEL_PATH --served-model-name $MODEL_ID --host 0.0.0.0 --port $TEACHER_PORT --distributed-executor-backend ray --tensor-parallel-size $TEACHER_TP --enable-expert-parallel --moe-backend auto --trust-remote-code --tokenizer-mode deepseek_v4 --kv-cache-dtype fp8 --block-size 256 --max-model-len $MAX_MODEL_LEN --max-num-seqs $MAX_NUM_SEQS --gpu-memory-utilization $GPU_MEMORY_UTILIZATION --safetensors-load-strategy $SAFETENSORS_LOAD_STRATEGY --safetensors-prefetch-num-threads $SAFETENSORS_PREFETCH_NUM_THREADS --enable-chunked-prefill" >"$VLLM_LOG" 2>&1 &
+srun --overlap --nodes=1 --ntasks=1 -w "$TEACHER_HEAD_NODE" bash -lc "source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh; conda activate $SERVER_CONDA_ENV; export CUDA_HOME=$CUDA_HOME CUDACXX=$CUDACXX CC=$CC CXX=$CXX CUDAHOSTCXX=$CUDAHOSTCXX DG_JIT_CACHE_DIR=$DG_JIT_CACHE_DIR VLLM_CACHE_ROOT=$VLLM_CACHE_ROOT TRITON_CACHE_DIR=$TRITON_CACHE_DIR TORCHINDUCTOR_CACHE_DIR=$TORCHINDUCTOR_CACHE_DIR FLASHINFER_WORKSPACE_BASE=$FLASHINFER_WORKSPACE_BASE; export PATH=$CUDA_HOME/bin:\$PATH LD_LIBRARY_PATH=$LD_LIBRARY_PATH LIBRARY_PATH=$LIBRARY_PATH CPATH=$CPATH C_INCLUDE_PATH=$C_INCLUDE_PATH CPLUS_INCLUDE_PATH=$CPLUS_INCLUDE_PATH; export NVCC_PREPEND_FLAGS=\"$NVCC_PREPEND_FLAGS\"; export LD_PRELOAD=$SERVER_LD_PRELOAD OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1; export HF_HOME=$HF_HOME HF_HUB_CACHE=$HF_HUB_CACHE HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 RAY_ADDRESS=$TEACHER_HEAD_IP:6379; exec vllm serve $MODEL_PATH --served-model-name $MODEL_ID --host 0.0.0.0 --port $TEACHER_PORT --distributed-executor-backend ray --tensor-parallel-size $TEACHER_TP --enable-expert-parallel --moe-backend auto --trust-remote-code --tokenizer-mode deepseek_v4 --kv-cache-dtype fp8 --block-size 256 --max-model-len $MAX_MODEL_LEN --max-num-seqs $MAX_NUM_SEQS --gpu-memory-utilization $GPU_MEMORY_UTILIZATION --safetensors-load-strategy $SAFETENSORS_LOAD_STRATEGY --safetensors-prefetch-num-threads $SAFETENSORS_PREFETCH_NUM_THREADS --enable-chunked-prefill" >"$VLLM_LOG" 2>&1 &
 STEP_PIDS+=("$!")
+VLLM_STEP_PID=$!
 
+VLLM_READY=0
 for _ in $(seq 1 1800); do
-  if curl --noproxy '*' -fsS "http://$TEACHER_HEAD_IP:$TEACHER_PORT/v1/models" >/dev/null 2>&1; then break; fi
+  if curl --noproxy '*' -fsS "http://$TEACHER_HEAD_IP:$TEACHER_PORT/v1/models" >/dev/null 2>&1; then VLLM_READY=1; break; fi
+  if ! kill -0 "$VLLM_STEP_PID" 2>/dev/null; then echo "ERROR: vLLM server exited before readiness; tail of $VLLM_LOG:"; tail -n 80 "$VLLM_LOG"; exit 2; fi
   sleep 1
 done
-curl --noproxy '*' -fsS "http://$TEACHER_HEAD_IP:$TEACHER_PORT/v1/models" >/dev/null
+if [ "$VLLM_READY" != "1" ]; then echo "ERROR: vLLM server did not become ready within 1800 seconds; tail of $VLLM_LOG:"; tail -n 80 "$VLLM_LOG"; exit 2; fi
 
 export OPENAI_API_KEY=dummy
 export OPENAI_BASE_URL="http://$TEACHER_HEAD_IP:$TEACHER_PORT/v1"

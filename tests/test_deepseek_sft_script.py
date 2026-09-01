@@ -41,6 +41,10 @@ def test_deepseek_server_scripts_pin_vista_cuda_and_local_jit_caches():
         assert "export CUDAHOSTCXX=${DEEPSEEK_CUDAHOSTCXX:-g++}" in text
         assert "DG_JIT_CACHE_DIR" in text
         assert "VLLM_CACHE_ROOT" in text
+        assert "TRITON_CACHE_DIR" in text
+        assert "TORCHINDUCTOR_CACHE_DIR" in text
+        assert "TRITON_CACHE_DIR=$TRITON_CACHE_DIR" in text
+        assert "TORCHINDUCTOR_CACHE_DIR=$TORCHINDUCTOR_CACHE_DIR" in text
         assert "FLASHINFER_WORKSPACE_BASE" in text
         assert "DEEPSEEK_CUDA_MATH_INCLUDE" in text
         assert "DEEPSEEK_CUDA_MATH_LIB" in text
@@ -56,6 +60,13 @@ def test_deepseek_server_scripts_pin_vista_cuda_and_local_jit_caches():
         assert "preflight stage: import vllm" in text
         assert "preflight stage: read model config" in text
         assert "export CUDA_HOME=$CUDA_HOME" in text
+
+
+def test_deepseek_sft_server_readiness_fails_fast_on_early_exit():
+    text = SCRIPT.read_text(encoding="utf-8")
+    assert 'VLLM_STEP_PID=$!' in text
+    assert 'kill -0 "$VLLM_STEP_PID"' in text
+    assert "vLLM server exited before readiness" in text
 
 
 def test_deepseek_interactive_preflight_allows_slow_vllm_import():
