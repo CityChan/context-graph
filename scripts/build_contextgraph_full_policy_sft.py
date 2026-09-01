@@ -147,11 +147,25 @@ def function_counts(messages):
     )
 
 
+def result_eligible_for_branch_rows(result):
+    if result.get("status") != "success":
+        return False, "runner_failed"
+    if float(result.get("task_reward", result.get("score", 0.0)) or 0.0) < 1.0:
+        return False, "task_reward"
+    if not bool(result.get("is_finish", False)):
+        return False, "unfinished"
+    stats = result.get("env_stats") or {}
+    if bool(stats.get("overlong", False)) or bool(stats.get("hit_token_limit", False)):
+        return False, "overlong"
+    return True, None
+
+
 def build_rows(results, *, teacher_model: str, require_open_page: bool):
     rows = {}
     counters = Counter()
     for result in results:
         counters["input_results"] += 1
+        branch_parent_valid, branch_parent_reason = result_eligible_for_branch_rows(result)
         main_reasons = []
         main_row = result_to_sft_row(
             result,
@@ -170,24 +184,30 @@ def build_rows(results, *, teacher_model: str, require_open_page: bool):
         )
         if main_row is None:
             counters["rejected_result:" + (main_reasons[0] if main_reasons else "unknown")] += 1
+        else:
+            task_id = str(main_row["task_id"])
+            query_hash = result_query_hash(result)
+            main_function_counts = function_counts(main_row["messages"])
+            main_row.update(
+                {
+                    "query_hash": query_hash,
+                    "policy_role": "main",
+                    "protocol_valid": True,
+                    "search_calls": main_function_counts["search"],
+                    "open_page_calls": main_function_counts["open_page"],
+                    "return_calls": main_function_counts["return"],
+                    "branch_calls": main_function_counts["branch"],
+                    "finish_calls": main_function_counts["finish"],
+                }
+            )
+            rows[main_row["trajectory_id"]] = main_row
+            counters["accepted_main"] += 1
+        if not branch_parent_valid:
+            counters["rejected_branch_parent:" + str(branch_parent_reason)] += 1
             continue
-        task_id = str(main_row["task_id"])
+        task_id = str(result.get("task_id", "unknown"))
         query_hash = result_query_hash(result)
-        main_function_counts = function_counts(main_row["messages"])
-        main_row.update(
-            {
-                "query_hash": query_hash,
-                "policy_role": "main",
-                "protocol_valid": True,
-                "search_calls": main_function_counts["search"],
-                "open_page_calls": main_function_counts["open_page"],
-                "return_calls": main_function_counts["return"],
-                "branch_calls": main_function_counts["branch"],
-                "finish_calls": main_function_counts["finish"],
-            }
-        )
-        rows[main_row["trajectory_id"]] = main_row
-        counters["accepted_main"] += 1
+        counters["accepted_branch_parent"] += 1
         trajectories = result.get("agent_trajectories") or []
         for trajectory in trajectories:
             if trajectory.get("is_main"):

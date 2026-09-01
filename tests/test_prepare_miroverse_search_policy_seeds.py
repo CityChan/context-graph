@@ -1,4 +1,8 @@
-from scripts.prepare_miroverse_search_policy_seeds import build_seeds, record_to_seed
+from scripts.prepare_miroverse_search_policy_seeds import (
+    build_seeds,
+    normalize_miroverse_answer,
+    record_to_seed,
+)
 
 
 def source_record(question="Who played the role?"):
@@ -34,3 +38,9 @@ def test_requires_boxed_answer_and_deduplicates_queries():
     assert len(seeds) == 1
     assert counters["accepted"] == 1
     assert counters["duplicates"] == 1
+
+
+def test_normalizes_textual_latex_gold_answers_for_exact_match_reward():
+    assert normalize_miroverse_answer(r'Dorothy\ "Dottie"\ Hinson') == 'Dorothy "Dottie" Hinson'
+    assert normalize_miroverse_answer(r"June\ 10,\ 323\ BC") == "June 10, 323 BC"
+    assert normalize_miroverse_answer(r"\text{Greyhound Canada}") == "Greyhound Canada"

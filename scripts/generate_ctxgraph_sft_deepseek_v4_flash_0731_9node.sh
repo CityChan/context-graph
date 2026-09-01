@@ -30,6 +30,8 @@ START_INDEX=${START_INDEX:-0}
 NUM_WORKERS=${NUM_WORKERS:-8}
 MAX_TURN=${MAX_TURN:-24}
 TURN_MAX_NEW_TOKENS=${TURN_MAX_NEW_TOKENS:-2048}
+FINAL_ANSWER_RESERVE=${FINAL_ANSWER_RESERVE:-1024}
+FINAL_ANSWER_SAFETY_MARGIN=${FINAL_ANSWER_SAFETY_MARGIN:-64}
 PROMPT_LENGTH=${PROMPT_LENGTH:-16384}
 RESPONSE_LENGTH=${RESPONSE_LENGTH:-16384}
 MAX_MODEL_LEN=${MAX_MODEL_LEN:-32768}
@@ -289,7 +291,7 @@ export OPENAI_API_KEY=dummy
 export OPENAI_BASE_URL="http://$TEACHER_HEAD_IP:$TEACHER_PORT/v1"
 export LOCAL_SEARCH_URL="http://$SEARCH_NODE_IP:$SEARCH_PORT"
 
-srun --overlap --nodes=1 --ntasks=1 -w "$TEACHER_HEAD_NODE" bash -lc "source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh; conda activate $AGENT_CONDA_ENV; cd $PROJECT_ROOT; export OPENAI_API_KEY=dummy OPENAI_BASE_URL=$OPENAI_BASE_URL LOCAL_SEARCH_URL=$LOCAL_SEARCH_URL; python scripts/eval_gaia.py --data-path $DATA_PATH --output-dir $RAW_OUTPUT_DIR --workflow search_graph --model-name $MODEL_ID --tokenizer-name $STUDENT_TOKENIZER_PATH --num-workers $NUM_WORKERS --start-index $START_INDEX --max-samples $MAX_SAMPLES --prompt-length $PROMPT_LENGTH --response-length $RESPONSE_LENGTH --max-turn $MAX_TURN --max-session 8 --branch-len 8192 --turn-max-new-tokens $TURN_MAX_NEW_TOKENS --temperature $TEMPERATURE --top-p $TOP_P --reasoning-effort $REASONING_EFFORT --local-search-url $LOCAL_SEARCH_URL --must-search --save-messages"
+srun --overlap --nodes=1 --ntasks=1 -w "$TEACHER_HEAD_NODE" bash -lc "source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh; conda activate $AGENT_CONDA_ENV; cd $PROJECT_ROOT; export OPENAI_API_KEY=dummy OPENAI_BASE_URL=$OPENAI_BASE_URL LOCAL_SEARCH_URL=$LOCAL_SEARCH_URL; python scripts/eval_gaia.py --data-path $DATA_PATH --output-dir $RAW_OUTPUT_DIR --workflow search_graph --model-name $MODEL_ID --tokenizer-name $STUDENT_TOKENIZER_PATH --num-workers $NUM_WORKERS --start-index $START_INDEX --max-samples $MAX_SAMPLES --prompt-length $PROMPT_LENGTH --response-length $RESPONSE_LENGTH --max-turn $MAX_TURN --max-session 8 --branch-len 8192 --turn-max-new-tokens $TURN_MAX_NEW_TOKENS --final-answer-reserve $FINAL_ANSWER_RESERVE --final-answer-safety-margin $FINAL_ANSWER_SAFETY_MARGIN --temperature $TEMPERATURE --top-p $TOP_P --reasoning-effort $REASONING_EFFORT --local-search-url $LOCAL_SEARCH_URL --must-search --save-messages"
 
 RESULT_FILE=$(find "$RAW_OUTPUT_DIR" -maxdepth 1 -name 'gaia_results_*.json' -type f | sort | tail -n 1)
 if [ -z "$RESULT_FILE" ]; then

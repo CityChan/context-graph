@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import sys
 from collections import Counter
 from pathlib import Path
@@ -19,6 +20,22 @@ from scripts.prepare_miroverse_contextgraph_policy_sft import (
     boxed_answer,
     collapse_finalizer_round,
 )
+
+
+LATEX_TEXT_PATTERN = re.compile(r"\\(?:text|textrm|mathrm|operatorname)\{([^{}]*)\}")
+
+
+def normalize_miroverse_answer(answer: str) -> str:
+    """Convert common textual LaTeX wrappers and spacing into judgeable text."""
+    normalized = answer.strip().strip("$")
+    previous = None
+    while previous != normalized:
+        previous = normalized
+        normalized = LATEX_TEXT_PATTERN.sub(r"\1", normalized)
+    normalized = re.sub(r"\\(?:,|;|:|!|quad|qquad)", " ", normalized)
+    normalized = normalized.replace(r"\ ", " ").replace("~", " ")
+    normalized = re.sub(r"\\([#$%&_{}])", r"\1", normalized)
+    return " ".join(normalized.split())
 
 
 def parse_args() -> argparse.Namespace:
@@ -47,6 +64,10 @@ def record_to_seed(record, index: int, reasons: list[str] | None = None):
         return None
     if not answer:
         reject("missing_boxed_answer")
+        return None
+    answer = normalize_miroverse_answer(answer)
+    if not answer:
+        reject("empty_normalized_answer")
         return None
     query_hash = hashlib.sha256(query.encode("utf-8")).hexdigest()
     task_id = f"miroverse_musique_{query_hash[:16]}"

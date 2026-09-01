@@ -62,6 +62,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--search-snippet-chars", type=int, default=2000)
     parser.add_argument("--open-page-words", type=int, default=1024)
     parser.add_argument("--open-page-chars", type=int, default=12000)
+    parser.add_argument("--final-answer-reserve", type=int, default=0)
+    parser.add_argument("--final-answer-safety-margin", type=int, default=64)
     parser.add_argument("--must-search", action="store_true",
                         help="Reject a correct final answer if the agent never searched.")
     parser.add_argument("--save-messages", action="store_true")
@@ -107,6 +109,8 @@ def _make_config(args: argparse.Namespace, workflow: str):
                     "search_snippet_chars": args.search_snippet_chars,
                     "open_page_words": args.open_page_words,
                     "open_page_chars": args.open_page_chars,
+                    "final_answer_reserve": args.final_answer_reserve,
+                    "final_answer_safety_margin": args.final_answer_safety_margin,
                     "val_response_length": args.response_length,
                     "process_reward": "[flat,scope,graph]" if workflow == "search_graph" else "[flat,scope]",
                     "max_traj": 4,

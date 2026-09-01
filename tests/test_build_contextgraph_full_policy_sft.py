@@ -1,4 +1,8 @@
-from scripts.build_contextgraph_full_policy_sft import branch_trajectory_to_row, function_counts
+from scripts.build_contextgraph_full_policy_sft import (
+    branch_trajectory_to_row,
+    function_counts,
+    result_eligible_for_branch_rows,
+)
 
 
 def branch_messages():
@@ -67,3 +71,15 @@ def test_function_counts_reports_all_policy_tools():
         "open_page": 1,
         "return": 1,
     }
+
+
+def test_branch_parent_gate_requires_successful_finished_correct_task_not_graph_ops():
+    result = {
+        "status": "success",
+        "task_reward": 1,
+        "is_finish": True,
+        "env_stats": {"graph_explicit_ops": 0, "graph_invalid_ops": 3},
+    }
+    assert result_eligible_for_branch_rows(result) == (True, None)
+    result["task_reward"] = 0
+    assert result_eligible_for_branch_rows(result) == (False, "task_reward")
