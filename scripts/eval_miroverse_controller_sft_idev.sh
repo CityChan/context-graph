@@ -22,6 +22,9 @@ conda activate cxtgraph
 
 export CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0}
 export PYTHONPATH="$PROJECT_ROOT:${PYTHONPATH:-}"
+export CC=gcc
+export CXX=g++
+export CUDAHOSTCXX=g++
 export VLLM_CACHE_ROOT=${VLLM_CACHE_ROOT:-/tmp/contextgraph-vllm-${SLURM_JOB_ID:-$$}}
 export TORCHINDUCTOR_CACHE_DIR=${TORCHINDUCTOR_CACHE_DIR:-/tmp/contextgraph-inductor-${SLURM_JOB_ID:-$$}}
 export TRITON_CACHE_DIR=${TRITON_CACHE_DIR:-/tmp/contextgraph-triton-${SLURM_JOB_ID:-$$}}
