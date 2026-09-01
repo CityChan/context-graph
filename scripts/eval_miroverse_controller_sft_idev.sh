@@ -35,4 +35,4 @@ echo "Data: $VALIDATION_FILE"
 echo "Output: $OUTPUT_JSON"
 
 set -o pipefail
-python -u scripts/eval_miroverse_controller_sft.py --model "$MODEL_PATH" --data "$VALIDATION_FILE" --output "$OUTPUT_JSON" --max-samples 0 --max-model-len 4096 --max-num-seqs 64 --gpu-memory-utilization 0.85 --enforce-eager 2>&1 | tee "$LOG_PATH"
+python -u scripts/eval_miroverse_controller_sft.py --model "$MODEL_PATH" --data "$VALIDATION_FILE" --output "$OUTPUT_JSON" --max-samples 0 --max-model-len 4096 --max-num-seqs 64 --gpu-memory-utilization 0.85 --enforce-eager --no-guided-decoding 2>&1 | tee "$LOG_PATH"

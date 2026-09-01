@@ -13,4 +13,5 @@ def test_idev_wrapper_uses_node_local_caches_and_eager_mode():
     assert "export CXX=g++" in text
     assert "export CUDAHOSTCXX=g++" in text
     assert "--enforce-eager" in text
+    assert "--no-guided-decoding" in text
     assert "contextgraph_sft_validation.parquet" in text

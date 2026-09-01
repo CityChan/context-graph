@@ -55,6 +55,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gpu-memory-utilization", type=float, default=0.85)
     parser.add_argument("--tensor-parallel-size", type=int, default=1)
     parser.add_argument(
+        "--guided-decoding",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Apply the runtime JSON grammar; disabled by default to measure unconstrained controller behavior",
+    )
+    parser.add_argument(
         "--enforce-eager",
         action=argparse.BooleanOptionalAction,
         default=True,
@@ -234,7 +240,6 @@ def main() -> None:
 
     from transformers import AutoTokenizer
     from vllm import LLM, SamplingParams
-    from vllm.sampling_params import GuidedDecodingParams
 
     tokenizer = AutoTokenizer.from_pretrained(
         args.model,
@@ -270,16 +275,20 @@ def main() -> None:
     )
     predictions = [""] * len(data)
     for (candidate_count, allow_pass, action_policy), row_indices in sorted(groups.items()):
-        schema = graph_action_schema(
-            list(range(candidate_count)),
-            allow_pass=allow_pass,
-            action_policy=action_policy,
-        )
-        sampling = SamplingParams(
-            temperature=0.0,
-            max_tokens=args.max_output_tokens,
-            guided_decoding=GuidedDecodingParams(json=schema),
-        )
+        sampling_kwargs: dict[str, Any] = {
+            "temperature": 0.0,
+            "max_tokens": args.max_output_tokens,
+        }
+        if args.guided_decoding:
+            from vllm.sampling_params import GuidedDecodingParams
+
+            schema = graph_action_schema(
+                list(range(candidate_count)),
+                allow_pass=allow_pass,
+                action_policy=action_policy,
+            )
+            sampling_kwargs["guided_decoding"] = GuidedDecodingParams(json=schema)
+        sampling = SamplingParams(**sampling_kwargs)
         outputs = llm.generate([prompts[index] for index in row_indices], sampling, use_tqdm=True)
         for row_index, output in zip(row_indices, outputs, strict=True):
             predictions[row_index] = output.outputs[0].text.strip()
@@ -315,6 +324,7 @@ def main() -> None:
         "model": str(Path(args.model)),
         "data": str(Path(args.data)),
         "rows": len(scored),
+        "guided_decoding": bool(args.guided_decoding),
         "parse_valid_rate": _rate(scored, "parse_valid"),
         "schema_valid_rate": _rate(scored, "schema_valid"),
         "action_contract_valid_rate": _rate(scored, "replay_valid"),
@@ -329,6 +339,7 @@ def main() -> None:
         "error_counts": dict(Counter(str(score["error"]) for score in scored if score["error"])),
         "pass_gold_rows": int((data["action"] == "pass").sum()),
         "notes": [
+            "guided decoding is disabled by default so schema validity measures learned behavior rather than grammar enforcement",
             "teacher agreement is not unique semantic correctness because multiple graph actions may be legal",
             "action contract validity replays the predicted action on a synthetic graph with the same candidate topology",
             "pass behavior is not measured when pass_gold_rows is zero",
