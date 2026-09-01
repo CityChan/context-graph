@@ -13,6 +13,27 @@ from typing import Any, Iterable
 
 TAG_PATTERN = re.compile(r"<\s*/?\s*([A-Za-z_][A-Za-z0-9_.:-]*)")
 FUNCTION_PATTERN = re.compile(r"<function=([A-Za-z_][A-Za-z0-9_.-]*)>")
+MCP_BLOCK_PATTERN = re.compile(r"<use_mcp_tool>(.*?)</use_mcp_tool>", re.DOTALL)
+
+
+def extract_tag(block: str, name: str) -> str | None:
+    match = re.search(
+        rf"<{re.escape(name)}>(.*?)</{re.escape(name)}>",
+        block,
+        re.DOTALL,
+    )
+    return match.group(1).strip() if match else None
+
+
+def mcp_calls(content: str) -> list[tuple[str, str, str]]:
+    calls: list[tuple[str, str, str]] = []
+    for block in MCP_BLOCK_PATTERN.findall(content):
+        server = extract_tag(block, "server_name")
+        tool = extract_tag(block, "tool_name")
+        arguments = extract_tag(block, "arguments")
+        if server and tool and arguments is not None:
+            calls.append((server, tool, arguments))
+    return calls
 
 
 def parse_args() -> argparse.Namespace:
@@ -81,6 +102,10 @@ def inspect_records(
     assistant_signatures: Counter[str] = Counter()
     final_assistant_signatures: Counter[str] = Counter()
     examples: dict[str, list[str]] = defaultdict(list)
+    transition_examples: dict[str, list[str]] = defaultdict(list)
+    mcp_tool_pairs: Counter[str] = Counter()
+    mcp_calls_per_message: Counter[str] = Counter()
+    malformed_mcp_messages = 0
     message_counts: list[int] = []
     rows = 0
     invalid_messages = 0
@@ -113,6 +138,22 @@ def inspect_records(
             assistant_signatures[signature] += 1
             if len(examples[signature]) < examples_per_signature:
                 examples[signature].append(" ".join(message["content"].split())[:500])
+            calls = mcp_calls(message["content"])
+            if "<use_mcp_tool>" in message["content"] and not calls:
+                malformed_mcp_messages += 1
+            if calls:
+                mcp_calls_per_message[str(len(calls))] += 1
+                mcp_tool_pairs.update(f"{server}/{tool}" for server, tool, _ in calls)
+        for index, message in enumerate(messages):
+            if message["role"] != "assistant" or index + 1 >= len(messages):
+                continue
+            transition = f"assistant:{assistant_signature(message['content'])}->user"
+            if len(transition_examples[transition]) < examples_per_signature:
+                next_content = " ".join(messages[index + 1]["content"].split())[:300]
+                assistant_content = " ".join(message["content"].split())[:300]
+                transition_examples[transition].append(
+                    f"ASSISTANT: {assistant_content} || USER: {next_content}"
+                )
         if assistant_messages:
             final_assistant_signatures[assistant_signature(assistant_messages[-1]["content"])] += 1
     sorted_counts = sorted(message_counts)
@@ -136,6 +177,10 @@ def inspect_records(
         "assistant_signatures": dict(assistant_signatures.most_common()),
         "final_assistant_signatures": dict(final_assistant_signatures.most_common()),
         "assistant_examples": dict(examples),
+        "assistant_to_user_examples": dict(transition_examples),
+        "mcp_tool_pairs": dict(mcp_tool_pairs.most_common()),
+        "mcp_calls_per_message": dict(mcp_calls_per_message.most_common()),
+        "malformed_mcp_messages": malformed_mcp_messages,
         "message_count": {
             "min": sorted_counts[0] if sorted_counts else 0,
             "p50": percentile(0.50),
@@ -155,7 +200,26 @@ def main() -> None:
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(summary, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    print(json.dumps(summary, indent=2, ensure_ascii=False))
+    console_summary = {
+        key: summary[key]
+        for key in (
+            "schema_version",
+            "rows",
+            "invalid_message_rows",
+            "role_transitions",
+            "mcp_tool_pairs",
+            "mcp_calls_per_message",
+            "malformed_mcp_messages",
+            "assistant_signatures",
+            "final_assistant_signatures",
+            "message_count",
+        )
+    }
+    console_summary["assistant_plain_to_user_examples"] = summary[
+        "assistant_to_user_examples"
+    ].get("assistant:plain->user", [])
+    console_summary["full_audit"] = str(output)
+    print(json.dumps(console_summary, indent=2, ensure_ascii=False))
 
 
 if __name__ == "__main__":
