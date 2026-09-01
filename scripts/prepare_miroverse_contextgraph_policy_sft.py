@@ -23,8 +23,16 @@ from scripts.inspect_miroverse_policy_source import as_messages, load_records, m
 
 SUPPORTED_TOOLS = {
     ("browsing-agent", "search_and_browse"): "branch",
+    ("agent-browsing", "search_and_browse"): "branch",
     ("tool-google-search", "google_search"): "search",
+    ("tool-google-search", "scrape"): "open_page",
 }
+
+FINALIZER_MARKERS = (
+    "summarize the above conversation",
+    "output the final answer",
+    "final answer to the original question",
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -87,6 +95,25 @@ def convert_call(server: str, tool: str, raw_arguments: str) -> str | None:
             f"<parameter=topk>{topk}</parameter>\n"
             "</function>"
         )
+    if mapped == "open_page":
+        url = str(
+            arguments.get(
+                "url",
+                arguments.get("link", arguments.get("page_url", "")),
+            )
+        ).strip()
+        docid = str(arguments.get("docid", arguments.get("document_id", ""))).strip()
+        if url:
+            parameter_name, parameter_value = "url", url
+        elif docid:
+            parameter_name, parameter_value = "docid", docid
+        else:
+            return None
+        return (
+            "<function=open_page>\n"
+            f"<parameter={parameter_name}>{xml_value(parameter_value)}</parameter>\n"
+            "</function>"
+        )
     return None
 
 
@@ -120,6 +147,23 @@ def strip_mcp_blocks(text: str) -> str:
     return re.sub(r"\s*<use_mcp_tool>.*?</use_mcp_tool>\s*", "", text, flags=re.DOTALL).strip()
 
 
+def collapse_finalizer_round(messages: list[dict[str, str]]) -> tuple[list[dict[str, str]], bool]:
+    if len(messages) < 5:
+        return messages, False
+    candidate_answer, finalizer_request, reformatted_answer = messages[-3:]
+    request = finalizer_request["content"].lower()
+    if (
+        candidate_answer["role"] == "assistant"
+        and finalizer_request["role"] == "user"
+        and reformatted_answer["role"] == "assistant"
+        and not mcp_calls(candidate_answer["content"])
+        and not mcp_calls(reformatted_answer["content"])
+        and any(marker in request for marker in FINALIZER_MARKERS)
+    ):
+        return messages[:-2], True
+    return messages, False
+
+
 def record_to_row(
     record: dict[str, Any],
     *,
@@ -131,6 +175,7 @@ def record_to_row(
             rejection_reasons.append(reason)
 
     source_messages = as_messages(record.get("messages", record.get("conversations")))
+    source_messages, finalizer_collapsed = collapse_finalizer_round(source_messages)
     if len(source_messages) < 3 or source_messages[0]["role"] != "system":
         reject("message_shape")
         return None
@@ -216,6 +261,8 @@ def record_to_row(
         "policy_turns": sum(message["role"] == "assistant" for message in canonical_messages),
         "mapped_branch_calls": mapped_counts["branch"],
         "mapped_search_calls": mapped_counts["search"],
+        "mapped_open_page_calls": mapped_counts["open_page"],
+        "source_finalizer_collapsed": finalizer_collapsed,
     }
 
 
@@ -315,8 +362,12 @@ def main() -> None:
                 {
                     "branch": sum(row["mapped_branch_calls"] for row in rows),
                     "search": sum(row["mapped_search_calls"] for row in rows),
+                    "open_page": sum(row["mapped_open_page_calls"] for row in rows),
                 }
             )
+        ),
+        "collapsed_finalizer_rows": sum(
+            bool(row["source_finalizer_collapsed"]) for row in rows
         ),
         "output": str(output),
         "validation_output": str(validation_output),

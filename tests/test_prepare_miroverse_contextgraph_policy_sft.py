@@ -4,6 +4,7 @@ import sys
 from scripts.prepare_miroverse_contextgraph_policy_sft import (
     boxed_answer,
     build_rows,
+    collapse_finalizer_round,
     convert_call,
     record_to_row,
     split_rows,
@@ -60,6 +61,23 @@ def test_maps_google_search_and_rejects_code_tools():
     assert reasons == ["unsupported_tool:tool-code/run_python_code"]
 
 
+def test_maps_scrape_to_open_page_and_agent_browsing_alias():
+    scrape = convert_call(
+        "tool-google-search",
+        "scrape",
+        json.dumps({"url": "https://example.com/evidence"}),
+    )
+    assert scrape is not None
+    assert "<function=open_page>" in scrape
+    assert "<parameter=url>https://example.com/evidence</parameter>" in scrape
+    row = record_to_row(
+        trajectory("agent-browsing", "search_and_browse"),
+        source_subset="test",
+    )
+    assert row is not None
+    assert row["mapped_branch_calls"] == 1
+
+
 def test_rejects_non_action_intermediate_assistant():
     record = trajectory()
     record["messages"][2]["content"] = "I think the answer may be X."
@@ -78,6 +96,27 @@ def test_rejects_malformed_mcp_block():
 
 def test_boxed_answer_handles_nested_braces():
     assert boxed_answer(r"Result: \boxed{Dorothy \text{Dottie} Hinson}") == r"Dorothy \text{Dottie} Hinson"
+
+
+def test_collapses_miroverse_final_answer_reformat_round():
+    record = trajectory()
+    candidate = record["messages"][-1]
+    record["messages"].extend(
+        [
+            {
+                "role": "user",
+                "content": "Summarize the above conversation and output the FINAL ANSWER to the original question.",
+            },
+            {"role": "assistant", "content": "\\boxed{Example Person}"},
+        ]
+    )
+    collapsed, changed = collapse_finalizer_round(record["messages"])
+    assert changed is True
+    assert collapsed[-1] == candidate
+    row = record_to_row(record, source_subset="test")
+    assert row is not None
+    assert row["source_finalizer_collapsed"] is True
+    assert "Therefore" in row["messages"][-1]["content"]
 
 
 def test_build_deduplicates_and_split_has_no_query_overlap():
