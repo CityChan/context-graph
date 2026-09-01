@@ -8,6 +8,8 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 export EXPECTED_NUM_NODES=${EXPECTED_NUM_NODES:-5}
 export TEACHER_TP=${TEACHER_TP:-4}
 export DATA_PATH=${DATA_PATH:-$SCRATCH/contextgraph_sft/miroverse_full_policy/seeds.parquet}
+export LOCAL_SEARCH_CORPUS=${LOCAL_SEARCH_CORPUS:-$SCRATCH/contextgraph_sft/miroverse_full_policy/retrieval_corpus.parquet}
+export LOCAL_SEARCH_EMBEDDINGS=${LOCAL_SEARCH_EMBEDDINGS:-$SCRATCH/contextgraph_sft/miroverse_full_policy/retrieval_embeddings.pkl}
 export MAX_SAMPLES=${MAX_SAMPLES:-20}
 export START_INDEX=${START_INDEX:-0}
 export NUM_WORKERS=${NUM_WORKERS:-4}
@@ -18,4 +20,6 @@ export RUN_TAG=${RUN_TAG:-${SLURM_JOB_ID:-idev}_miroverse_full_policy_smoke}
 export ARTIFACT_ROOT=${ARTIFACT_ROOT:-$SCRATCH/contextgraph_sft/miroverse_full_policy_native/$RUN_TAG}
 
 test -s "$DATA_PATH"
+test -s "$LOCAL_SEARCH_CORPUS"
+test -s "$LOCAL_SEARCH_EMBEDDINGS"
 exec bash "$SCRIPT_DIR/generate_ctxgraph_sft_deepseek_v4_flash_0731_9node.sh"

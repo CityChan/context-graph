@@ -25,6 +25,8 @@ def test_extracts_query_and_exact_answer_before_artificial_finalizer():
     assert seed["extra_info"]["query"] == "Who played the role?"
     assert seed["extra_info"]["answer"] == "Example Person"
     assert seed["extra_info"]["workflow"] == "search_graph"
+    assert seed["ability"] == "miroverse_musique"
+    assert seed["data_source"] == "miroverse_musique"
     assert seed["reward_model"]["ground_truth"] == "Example Person"
 
 

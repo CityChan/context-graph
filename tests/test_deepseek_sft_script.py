@@ -88,6 +88,13 @@ def test_deepseek_sft_script_keeps_eval_splits_out_by_default():
     assert "--min-structural-graph-ops 1" in text
 
 
+def test_deepseek_sft_script_supports_a_local_search_corpus_pair():
+    text = SCRIPT.read_text(encoding="utf-8")
+    assert "LOCAL_SEARCH_CORPUS and LOCAL_SEARCH_EMBEDDINGS must be set together" in text
+    assert "--local-corpus $LOCAL_SEARCH_CORPUS" in text
+    assert "--local-embeddings $LOCAL_SEARCH_EMBEDDINGS" in text
+
+
 def test_deepseek_interactive_script_covers_both_train_domains_and_strict_trace():
     text = INTERACTIVE_SCRIPT.read_text(encoding="utf-8")
     assert "#SBATCH --array=0-1" in text

@@ -85,7 +85,7 @@ def record_to_seed(record, index: int, reasons: list[str] | None = None):
     }
     return {
         "prompt": [{"role": "user", "content": query}],
-        "ability": "GAIA",
+        "ability": "miroverse_musique",
         "data_source": "miroverse_musique",
         "extra_info": extra,
         "reward_model": {"style": "rule", "ground_truth": answer},

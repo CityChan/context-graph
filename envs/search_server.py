@@ -267,8 +267,16 @@ def optimized_worker(gpu_id: int, batch_queue: mp.Queue, result_queue: mp.Queue,
         model.eval()
 
         # Load corpus embeddings
-        corpus_embeddings = corpus_data['embeddings'].to(device)
+        corpus_embeddings = corpus_data['embeddings'].to(
+            device=device,
+            dtype=next(model.parameters()).dtype,
+        )
         corpus_docids = corpus_data['docids']
+        if corpus_embeddings.shape[0] != len(corpus_docids):
+            raise ValueError(
+                "corpus embedding row count does not match corpus docids: "
+                f"{corpus_embeddings.shape[0]} != {len(corpus_docids)}"
+            )
         task_description = 'Given a web search query, retrieve relevant passages that answer the query'
 
         ready_event.set()

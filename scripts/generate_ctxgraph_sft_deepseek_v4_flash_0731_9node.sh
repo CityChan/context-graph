@@ -58,6 +58,8 @@ HF_HUB_CACHE=${DEEPSEEK_HF_HUB_CACHE:-$HF_HOME/hub}
 SCRATCH_HF_HUB_CACHE=${SCRATCH_HF_HUB_CACHE:-$SCRATCH/hf_cache/hub}
 SEARCH_HF_HOME=${SEARCH_HF_HOME:-/work/09281/chc_1996/vista/cache}
 SEARCH_HF_HUB_CACHE=${SEARCH_HF_HUB_CACHE:-$SEARCH_HF_HOME/hub}
+LOCAL_SEARCH_CORPUS=${LOCAL_SEARCH_CORPUS:-}
+LOCAL_SEARCH_EMBEDDINGS=${LOCAL_SEARCH_EMBEDDINGS:-}
 ARTIFACT_ROOT=${ARTIFACT_ROOT:-$SCRATCH/contextgraph_sft/deepseek_v4_flash_0731/$RUN_TAG}
 RAW_OUTPUT_DIR=$ARTIFACT_ROOT/raw
 SFT_OUTPUT=$ARTIFACT_ROOT/contextgraph_sft_train.parquet
@@ -148,6 +150,19 @@ case "$DATA_PATH" in
     fi
     ;;
 esac
+if { [ -n "$LOCAL_SEARCH_CORPUS" ] && [ -z "$LOCAL_SEARCH_EMBEDDINGS" ]; } || { [ -z "$LOCAL_SEARCH_CORPUS" ] && [ -n "$LOCAL_SEARCH_EMBEDDINGS" ]; }; then
+  echo "ERROR: LOCAL_SEARCH_CORPUS and LOCAL_SEARCH_EMBEDDINGS must be set together"
+  exit 2
+fi
+if [ -n "$LOCAL_SEARCH_CORPUS" ]; then
+  test -s "$LOCAL_SEARCH_CORPUS" || { echo "ERROR: missing local search corpus: $LOCAL_SEARCH_CORPUS"; exit 2; }
+  test -s "$LOCAL_SEARCH_EMBEDDINGS" || { echo "ERROR: missing local search embeddings: $LOCAL_SEARCH_EMBEDDINGS"; exit 2; }
+  SEARCH_CORPUS_ARGS="--local-corpus $LOCAL_SEARCH_CORPUS --local-embeddings $LOCAL_SEARCH_EMBEDDINGS"
+  SEARCH_CORPUS_DESCRIPTION="local corpus $LOCAL_SEARCH_CORPUS"
+else
+  SEARCH_CORPUS_ARGS="--corpus Tevatron/browsecomp-plus-corpus --corpus-embedding-dataset miaolu3/browsecomp-plus"
+  SEARCH_CORPUS_DESCRIPTION="Tevatron/browsecomp-plus-corpus"
+fi
 
 set +u
 source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
@@ -237,6 +252,7 @@ echo "Model path: $MODEL_PATH"
 echo "Tokenizer:  $STUDENT_TOKENIZER_PATH"
 echo "Server env: $SERVER_CONDA_ENV; TP=$TEACHER_TP; model nodes=${NODELIST[*]:$MODEL_NODE_START}"
 echo "Search:     $SEARCH_NODE ($SEARCH_NODE_IP:$SEARCH_PORT)"
+echo "Search corpus: $SEARCH_CORPUS_DESCRIPTION"
 echo "Search colocated with teacher: $COLOCATE_SEARCH"
 echo "Safetensors load strategy: $SAFETENSORS_LOAD_STRATEGY (threads=$SAFETENSORS_PREFETCH_NUM_THREADS)"
 echo "Output:     $ARTIFACT_ROOT"
@@ -251,7 +267,7 @@ cleanup() {
 trap cleanup EXIT
 
 SEARCH_LOG="$PROJECT_ROOT/logs/gen-cg-sft-dsv4-search.${SLURM_JOB_ID:-local}.log"
-srun --overlap --nodes=1 --ntasks=1 -w "$SEARCH_NODE" bash -lc "source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh; conda activate $AGENT_CONDA_ENV; cd $PROJECT_ROOT; export HF_HOME=$SEARCH_HF_HOME HF_HUB_CACHE=$SEARCH_HF_HUB_CACHE NUM_GPUS=1 MAX_BATCH_SIZE=128; exec python -u envs/search_server.py --model $EMBED_MODEL --host 0.0.0.0 --port $SEARCH_PORT --corpus Tevatron/browsecomp-plus-corpus --corpus-embedding-dataset miaolu3/browsecomp-plus" >"$SEARCH_LOG" 2>&1 &
+srun --overlap --nodes=1 --ntasks=1 -w "$SEARCH_NODE" bash -lc "source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh; conda activate $AGENT_CONDA_ENV; cd $PROJECT_ROOT; export HF_HOME=$SEARCH_HF_HOME HF_HUB_CACHE=$SEARCH_HF_HUB_CACHE NUM_GPUS=1 MAX_BATCH_SIZE=128; exec python -u envs/search_server.py --model $EMBED_MODEL --host 0.0.0.0 --port $SEARCH_PORT $SEARCH_CORPUS_ARGS" >"$SEARCH_LOG" 2>&1 &
 STEP_PIDS+=("$!")
 
 for _ in $(seq 1 600); do

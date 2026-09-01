@@ -138,7 +138,7 @@ def _make_dataproto(row: dict[str, Any], workflow: str) -> DataProto:
     extra["workflow"] = workflow
     item = DataProto()
     item.non_tensor_batch = {
-        "ability": np.array([row.get("ability", "GAIA")], dtype=object),
+        "ability": np.array([row.get("ability", "unknown")], dtype=object),
         "extra_info": np.array([extra], dtype=object),
         "uid": np.array([extra.get("instance_id") or extra.get("task_id") or "unknown"], dtype=object),
         "reward_model": np.array([row.get("reward_model", {})], dtype=object),
@@ -182,7 +182,7 @@ async def _preflight_model_api(args: argparse.Namespace) -> None:
             finish_reason = getattr(response.choices[0], "finish_reason", "")
             usage = response.usage.model_dump() if response.usage else {}
             print(
-                "[GAIA preflight] model API returned an empty assistant "
+                "[rollout preflight] model API returned an empty assistant "
                 f"message; continuing because the request succeeded "
                 f"(finish_reason={finish_reason}, usage={usage})"
             )
@@ -196,7 +196,7 @@ async def _preflight_model_api(args: argparse.Namespace) -> None:
             reason = "model API request failed"
         raise SystemExit(
             f"Model API preflight failed: {reason}. Details: {text}\n"
-            "No GAIA items were evaluated. Use --dry-run for data/workflow checks, "
+            "No items were evaluated. Use --dry-run for data/workflow checks, "
             "or set OPENAI_BASE_URL/OPENAI_API_KEY for a working OpenAI-compatible endpoint."
         ) from exc
 
@@ -236,7 +236,7 @@ async def eval_one(row: dict[str, Any], args: argparse.Namespace, tokenizer) -> 
         task_reward, agent_reward, is_finish, extra_fields = _metrics_from_output(output)
         result.update({
             "status": "success",
-            # score is the benchmark score. Keep shaping separate so GAIA
+            # score is the task score. Keep shaping separate so benchmark
             # accuracy cannot be inflated by ContextGraph structure rewards.
             "score": task_reward,
             "task_reward": task_reward,
@@ -265,7 +265,8 @@ async def run_eval(rows: list[dict[str, Any]], args: argparse.Namespace) -> list
             return await eval_one(row, args, tokenizer)
 
     tasks = [asyncio.create_task(guarded(row)) for row in rows]
-    with tqdm(total=len(tasks), desc="GAIA", unit="item") as pbar:
+    label = str(rows[0].get("data_source", "rollout")) if rows else "rollout"
+    with tqdm(total=len(tasks), desc=label, unit="item") as pbar:
         for fut in asyncio.as_completed(tasks):
             result = await fut
             results.append(result)
