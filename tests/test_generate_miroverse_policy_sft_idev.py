@@ -13,3 +13,6 @@ def test_policy_generation_wrapper_uses_full_converter_and_strict_preflight():
     assert "contextgraph_sft_validation.parquet" in text
     assert "--all-samples" in text
     assert "RUN_PREFLIGHT=${RUN_PREFLIGHT:-0}" in text
+    assert "PREFLIGHT_ONLY=${PREFLIGHT_ONLY:-0}" in text
+    assert 'if [[ "$PREFLIGHT_ONLY" != "1" ]]' in text
+    assert 'if [[ "$RUN_PREFLIGHT" == "1" || "$PREFLIGHT_ONLY" == "1" ]]' in text
