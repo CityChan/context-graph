@@ -85,7 +85,9 @@ def record_to_seed(record, index: int, reasons: list[str] | None = None):
     }
     return {
         "prompt": [{"role": "user", "content": query}],
-        "ability": "miroverse_musique",
+        # ability controls environment dispatch; dataset identity belongs in
+        # data_source and extra_info.source.
+        "ability": "LocalSearch",
         "data_source": "miroverse_musique",
         "extra_info": extra,
         "reward_model": {"style": "rule", "ground_truth": answer},
@@ -127,6 +129,8 @@ def main() -> None:
         "schema_version": "contextgraph.miroverse_policy_seeds.v1",
         "input": args.input,
         "output": str(output),
+        "ability": "LocalSearch",
+        "data_source": "miroverse_musique",
         **dict(counters),
     }
     manifest_path = Path(args.manifest)
