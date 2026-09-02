@@ -1307,7 +1307,15 @@ async def process_item(
     env.stats['main_len'] = min(main_response_tokens, config.response_length)
     env.stats['main_context_tokens'] = main_context_tokens
     env.stats['working_context_limit'] = working_context_limit
-    env.stats['total_token'] = len(tokenizer.encode(print_chat(user_prompt + session_message)))
+    # This is post-run telemetry over the complete archived trajectory, not a
+    # model input. Suppress the tokenizer model_max_length warning while still
+    # counting the full untruncated trace.
+    env.stats['total_token'] = len(tokenizer(
+        print_chat(user_prompt + session_message),
+        add_special_tokens=False,
+        truncation=False,
+        verbose=False,
+    )['input_ids'])
     env.stats['main_turn'] = len(agent['main'].messages())
     env.stats['is_branch'] = int(len(agent) > 1)
     env.stats['branch_success'] = int(int(len(agent) > 1) * score[1])
