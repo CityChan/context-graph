@@ -64,7 +64,6 @@ if [ -n "${WORK:-}" ] && [ -f "$WORK/.wandb_env" ]; then
   # shellcheck disable=SC1090
   source "$WORK/.wandb_env"
 fi
-export WANDB_API_KEY=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
 
 # ── OpenAI judge (REQUIRED for BrowseComp — no LLM judge = no reward signal) ──
 if [ -n "${WORK:-}" ] && [ -f "$WORK/.openai_env" ]; then
@@ -136,6 +135,9 @@ RUN_TAG=${RUN_TAG:-paperfaithful_5n_48h}
 EXPERIMENT_NAME=${EXPERIMENT_NAME:-"train_ctxgraph_bc_8b_${RUN_TAG}_${TS}"}
 TRAIN_DATA_FILE=${TRAIN_DATA_FILE:-data/bc_train.parquet}
 VAL_DATA_FILE=${VAL_DATA_FILE:-data/bc_test.parquet}
+DATASET_LABEL=${DATASET_LABEL:-BrowseComp-Plus}
+LOCAL_SEARCH_CORPUS=${LOCAL_SEARCH_CORPUS:-}
+LOCAL_SEARCH_EMBEDDINGS=${LOCAL_SEARCH_EMBEDDINGS:-}
 TRAIN_MAX_SAMPLES=${TRAIN_MAX_SAMPLES:--1}
 VAL_MAX_SAMPLES=${VAL_MAX_SAMPLES:--1}
 TRAINER_VAL_ONLY=${TRAINER_VAL_ONLY:-False}
@@ -206,7 +208,7 @@ fi
 probe() { printf '+++ [%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 
 echo "=============================================================="
-echo "  TRAIN: ContextGraph + v5 on BrowseComp-Plus (Qwen3-8B dense, $NUM_NODES nodes [1 search + $((NUM_NODES - 1)) trainer], $TOTAL_TRAINING_STEPS steps)"
+echo "  TRAIN: ContextGraph + v5 on $DATASET_LABEL (Qwen3-8B dense, $NUM_NODES nodes [1 search + $((NUM_NODES - 1)) trainer], $TOTAL_TRAINING_STEPS steps)"
 echo "  Token budget: prompt=$PROMPT_LENGTH response=$RESPONSE_LENGTH active_context=$CONTEXT_LENGTH"
 echo "  Job: ${SLURM_JOB_ID:-<idev>}   Head: $NODE0 ($NODE0_IP)"
 echo "  Worker(s): ${NODELIST[@]:1}"
@@ -219,12 +221,17 @@ echo "=============================================================="
 
 # ── Pre-flight: BrowseComp data parquets + HF datasets must exist ──
 probe "checking training/evaluation parquets"
-TRAIN_PARQUET="$PROJECT_ROOT/$TRAIN_DATA_FILE"
-VAL_PARQUET="$PROJECT_ROOT/$VAL_DATA_FILE"
+case "$TRAIN_DATA_FILE" in
+  /*) TRAIN_PARQUET="$TRAIN_DATA_FILE" ;;
+  *) TRAIN_PARQUET="$PROJECT_ROOT/$TRAIN_DATA_FILE" ;;
+esac
+case "$VAL_DATA_FILE" in
+  /*) VAL_PARQUET="$VAL_DATA_FILE" ;;
+  *) VAL_PARQUET="$PROJECT_ROOT/$VAL_DATA_FILE" ;;
+esac
 for f in "$TRAIN_PARQUET" "$VAL_PARQUET"; do
   if [ ! -f "$f" ]; then
     echo "ERROR: missing $f"
-    echo "       Run: gdown 'https://drive.google.com/uc?id=1aX5xXAN5R-gLKd8A0AY-troxXJRawyAM' -O bc.zip && unzip bc.zip -d data/"
     exit 1
   fi
 done
@@ -254,22 +261,40 @@ elif [ -n "${RESUME_CHECKPOINT_ROOT:-}" ]; then
   RESUME_ARGS=(trainer.resume_mode=resume_path "+trainer.resume_from_path=$RESUME_PATH")
   probe "will load latest checkpoint $RESUME_PATH"
 fi
-# HF corpus + embedding datasets (will use HF cache from \$HF_HOME/hub)
 CORPUS_DATASET="Tevatron/browsecomp-plus-corpus"
 CORPUS_EMBEDDING_DATASET="miaolu3/browsecomp-plus"
-CORPUS_CACHE_DIR="$HF_HOME/hub/datasets--${CORPUS_DATASET//\//--}"
-EMBED_CACHE_DIR_DS="$HF_HOME/hub/datasets--${CORPUS_EMBEDDING_DATASET//\//--}"
-if [ ! -d "$CORPUS_CACHE_DIR" ]; then
-  echo "ERROR: corpus dataset not cached at $CORPUS_CACHE_DIR"
-  echo "       login node: hf download $CORPUS_DATASET --repo-type=dataset"
-  exit 1
+SEARCH_SERVER_ARGS=(--model "$EMBED_MODEL" --port 18999)
+if [ -n "$LOCAL_SEARCH_CORPUS" ] || [ -n "$LOCAL_SEARCH_EMBEDDINGS" ]; then
+  if [ -z "$LOCAL_SEARCH_CORPUS" ] || [ -z "$LOCAL_SEARCH_EMBEDDINGS" ]; then
+    echo "ERROR: LOCAL_SEARCH_CORPUS and LOCAL_SEARCH_EMBEDDINGS must be set together"
+    exit 1
+  fi
+  for f in "$LOCAL_SEARCH_CORPUS" "$LOCAL_SEARCH_EMBEDDINGS"; do
+    if [ ! -s "$f" ]; then
+      echo "ERROR: missing or empty local retrieval artifact: $f"
+      exit 1
+    fi
+  done
+  SEARCH_SERVER_ARGS+=(--local-corpus "$LOCAL_SEARCH_CORPUS" --local-embeddings "$LOCAL_SEARCH_EMBEDDINGS")
+  SEARCH_SOURCE="local corpus $LOCAL_SEARCH_CORPUS"
+else
+  CORPUS_CACHE_DIR="$HF_HOME/hub/datasets--${CORPUS_DATASET//\//--}"
+  EMBED_CACHE_DIR_DS="$HF_HOME/hub/datasets--${CORPUS_EMBEDDING_DATASET//\//--}"
+  if [ ! -d "$CORPUS_CACHE_DIR" ]; then
+    echo "ERROR: corpus dataset not cached at $CORPUS_CACHE_DIR"
+    echo "       login node: hf download $CORPUS_DATASET --repo-type=dataset"
+    exit 1
+  fi
+  if [ ! -d "$EMBED_CACHE_DIR_DS" ]; then
+    echo "ERROR: embedding dataset not cached at $EMBED_CACHE_DIR_DS"
+    echo "       login node: hf download $CORPUS_EMBEDDING_DATASET --repo-type=dataset"
+    exit 1
+  fi
+  SEARCH_SERVER_ARGS+=(--corpus "$CORPUS_DATASET" --corpus-embedding-dataset "$CORPUS_EMBEDDING_DATASET")
+  SEARCH_SOURCE="Hugging Face corpus $CORPUS_DATASET"
 fi
-if [ ! -d "$EMBED_CACHE_DIR_DS" ]; then
-  echo "ERROR: embedding dataset not cached at $EMBED_CACHE_DIR_DS"
-  echo "       login node: hf download $CORPUS_EMBEDDING_DATASET --repo-type=dataset"
-  exit 1
-fi
-probe "BC parquets + HF datasets ok"
+printf -v SEARCH_SERVER_ARGS_Q '%q ' "${SEARCH_SERVER_ARGS[@]}"
+probe "retrieval artifacts ok: $SEARCH_SOURCE"
 
 # ── Pre-flight: 8B + embedder weights must be present (offline) ──
 probe "checking model caches"
@@ -312,7 +337,7 @@ echo "  Trainer Ray head:      $TRAINER_HEAD_NODE ($TRAINER_HEAD_IP)"
 echo "  Trainer workers:       ${NODELIST[@]:2}"
 
 # ── Start envs/search_server.py on dedicated SEARCH_NODE ──
-probe "starting envs/search_server.py with $EMBED_MODEL on dedicated $SEARCH_NODE:18999"
+probe "starting envs/search_server.py with $EMBED_MODEL and $SEARCH_SOURCE on dedicated $SEARCH_NODE:18999"
 mkdir -p "$PROJECT_ROOT/logs"
 SEARCH_LOG="$PROJECT_ROOT/logs/search-${SLURM_JOB_ID:-idev}-${RUN_TAG}-ctxgraph.log"
 probe "search server log: $SEARCH_LOG"
@@ -329,12 +354,8 @@ srun --overlap --nodes=1 --ntasks=1 -w "$SEARCH_NODE" bash -c "
   export PYTHONUNBUFFERED=1
   export NUM_GPUS=1
   export MAX_BATCH_SIZE=128
-  unset LOCAL_CORPUS_PARQUET LOCAL_EMBEDDINGS_PKL  # use HF dataset mode for BC
-  exec python -u envs/search_server.py \
-    --model $EMBED_MODEL \
-    --port 18999 \
-    --corpus Tevatron/browsecomp-plus-corpus \
-    --corpus-embedding-dataset miaolu3/browsecomp-plus
+  unset LOCAL_CORPUS_PARQUET LOCAL_EMBEDDINGS_PKL
+  exec python -u envs/search_server.py $SEARCH_SERVER_ARGS_Q
 " >"$SEARCH_LOG" 2>&1 &
 SEARCH_PID=$!
 
@@ -466,7 +487,7 @@ probe "querying ray status"
 ray status || echo "WARN: ray status check failed"
 
 echo "=============================================================="
-echo "  Launching ContextGraph FoldGRPO + v5 (Qwen3-8B dense, 5 nodes [1 search + 4 trainer], $TOTAL_TRAINING_STEPS steps, BS=$TRAIN_BATCH_SIZE, rollout_n=$ROLLOUT_N, ppo_mini/rank=$PPO_MINI_BATCH_SIZE, context=$CONTEXT_LENGTH [48h], BrowseComp-Plus)"
+echo "  Launching ContextGraph FoldGRPO + v5 (Qwen3-8B dense, 5 nodes [1 search + 4 trainer], $TOTAL_TRAINING_STEPS steps, BS=$TRAIN_BATCH_SIZE, rollout_n=$ROLLOUT_N, ppo_mini/rank=$PPO_MINI_BATCH_SIZE, context=$CONTEXT_LENGTH [48h], $DATASET_LABEL)"
 echo "  Optimization: lr=$TRAIN_LR use_kl_loss=$USE_KL_LOSS clip=[$CLIP_RATIO_LOW,$CLIP_RATIO_HIGH]"
 echo "  CG-specific (kept): workflow=search_graph, process_reward=[flat,scope,graph], lambda_compact=0.2, lambda_cost=0.02, consolidation K=5"
 echo "  Graph protocol: $BC_CTXGRAPH_PROTOCOL structured_controller=$BC_STRUCTURED_GRAPH_CONTROLLER controller_formatting=$BC_CONTROLLER_OWNED_TOOL_FORMATTING action_policy=$BC_CONTROLLER_ACTION_POLICY"

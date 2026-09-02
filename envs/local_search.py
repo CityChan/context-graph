@@ -232,9 +232,10 @@ async def judge(question, correct_answer, predicted_answer):
                 correct_answer=correct_answer
             )
             messages = [{'role': 'user', 'content': judge_prompt}]
+            judge_model = os.getenv("JUDGE_MODEL", "gpt-5-nano")
             score = 0
             for _ in range(3):
-                response = await call_openai_raw(messages)  # use call_openai for api proxy
+                response = await call_openai_raw(messages, model=judge_model)
                 grade_report = parse_judge_response(response)
                 if grade_report['parse_error']:
                     continue
