@@ -48,6 +48,23 @@ def test_miroverse_controller_rl_wrapper_uses_base_model_new_protocol_and_local_
     assert "TOTAL_TRAINING_STEPS=${TOTAL_TRAINING_STEPS:-5}" in source
 
 
+def test_miroverse_full_policy_rl_wrapper_matches_generated_sft_action_space():
+    source = (ROOT / "scripts/smoke_train_miroverse_ctxgraph_full_policy_rl_qwen3_8b_5node.sh").read_text(encoding="utf-8")
+    assert "#SBATCH -N 5" in source
+    assert "MODEL_PATH=${MODEL_PATH:-Qwen/Qwen3-8B}" in source
+    assert "BC_CTXGRAPH_PROTOCOL=full_policy" in source
+    assert "LOCAL_SEARCH_CORPUS=" in source
+    assert "LOCAL_SEARCH_EMBEDDINGS=" in source
+    assert "VAL_BEFORE_TRAIN=True" in source
+    assert "TEST_FREQ=1" in source
+
+
+def test_runner_accepts_explicit_full_policy_protocol_alias():
+    source = (ROOT / "scripts/train_bc_ctxgraph_8b_paperfaithful_5node_48h.sh").read_text(encoding="utf-8")
+    assert "legacy|full_policy)" in source
+    assert "full_policy, legacy, or controller" in source
+
+
 def test_contextgraph_runner_supports_absolute_data_and_local_retrieval_artifacts():
     source = (ROOT / "scripts/train_bc_ctxgraph_8b_paperfaithful_5node_48h.sh").read_text(encoding="utf-8")
     assert '/*) TRAIN_PARQUET="$TRAIN_DATA_FILE"' in source

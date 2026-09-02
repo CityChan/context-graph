@@ -166,7 +166,7 @@ TRAIN_LR=${TRAIN_LR:-2e-6}
 USE_KL_LOSS=${USE_KL_LOSS:-True}
 
 case "$BC_CTXGRAPH_PROTOCOL" in
-  legacy)
+  legacy|full_policy)
     BC_STRUCTURED_GRAPH_CONTROLLER=false
     BC_CONTROLLER_OWNED_TOOL_FORMATTING=false
     ;;
@@ -175,7 +175,7 @@ case "$BC_CTXGRAPH_PROTOCOL" in
     BC_CONTROLLER_OWNED_TOOL_FORMATTING=true
     ;;
   *)
-    echo "ERROR: BC_CTXGRAPH_PROTOCOL must be legacy or controller; got $BC_CTXGRAPH_PROTOCOL"
+    echo "ERROR: BC_CTXGRAPH_PROTOCOL must be full_policy, legacy, or controller; got $BC_CTXGRAPH_PROTOCOL"
     exit 1
     ;;
 esac
