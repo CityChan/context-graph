@@ -52,13 +52,20 @@ def record_to_seed(record, index: int, reasons: list[str] | None = None):
         if reasons is not None:
             reasons.append(reason)
 
-    messages = as_messages(record.get("messages", record.get("conversations")))
-    messages, _ = collapse_finalizer_round(messages)
+    original_messages = as_messages(record.get("messages", record.get("conversations")))
+    messages, finalizer_collapsed = collapse_finalizer_round(original_messages)
     if len(messages) < 3 or messages[1]["role"] != "user" or messages[-1]["role"] != "assistant":
         reject("message_shape")
         return None
     query = messages[1]["content"].strip()
-    answer = boxed_answer(messages[-1]["content"])
+    # MiroVerse often appends an artificial finalizer round whose assistant
+    # response contains the normalized boxed gold answer. Remove that round
+    # from the rollout context, but retain its answer for reward supervision.
+    answer_sources = []
+    if finalizer_collapsed:
+        answer_sources.append(original_messages[-1]["content"])
+    answer_sources.append(messages[-1]["content"])
+    answer = next((value for text in answer_sources if (value := boxed_answer(text))), None)
     if not query:
         reject("empty_query")
         return None

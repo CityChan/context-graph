@@ -32,6 +32,14 @@ def test_extracts_query_and_exact_answer_before_artificial_finalizer():
     assert seed["reward_model"]["ground_truth"] == "Example Person"
 
 
+def test_uses_boxed_finalizer_as_gold_when_candidate_answer_is_plain():
+    record = source_record()
+    record["messages"][-3]["content"] = "The answer is Example Person."
+    seed = record_to_seed(record, 7)
+    assert seed is not None
+    assert seed["reward_model"]["ground_truth"] == "Example Person"
+
+
 def test_seed_ability_routes_to_local_search_environment():
     seed = record_to_seed(source_record(), 7)
     selector = Path("agents/utils.py").read_text(encoding="utf-8")
@@ -42,6 +50,7 @@ def test_seed_ability_routes_to_local_search_environment():
 def test_requires_boxed_answer_and_deduplicates_queries():
     rejected = source_record("No answer?")
     rejected["messages"][-3]["content"] = "I do not know."
+    rejected["messages"][-1]["content"] = "I do not know."
     reasons = []
     assert record_to_seed(rejected, 0, reasons) is None
     assert reasons == ["missing_boxed_answer"]

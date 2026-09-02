@@ -3,7 +3,7 @@
 #SBATCH -o /work/09281/chc_1996/vista/context-graph/logs/miro-full-policy.%A_%a.out
 #SBATCH -e /work/09281/chc_1996/vista/context-graph/logs/miro-full-policy.%A_%a.err
 #SBATCH -p gh
-#SBATCH -N 4
+#SBATCH -N 5
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=72
 #SBATCH -t 08:00:00
@@ -29,15 +29,15 @@ fi
 : "${MAX_SAMPLES:?MAX_SAMPLES or SHARD_SIZE is required}"
 export START_INDEX MAX_SAMPLES
 
-export EXPECTED_NUM_NODES=4
+export EXPECTED_NUM_NODES=5
 export TEACHER_TP=4
-export COLOCATE_SEARCH=1
+export COLOCATE_SEARCH=0
 export DATA_PATH=${DATA_PATH:-$SCRATCH/contextgraph_sft/miroverse_full_policy/seeds.parquet}
 export LOCAL_SEARCH_CORPUS=${LOCAL_SEARCH_CORPUS:-$SCRATCH/contextgraph_sft/miroverse_full_policy/retrieval_corpus.parquet}
 export LOCAL_SEARCH_EMBEDDINGS=${LOCAL_SEARCH_EMBEDDINGS:-$SCRATCH/contextgraph_sft/miroverse_full_policy/retrieval_embeddings.pkl}
-export NUM_WORKERS=${NUM_WORKERS:-2}
-export MAX_NUM_SEQS=${MAX_NUM_SEQS:-2}
-export GPU_MEMORY_UTILIZATION=${GPU_MEMORY_UTILIZATION:-0.70}
+export NUM_WORKERS=${NUM_WORKERS:-4}
+export MAX_NUM_SEQS=${MAX_NUM_SEQS:-4}
+export GPU_MEMORY_UTILIZATION=${GPU_MEMORY_UTILIZATION:-0.85}
 export FULL_POLICY_CURATOR=1
 export RUN_TAG=${RUN_TAG:-${SLURM_ARRAY_JOB_ID:-${SLURM_JOB_ID}}_miroverse_full_policy_s${START_INDEX}_n${MAX_SAMPLES}}
 export ARTIFACT_ROOT=${ARTIFACT_ROOT:-$SCRATCH/contextgraph_sft/miroverse_full_policy_native/shards/$RUN_TAG}
