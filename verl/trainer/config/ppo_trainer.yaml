@@ -125,6 +125,11 @@ algorithm:
   # FoldGRPO process reward: paper | relative_extrema
   foldgrpo_process_reward_mode: relative_extrema
 
+  # GraphRPO token-advantage coefficients (used only when adv_estimator=graphrpo)
+  graphrpo_alpha: 1.0
+  graphrpo_beta: 1.0
+  graphrpo_epsilon: 1.0e-6
+
   # Whether to fix bad positive advantages
   fix_bad_positive_adv: False
 

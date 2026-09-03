@@ -426,6 +426,8 @@ class DataParallelPPOActor(BasePPOActor):
         # Include rollout_log_probs for computing rollout_corr metrics in bypass mode
         if "rollout_log_probs" in data.batch.keys():
             select_keys.append("rollout_log_probs")
+        if "graphrpo_loss_weights" in data.batch.keys():
+            select_keys.append("graphrpo_loss_weights")
 
         has_multi_modal_inputs = "multi_modal_inputs" in data.non_tensor_batch.keys()
         non_tensor_select_keys = ["multi_modal_inputs"] if has_multi_modal_inputs else []
@@ -434,7 +436,19 @@ class DataParallelPPOActor(BasePPOActor):
 
         # Split to make minibatch iterator for updating the actor
         # See PPO paper for details. https://arxiv.org/abs/1707.06347
-        mini_batches = data.split(self.config.ppo_mini_batch_size)
+        loss_mode = self.config.policy_loss.get("loss_mode", "vanilla")
+        graph_rpo_mode = loss_mode == "graphrpo"
+        if graph_rpo_mode:
+            # The global GraphRPO weights couple every main/branch stream that
+            # shares a gen_uid.  Use one optimizer minibatch so a single update
+            # realizes the complete episode-first objective; memory is still
+            # bounded by the ordinary microbatch settings below.
+            mini_batches = [data]
+            world_size = torch.distributed.get_world_size()
+            dp_size = world_size // self.ulysses_sequence_parallel_size
+            self.config.global_batch_info["graphrpo_dp_size"] = dp_size
+        else:
+            mini_batches = data.split(self.config.ppo_mini_batch_size)
 
         on_policy = len(mini_batches) == 1 and self.config.ppo_epochs == 1
 
@@ -467,7 +481,9 @@ class DataParallelPPOActor(BasePPOActor):
 
                     calculate_entropy = self.config.calculate_entropy or (entropy_coeff != 0)
 
-                    if self.config.use_dynamic_bsz:
+                    if graph_rpo_mode:
+                        loss_scale_factor = 1.0
+                    elif self.config.use_dynamic_bsz:
                         loss_scale_factor = response_mask.shape[0] / self.config.ppo_mini_batch_size
                     else:
                         loss_scale_factor = 1 / self.gradient_accumulation
@@ -486,7 +502,6 @@ class DataParallelPPOActor(BasePPOActor):
                         else:
                             old_log_prob = model_inputs["old_log_probs"]
 
-                    loss_mode = self.config.policy_loss.get("loss_mode", "vanilla")
                     # vanilla -> verl.trainer.ppo.core_algos.compute_policy_loss_vanilla
 
                     # Extract pre-computed rollout correction weights if present
@@ -498,7 +513,7 @@ class DataParallelPPOActor(BasePPOActor):
                     policy_loss_fn = get_policy_loss_fn(loss_mode)
 
                     # Compute policy loss (any function is expected to return 2 values)
-                    pg_loss, pg_metrics = policy_loss_fn(
+                    policy_loss_kwargs = dict(
                         old_log_prob=old_log_prob,
                         log_prob=log_prob,
                         advantages=advantages,
@@ -508,6 +523,11 @@ class DataParallelPPOActor(BasePPOActor):
                         rollout_is_weights=rollout_is_weights,
                         overlong_mask=overlong_mask,
                     )
+                    if graph_rpo_mode:
+                        policy_loss_kwargs["graphrpo_loss_weights"] = model_inputs.get(
+                            "graphrpo_loss_weights"
+                        )
+                    pg_loss, pg_metrics = policy_loss_fn(**policy_loss_kwargs)
                     micro_batch_metrics.update(pg_metrics)
                     # Multiplying NaN by zero still produces NaN. If a future
                     # loss path bypasses the safe denominator in agg_loss,
@@ -536,7 +556,20 @@ class DataParallelPPOActor(BasePPOActor):
 
                     policy_loss = pg_loss
                     if calculate_entropy and entropy is not None:
-                        entropy_agg = agg_loss(loss_mat=entropy, loss_mask=response_mask, loss_agg_mode=loss_agg_mode)
+                        if graph_rpo_mode:
+                            graph_weights = model_inputs["graphrpo_loss_weights"].to(torch.float32)
+                            entropy_float = entropy.to(torch.float32)
+                            entropy_agg = torch.where(
+                                graph_weights.bool(),
+                                entropy_float * graph_weights,
+                                torch.zeros_like(entropy_float),
+                            ).sum() * self.config.global_batch_info["graphrpo_dp_size"]
+                        else:
+                            entropy_agg = agg_loss(
+                                loss_mat=entropy,
+                                loss_mask=response_mask,
+                                loss_agg_mode=loss_agg_mode,
+                            )
                         micro_batch_metrics["actor/entropy"] = entropy_agg.detach().item()
                         if entropy_coeff != 0:
                             policy_loss -= entropy_agg * entropy_coeff
@@ -547,7 +580,20 @@ class DataParallelPPOActor(BasePPOActor):
                         kld = kl_penalty(
                             logprob=log_prob, ref_logprob=ref_log_prob, kl_penalty=self.config.kl_loss_type
                         )
-                        kl_loss = agg_loss(loss_mat=kld, loss_mask=response_mask, loss_agg_mode=loss_agg_mode)
+                        if graph_rpo_mode:
+                            graph_weights = model_inputs["graphrpo_loss_weights"].to(torch.float32)
+                            kld_float = kld.to(torch.float32)
+                            kl_loss = torch.where(
+                                graph_weights.bool(),
+                                kld_float * graph_weights,
+                                torch.zeros_like(kld_float),
+                            ).sum() * self.config.global_batch_info["graphrpo_dp_size"]
+                        else:
+                            kl_loss = agg_loss(
+                                loss_mat=kld,
+                                loss_mask=response_mask,
+                                loss_agg_mode=loss_agg_mode,
+                            )
                         if not bool(torch.isfinite(kl_loss).item()):
                             print(f"WARN: kl_loss is non-finite ({kl_loss.item()}), skipping microbatch")
                             micro_batch_metrics["actor/skipped_nonfinite_micro_batch"] = 1.0

@@ -176,6 +176,35 @@ def validate_config(
     if config.algorithm.use_kl_in_reward and config.actor_rollout_ref.actor.use_kl_loss:
         print("NOTICE: You have both enabled in-reward kl and kl loss.")
 
+    if str(config.algorithm.adv_estimator).lower() == "graphrpo":
+        assert config.actor_rollout_ref.rollout.n >= 2, "GraphRPO requires rollout.n >= 2"
+        assert not config.algorithm.use_kl_in_reward, (
+            "GraphRPO applies KL in the policy objective; use_kl_in_reward must be False"
+        )
+        assert config.actor_rollout_ref.actor.policy_loss.loss_mode == "graphrpo", (
+            "GraphRPO requires actor.policy_loss.loss_mode=graphrpo for episode-first aggregation"
+        )
+        if config.actor_rollout_ref.actor.use_kl_loss:
+            assert config.actor_rollout_ref.actor.kl_loss_type == "low_var_kl", (
+                "GraphRPO requires kl_loss_type=low_var_kl when actor KL loss is enabled"
+            )
+        assert float(config.algorithm.get("graphrpo_epsilon", 0.0)) > 0.0
+        assert float(config.algorithm.get("graphrpo_alpha", -1.0)) >= 0.0
+        assert float(config.algorithm.get("graphrpo_beta", -1.0)) >= 0.0
+        plugin = config.actor_rollout_ref.rollout.plugin
+        assert config.actor_rollout_ref.rollout.agent.default_agent_loop == "context_graph_isolated_agent", (
+            "GraphRPO is implemented for context_graph_isolated_agent"
+        )
+        assert config.actor_rollout_ref.actor.strategy == "fsdp", (
+            "GraphRPO's global episode weighting currently requires the FSDP actor"
+        )
+        assert bool(plugin.get("structured_graph_controller", False)), (
+            "GraphRPO requires structured_graph_controller=True"
+        )
+        assert str(plugin.get("graph_rpo_evaluator_url", "")).strip(), (
+            "GraphRPO requires plugin.graph_rpo_evaluator_url"
+        )
+
     # critic
     if use_critic:
         critic_config = omega_conf_to_dataclass(config.critic)

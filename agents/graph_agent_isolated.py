@@ -58,6 +58,7 @@ from .graph_controller import (
     graph_checkpoint_due,
 )
 from .graph_trace import GraphTraceRecorder
+from .graph_rpo import GraphRPOEvaluatorError, assign_graph_edit_credits
 from .trajectory_capture import serialize_agent_trajectories
 
 
@@ -291,6 +292,28 @@ async def process_item(
     process_reward = getattr(config.plugin, "process_reward", None)
     if process_reward is not None and isinstance(process_reward, str) and process_reward.lower() == "none":
         process_reward = None
+    adv_estimator = str(getattr(context.config.algorithm, "adv_estimator", "")).lower()
+    graph_rpo_enabled = adv_estimator in {"graphrpo", "advantageestimator.graphrpo"}
+    if graph_rpo_enabled and is_train:
+        if not structured_graph_controller:
+            raise ValueError(
+                "GraphRPO requires structured_graph_controller=True so each "
+                "edit span is an isolated structured decision"
+            )
+        if not str(getattr(config.plugin, "graph_rpo_evaluator_url", "") or "").strip():
+            raise GraphRPOEvaluatorError(
+                "GraphRPO requires actor_rollout_ref.rollout.plugin."
+                "graph_rpo_evaluator_url"
+            )
+        if process_reward is None:
+            process_reward = []
+        elif isinstance(process_reward, str):
+            process_reward = [process_reward]
+        else:
+            process_reward = list(process_reward)
+        for required_label in ("scope", "graphrpo"):
+            if required_label not in process_reward:
+                process_reward.append(required_label)
     max_traj = getattr(config.plugin, "max_traj", None)
     enable_summary = getattr(config.plugin, "enable_summary", False)
     enable_retrieval_memory = getattr(
@@ -368,6 +391,12 @@ async def process_item(
     graph_invalid_penalty = getattr(
         config.plugin, "graph_invalid_penalty", -0.3
     )
+    if graph_rpo_enabled:
+        # Section 4.2 assigns every invalid or malformed graph decision,
+        # including a disallowed pass, the same -0.3 process label.
+        consolidation_invalid_penalty = -0.3
+        consolidation_pass_invalid_penalty = -0.3
+        graph_invalid_penalty = -0.3
 
     llm_client = context.llm_client
 
@@ -396,7 +425,14 @@ async def process_item(
 
     prompt_turn = len(user_prompt)
     agent = dict()
-    agent['main'] = Agent(llm_client, user_prompt, tokenizer, config, prompt_turn=prompt_turn)
+    agent['main'] = Agent(
+        llm_client,
+        user_prompt,
+        tokenizer,
+        config,
+        prompt_turn=prompt_turn,
+        process_reward_min_precedence=graph_rpo_enabled,
+    )
     branches = []
     branch_tasks = {}
     branch_return = {}
@@ -465,7 +501,14 @@ async def process_item(
                 f"For this question, you have already made the following progress in previous session, "
                 f"summarized as follow:\n\n{summary}\n\nNow continue work on it.")
             current = current + '+'
-            agent[current] = Agent(llm_client, user_prompt, tokenizer, config, prompt_turn=prompt_turn)
+            agent[current] = Agent(
+                llm_client,
+                user_prompt,
+                tokenizer,
+                config,
+                prompt_turn=prompt_turn,
+                process_reward_min_precedence=graph_rpo_enabled,
+            )
             agent[current].append({'role': 'assistant', 'content': ""})
             agent[current].append({'role': 'user', 'content': next_session_prompt})
             session_message.append({'role': 'user', 'content': next_session_prompt})
@@ -506,11 +549,16 @@ async def process_item(
                 args=fn_call.get('arguments', {}), success=False,
                 error=f"out-of-mode graph action: {fn_call['function']}",
                 assistant_content=response,
+                assistant_turn_index=len(agent['main'].chat) - 1,
                 decision_context={
                     "mode": "environment",
                     "rejected_op": fn_call['function'],
                 },
             )
+            if process_reward and is_train:
+                agent['main'].set_process_reward(
+                    len(agent['main'].chat) - 1, graph_invalid_penalty
+                )
             print(
                 f'[GRAPH CONTROLLER MODE REJECTION] '
                 f'{fn_call["function"]} outside checkpoint'
@@ -537,6 +585,7 @@ async def process_item(
                 args=fn_call.get('arguments', {}), success=observation.success,
                 error=None if observation.success else str(observation).split("\n", 1)[0],
                 assistant_content=response,
+                assistant_turn_index=len(agent['main'].chat) - 1,
             )
             if not observation.success and process_reward and is_train:
                 graph_turn_idx = len(agent['main'].chat) - 1
@@ -570,6 +619,7 @@ async def process_item(
                 source="model", op="pass", args={}, success=observation.success,
                 error=None if observation.success else str(observation).split("\n", 1)[0],
                 assistant_content=response,
+                assistant_turn_index=len(agent['main'].chat) - 1,
             )
 
         # ── Branch: spawn isolated child subgraph ──
@@ -612,7 +662,14 @@ async def process_item(
                 branch_node_map[agent_name] = subtask_id
 
                 history = agent['main'].messages()
-                agent[agent_name] = Agent(llm_client, history, tokenizer, config, prompt_turn=prompt_turn)
+                agent[agent_name] = Agent(
+                    llm_client,
+                    history,
+                    tokenizer,
+                    config,
+                    prompt_turn=prompt_turn,
+                    process_reward_min_precedence=graph_rpo_enabled,
+                )
                 branch_prompt_formatted = branch_prompt.format(message=message_to_branch)
 
                 # Branch sees its OWN child graph state, not the parent
@@ -1035,6 +1092,7 @@ async def process_item(
                         success=False,
                         error=str(exc),
                         assistant_content=controller_response,
+                        assistant_turn_index=controller_turn_idx,
                         decision_context=decision_context,
                     )
                     if process_reward and is_train:
@@ -1062,6 +1120,7 @@ async def process_item(
                         args=graph_call['arguments'],
                         success=True,
                         assistant_content=controller_response,
+                        assistant_turn_index=controller_turn_idx,
                         decision_context=decision_context,
                     )
                     if (
@@ -1207,6 +1266,7 @@ async def process_item(
                     args=consol_fn.get('arguments', {}), success=consol_obs.success,
                     error=None if consol_obs.success else str(consol_obs).split("\n", 1)[0],
                     assistant_content=consol_response,
+                    assistant_turn_index=consol_turn_idx,
                 )
                 if consol_obs.success:
                     consolidation_stats['ops'] += 1
@@ -1239,6 +1299,7 @@ async def process_item(
                     source="model", op="pass", args={}, success=is_sat,
                     error=None if is_sat else "pass rejected: graph not saturated",
                     assistant_content=consol_response,
+                    assistant_turn_index=consol_turn_idx,
                 )
             else:
                 consolidation_stats['invalid'] += 1
@@ -1516,7 +1577,20 @@ async def process_item(
                         if 'flat' in process_reward:
                             agent[name].set_cache('reward', 0 + 0.2)
 
-    use_graph_reward = process_reward and 'graph' in process_reward
+    if graph_rpo_enabled and is_train:
+        graph_rpo_metrics = await assign_graph_edit_credits(
+            agent=agent['main'],
+            graph_trace=graph_trace_payload,
+            question=query_text,
+            terminal_reward=score[1],
+            tokenizer=tokenizer,
+            plugin_config=config.plugin,
+        )
+        env.stats.update(graph_rpo_metrics)
+
+    use_graph_reward = (
+        not graph_rpo_enabled and process_reward and 'graph' in process_reward
+    )
 
     for name in agent if is_train else ['main']:
         out = await agent[name].get_data()
@@ -1557,6 +1631,11 @@ async def process_item(
                 'message_str': print_chat(session_message),
                 'meta_info': f"N: {len(agent)} | {name} | G:{len(graph.nodes)}n/{len(graph.active_edges)}e [iso]",
                 'process_reward_mask': out['process_reward_mask'],
+                **(
+                    {'graph_edit_credit_mask': out['graph_edit_credit_mask']}
+                    if graph_rpo_enabled
+                    else {}
+                ),
                 'uid': uid,
                 'gen_uid': gen_uid,
                 'graph_state': graph.to_state_text(),

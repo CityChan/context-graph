@@ -286,6 +286,29 @@ def compute_advantage(
         )
         data.batch["advantages"] = advantages
         data.batch["returns"] = returns
+    elif adv_estimator == AdvantageEstimator.GRAPHRPO:
+        excluded_gen_uids = set()
+        if data.meta_info.get("gen_uid_dummy") is not None:
+            excluded_gen_uids.add(data.meta_info["gen_uid_dummy"])
+        advantages, returns = core_algos.compute_graphrpo_advantage(
+            token_level_rewards=data.batch["token_level_rewards"],
+            response_mask=data.batch["response_mask"],
+            index=data.non_tensor_batch["uid"],
+            gen_uid=data.non_tensor_batch["gen_uid"],
+            epsilon=float(config.get("graphrpo_epsilon", 1e-6)),
+            process_reward_mask=data.batch.get("process_reward_mask"),
+            graph_edit_credit_mask=data.batch.get("graph_edit_credit_mask"),
+            excluded_gen_uids=excluded_gen_uids,
+            config=config,
+        )
+        data.batch["advantages"] = advantages
+        data.batch["returns"] = returns
+        data.batch["graphrpo_loss_weights"] = core_algos.compute_graphrpo_loss_weights(
+            response_mask=data.batch["response_mask"],
+            index=data.non_tensor_batch["uid"],
+            gen_uid=data.non_tensor_batch["gen_uid"],
+            excluded_gen_uids=excluded_gen_uids,
+        )
     else:
         # handle all other adv estimator type other than GAE and GRPO
         adv_estimator_fn = core_algos.get_adv_estimator_fn(adv_estimator)

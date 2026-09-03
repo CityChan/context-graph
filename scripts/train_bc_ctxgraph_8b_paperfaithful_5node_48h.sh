@@ -164,6 +164,9 @@ FINAL_ANSWER_RESERVE=${FINAL_ANSWER_RESERVE:-2048}
 FINAL_ANSWER_SAFETY_MARGIN=${FINAL_ANSWER_SAFETY_MARGIN:-64}
 TRAIN_LR=${TRAIN_LR:-2e-6}
 USE_KL_LOSS=${USE_KL_LOSS:-True}
+ADV_ESTIMATOR=${ADV_ESTIMATOR:-foldgrpo}
+POLICY_LOSS_MODE=${POLICY_LOSS_MODE:-vanilla}
+PROCESS_REWARD_SPEC=${PROCESS_REWARD_SPEC:-'[flat,scope,graph]'}
 
 case "$BC_CTXGRAPH_PROTOCOL" in
   legacy|full_policy)
@@ -191,6 +194,39 @@ ALGORITHM_KL_COEF=${ALGORITHM_KL_COEF:-0.005}
 CLIP_RATIO_LOW=${CLIP_RATIO_LOW:-0.2}
 CLIP_RATIO_HIGH=${CLIP_RATIO_HIGH:-0.2}
 CHECKPOINT_ROOT=${CHECKPOINT_ROOT:-${SCRATCH:-/scratch/09281/chc_1996}/context-graph-ckpts/$EXPERIMENT_NAME}
+
+GRAPH_RPO_ARGS=()
+if [ "$ADV_ESTIMATOR" = "graphrpo" ]; then
+  if [ "$BC_CTXGRAPH_PROTOCOL" != "controller" ]; then
+    echo "ERROR: GraphRPO requires BC_CTXGRAPH_PROTOCOL=controller"
+    exit 1
+  fi
+  if [ -z "${GRAPH_RPO_EVALUATOR_URL:-}" ]; then
+    echo "ERROR: GraphRPO requires GRAPH_RPO_EVALUATOR_URL"
+    exit 1
+  fi
+  GRAPH_RPO_ALPHA=${GRAPH_RPO_ALPHA:-1.0}
+  GRAPH_RPO_BETA=${GRAPH_RPO_BETA:-1.0}
+  GRAPH_RPO_EPSILON=${GRAPH_RPO_EPSILON:-1e-6}
+  GRAPH_RPO_VIEW_BUDGET=${GRAPH_RPO_VIEW_BUDGET:-2048}
+  GRAPH_RPO_PROBABILITY_EPSILON=${GRAPH_RPO_PROBABILITY_EPSILON:-1e-4}
+  GRAPH_RPO_CONFIDENCE_BOUND=${GRAPH_RPO_CONFIDENCE_BOUND:-8.0}
+  GRAPH_RPO_SERIALIZATION_PENALTY=${GRAPH_RPO_SERIALIZATION_PENALTY:-0.0}
+  GRAPH_RPO_DELTA_MAX=${GRAPH_RPO_DELTA_MAX:-1.0}
+  GRAPH_RPO_OPERATION_COSTS=${GRAPH_RPO_OPERATION_COSTS:-'{merge:0.0,prune:0.0,add_edge:0.0,select:0.0}'}
+  GRAPH_RPO_ARGS+=(
+    "algorithm.graphrpo_alpha=$GRAPH_RPO_ALPHA"
+    "algorithm.graphrpo_beta=$GRAPH_RPO_BETA"
+    "algorithm.graphrpo_epsilon=$GRAPH_RPO_EPSILON"
+    "+actor_rollout_ref.rollout.plugin.graph_rpo_evaluator_url=$GRAPH_RPO_EVALUATOR_URL"
+    "+actor_rollout_ref.rollout.plugin.graph_rpo_view_budget=$GRAPH_RPO_VIEW_BUDGET"
+    "+actor_rollout_ref.rollout.plugin.graph_rpo_probability_epsilon=$GRAPH_RPO_PROBABILITY_EPSILON"
+    "+actor_rollout_ref.rollout.plugin.graph_rpo_confidence_bound=$GRAPH_RPO_CONFIDENCE_BOUND"
+    "+actor_rollout_ref.rollout.plugin.graph_rpo_serialization_penalty=$GRAPH_RPO_SERIALIZATION_PENALTY"
+    "+actor_rollout_ref.rollout.plugin.graph_rpo_delta_max=$GRAPH_RPO_DELTA_MAX"
+    "+actor_rollout_ref.rollout.plugin.graph_rpo_operation_costs=$GRAPH_RPO_OPERATION_COSTS"
+  )
+fi
 
 # Qwen3-8B advertises 40,960 positions. Longer runs must override both the
 # actor/reference HF config and vLLM's independently loaded HF config.
@@ -487,9 +523,9 @@ probe "querying ray status"
 ray status || echo "WARN: ray status check failed"
 
 echo "=============================================================="
-echo "  Launching ContextGraph FoldGRPO + v5 (Qwen3-8B dense, 5 nodes [1 search + 4 trainer], $TOTAL_TRAINING_STEPS steps, BS=$TRAIN_BATCH_SIZE, rollout_n=$ROLLOUT_N, ppo_mini/rank=$PPO_MINI_BATCH_SIZE, context=$CONTEXT_LENGTH [48h], $DATASET_LABEL)"
+echo "  Launching ContextGraph ${ADV_ESTIMATOR} + v5 (Qwen3-8B dense, 5 nodes [1 search + 4 trainer], $TOTAL_TRAINING_STEPS steps, BS=$TRAIN_BATCH_SIZE, rollout_n=$ROLLOUT_N, ppo_mini/rank=$PPO_MINI_BATCH_SIZE, context=$CONTEXT_LENGTH [48h], $DATASET_LABEL)"
 echo "  Optimization: lr=$TRAIN_LR use_kl_loss=$USE_KL_LOSS clip=[$CLIP_RATIO_LOW,$CLIP_RATIO_HIGH]"
-echo "  CG-specific (kept): workflow=search_graph, process_reward=[flat,scope,graph], lambda_compact=0.2, lambda_cost=0.02, consolidation K=5"
+echo "  CG-specific: workflow=search_graph, process_reward=$PROCESS_REWARD_SPEC, lambda_compact=0.2, lambda_cost=0.02, consolidation K=5"
 echo "  Graph protocol: $BC_CTXGRAPH_PROTOCOL structured_controller=$BC_STRUCTURED_GRAPH_CONTROLLER controller_formatting=$BC_CONTROLLER_OWNED_TOOL_FORMATTING action_policy=$BC_CONTROLLER_ACTION_POLICY"
 echo "  v5 add-ons: uniqueness_weight=0.10 (Improvement #1), auto_bind_branch_edges=True with min_overlap=0.05 (Improvement #3)"
 echo "  vLLM gpu_memory_utilization=0.6 + FSDP CPU offload"
@@ -501,7 +537,7 @@ set +e
 srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_ROOT" \
   --export=ALL,LOCAL_SEARCH_URL="$LOCAL_SEARCH_URL",OPENAI_API_KEY="$OPENAI_API_KEY",JUDGE_MODEL="$JUDGE_MODEL" \
   python -m scripts.train_graph \
-  algorithm.adv_estimator=foldgrpo \
+  algorithm.adv_estimator="$ADV_ESTIMATOR" \
   algorithm.kl_ctrl.kl_coef="$ALGORITHM_KL_COEF" \
   actor_rollout_ref.rollout.agent.default_agent_loop=context_graph_isolated_agent \
   actor_rollout_ref.rollout.name=vllm \
@@ -528,6 +564,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   actor_rollout_ref.actor.optim.lr="$TRAIN_LR" \
   actor_rollout_ref.actor.optim.weight_decay=0.1 \
   actor_rollout_ref.actor.use_kl_loss="$USE_KL_LOSS" \
+  actor_rollout_ref.actor.policy_loss.loss_mode="$POLICY_LOSS_MODE" \
   actor_rollout_ref.actor.clip_ratio_low="$CLIP_RATIO_LOW" \
   actor_rollout_ref.actor.clip_ratio_high="$CLIP_RATIO_HIGH" \
   actor_rollout_ref.actor.grad_clip=0.5 \
@@ -561,7 +598,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   +actor_rollout_ref.rollout.plugin.session_timeout="$SESSION_TIMEOUT" \
   +actor_rollout_ref.rollout.plugin.enable_summary=False \
   +actor_rollout_ref.rollout.plugin.branch_len="$RESPONSE_LENGTH" \
-  +actor_rollout_ref.rollout.plugin.process_reward='[flat,scope,graph]' \
+  +actor_rollout_ref.rollout.plugin.process_reward="$PROCESS_REWARD_SPEC" \
   +actor_rollout_ref.rollout.plugin.lambda_compact=0.2 \
   +actor_rollout_ref.rollout.plugin.lambda_cost=0.02 \
   +actor_rollout_ref.rollout.plugin.consolidation_interval=5 \
@@ -586,6 +623,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   trainer.project_name=context-graph \
   trainer.experiment_name="$EXPERIMENT_NAME" \
   trainer.logger="$TRAINER_LOGGER" \
+  "${GRAPH_RPO_ARGS[@]}" \
   "${RESUME_ARGS[@]}"
 RC=$?
 set -e

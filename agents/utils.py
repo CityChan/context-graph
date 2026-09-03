@@ -569,12 +569,21 @@ class AgentContext:
         process_reward_mask = sum([[info.get('process_reward', 0) if isinstance(info, dict) else 0] * len(turn)
                                    for turn, info in zip(self.chat_ids, self.additional_info)][prompt_turn:], [])
         process_reward_mask = [p * m for p, m in zip(process_reward_mask, response_mask)][:response_length]
+        graph_edit_credit_mask = sum([
+            [info.get('graph_edit_credit', 0) if isinstance(info, dict) else 0] * len(turn)
+            for turn, info in zip(self.chat_ids, self.additional_info)
+        ][prompt_turn:], [])
+        graph_edit_credit_mask = [
+            credit * mask
+            for credit, mask in zip(graph_edit_credit_mask, response_mask)
+        ][:response_length]
         return {
             'prompt_ids': prompt_ids,
             'response_ids': response_ids,
             'response_logprobs': response_logprobs,
             'response_mask': response_mask,
             'process_reward_mask': process_reward_mask,
+            'graph_edit_credit_mask': graph_edit_credit_mask,
             'num_turns': len(self.chat_ids),
             'messages': self.chat,
         }
@@ -582,10 +591,19 @@ class AgentContext:
 
 class Agent(AgentContext):
     # Agent utils
-    def __init__(self, llm_client, conversations, tokenizer, config, prompt_turn=2):
+    def __init__(
+        self,
+        llm_client,
+        conversations,
+        tokenizer,
+        config,
+        prompt_turn=2,
+        process_reward_min_precedence=False,
+    ):
         super().__init__(conversations, tokenizer, config, prompt_turn=prompt_turn)
         self.llm_client = llm_client
         self.retry_cjk = getattr(config.plugin, "retry_cjk", 0)
+        self.process_reward_min_precedence = bool(process_reward_min_precedence)
         self.info_cache = {}
         self.tool_format_repairs = []
 
@@ -697,7 +715,23 @@ class Agent(AgentContext):
                 continue
             if self.additional_info[i] is None:
                 self.additional_info[i] = {}
-            self.additional_info[i]['process_reward'] = reward
+            existing = self.additional_info[i].get('process_reward')
+            if existing is None or not self.process_reward_min_precedence:
+                self.additional_info[i]['process_reward'] = reward
+            else:
+                self.additional_info[i]['process_reward'] = min(existing, reward)
+
+    def add_graph_edit_credit(self, turn, credit):
+        """Accumulate edit-level GraphRPO credit on one generated turn."""
+        if turn <= 0 or turn > len(self.chat) - 1:
+            raise IndexError(f"GraphRPO assistant turn index is out of range: {turn}")
+        if self.chat_completions[turn] is None:
+            raise ValueError(f"GraphRPO turn {turn} is not policy-generated")
+        if self.additional_info[turn] is None:
+            self.additional_info[turn] = {}
+        self.additional_info[turn]['graph_edit_credit'] = (
+            self.additional_info[turn].get('graph_edit_credit', 0.0) + float(credit)
+        )
 
     def set_cache(self, key, value):
         self.info_cache[key] = value

@@ -77,6 +77,7 @@ class GraphTraceRecorder:
         success: bool = True,
         error: str | None = None,
         assistant_content: str | None = None,
+        assistant_turn_index: int | None = None,
         decision_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         after = self.capture(graph)
@@ -98,6 +99,9 @@ class GraphTraceRecorder:
             ),
             "assistant_content_preview": (
                 assistant_content[-512:] if assistant_content is not None else None
+            ),
+            "assistant_turn_index": (
+                int(assistant_turn_index) if assistant_turn_index is not None else None
             ),
             "decision_context": ContextGraph._json_safe(decision_context or {}),
             "before_hash": snapshot_hash(before),

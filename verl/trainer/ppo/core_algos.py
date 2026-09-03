@@ -107,6 +107,7 @@ class AdvantageEstimator(str, Enum):
     RLOO_VECTORIZED = "rloo_vectorized"
     GRPO_VECTORIZED = "grpo_vectorized"
     FOLDGRPO = "foldgrpo"
+    GRAPHRPO = "graphrpo"
 
 
 ADV_ESTIMATOR_REGISTRY: dict[str, Any] = {}
@@ -544,6 +545,183 @@ def compute_foldgrpo_advantage(
         scores = torch.nan_to_num(scores, nan=0.0, posinf=5.0, neginf=-5.0)
 
     return scores, scores
+
+
+def _graph_rpo_python_ids(values: np.ndarray | list[Any]) -> list[Any]:
+    """Convert numpy scalar containers into stable dictionary keys."""
+    result = []
+    for value in values:
+        if isinstance(value, np.ndarray):
+            value = value.item()
+        elif hasattr(value, "item") and not isinstance(value, (str, bytes)):
+            try:
+                value = value.item()
+            except (ValueError, TypeError):
+                pass
+        result.append(value)
+    return result
+
+
+def compute_graphrpo_loss_weights(
+    response_mask: torch.Tensor,
+    index: np.ndarray,
+    gen_uid: np.ndarray,
+    *,
+    excluded_gen_uids: Optional[set[Any]] = None,
+) -> torch.Tensor:
+    """Return exact ``1 / (|Q| K_q |M_g|)`` token weights.
+
+    One GraphRPO episode may occupy several batch rows because the main stream
+    and every branch are optimized from their recorded prefixes separately.
+    The denominator therefore counts policy tokens across all rows sharing a
+    ``gen_uid`` before assigning any token weight.
+    """
+    question_ids = _graph_rpo_python_ids(index)
+    episode_ids = _graph_rpo_python_ids(gen_uid)
+    excluded = set(excluded_gen_uids or set())
+    if len(question_ids) != response_mask.shape[0] or len(episode_ids) != response_mask.shape[0]:
+        raise ValueError("GraphRPO identifiers must match the response batch size")
+
+    group_episodes: dict[Any, list[Any]] = defaultdict(list)
+    episode_rows: dict[Any, list[int]] = defaultdict(list)
+    episode_question: dict[Any, Any] = {}
+    for row, (question_id, episode_id) in enumerate(zip(question_ids, episode_ids, strict=True)):
+        if episode_id in excluded:
+            continue
+        if episode_id in episode_question and episode_question[episode_id] != question_id:
+            raise ValueError(f"GraphRPO gen_uid {episode_id!r} belongs to multiple questions")
+        episode_question[episode_id] = question_id
+        episode_rows[episode_id].append(row)
+        if episode_id not in group_episodes[question_id]:
+            group_episodes[question_id].append(episode_id)
+
+    if not group_episodes:
+        raise ValueError("GraphRPO batch contains no non-dummy question groups")
+    for question_id, episodes in group_episodes.items():
+        if len(episodes) < 2:
+            raise ValueError(
+                f"GraphRPO requires K>=2 episodes for question {question_id!r}; got {len(episodes)}"
+            )
+
+    weights = torch.zeros_like(response_mask, dtype=torch.float32)
+    question_count = len(group_episodes)
+    for question_id, episodes in group_episodes.items():
+        episode_count = len(episodes)
+        for episode_id in episodes:
+            rows = episode_rows[episode_id]
+            token_count = int(response_mask[rows].to(torch.bool).sum().item())
+            if token_count == 0:
+                raise ValueError(
+                    f"GraphRPO episode {episode_id!r} has M_g=empty; resample it before grouping"
+                )
+            token_weight = 1.0 / (question_count * episode_count * token_count)
+            weights[rows] = response_mask[rows].to(torch.float32) * token_weight
+    return weights
+
+
+@register_adv_est(AdvantageEstimator.GRAPHRPO)
+def compute_graphrpo_advantage(
+    token_level_rewards: torch.Tensor,
+    response_mask: torch.Tensor,
+    index: np.ndarray,
+    gen_uid: np.ndarray,
+    epsilon: float = 1e-6,
+    process_reward_mask: Optional[torch.Tensor] = None,
+    graph_edit_credit_mask: Optional[torch.Tensor] = None,
+    excluded_gen_uids: Optional[set[Any]] = None,
+    config: Optional[AlgoConfig] = None,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Compute the token advantage in the GraphRPO objective.
+
+    Terminal rewards are deduplicated by ``gen_uid`` so branch streams cannot
+    alter group statistics.  Unlike the legacy FoldGRPO path, this estimator
+    uses the population standard deviation and adds graph/process credit after
+    outcome normalization exactly as specified in Section 4.2.
+    """
+    if epsilon <= 0.0:
+        raise ValueError("GraphRPO epsilon must be positive")
+    question_ids = _graph_rpo_python_ids(index)
+    episode_ids = _graph_rpo_python_ids(gen_uid)
+    excluded = set(excluded_gen_uids or set())
+    terminal_scores = token_level_rewards.sum(dim=-1).to(torch.float32)
+    if len(question_ids) != terminal_scores.shape[0] or len(episode_ids) != terminal_scores.shape[0]:
+        raise ValueError("GraphRPO identifiers must match the reward batch size")
+
+    episode_reward: dict[Any, torch.Tensor] = {}
+    episode_question: dict[Any, Any] = {}
+    group_episodes: dict[Any, list[Any]] = defaultdict(list)
+    for row, (question_id, episode_id) in enumerate(zip(question_ids, episode_ids, strict=True)):
+        if episode_id in excluded:
+            continue
+        reward = terminal_scores[row]
+        if not torch.isfinite(reward):
+            raise ValueError(f"GraphRPO terminal reward is non-finite for {episode_id!r}")
+        if not bool(torch.isclose(reward, torch.zeros_like(reward), atol=1e-6)) and not bool(
+            torch.isclose(reward, torch.ones_like(reward), atol=1e-6)
+        ):
+            raise ValueError(
+                "GraphRPO requires verified binary task rewards; "
+                f"episode {episode_id!r} has {reward.item():.6g}"
+            )
+        if episode_id in episode_reward:
+            if episode_question[episode_id] != question_id:
+                raise ValueError(f"GraphRPO gen_uid {episode_id!r} belongs to multiple questions")
+            if not bool(torch.isclose(episode_reward[episode_id], reward, atol=1e-6)):
+                raise ValueError(
+                    f"GraphRPO streams disagree on terminal reward for episode {episode_id!r}"
+                )
+            continue
+        episode_reward[episode_id] = reward
+        episode_question[episode_id] = question_id
+        group_episodes[question_id].append(episode_id)
+
+    episode_advantage: dict[Any, torch.Tensor] = {}
+    for question_id, episodes in group_episodes.items():
+        if len(episodes) < 2:
+            raise ValueError(
+                f"GraphRPO requires K>=2 episodes for question {question_id!r}; got {len(episodes)}"
+            )
+        rewards = torch.stack([episode_reward[episode_id] for episode_id in episodes])
+        mean = rewards.mean()
+        population_std = rewards.std(unbiased=False)
+        if not torch.isfinite(population_std) or population_std.item() == 0.0:
+            for episode_id in episodes:
+                episode_advantage[episode_id] = torch.zeros_like(mean)
+        else:
+            denominator = torch.clamp(population_std, min=epsilon)
+            for episode_id in episodes:
+                episode_advantage[episode_id] = (
+                    episode_reward[episode_id] - mean
+                ) / denominator
+
+    alpha = float(config.get("graphrpo_alpha", 1.0) if config is not None else 1.0)
+    beta = float(config.get("graphrpo_beta", 1.0) if config is not None else 1.0)
+    if alpha < 0.0 or beta < 0.0:
+        raise ValueError("GraphRPO alpha and beta must be non-negative")
+    graph_credit = (
+        torch.zeros_like(token_level_rewards, dtype=torch.float32)
+        if graph_edit_credit_mask is None
+        else graph_edit_credit_mask.to(torch.float32)
+    )
+    process_labels = (
+        torch.zeros_like(token_level_rewards, dtype=torch.float32)
+        if process_reward_mask is None
+        else process_reward_mask.to(torch.float32).clamp(min=-1.0, max=0.0)
+    )
+    if graph_credit.shape != token_level_rewards.shape or process_labels.shape != token_level_rewards.shape:
+        raise ValueError("GraphRPO token-credit tensors must match token rewards")
+
+    advantages = torch.zeros_like(token_level_rewards, dtype=torch.float32)
+    for row, episode_id in enumerate(episode_ids):
+        if episode_id in excluded:
+            continue
+        advantages[row] = (
+            episode_advantage[episode_id]
+            + alpha * graph_credit[row]
+            + beta * process_labels[row]
+        ) * response_mask[row]
+    advantages = torch.nan_to_num(advantages, nan=0.0)
+    return advantages, advantages
 
 
 @register_adv_est(AdvantageEstimator.GRPO_VECTORIZED)
@@ -1237,6 +1415,64 @@ def compute_policy_loss_vanilla(
         "actor/pg_clipfrac_lower": pg_clipfrac_lower.detach().item(),
     }
     return pg_loss, pg_metrics
+
+
+@register_policy_loss("graphrpo")
+def compute_policy_loss_graphrpo(
+    old_log_prob: torch.Tensor,
+    log_prob: torch.Tensor,
+    advantages: torch.Tensor,
+    response_mask: torch.Tensor,
+    loss_agg_mode: str = "token-mean",
+    config: Optional[ActorConfig] = None,
+    rollout_is_weights: torch.Tensor | None = None,
+    overlong_mask: torch.Tensor | None = None,
+    graphrpo_loss_weights: torch.Tensor | None = None,
+) -> tuple[torch.Tensor, dict[str, Any]]:
+    """GraphRPO's tokenwise clipped surrogate with episode-first weights."""
+    del loss_agg_mode, overlong_mask  # GraphRPO supplies its own exact aggregation.
+    if config is None:
+        raise ValueError("GraphRPO policy loss requires actor configuration")
+    if graphrpo_loss_weights is None:
+        raise ValueError("GraphRPO policy loss requires graphrpo_loss_weights")
+
+    weights = graphrpo_loss_weights.to(torch.float32) * response_mask.to(torch.float32)
+    negative_approx_kl = torch.nan_to_num(
+        torch.clamp(log_prob - old_log_prob, min=-20.0, max=20.0), nan=0.0
+    )
+    ratio = torch.exp(negative_approx_kl)
+    clip_ratio = config.clip_ratio
+    clip_ratio_low = config.clip_ratio_low if config.clip_ratio_low is not None else clip_ratio
+    clip_ratio_high = config.clip_ratio_high if config.clip_ratio_high is not None else clip_ratio
+
+    losses_unclipped = -advantages * ratio
+    losses_clipped = -advantages * torch.clamp(
+        ratio, 1.0 - clip_ratio_low, 1.0 + clip_ratio_high
+    )
+    pg_losses = torch.maximum(losses_unclipped, losses_clipped)
+    if rollout_is_weights is not None:
+        pg_losses = pg_losses * rollout_is_weights
+
+    # FSDP averages gradients across data-parallel ranks.  Since the driver
+    # has already normalized weights over the complete global question batch,
+    # multiplying each rank's partial sum by dp_size recovers the global sum.
+    dp_size = int(config.global_batch_info.get("graphrpo_dp_size", 1))
+    pg_losses_float = pg_losses.to(torch.float32)
+    weighted_losses = torch.where(
+        weights.bool(), pg_losses_float * weights, torch.zeros_like(pg_losses_float)
+    )
+    pg_loss = weighted_losses.sum() * dp_size
+
+    local_weight = weights.sum().clamp_min(torch.finfo(weights.dtype).eps)
+    pg_clipfrac = (
+        (losses_clipped > losses_unclipped).to(weights.dtype) * weights
+    ).sum() / local_weight
+    ppo_kl = ((-negative_approx_kl) * weights).sum() / local_weight
+    return pg_loss, {
+        "actor/pg_clipfrac": pg_clipfrac.detach().item(),
+        "actor/ppo_kl": ppo_kl.detach().item(),
+        "actor/pg_clipfrac_lower": 0.0,
+    }
 
 
 @register_policy_loss("gspo")

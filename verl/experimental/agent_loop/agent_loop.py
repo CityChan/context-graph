@@ -175,6 +175,8 @@ class _InternalAgentLoopOutput(AgentLoopOutput):
     """Extra fields for dynamic addition."""
     process_reward_mask: Optional[torch.Tensor] = None
     """Padded process reward mask."""
+    graph_edit_credit_mask: Optional[torch.Tensor] = None
+    """Padded GraphRPO edit-credit mask."""
 
 
 # make hydra.utils.instantiate happy
@@ -538,6 +540,13 @@ class AgentLoopWorkerBase:
             prm = torch.tensor(prm_list + [0] * max(pad_size, 0), dtype=torch.float32).unsqueeze(0)
             process_reward_mask = prm * response_mask.to(torch.float32)
 
+        graph_edit_credit_mask = None
+        gec_list = output.extra_fields.get("graph_edit_credit_mask", None)
+        if gec_list is not None:
+            pad_size = self.config.actor_rollout_ref.rollout.response_length - len(gec_list)
+            gec = torch.tensor(gec_list + [0] * max(pad_size, 0), dtype=torch.float32).unsqueeze(0)
+            graph_edit_credit_mask = gec * response_mask.to(torch.float32)
+
 
         routed_experts = None
         if output.routed_experts is not None:
@@ -648,6 +657,7 @@ class AgentLoopWorkerBase:
             metrics=metrics,
             extra_fields=output.extra_fields,
             process_reward_mask=process_reward_mask,
+            graph_edit_credit_mask=graph_edit_credit_mask,
         )
 
     def _postprocess(self, inputs: list[_InternalAgentLoopOutput]) -> DataProto:
@@ -669,6 +679,12 @@ class AgentLoopWorkerBase:
         if inputs[0].process_reward_mask is not None:
             process_reward_mask = torch.cat([input.process_reward_mask for input in inputs], dim=0)
 
+        graph_edit_credit_mask = None
+        if inputs[0].graph_edit_credit_mask is not None:
+            graph_edit_credit_mask = torch.cat(
+                [input.graph_edit_credit_mask for input in inputs], dim=0
+            )
+
         mask_rollout = None
         if inputs[0].extra_fields.get("mask_rollout", None) is not None:
             mask_rollout = torch.cat([torch.tensor([input.extra_fields["mask_rollout"]]) for input in inputs], dim=0)
@@ -688,6 +704,8 @@ class AgentLoopWorkerBase:
         )
         if process_reward_mask is not None:
             batch["process_reward_mask"] = process_reward_mask.to(torch.float32)
+        if graph_edit_credit_mask is not None:
+            batch["graph_edit_credit_mask"] = graph_edit_credit_mask.to(torch.float32)
         if mask_rollout is not None:
             batch["mask_rollout"] = mask_rollout
 
