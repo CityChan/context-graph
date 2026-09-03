@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -18,6 +19,8 @@ from transformers import (
     Trainer,
     TrainingArguments,
 )
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from agents.graph_rpo import format_graph_evaluator_input
 

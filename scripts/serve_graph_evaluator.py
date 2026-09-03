@@ -6,12 +6,15 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
 import torch
 from aiohttp import web
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from agents.graph_rpo import GRAPH_EVALUATOR_SCHEMA_VERSION, format_graph_evaluator_input
 

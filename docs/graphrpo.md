@@ -42,3 +42,9 @@ missing or unavailable. Set `GRAPH_RPO_EVALUATOR_URL` to the frozen service's
 The evaluator checkpoint and calibration must be fixed before a policy run.
 Judge outputs used for task outcomes or scope labels should likewise be cached
 or generated with a fixed decoding configuration for reproducible experiments.
+
+For mechanics-only validation on an existing five-node allocation,
+`scripts/smoke_train_bc_ctxgraph_8b_graphrpo_5node_idev.sh` starts a deterministic
+CPU evaluator on the search node and performs one optimizer step. Its evaluator
+scores are deliberately synthetic: use the smoke only to verify wiring and
+never include its reward or checkpoint in experiments.

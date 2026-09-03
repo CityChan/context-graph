@@ -165,6 +165,15 @@ def test_graph_utility_matches_bounded_logit_and_length_penalty():
     assert utility == pytest.approx(np.log(4.0) - 0.05)
 
 
+def test_smoke_evaluator_is_deterministic_and_bounded():
+    from scripts.serve_graph_evaluator_smoke import deterministic_probability
+
+    first = deterministic_probability("question", "graph-a")
+    assert first == deterministic_probability("question", "graph-a")
+    assert first != deterministic_probability("question", "graph-b")
+    assert 0.2 <= first <= 0.8
+
+
 def test_graph_edit_credit_only_uses_valid_state_changing_edits(monkeypatch):
     import agents.graph_rpo as graph_rpo
 
@@ -305,6 +314,9 @@ def test_graphrpo_training_wiring_is_explicit():
     launcher = (root / "scripts/train_bc_ctxgraph_8b_graphrpo_5node_48h.sh").read_text(
         encoding="utf-8"
     )
+    smoke_launcher = (
+        root / "scripts/smoke_train_bc_ctxgraph_8b_graphrpo_5node_idev.sh"
+    ).read_text(encoding="utf-8")
 
     assert "AdvantageEstimator.GRAPHRPO" in trainer
     assert 'loss_mode == "graphrpo"' in actor
@@ -315,3 +327,7 @@ def test_graphrpo_training_wiring_is_explicit():
     assert "not graph_rpo_enabled and process_reward and 'graph' in process_reward" in agent
     assert "export ADV_ESTIMATOR=graphrpo" in launcher
     assert "export POLICY_LOSS_MODE=graphrpo" in launcher
+    assert "serve_graph_evaluator_smoke.py" in smoke_launcher
+    assert "TOTAL_TRAINING_STEPS:-1" in smoke_launcher
+    assert "ROLLOUT_N:-2" in smoke_launcher
+    assert "VAL_BEFORE_TRAIN:-False" in smoke_launcher
