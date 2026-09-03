@@ -328,6 +328,8 @@ def test_graphrpo_training_wiring_is_explicit():
     assert "export ADV_ESTIMATOR=graphrpo" in launcher
     assert "export POLICY_LOSS_MODE=graphrpo" in launcher
     assert "serve_graph_evaluator_smoke.py" in smoke_launcher
+    assert "global_step_174" in smoke_launcher
+    assert "python -m verl.model_merger merge --backend fsdp" in smoke_launcher
     assert "TOTAL_TRAINING_STEPS:-1" in smoke_launcher
     assert "ROLLOUT_N:-2" in smoke_launcher
     assert "VAL_BEFORE_TRAIN:-False" in smoke_launcher

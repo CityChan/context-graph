@@ -14,12 +14,28 @@
 set -euo pipefail
 
 PROJECT_ROOT=${PROJECT_ROOT:-/work/09281/chc_1996/vista/context-graph}
-: "${MODEL_PATH:?Set MODEL_PATH to the merged Hugging Face SFT checkpoint}"
+SFT_FSDP_CHECKPOINT=${SFT_FSDP_CHECKPOINT:-${SCRATCH:-/scratch/09281/chc_1996}/contextgraph_sft_checkpoints/miroverse_full_policy_qwen3_8b_bs16_1ep_v1/global_step_174}
+MODEL_PATH=${MODEL_PATH:-${SCRATCH:-/scratch/09281/chc_1996}/contextgraph_sft_models/miroverse_full_policy_qwen3_8b_bs16_1ep_v1_step174_hf}
 
 source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
 conda activate cxtgraph
 cd "$PROJECT_ROOT"
 export PYTHONPATH="$PROJECT_ROOT:${PYTHONPATH:-}"
+
+if [ ! -s "$MODEL_PATH/config.json" ] || ! find "$MODEL_PATH" -maxdepth 1 -type f \( -name '*.safetensors' -o -name 'pytorch_model*.bin' \) -size +0c -print -quit 2>/dev/null | grep -q .; then
+  if [ ! -d "$SFT_FSDP_CHECKPOINT" ]; then
+    echo "ERROR: SFT FSDP checkpoint is missing: $SFT_FSDP_CHECKPOINT"
+    exit 1
+  fi
+  if [ -e "$MODEL_PATH" ] && [ -n "$(find "$MODEL_PATH" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]; then
+    echo "ERROR: incomplete merged-model directory is not empty: $MODEL_PATH"
+    exit 1
+  fi
+  mkdir -p "$(dirname "$MODEL_PATH")"
+  echo "Merging SFT checkpoint: $SFT_FSDP_CHECKPOINT -> $MODEL_PATH"
+  python -m verl.model_merger merge --backend fsdp --local_dir "$SFT_FSDP_CHECKPOINT" --target_dir "$MODEL_PATH"
+fi
+export MODEL_PATH
 
 mapfile -t NODELIST < <(scontrol show hostnames "$SLURM_JOB_NODELIST")
 if [ "${#NODELIST[@]}" -ne 5 ]; then
