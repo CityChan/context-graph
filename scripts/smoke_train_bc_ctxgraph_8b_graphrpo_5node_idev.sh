@@ -1,4 +1,14 @@
 #!/bin/bash
+#SBATCH -J graphrpo-8b-smoke
+#SBATCH -o logs/graphrpo-8b-smoke.%j.out
+#SBATCH -e logs/graphrpo-8b-smoke.%j.err
+#SBATCH -p gh
+#SBATCH -N 5
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=72
+#SBATCH -t 02:00:00
+#SBATCH -A AST24021
+
 # One-step end-to-end GraphRPO mechanics smoke on a five-node Vista allocation.
 # The deterministic evaluator started here is not valid for scientific runs.
 set -euo pipefail
