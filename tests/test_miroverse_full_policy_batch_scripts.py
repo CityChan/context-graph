@@ -6,6 +6,8 @@ BATCH = ROOT / "scripts" / "generate_miroverse_full_policy_deepseek_v4_4node_bat
 BATCH5 = ROOT / "scripts" / "generate_miroverse_full_policy_deepseek_v4_5node_batch.sh"
 SUBMIT = ROOT / "scripts" / "submit_miroverse_full_policy_deepseek_v4_4node_shards.sh"
 MERGE = ROOT / "scripts" / "merge_miroverse_full_policy_shards.sh"
+PREP_REMAINING = ROOT / "scripts" / "prepare_miroverse_remaining_full_policy_1node_batch.sh"
+SUBMIT_REMAINING = ROOT / "scripts" / "submit_miroverse_remaining_full_policy_deepseek_v4_5node.sh"
 
 
 def test_batch_uses_verified_four_node_concurrency_and_completion_marker():
@@ -53,3 +55,18 @@ def test_full_trace_token_telemetry_suppresses_model_length_warning():
     text = (ROOT / "agents" / "graph_agent_isolated.py").read_text(encoding="utf-8")
     assert "truncation=False" in text
     assert "verbose=False" in text
+
+
+def test_remaining_miroverse_pipeline_excludes_completed_musique_subset():
+    prep = PREP_REMAINING.read_text(encoding="utf-8")
+    submit = SUBMIT_REMAINING.read_text(encoding="utf-8")
+    assert "MiroVerse-HotpotQA" in prep
+    assert "MiroVerse-Voyager1.0" in prep
+    assert "MiroVerse-MuSiQue" not in prep
+    assert "prepare_miroverse_retrieval_corpus.py" in prep
+    assert "prepare_miroverse_search_policy_seeds.py" in prep
+    assert "embed_local_search_corpus.py" in prep
+    assert 'dependency="afterok:$prep_job"' in submit
+    assert '0-$MAX_ARRAY_INDEX%1' in submit
+    assert "miroverse_remaining_full_policy_native/shards" in submit
+    assert "expected 11 remaining MiroVerse JSONL files" in submit

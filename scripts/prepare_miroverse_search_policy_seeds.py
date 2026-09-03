@@ -10,6 +10,7 @@ import re
 import sys
 from collections import Counter
 from pathlib import Path
+from typing import Iterable
 
 import pandas as pd
 
@@ -40,14 +41,20 @@ def normalize_miroverse_answer(answer: str) -> str:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--input", required=True)
+    parser.add_argument("--input", required=True, nargs="+")
     parser.add_argument("--output", required=True)
     parser.add_argument("--manifest", required=True)
     parser.add_argument("--max-samples", type=int, default=0, help="0 means all rows")
     return parser.parse_args()
 
 
-def record_to_seed(record, index: int, reasons: list[str] | None = None):
+def record_to_seed(
+    record,
+    index: int,
+    reasons: list[str] | None = None,
+    *,
+    source_subset: str = "MiroVerse-MuSiQue",
+):
     def reject(reason: str):
         if reasons is not None:
             reasons.append(reason)
@@ -77,7 +84,9 @@ def record_to_seed(record, index: int, reasons: list[str] | None = None):
         reject("empty_normalized_answer")
         return None
     query_hash = hashlib.sha256(query.encode("utf-8")).hexdigest()
-    task_id = f"miroverse_musique_{query_hash[:16]}"
+    subset_slug = re.sub(r"[^a-z0-9]+", "_", source_subset.lower()).strip("_")
+    subset_slug = re.sub(r"^miroverse_", "", subset_slug)
+    task_id = f"miroverse_{subset_slug}_{query_hash[:16]}"
     extra = {
         "task_id": task_id,
         "instance_id": task_id,
@@ -86,7 +95,8 @@ def record_to_seed(record, index: int, reasons: list[str] | None = None):
         "answer": answer,
         "workflow": "search_graph",
         "level": "miroverse",
-        "source": "miromind-ai/MiroVerse-v0.1:MiroVerse-MuSiQue",
+        "source": f"miromind-ai/MiroVerse-v0.1:{source_subset}",
+        "source_subset": source_subset,
         "source_index": index,
         "query_hash": query_hash,
     }
@@ -95,7 +105,7 @@ def record_to_seed(record, index: int, reasons: list[str] | None = None):
         # ability controls environment dispatch; dataset identity belongs in
         # data_source and extra_info.source.
         "ability": "LocalSearch",
-        "data_source": "miroverse_musique",
+        "data_source": f"miroverse_{subset_slug}",
         "extra_info": extra,
         "reward_model": {"style": "rule", "ground_truth": answer},
     }
@@ -111,7 +121,14 @@ def build_seeds(records, max_samples: int):
             break
         counters["input"] += 1
         reasons = []
-        seed = record_to_seed(record, index, reasons)
+        source_subset = str(record.get("_miroverse_source_subset", "MiroVerse-MuSiQue"))
+        source_index = int(record.get("_miroverse_source_index", index))
+        seed = record_to_seed(
+            record,
+            source_index,
+            reasons,
+            source_subset=source_subset,
+        )
         if seed is None:
             counters[f"rejected:{reasons[0] if reasons else 'unknown'}"] += 1
             continue
@@ -124,9 +141,20 @@ def build_seeds(records, max_samples: int):
     return list(seeds.values()), counters
 
 
+def source_records(paths: Iterable[Path]):
+    for path in paths:
+        subset = path.stem
+        for source_index, record in enumerate(load_records(path)):
+            annotated = dict(record)
+            annotated["_miroverse_source_subset"] = subset
+            annotated["_miroverse_source_index"] = source_index
+            yield annotated
+
+
 def main() -> None:
     args = parse_args()
-    seeds, counters = build_seeds(load_records(Path(args.input)), args.max_samples)
+    input_paths = [Path(value) for value in args.input]
+    seeds, counters = build_seeds(source_records(input_paths), args.max_samples)
     if not seeds:
         raise SystemExit(f"no MiroVerse policy seeds accepted: {dict(counters)}")
     output = Path(args.output)
@@ -134,10 +162,18 @@ def main() -> None:
     pd.DataFrame(seeds).to_parquet(output, index=False)
     manifest = {
         "schema_version": "contextgraph.miroverse_policy_seeds.v1",
-        "input": args.input,
+        "input": (
+            str(input_paths[0])
+            if len(input_paths) == 1
+            else [str(path) for path in input_paths]
+        ),
         "output": str(output),
         "ability": "LocalSearch",
-        "data_source": "miroverse_musique",
+        "data_source": (
+            seeds[0]["data_source"]
+            if len(input_paths) == 1
+            else "miroverse_multi_subset"
+        ),
         **dict(counters),
     }
     manifest_path = Path(args.manifest)

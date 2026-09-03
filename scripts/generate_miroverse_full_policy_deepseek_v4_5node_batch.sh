@@ -40,7 +40,8 @@ export MAX_NUM_SEQS=${MAX_NUM_SEQS:-4}
 export GPU_MEMORY_UTILIZATION=${GPU_MEMORY_UTILIZATION:-0.85}
 export FULL_POLICY_CURATOR=1
 export RUN_TAG=${RUN_TAG:-${SLURM_ARRAY_JOB_ID:-${SLURM_JOB_ID}}_miroverse_full_policy_s${START_INDEX}_n${MAX_SAMPLES}}
-export ARTIFACT_ROOT=${ARTIFACT_ROOT:-$SCRATCH/contextgraph_sft/miroverse_full_policy_native/shards/$RUN_TAG}
+export SHARD_ROOT=${SHARD_ROOT:-$SCRATCH/contextgraph_sft/miroverse_full_policy_native/shards}
+export ARTIFACT_ROOT=${ARTIFACT_ROOT:-$SHARD_ROOT/$RUN_TAG}
 
 test -s "$DATA_PATH"
 test -s "$LOCAL_SEARCH_CORPUS"

@@ -108,3 +108,23 @@ def test_synthetic_urls_are_stable_when_observation_has_no_url():
     )
     assert rows[0]["url"].startswith("miroverse://observation/miroverse_obs_")
     assert audit["counters"]["synthetic_urls"] == 1
+
+
+def test_preserves_non_musique_subset_provenance():
+    record = call(
+        "tool-google-search",
+        "google_search",
+        {"q": "example"},
+        "A sufficiently detailed search result from another MiroVerse subset.",
+    )
+    record["_miroverse_source_subset"] = "MiroVerse-HotpotQA"
+    record["_miroverse_source_index"] = 23
+    rows, _ = build_corpus(
+        [record],
+        max_samples=0,
+        min_characters=20,
+        max_characters=1000,
+    )
+    assert rows[0]["source"].endswith(":MiroVerse-HotpotQA")
+    assert rows[0]["source_subset"] == "MiroVerse-HotpotQA"
+    assert rows[0]["source_index"] == 23

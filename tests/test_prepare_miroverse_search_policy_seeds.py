@@ -64,3 +64,14 @@ def test_normalizes_textual_latex_gold_answers_for_exact_match_reward():
     assert normalize_miroverse_answer(r'Dorothy\ "Dottie"\ Hinson') == 'Dorothy "Dottie" Hinson'
     assert normalize_miroverse_answer(r"June\ 10,\ 323\ BC") == "June 10, 323 BC"
     assert normalize_miroverse_answer(r"\text{Greyhound Canada}") == "Greyhound Canada"
+
+
+def test_preserves_non_musique_subset_provenance():
+    record = source_record()
+    record["_miroverse_source_subset"] = "MiroVerse-HotpotQA"
+    record["_miroverse_source_index"] = 19
+    seeds, counters = build_seeds([record], 0)
+    assert counters["accepted"] == 1
+    assert seeds[0]["data_source"] == "miroverse_hotpotqa"
+    assert seeds[0]["extra_info"]["source"].endswith(":MiroVerse-HotpotQA")
+    assert seeds[0]["extra_info"]["source_index"] == 19

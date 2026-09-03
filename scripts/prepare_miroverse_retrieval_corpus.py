@@ -30,7 +30,7 @@ URL_PATTERN = re.compile(r"https?://[^\s<>\]\[\)\(\"']+")
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--input", required=True)
+    parser.add_argument("--input", required=True, nargs="+")
     parser.add_argument("--output", required=True)
     parser.add_argument("--manifest", required=True)
     parser.add_argument("--max-samples", type=int, default=0, help="0 means all rows")
@@ -99,6 +99,8 @@ def build_corpus(
         if max_samples and counters["input_rows"] >= max_samples:
             break
         counters["input_rows"] += 1
+        source_subset = str(record.get("_miroverse_source_subset", "MiroVerse-MuSiQue"))
+        record_source_index = int(record.get("_miroverse_source_index", source_index))
         messages = as_messages(record.get("messages", record.get("conversations")))
         if not messages:
             counters["invalid_message_rows"] += 1
@@ -152,8 +154,9 @@ def build_corpus(
                 "url": url,
                 "title": observation_title(server, tool, arguments),
                 "text": observation,
-                "source": "miromind-ai/MiroVerse-v0.1:MiroVerse-MuSiQue",
-                "source_index": source_index,
+                "source": f"miromind-ai/MiroVerse-v0.1:{source_subset}",
+                "source_subset": source_subset,
+                "source_index": record_source_index,
                 "turn_index": turn_index,
                 "server_name": server,
                 "tool_name": tool,
@@ -173,13 +176,23 @@ def build_corpus(
     }
 
 
+def source_records(paths: Iterable[Path]):
+    for path in paths:
+        subset = path.stem
+        for source_index, record in enumerate(load_records(path)):
+            annotated = dict(record)
+            annotated["_miroverse_source_subset"] = subset
+            annotated["_miroverse_source_index"] = source_index
+            yield annotated
+
+
 def main() -> None:
     args = parse_args()
-    input_path = Path(args.input)
+    input_paths = [Path(value) for value in args.input]
     output_path = Path(args.output)
     manifest_path = Path(args.manifest)
     rows, audit = build_corpus(
-        load_records(input_path),
+        source_records(input_paths),
         max_samples=args.max_samples,
         min_characters=args.min_characters,
         max_characters=args.max_characters,
@@ -190,9 +203,20 @@ def main() -> None:
     pd.DataFrame(rows).to_parquet(output_path, index=False)
     manifest = {
         "schema_version": "miroverse.retrieval_corpus.v1",
-        "input": str(input_path),
+        "input": (
+            str(input_paths[0])
+            if len(input_paths) == 1
+            else [str(path) for path in input_paths]
+        ),
         "output": str(output_path),
-        "source": "miromind-ai/MiroVerse-v0.1:MiroVerse-MuSiQue",
+        "source": (
+            f"miromind-ai/MiroVerse-v0.1:{input_paths[0].stem}"
+            if len(input_paths) == 1
+            else [
+                f"miromind-ai/MiroVerse-v0.1:{path.stem}"
+                for path in input_paths
+            ]
+        ),
         "deduplication": "sha256(normalized_observation_text)",
         **audit,
     }
