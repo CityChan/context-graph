@@ -22,7 +22,7 @@ conda activate cxtgraph
 cd "$PROJECT_ROOT"
 export PYTHONPATH="$PROJECT_ROOT:${PYTHONPATH:-}"
 
-if [ ! -s "$MODEL_PATH/config.json" ] || ! find "$MODEL_PATH" -maxdepth 1 -type f \( -name '*.safetensors' -o -name 'pytorch_model*.bin' \) -size +0c -print -quit 2>/dev/null | grep -q .; then
+if [ ! -s "$MODEL_PATH/config.json" ] || ! find -L "$MODEL_PATH" -maxdepth 1 -type f \( -name '*.safetensors' -o -name 'pytorch_model*.bin' \) -size +0c -print -quit 2>/dev/null | grep -q .; then
   if [ ! -d "$SFT_FSDP_CHECKPOINT" ]; then
     echo "ERROR: SFT FSDP checkpoint is missing: $SFT_FSDP_CHECKPOINT"
     exit 1
