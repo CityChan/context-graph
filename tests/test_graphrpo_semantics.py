@@ -311,6 +311,9 @@ def test_graphrpo_training_wiring_is_explicit():
     actor = (root / "verl/workers/actor/dp_actor.py").read_text(encoding="utf-8")
     agent = (root / "agents/graph_agent_isolated.py").read_text(encoding="utf-8")
     agent_utils = (root / "agents/utils.py").read_text(encoding="utf-8")
+    reward_manager = (
+        root / "verl/workers/reward_manager/agent.py"
+    ).read_text(encoding="utf-8")
     launcher = (root / "scripts/train_bc_ctxgraph_8b_graphrpo_5node_48h.sh").read_text(
         encoding="utf-8"
     )
@@ -325,6 +328,9 @@ def test_graphrpo_training_wiring_is_explicit():
     assert "process_reward_min_precedence=graph_rpo_enabled" in agent
     assert "self.process_reward_min_precedence" in agent_utils
     assert "not graph_rpo_enabled and process_reward and 'graph' in process_reward" in agent
+    assert '"graph_rpo_valid_edits"' in reward_manager
+    assert '"graph_rpo_scored_states"' in reward_manager
+    assert '"graph_rpo_delta_abs_sum"' in reward_manager
     assert "export ADV_ESTIMATOR=graphrpo" in launcher
     assert "export POLICY_LOSS_MODE=graphrpo" in launcher
     assert "serve_graph_evaluator_smoke.py" in smoke_launcher
@@ -336,3 +342,8 @@ def test_graphrpo_training_wiring_is_explicit():
     assert "TOTAL_TRAINING_STEPS:-1" in smoke_launcher
     assert "ROLLOUT_N:-2" in smoke_launcher
     assert "VAL_BEFORE_TRAIN:-False" in smoke_launcher
+
+    base_launcher = (
+        root / "scripts/train_bc_ctxgraph_8b_paperfaithful_5node_48h.sh"
+    ).read_text(encoding="utf-8")
+    assert '$NUM_NODES nodes [1 search + $((NUM_NODES - 1)) trainer]' in base_launcher

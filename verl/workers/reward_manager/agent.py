@@ -249,7 +249,10 @@ class AgentLoopRewardManager(AbstractRewardManager):
                       "consol_attempts", "consol_ops", "consol_pass_valid",
                       "consol_pass_invalid", "consol_invalid",
                       "consol_op_rate", "consol_valid_pass_rate",
-                      "consol_invalid_pass_rate", "consol_invalid_rate"):
+                      "consol_invalid_pass_rate", "consol_invalid_rate",
+                      # GraphRPO evaluator/edit-credit telemetry
+                      "graph_rpo_valid_edits", "graph_rpo_scored_states",
+                      "graph_rpo_delta_sum", "graph_rpo_delta_abs_sum"):
                 per_sample = np.full(bsz, np.nan, dtype=float)
                 for i, s in enumerate(env_stats_arr):
                     if isinstance(s, dict) and k in s:

@@ -523,7 +523,7 @@ probe "querying ray status"
 ray status || echo "WARN: ray status check failed"
 
 echo "=============================================================="
-echo "  Launching ContextGraph ${ADV_ESTIMATOR} + v5 (Qwen3-8B dense, 5 nodes [1 search + 4 trainer], $TOTAL_TRAINING_STEPS steps, BS=$TRAIN_BATCH_SIZE, rollout_n=$ROLLOUT_N, ppo_mini/rank=$PPO_MINI_BATCH_SIZE, context=$CONTEXT_LENGTH [48h], $DATASET_LABEL)"
+echo "  Launching ContextGraph ${ADV_ESTIMATOR} + v5 (Qwen3-8B dense, $NUM_NODES nodes [1 search + $((NUM_NODES - 1)) trainer], $TOTAL_TRAINING_STEPS steps, BS=$TRAIN_BATCH_SIZE, rollout_n=$ROLLOUT_N, ppo_mini/rank=$PPO_MINI_BATCH_SIZE, context=$CONTEXT_LENGTH [48h], $DATASET_LABEL)"
 echo "  Optimization: lr=$TRAIN_LR use_kl_loss=$USE_KL_LOSS clip=[$CLIP_RATIO_LOW,$CLIP_RATIO_HIGH]"
 echo "  CG-specific: workflow=search_graph, process_reward=$PROCESS_REWARD_SPEC, lambda_compact=0.2, lambda_cost=0.02, consolidation K=5"
 echo "  Graph protocol: $BC_CTXGRAPH_PROTOCOL structured_controller=$BC_STRUCTURED_GRAPH_CONTROLLER controller_formatting=$BC_CONTROLLER_OWNED_TOOL_FORMATTING action_policy=$BC_CONTROLLER_ACTION_POLICY"
