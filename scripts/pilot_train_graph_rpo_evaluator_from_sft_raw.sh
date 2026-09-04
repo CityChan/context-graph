@@ -18,11 +18,10 @@ GRAPH_EVALUATOR_VALIDATION_FRACTION=${GRAPH_EVALUATOR_VALIDATION_FRACTION:-0.2}
 GRAPH_EVALUATOR_SEED=${GRAPH_EVALUATOR_SEED:-42}
 GRAPH_EVALUATOR_PROBE_PORT=${GRAPH_EVALUATOR_PROBE_PORT:-19002}
 RUN_TS=$(date +%Y%m%d_%H%M%S)
-OUTPUT_ROOT=${GRAPH_EVALUATOR_OUTPUT_ROOT:-$SCRATCH_ROOT/context-graph-evaluators/sft_raw_pilot_qwen3_0p6b_$RUN_TS}
-DATA_DIR="$OUTPUT_ROOT/data"
-MODEL_DIR="$OUTPUT_ROOT/model"
-TRAIN_LOG="$OUTPUT_ROOT/train.log"
-SERVER_LOG="$OUTPUT_ROOT/server_probe.log"
+DATA_DIR=${GRAPH_EVALUATOR_DATA_ROOT:-$SCRATCH_ROOT/context-graph-evaluator-data/sft_raw_pilot_$RUN_TS}
+MODEL_DIR=${GRAPH_EVALUATOR_MODEL_ROOT:-$SCRATCH_ROOT/context-graph-evaluators/sft_raw_pilot_qwen3_0p6b_$RUN_TS}
+TRAIN_LOG="$MODEL_DIR/train.log"
+SERVER_LOG="$MODEL_DIR/server_probe.log"
 
 source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
 conda activate cxtgraph
@@ -31,12 +30,28 @@ export PYTHONPATH="$PROJECT_ROOT:${PYTHONPATH:-}"
 export TOKENIZERS_PARALLELISM=false
 export HF_HOME=${HF_HOME:-/work/09281/chc_1996/vista/cache}
 export HF_HUB_CACHE=${HF_HUB_CACHE:-$HF_HOME/hub}
-mkdir -p "$OUTPUT_ROOT"
 
 if [ ! -d "$RAW_SFT_ROOT" ]; then
   echo "ERROR: raw SFT root does not exist: $RAW_SFT_ROOT"
   exit 1
 fi
+
+RAW_SFT_REAL=$(realpath -m "$RAW_SFT_ROOT")
+DATA_REAL=$(realpath -m "$DATA_DIR")
+MODEL_REAL=$(realpath -m "$MODEL_DIR")
+for OUTPUT_PATH in "$DATA_REAL" "$MODEL_REAL"; do
+  case "$OUTPUT_PATH" in
+    "$RAW_SFT_REAL"|"$RAW_SFT_REAL"/*)
+      echo "ERROR: evaluator outputs must not be written inside raw SFT data: $OUTPUT_PATH"
+      exit 1
+      ;;
+  esac
+done
+if [ "$DATA_REAL" = "$MODEL_REAL" ]; then
+  echo "ERROR: evaluator data and model roots must be different directories."
+  exit 1
+fi
+mkdir -p "$DATA_DIR" "$MODEL_DIR"
 
 mapfile -t RAW_RESULTS < <(find "$RAW_SFT_ROOT" -type f \( -name 'interactive_results_*.json' -o -name 'gaia_results_*.json' \) -size +0c -printf '%T@ %p\n' | sort -nr | head -n "$GRAPH_EVALUATOR_MAX_RAW_FILES" | cut -d' ' -f2-)
 if [ "${#RAW_RESULTS[@]}" -eq 0 ]; then
@@ -44,6 +59,7 @@ if [ "${#RAW_RESULTS[@]}" -eq 0 ]; then
   echo "Expected .../raw/interactive_results_*.json or .../raw/gaia_results_*.json"
   exit 1
 fi
+printf '%s\n' "${RAW_RESULTS[@]}" > "$DATA_DIR/source_files.txt"
 
 MODEL_SOURCE="$GRAPH_EVALUATOR_BASE_MODEL"
 if [ ! -d "$MODEL_SOURCE" ]; then
@@ -63,7 +79,8 @@ echo "  Raw root:       $RAW_SFT_ROOT"
 echo "  Input files:    ${#RAW_RESULTS[@]}"
 echo "  Question cap:   $GRAPH_EVALUATOR_MAX_QUESTIONS"
 echo "  Base classifier:$MODEL_SOURCE"
-echo "  Output:         $OUTPUT_ROOT"
+echo "  Data output:    $DATA_DIR"
+echo "  Model output:   $MODEL_DIR"
 echo "=============================================================="
 
 python scripts/prepare_graph_evaluator_data.py "${RAW_RESULTS[@]}" --output-dir "$DATA_DIR" --validation-fraction "$GRAPH_EVALUATOR_VALIDATION_FRACTION" --seed "$GRAPH_EVALUATOR_SEED" --auto-seed-attempts 10000 --require-both-classes --max-questions "$GRAPH_EVALUATOR_MAX_QUESTIONS"
@@ -104,6 +121,7 @@ echo
 echo "=============================================================="
 echo "  EVALUATOR PILOT COMPLETED"
 echo "  GRAPH_RPO_EVALUATOR_MODEL=$MODEL_DIR"
+echo "  Evaluator data: $DATA_DIR"
 echo "  Data manifest: $DATA_DIR/manifest.json"
 echo "  Training log:  $TRAIN_LOG"
 echo "  NOTE: fine-tune and recalibrate on held-out BrowseComp rollouts before the formal run."

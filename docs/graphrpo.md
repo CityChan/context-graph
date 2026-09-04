@@ -53,6 +53,10 @@ failures without a graph trace are ignored. Run
 because those data come from different tasks and/or teacher policies, the
 result must still be fine-tuned and calibrated on held-out target-policy
 BrowseComp rollouts before a formal policy experiment.
+The pilot treats the raw SFT tree as read-only and writes derived Parquet data
+under `$SCRATCH/context-graph-evaluator-data/`; model weights and calibration
+are written separately under `$SCRATCH/context-graph-evaluators/`. Path guards
+reject either output when it is configured inside the source SFT tree.
 
 ## BrowseComp judge audit
 

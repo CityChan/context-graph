@@ -59,3 +59,6 @@ def test_raw_sft_pilot_trains_calibrates_and_probes():
     assert "scripts/train_graph_evaluator.py" in source
     assert "graph_rpo_calibration.json" in source
     assert "scripts/serve_graph_evaluator.py" in source
+    assert "context-graph-evaluator-data" in source
+    assert "context-graph-evaluators" in source
+    assert '"$RAW_SFT_REAL"|"$RAW_SFT_REAL"/*' in source
