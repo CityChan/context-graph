@@ -1,8 +1,38 @@
 import asyncio
+import importlib.util
+import json
+import uuid
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
 import pytest
+
+
+def test_rollout_json_serializer_handles_numpy_and_metadata_types():
+    module_path = Path(__file__).parents[1] / "verl" / "utils" / "json_serialization.py"
+    spec = importlib.util.spec_from_file_location("rollout_json_serialization", module_path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+
+    identifier = uuid.uuid4()
+    payload = {
+        "array": np.array([[1, 2], [3, 4]], dtype=np.int64),
+        "float": np.float32(0.25),
+        "integer": np.int64(7),
+        "path": Path("rollouts/1.jsonl"),
+        "uid": identifier,
+        "tags": {"judge", "graph"},
+    }
+
+    decoded = json.loads(json.dumps(payload, default=module.json_default))
+    assert decoded["array"] == [[1, 2], [3, 4]]
+    assert decoded["float"] == pytest.approx(0.25)
+    assert decoded["integer"] == 7
+    assert Path(decoded["path"]) == Path("rollouts/1.jsonl")
+    assert decoded["uid"] == str(identifier)
+    assert sorted(decoded["tags"]) == ["graph", "judge"]
 
 
 def _torch():
