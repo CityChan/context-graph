@@ -250,6 +250,7 @@ async def eval_one(row: dict[str, Any], args: argparse.Namespace, tokenizer) -> 
             result["graph_trace"] = extra_fields.get("graph_trace")
             result["graph_state"] = extra_fields.get("graph_state", "")
             result["graph_rewards"] = extra_fields.get("graph_rewards", {})
+            result["judge_audit"] = extra_fields.get("judge_audit", [])
     except Exception as exc:
         result["error"] = repr(exc)
     return result

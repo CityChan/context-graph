@@ -209,22 +209,40 @@ async def call_openai_raw(messages, model='gpt-4o-mini', max_retries=3):
             await asyncio.sleep(1 * (attempt + 1))
     return ""
 
-async def judge(question, correct_answer, predicted_answer):
+async def judge(question, correct_answer, predicted_answer, audit_sink=None):
     # Patch browsecomp typo
     correct_answer = "ttellomS saiboT"[::-1] if "tellomS saiboT"[::-1] in correct_answer else correct_answer  # fix
     correct_answer = "yayhdapottahC najnarawsiB"[::-1] if "yayhdapattahC najnarawsiB"[::-1] in correct_answer else correct_answer
     predicted_answer = "yrtnuoC a fo htaP ehT :sedirelC sokfalG"[::-1] if "yrtnuoC a fo htaP ehT :sedirelC socfalG"[::-1] in predicted_answer else predicted_answer
-    if em_score(correct_answer, predicted_answer):
+    strict_match = em_score(correct_answer, predicted_answer)
+    relaxed_match = relaxed_em(correct_answer, predicted_answer)
+    audit = {
+        "question": question,
+        "correct_answer": correct_answer,
+        "predicted_answer": predicted_answer,
+        "strict_em": strict_match,
+        # Diagnostic only. This heuristic is intentionally not allowed to
+        # override a strict-EM miss or a negative/failed LLM judgment.
+        "relaxed_em": relaxed_match,
+        "judge_model": None,
+        "judge_method": None,
+        "grader_attempts": [],
+        "score": 0,
+    }
+    if strict_match:
         score = 1
+        audit["judge_method"] = "strict_em"
     elif len(predicted_answer.strip()) == 0:
         score = 0
+        audit["judge_method"] = "blank_prediction"
     else:
-        # Skip OpenAI grader if no real API key is set (use EM-only mode).
-        # This is critical for offline / local testing where OPENAI_API_KEY=dummy.
+        # Skip the OpenAI grader if no real API key is set. A strict-EM miss
+        # stays negative in offline mode: relaxed_em is too permissive to be a
+        # safe source of positive outcome labels for policy training.
         api_key = os.getenv("OPENAI_API_KEY", "")
         if not api_key or api_key == "dummy":
-            # Try relaxed EM as a softer fallback before giving up
-            score = 1 if relaxed_em(correct_answer, predicted_answer) else 0
+            score = 0
+            audit["judge_method"] = "offline_strict_only"
         else:
             judge_prompt = GRADER_TEMPLATE.format(
                 question=question,
@@ -233,25 +251,35 @@ async def judge(question, correct_answer, predicted_answer):
             )
             messages = [{'role': 'user', 'content': judge_prompt}]
             judge_model = os.getenv("JUDGE_MODEL", "gpt-5-nano")
+            audit["judge_model"] = judge_model
             score = 0
-            for _ in range(3):
+            audit["judge_method"] = "llm_parse_failure"
+            for attempt in range(3):
                 response = await call_openai_raw(messages, model=judge_model)
                 grade_report = parse_judge_response(response)
+                audit["grader_attempts"].append({
+                    "attempt": attempt + 1,
+                    "response": response,
+                    "parsed": grade_report,
+                })
                 if grade_report['parse_error']:
                     continue
                 # Defensive: parse_judge_response can return correct=None even
                 # when parse_error is False; treat None as 0.
                 score = int(grade_report.get('correct') or 0)
+                audit["judge_method"] = "llm_judge"
                 break
-            if score == 0 and relaxed_em(correct_answer, predicted_answer):
-                response = await call_openai_raw(messages, model='gpt-4.1')  # use call_openai for api proxy
-                grade_report = parse_judge_response(response)
-                score = int(grade_report.get('correct') or 0)
-            # Final fallback: if grader entirely failed (e.g. API down),
-            # use relaxed_em to avoid losing reward signal.
-            if score == 0 and relaxed_em(correct_answer, predicted_answer):
-                score = 1
 
+    audit["score"] = score
+    if audit_sink is not None:
+        audit_sink.append(copy.deepcopy(audit))
+    print("[JUDGE AUDIT] " + json.dumps({
+        "score": score,
+        "method": audit["judge_method"],
+        "strict_em": strict_match,
+        "relaxed_em": relaxed_match,
+        "judge_model": audit["judge_model"],
+    }, ensure_ascii=False))
     print(f"[Judged] score={score}\nLabel: " + correct_answer + '\nModel: ' + predicted_answer.split('\n')[0])
     return score
 
@@ -395,6 +423,7 @@ class LocalSearch:
         self.question = None
         self.label_answer = None
         self.predicted_answer = None
+        self.judge_audit = []
         self.double_check = getattr(self.config.plugin, "double_check", False)
         self.donotgiveup = False
         self.must_search = getattr(self.config.plugin, "must_search", True)
@@ -412,6 +441,7 @@ class LocalSearch:
         self.question = extra['query']
         self.label_answer = extra['answer']
         self.predicted_answer = None
+        self.judge_audit = []
         self.instance_info = copy.deepcopy(extra)
         self.instance_info['problem_statement'] = self.instance_info['query']
 
@@ -589,14 +619,41 @@ Once you’re confident everything is covered and verified, submit the final ans
             all_reward = []
             for k in label_answer_dict:
                 if k in predicted_answer_dict:
-                    reward = await judge(self.question, label_answer_dict[k], predicted_answer_dict[k])
+                    reward = await judge(
+                        self.question,
+                        label_answer_dict[k],
+                        predicted_answer_dict[k],
+                        audit_sink=self.judge_audit,
+                    )
                     all_reward.append(reward)
                 else:
                     all_reward.append(0)
             reward = sum(all_reward) / len(all_reward)
+            self._record_judge_stats()
             return "", reward, {}
-        reward = await judge(self.question, self.label_answer, self.predicted_answer[0])
+        reward = await judge(
+            self.question,
+            self.label_answer,
+            self.predicted_answer[0],
+            audit_sink=self.judge_audit,
+        )
+        self._record_judge_stats()
         return "", reward, {}
+
+    def _record_judge_stats(self):
+        audits = self.judge_audit
+        self.stats["judge_calls"] = len(audits)
+        self.stats["judge_positive"] = sum(int(audit.get("score", 0) > 0) for audit in audits)
+        self.stats["judge_strict_em"] = sum(bool(audit.get("strict_em")) for audit in audits)
+        self.stats["judge_relaxed_em"] = sum(bool(audit.get("relaxed_em")) for audit in audits)
+        self.stats["judge_relaxed_only"] = sum(
+            bool(audit.get("relaxed_em")) and not bool(audit.get("strict_em"))
+            for audit in audits
+        )
+        self.stats["judge_llm"] = sum(audit.get("judge_method") == "llm_judge" for audit in audits)
+        self.stats["judge_parse_failure"] = sum(
+            audit.get("judge_method") == "llm_parse_failure" for audit in audits
+        )
 
     async def update_dataproto(self, out, item, messages, score, reward_dict, tag='main', metrics=None):
         final_score = score[1]

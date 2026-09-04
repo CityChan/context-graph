@@ -93,6 +93,7 @@ export MAX_TURN=${MAX_TURN:-40}
 export RUN_TAG=${RUN_TAG:-graphrpo_sft_1step_smoke}
 export GRAPH_RPO_SERIALIZATION_PENALTY=${GRAPH_RPO_SERIALIZATION_PENALTY:-0.02}
 export BC_DISABLE_WANDB=${BC_DISABLE_WANDB:-0}
+export SAVE_ROLLOUT_DATA=${SAVE_ROLLOUT_DATA:-1}
 
 echo "WARNING: using deterministic smoke-only graph evaluator at $GRAPH_RPO_EVALUATOR_URL"
 bash scripts/train_bc_ctxgraph_8b_graphrpo_5node_48h.sh

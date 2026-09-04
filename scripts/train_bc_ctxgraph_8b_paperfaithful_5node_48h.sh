@@ -133,6 +133,17 @@ fi
 TS=$(date +%Y%m%d_%H%M%S)
 RUN_TAG=${RUN_TAG:-paperfaithful_5n_48h}
 EXPERIMENT_NAME=${EXPERIMENT_NAME:-"train_ctxgraph_bc_8b_${RUN_TAG}_${TS}"}
+SAVE_ROLLOUT_DATA=${SAVE_ROLLOUT_DATA:-0}
+ROLLOUT_DATA_DIR=${ROLLOUT_DATA_DIR:-}
+if [ "$SAVE_ROLLOUT_DATA" = "1" ] && [ -z "$ROLLOUT_DATA_DIR" ]; then
+  ROLLOUT_DATA_ROOT=${ROLLOUT_DATA_ROOT:-${SCRATCH:-/scratch/09281/chc_1996}/context-graph-rollouts}
+  ROLLOUT_DATA_DIR="$ROLLOUT_DATA_ROOT/$EXPERIMENT_NAME"
+fi
+ROLLOUT_DATA_ARGS=()
+if [ -n "$ROLLOUT_DATA_DIR" ]; then
+  mkdir -p "$ROLLOUT_DATA_DIR"
+  ROLLOUT_DATA_ARGS+=("trainer.rollout_data_dir=$ROLLOUT_DATA_DIR")
+fi
 TRAIN_DATA_FILE=${TRAIN_DATA_FILE:-data/bc_train.parquet}
 VAL_DATA_FILE=${VAL_DATA_FILE:-data/bc_test.parquet}
 DATASET_LABEL=${DATASET_LABEL:-BrowseComp-Plus}
@@ -252,6 +263,7 @@ echo "  Trainer model:  $MODEL_PATH"
 echo "  Embedder model: $EMBED_MODEL"
 echo "  Experiment: $EXPERIMENT_NAME"
 echo "  Logger: ${probe_msg}"
+echo "  Rollout data: ${ROLLOUT_DATA_DIR:-disabled}"
 echo "  Started: $(date)"
 echo "=============================================================="
 
@@ -623,6 +635,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   trainer.project_name=context-graph \
   trainer.experiment_name="$EXPERIMENT_NAME" \
   trainer.logger="$TRAINER_LOGGER" \
+  "${ROLLOUT_DATA_ARGS[@]}" \
   "${GRAPH_RPO_ARGS[@]}" \
   "${RESUME_ARGS[@]}"
 RC=$?

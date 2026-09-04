@@ -13,9 +13,15 @@ import pandas as pd
 
 
 def load_results(path: Path) -> list[dict[str, Any]]:
-    payload = json.loads(path.read_text(encoding="utf-8"))
+    text = path.read_text(encoding="utf-8")
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        # VeRL trainer.rollout_data_dir writes one result object per line.
+        # Accept that native JSONL format as well as evaluation JSON arrays.
+        payload = [json.loads(line) for line in text.splitlines() if line.strip()]
     if isinstance(payload, dict):
-        payload = payload.get("results")
+        payload = payload.get("results") if "results" in payload else [payload]
     if not isinstance(payload, list):
         raise ValueError(f"{path} must contain a result list or an object with results")
     return [row for row in payload if isinstance(row, dict)]

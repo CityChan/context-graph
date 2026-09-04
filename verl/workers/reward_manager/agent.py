@@ -261,19 +261,31 @@ class AgentLoopRewardManager(AbstractRewardManager):
                       "consol_op_rate", "consol_valid_pass_rate",
                       "consol_invalid_pass_rate", "consol_invalid_rate",
                       "graph_trace_events", "graph_trace_model_events",
+                      # BrowseComp task-judge audit telemetry
+                      "judge_calls", "judge_positive", "judge_strict_em",
+                      "judge_relaxed_em", "judge_relaxed_only", "judge_llm",
+                      "judge_parse_failure",
                       # GraphRPO evaluator/edit-credit telemetry
                       "graph_rpo_valid_edits", "graph_rpo_scored_states",
                       "graph_rpo_delta_sum", "graph_rpo_delta_abs_sum"):
-                per_sample = np.full(bsz, np.nan, dtype=float)
-                for i, s in enumerate(env_stats_arr):
+                # One episode can emit main plus several branch streams. The
+                # environment stats are episode-level and duplicated on every
+                # stream, so average within gen_uid first and then across
+                # episodes. Repeating that scalar preserves VeRL's expected
+                # batch-shaped reward_extra_info without branch-count bias.
+                gen_uid_to_values: dict[Any, list[float]] = defaultdict(list)
+                for gen_uid, original_index in zip(gen_uid_list, keep_indices):
+                    if original_index >= len(env_stats_arr):
+                        continue
+                    s = env_stats_arr[original_index]
                     if isinstance(s, dict) and k in s:
                         try:
-                            per_sample[i] = float(s[k])
+                            gen_uid_to_values[gen_uid].append(float(s[k]))
                         except (TypeError, ValueError):
                             pass
-                if np.isnan(per_sample).all():
+                if not gen_uid_to_values:
                     continue
-                per_sample = np.where(np.isnan(per_sample), 0.0, per_sample)
-                reward_extra_info[k] = per_sample
+                per_episode = [_safe_mean(values) for values in gen_uid_to_values.values()]
+                reward_extra_info[k] = repeat(_safe_mean(per_episode))
 
         return reward_extra_info

@@ -1638,6 +1638,7 @@ async def process_item(
             extra_fields={
                 'messages': out['messages'],
                 'env_stats': copy.deepcopy(env.stats) if hasattr(env, 'stats') else {},
+                'judge_audit': copy.deepcopy(getattr(env, 'judge_audit', [])),
                 'num_branches': len(branches),
                 'branch_names': branches,
                 'mask_rollout': mask_rollout,

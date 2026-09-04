@@ -565,6 +565,46 @@ class RayPPOTrainer:
                     batch.non_tensor_batch["request_id"].tolist(),
                 )
 
+            trajectory_fields: dict[str, list] = {}
+            for key in (
+                "messages", "env_stats", "is_finish", "termination_reason",
+                "agent_name", "graph_trace", "graph_state", "graph_rewards",
+                "judge_audit", "uid", "gen_uid",
+            ):
+                values = batch.non_tensor_batch.get(key)
+                if values is not None and len(values) == len(scores):
+                    trajectory_fields[key] = (
+                        values.tolist() if hasattr(values, "tolist") else list(values)
+                    )
+
+            extra_infos = batch.non_tensor_batch.get("extra_info")
+            if extra_infos is not None and len(extra_infos) == len(scores):
+                normalized_extra_infos = (
+                    extra_infos.tolist()
+                    if hasattr(extra_infos, "tolist")
+                    else list(extra_infos)
+                )
+                trajectory_fields["task_id"] = [
+                    str(info.get("task_id", info.get("instance_id", "unknown")))
+                    if isinstance(info, dict) else "unknown"
+                    for info in normalized_extra_infos
+                ]
+                trajectory_fields["question"] = [
+                    str(info.get("query", info.get("problem_statement", "")))
+                    if isinstance(info, dict) else ""
+                    for info in normalized_extra_infos
+                ]
+
+            # reward_extra_infos_dict contains episode-deduplicated values for
+            # logging. Preserve the binary label of each concrete rollout for
+            # judge auditing and graph-evaluator dataset construction.
+            env_stats = trajectory_fields.get("env_stats")
+            if env_stats is not None:
+                trajectory_fields["task_reward"] = [
+                    stats.get("task_reward") if isinstance(stats, dict) else None
+                    for stats in env_stats
+                ]
+
             self._dump_generations(
                 inputs=inputs,
                 outputs=outputs,
@@ -572,6 +612,7 @@ class RayPPOTrainer:
                 scores=scores,
                 reward_extra_infos_dict=reward_extra_infos_to_dump,
                 dump_path=rollout_data_dir,
+                trajectory_fields=trajectory_fields,
             )
 
     def _maybe_log_val_generations(self, inputs, outputs, scores):

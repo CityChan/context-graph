@@ -43,6 +43,27 @@ The evaluator checkpoint and calibration must be fixed before a policy run.
 Judge outputs used for task outcomes or scope labels should likewise be cached
 or generated with a fixed decoding configuration for reproducible experiments.
 
+## BrowseComp judge audit
+
+BrowseComp task success is positive only after strict answer matching or a
+successfully parsed positive LLM judgment. The legacy `relaxed_em` heuristic is
+retained as diagnostics but cannot override a negative judgment or create a
+positive label when the judge is unavailable.
+
+The mechanics smoke enables `SAVE_ROLLOUT_DATA=1` and writes JSONL records under
+`$SCRATCH/context-graph-rollouts/<experiment>/`. Each record includes the task
+and episode IDs, binary task reward, graph trace/state, and complete
+`judge_audit` decision path. Audit a completed directory with:
+
+```bash
+python scripts/audit_bc_judge_results.py /scratch/09281/chc_1996/context-graph-rollouts/train_ctxgraph_EXPERIMENT --fail-on-integrity-error
+```
+
+The command deduplicates main/branch streams by `gen_uid`, checks that persisted
+task rewards match judge decisions, reports grader parse failures, and prints
+all non-strict positive decisions for manual review. W&B reward, graph, and
+judge metrics are also episode-weighted rather than branch-stream-weighted.
+
 For mechanics-only validation on an existing four- or five-node allocation,
 `scripts/smoke_train_bc_ctxgraph_8b_graphrpo_5node_idev.sh` starts a deterministic
 CPU evaluator on the search node and performs one optimizer step. Its evaluator
