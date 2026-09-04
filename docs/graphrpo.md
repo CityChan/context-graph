@@ -69,3 +69,10 @@ For mechanics-only validation on an existing four- or five-node allocation,
 CPU evaluator on the search node and performs one optimizer step. Its evaluator
 scores are deliberately synthetic: use the smoke only to verify wiring and
 never include its reward or checkpoint in experiments.
+
+On an existing four-node allocation, run the original Qwen3-8B zero-shot
+judge-audit variant, including rollout persistence and post-run audit, with:
+
+```bash
+bash scripts/smoke_train_bc_ctxgraph_8b_graphrpo_qwen3_8b_4node_judge_audit.sh
+```

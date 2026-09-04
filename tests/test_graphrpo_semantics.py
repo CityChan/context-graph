@@ -461,6 +461,9 @@ def test_graphrpo_training_wiring_is_explicit():
     smoke_launcher = (
         root / "scripts/smoke_train_bc_ctxgraph_8b_graphrpo_5node_idev.sh"
     ).read_text(encoding="utf-8")
+    audit_smoke_launcher = (
+        root / "scripts/smoke_train_bc_ctxgraph_8b_graphrpo_qwen3_8b_4node_judge_audit.sh"
+    ).read_text(encoding="utf-8")
 
     assert "AdvantageEstimator.GRAPHRPO" in trainer
     assert 'loss_mode == "graphrpo"' in actor
@@ -505,6 +508,12 @@ def test_graphrpo_training_wiring_is_explicit():
     assert "ROLLOUT_N:-2" in smoke_launcher
     assert "VAL_BEFORE_TRAIN:-False" in smoke_launcher
     assert "SAVE_ROLLOUT_DATA:-1" in smoke_launcher
+    assert "b968826d9c46dd6066d109eabc6255188de91218" in audit_smoke_launcher
+    assert "export EXPECTED_NUM_NODES=4" in audit_smoke_launcher
+    assert "export TRAIN_BATCH_SIZE=3" in audit_smoke_launcher
+    assert "export ROLLOUT_N=8" in audit_smoke_launcher
+    assert "audit_bc_judge_results.py" in audit_smoke_launcher
+    assert "SMOKE + JUDGE AUDIT COMPLETED" in audit_smoke_launcher
 
     base_launcher = (
         root / "scripts/train_bc_ctxgraph_8b_paperfaithful_5node_48h.sh"
