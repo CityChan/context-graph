@@ -17,6 +17,7 @@ Note that we don't combine the main with ray_trainer as ray_trainer is used by o
 
 import os
 import socket
+from copy import deepcopy
 
 import hydra
 import ray
@@ -30,6 +31,25 @@ from verl.trainer.ppo.utils import need_critic, need_reference_policy
 from verl.utils.config import validate_config
 from verl.utils.device import is_cuda_available
 from verl.utils.import_utils import load_extern_object
+
+
+_SENSITIVE_ENV_MARKERS = ("KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIAL")
+
+
+def _redact_ray_init_kwargs(ray_init_kwargs):
+    """Return a log-safe copy without exposing credentials in env vars."""
+    if OmegaConf.is_config(ray_init_kwargs):
+        redacted = OmegaConf.to_container(ray_init_kwargs, resolve=False)
+    else:
+        redacted = deepcopy(ray_init_kwargs)
+
+    env_vars = redacted.get("runtime_env", {}).get("env_vars", {})
+    if isinstance(env_vars, dict):
+        for name in env_vars:
+            upper_name = str(name).upper()
+            if any(marker in upper_name for marker in _SENSITIVE_ENV_MARKERS):
+                env_vars[name] = "[REDACTED]"
+    return redacted
 
 
 @hydra.main(config_path="config", config_name="ppo_trainer", version_base=None)
@@ -70,7 +90,7 @@ def run_ppo(config, task_runner_class=None) -> None:
             runtime_env_vars["TRANSFER_QUEUE_ENABLE"] = "1"
         runtime_env = OmegaConf.merge(default_runtime_env, runtime_env_kwargs)
         ray_init_kwargs = OmegaConf.create({**ray_init_kwargs, "runtime_env": runtime_env})
-        print(f"ray init kwargs: {ray_init_kwargs}")
+        print(f"ray init kwargs: {_redact_ray_init_kwargs(ray_init_kwargs)}")
         ray.init(**OmegaConf.to_container(ray_init_kwargs))
 
     if task_runner_class is None:
