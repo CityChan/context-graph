@@ -18,6 +18,7 @@ A unified tracking interface that supports logging data to different backend
 import dataclasses
 import json
 import os
+import warnings
 from enum import Enum
 from functools import partial
 from pathlib import Path
@@ -48,6 +49,7 @@ class Tracking:
     ]
 
     def __init__(self, project_name, experiment_name, default_backend: str | list[str] = "console", config=None):
+        self._finished = False
         if isinstance(default_backend, str):
             default_backend = [default_backend]
         for backend in default_backend:
@@ -155,21 +157,32 @@ class Tracking:
             if backend is None or default_backend in backend:
                 logger_instance.log(data=data, step=step)
 
+    def finish(self, exit_code=0):
+        """Flush and close configured backends exactly once."""
+        if getattr(self, "_finished", False):
+            return
+        self._finished = True
+
+        logger = getattr(self, "logger", {})
+        finishers = {
+            "wandb": lambda instance: instance.finish(exit_code=exit_code),
+            "swanlab": lambda instance: instance.finish(),
+            "vemlp_wandb": lambda instance: instance.finish(exit_code=exit_code),
+            "tensorboard": lambda instance: instance.finish(),
+            "clearml": lambda instance: instance.finish(),
+            "trackio": lambda instance: instance.finish(),
+            "file": lambda instance: instance.finish(),
+        }
+        for backend, finish_backend in finishers.items():
+            if backend not in logger:
+                continue
+            try:
+                finish_backend(logger[backend])
+            except Exception as exc:
+                warnings.warn(f"Failed to finish {backend} logger cleanly: {exc}", stacklevel=2)
+
     def __del__(self):
-        if "wandb" in self.logger:
-            self.logger["wandb"].finish(exit_code=0)
-        if "swanlab" in self.logger:
-            self.logger["swanlab"].finish()
-        if "vemlp_wandb" in self.logger:
-            self.logger["vemlp_wandb"].finish(exit_code=0)
-        if "tensorboard" in self.logger:
-            self.logger["tensorboard"].finish()
-        if "clearml" in self.logger:
-            self.logger["clearml"].finish()
-        if "trackio" in self.logger:
-            self.logger["trackio"].finish()
-        if "file" in self.logger:
-            self.logger["file"].finish()
+        self.finish(exit_code=0)
 
 
 class ClearMLLogger:
