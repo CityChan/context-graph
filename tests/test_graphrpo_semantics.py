@@ -331,6 +331,22 @@ def test_graphrpo_training_wiring_is_explicit():
     assert '"graph_rpo_valid_edits"' in reward_manager
     assert '"graph_rpo_scored_states"' in reward_manager
     assert '"graph_rpo_delta_abs_sum"' in reward_manager
+    for metric in (
+        "graph_compactness",
+        "graph_structural",
+        "graph_merge_bonus",
+        "graph_prune_bonus",
+        "graph_uniqueness_bonus",
+        "graph_cost_penalty",
+        "graph_invalid_op_penalty",
+        "graph_n_folded",
+        "graph_n_pruned",
+        "graph_n_cross_edges",
+        "graph_trace_events",
+        "graph_trace_model_events",
+    ):
+        assert f'"{metric}"' in reward_manager
+        assert f"'{metric}'" in agent
     assert "export ADV_ESTIMATOR=graphrpo" in launcher
     assert "export POLICY_LOSS_MODE=graphrpo" in launcher
     assert "serve_graph_evaluator_smoke.py" in smoke_launcher

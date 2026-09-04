@@ -232,6 +232,14 @@ class AgentLoopRewardManager(AbstractRewardManager):
         if env_stats_arr is not None:
             for k in ("task_reward", "graph_shaping", "graph_reward",
                       "graph_n_nodes", "graph_n_edges", "graph_n_active",
+                      "graph_n_folded", "graph_n_pruned",
+                      "graph_n_cross_edges", "graph_n_summaries",
+                      "graph_compactness", "graph_structural",
+                      "graph_merge_bonus", "graph_prune_bonus",
+                      "graph_usage_bonus", "graph_uniqueness_bonus",
+                      "graph_uniqueness_raw", "graph_cost_penalty",
+                      "graph_invalid_op_penalty", "graph_bloat_penalty",
+                      "graph_operation_cost", "graph_total_ops",
                       "graph_op_attempts", "graph_explicit_ops",
                       "graph_invalid_ops", "graph_invalid_op_rate",
                       "controller_mode_rejections",
@@ -248,8 +256,11 @@ class AgentLoopRewardManager(AbstractRewardManager):
                       # v3 consolidation checkpoint stats
                       "consol_attempts", "consol_ops", "consol_pass_valid",
                       "consol_pass_invalid", "consol_invalid",
+                      "consol_budget_skips", "consol_controller_errors",
+                      "consol_candidate_skips", "structured_graph_controller",
                       "consol_op_rate", "consol_valid_pass_rate",
                       "consol_invalid_pass_rate", "consol_invalid_rate",
+                      "graph_trace_events", "graph_trace_model_events",
                       # GraphRPO evaluator/edit-credit telemetry
                       "graph_rpo_valid_edits", "graph_rpo_scored_states",
                       "graph_rpo_delta_sum", "graph_rpo_delta_abs_sum"):

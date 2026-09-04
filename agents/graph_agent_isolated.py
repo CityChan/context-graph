@@ -1404,6 +1404,28 @@ async def process_item(
     )
     env.stats['graph_n_summaries'] = graph_rewards.get('n_summaries', 0)
     env.stats['graph_reward'] = graph_rewards.get('graph_reward', score[1])
+    # Preserve the complete graph-reward decomposition for experiment
+    # telemetry. These fields are diagnostics under GraphRPO; the optimized
+    # reward remains selected below according to the configured estimator.
+    graph_reward_stat_keys = {
+        'compactness': 'graph_compactness',
+        'structural': 'graph_structural',
+        'merge_bonus': 'graph_merge_bonus',
+        'prune_bonus': 'graph_prune_bonus',
+        'usage_bonus': 'graph_usage_bonus',
+        'uniqueness_bonus': 'graph_uniqueness_bonus',
+        'uniqueness_raw': 'graph_uniqueness_raw',
+        'cost_penalty': 'graph_cost_penalty',
+        'invalid_op_penalty': 'graph_invalid_op_penalty',
+        'bloat_penalty': 'graph_bloat_penalty',
+        'operation_cost': 'graph_operation_cost',
+        'total_ops': 'graph_total_ops',
+        'n_folded': 'graph_n_folded',
+        'n_pruned': 'graph_n_pruned',
+        'n_cross_edges': 'graph_n_cross_edges',
+    }
+    for reward_key, stat_key in graph_reward_stat_keys.items():
+        env.stats[stat_key] = float(graph_rewards.get(reward_key, 0.0))
     # Consolidation checkpoint stats — surface in wandb to track whether
     # the policy is actually using the forced-exploration channel.
     env.stats['consol_attempts'] = consolidation_stats['attempts']
