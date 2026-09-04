@@ -25,6 +25,33 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from agents.graph_rpo import format_graph_evaluator_input
 
 
+def balanced_class_weights(labels: np.ndarray) -> torch.Tensor:
+    labels = np.asarray(labels, dtype=np.int64)
+    counts = np.bincount(labels, minlength=2)
+    if len(counts) != 2 or np.any(counts == 0):
+        raise ValueError("balanced class weights require both binary outcome classes")
+    return torch.tensor(len(labels) / (2.0 * counts), dtype=torch.float32)
+
+
+class ClassWeightedTrainer(Trainer):
+    def __init__(self, *args, class_weights: torch.Tensor, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.class_weights = class_weights
+
+    def compute_loss(
+        self, model, inputs, return_outputs: bool = False, num_items_in_batch=None
+    ):
+        model_inputs = dict(inputs)
+        labels = model_inputs.pop("labels")
+        outputs = model(**model_inputs)
+        loss = torch.nn.functional.cross_entropy(
+            outputs.logits,
+            labels,
+            weight=self.class_weights.to(outputs.logits.device),
+        )
+        return (loss, outputs) if return_outputs else loss
+
+
 def fit_temperature(logits: np.ndarray, labels: np.ndarray) -> float:
     logits_t = torch.tensor(logits, dtype=torch.float32)
     labels_t = torch.tensor(labels, dtype=torch.long)
@@ -73,9 +100,14 @@ def main() -> None:
             raise ValueError(f"{name} split must contain both binary outcome classes")
 
     tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
+    if tokenizer.pad_token_id is None:
+        if tokenizer.eos_token_id is None:
+            raise ValueError("evaluator tokenizer must define a pad or EOS token")
+        tokenizer.pad_token = tokenizer.eos_token
     model = AutoModelForSequenceClassification.from_pretrained(
         args.model, num_labels=2, trust_remote_code=True
     )
+    model.config.pad_token_id = tokenizer.pad_token_id
 
     def make_dataset(frame: pd.DataFrame) -> Dataset:
         dataset = Dataset.from_dict(
@@ -110,14 +142,17 @@ def main() -> None:
         seed=args.seed,
         bf16=torch.cuda.is_available(),
         report_to=[],
+        save_total_limit=1,
     )
-    trainer = Trainer(
+    class_weights = balanced_class_weights(train_frame.label.to_numpy())
+    trainer = ClassWeightedTrainer(
         model=model,
         args=training_args,
         train_dataset=train_data,
         eval_dataset=validation_data,
         processing_class=tokenizer,
         data_collator=DataCollatorWithPadding(tokenizer=tokenizer),
+        class_weights=class_weights,
     )
     trainer.train()
     prediction = trainer.predict(validation_data)
@@ -129,6 +164,15 @@ def main() -> None:
         "temperature": temperature,
         "positive_label_id": 1,
         "validation_rows": len(validation_frame),
+        "train_class_counts": {
+            "negative": int((train_frame.label.astype(int) == 0).sum()),
+            "positive": int((train_frame.label.astype(int) == 1).sum()),
+        },
+        "validation_class_counts": {
+            "negative": int((validation_frame.label.astype(int) == 0).sum()),
+            "positive": int((validation_frame.label.astype(int) == 1).sum()),
+        },
+        "class_weights": class_weights.tolist(),
     }
     (args.output_dir / "graph_rpo_calibration.json").write_text(
         json.dumps(calibration, indent=2) + "\n", encoding="utf-8"

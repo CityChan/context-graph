@@ -348,6 +348,40 @@ def test_graph_evaluator_loader_accepts_verl_jsonl(tmp_path):
     assert load_results(single_path) == records[:1]
 
 
+def test_graph_evaluator_preserves_different_episode_outcomes(tmp_path):
+    import json
+
+    from scripts.prepare_graph_evaluator_data import build_rows
+
+    trace = {
+        "initial_graph": {
+            "root_id": "n1",
+            "nodes": [{"id": "n1", "content": "Question"}],
+        },
+        "events": [{"rendered_before": "same", "rendered_after": "same"}],
+    }
+    path = tmp_path / "episodes.jsonl"
+    path.write_text(
+        "\n".join(
+            json.dumps(
+                {
+                    "task_id": "task",
+                    "gen_uid": f"episode-{label}",
+                    "question": "Question",
+                    "task_reward": label,
+                    "graph_trace": trace,
+                }
+            )
+            for label in (0, 1)
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    rows = build_rows([path])
+    assert len(rows) == 2
+    assert {row["label"] for row in rows} == {0, 1}
+
+
 def test_relaxed_em_cannot_create_positive_task_reward(monkeypatch):
     from envs import local_search
 

@@ -43,6 +43,17 @@ The evaluator checkpoint and calibration must be fixed before a policy run.
 Judge outputs used for task outcomes or scope labels should likewise be cached
 or generated with a fixed decoding configuration for reproducible experiments.
 
+Curated SFT Parquet files are not sufficient evaluator data by themselves:
+strict SFT builders retain successful demonstrations and therefore omit the
+matched negative outcomes. The raw pre-SFT `interactive_results_*.json` and
+`gaia_results_*.json` files can be reused because normally completed task
+failures retain their graph traces and binary terminal rewards. Infrastructure
+failures without a graph trace are ignored. Run
+`scripts/pilot_train_graph_rpo_evaluator_from_sft_raw.sh` for a bounded pilot;
+because those data come from different tasks and/or teacher policies, the
+result must still be fine-tuned and calibrated on held-out target-policy
+BrowseComp rollouts before a formal policy experiment.
+
 ## BrowseComp judge audit
 
 BrowseComp task success is positive only after strict answer matching or a
