@@ -5,8 +5,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
+
+# This evaluator is PyTorch-only. Some shared environments contain Keras 3,
+# which otherwise makes Transformers import its unsupported TF integration.
+os.environ.setdefault("USE_TF", "0")
+os.environ.setdefault("TRANSFORMERS_NO_TF", "1")
 
 import numpy as np
 import pandas as pd

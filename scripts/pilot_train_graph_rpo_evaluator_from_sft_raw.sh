@@ -17,8 +17,18 @@ GRAPH_EVALUATOR_GRAD_ACCUM=${GRAPH_EVALUATOR_GRAD_ACCUM:-8}
 GRAPH_EVALUATOR_VALIDATION_FRACTION=${GRAPH_EVALUATOR_VALIDATION_FRACTION:-0.2}
 GRAPH_EVALUATOR_SEED=${GRAPH_EVALUATOR_SEED:-42}
 GRAPH_EVALUATOR_PROBE_PORT=${GRAPH_EVALUATOR_PROBE_PORT:-19002}
+REUSE_LATEST_PREPARED_DATA=${REUSE_LATEST_PREPARED_DATA:-0}
 RUN_TS=$(date +%Y%m%d_%H%M%S)
-DATA_DIR=${GRAPH_EVALUATOR_DATA_ROOT:-$SCRATCH_ROOT/context-graph-evaluator-data/sft_raw_pilot_$RUN_TS}
+DATA_BASE="$SCRATCH_ROOT/context-graph-evaluator-data"
+if [ "$REUSE_LATEST_PREPARED_DATA" = "1" ] && [ -z "${GRAPH_EVALUATOR_DATA_ROOT:-}" ]; then
+  DATA_DIR=$(find "$DATA_BASE" -mindepth 1 -maxdepth 1 -type d -name 'sft_raw_pilot_*' -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -n 1 | cut -d' ' -f2-) || true
+  if [ -z "$DATA_DIR" ]; then
+    echo "ERROR: no prepared evaluator dataset found under $DATA_BASE"
+    exit 1
+  fi
+else
+  DATA_DIR=${GRAPH_EVALUATOR_DATA_ROOT:-$DATA_BASE/sft_raw_pilot_$RUN_TS}
+fi
 MODEL_DIR=${GRAPH_EVALUATOR_MODEL_ROOT:-$SCRATCH_ROOT/context-graph-evaluators/sft_raw_pilot_qwen3_0p6b_$RUN_TS}
 TRAIN_LOG="$MODEL_DIR/train.log"
 SERVER_LOG="$MODEL_DIR/server_probe.log"
@@ -28,6 +38,8 @@ conda activate cxtgraph
 cd "$PROJECT_ROOT"
 export PYTHONPATH="$PROJECT_ROOT:${PYTHONPATH:-}"
 export TOKENIZERS_PARALLELISM=false
+export USE_TF=0
+export TRANSFORMERS_NO_TF=1
 export HF_HOME=${HF_HOME:-/work/09281/chc_1996/vista/cache}
 export HF_HUB_CACHE=${HF_HUB_CACHE:-$HF_HOME/hub}
 
@@ -53,13 +65,22 @@ if [ "$DATA_REAL" = "$MODEL_REAL" ]; then
 fi
 mkdir -p "$DATA_DIR" "$MODEL_DIR"
 
-mapfile -t RAW_RESULTS < <(find "$RAW_SFT_ROOT" -type f \( -name 'interactive_results_*.json' -o -name 'gaia_results_*.json' \) -size +0c -printf '%T@ %p\n' | sort -nr | head -n "$GRAPH_EVALUATOR_MAX_RAW_FILES" | cut -d' ' -f2-)
-if [ "${#RAW_RESULTS[@]}" -eq 0 ]; then
-  echo "ERROR: no raw pre-SFT result JSON found under $RAW_SFT_ROOT"
-  echo "Expected .../raw/interactive_results_*.json or .../raw/gaia_results_*.json"
-  exit 1
+RAW_RESULT_COUNT=0
+if [ "$REUSE_LATEST_PREPARED_DATA" = "1" ]; then
+  if [ ! -s "$DATA_DIR/graph_evaluator_train.parquet" ] || [ ! -s "$DATA_DIR/graph_evaluator_validation.parquet" ] || [ ! -s "$DATA_DIR/manifest.json" ]; then
+    echo "ERROR: prepared evaluator dataset is incomplete: $DATA_DIR"
+    exit 1
+  fi
+else
+  mapfile -t RAW_RESULTS < <(find "$RAW_SFT_ROOT" -type f \( -name 'interactive_results_*.json' -o -name 'gaia_results_*.json' \) -size +0c -printf '%T@ %p\n' | sort -nr | head -n "$GRAPH_EVALUATOR_MAX_RAW_FILES" | cut -d' ' -f2-)
+  RAW_RESULT_COUNT=${#RAW_RESULTS[@]}
+  if [ "$RAW_RESULT_COUNT" -eq 0 ]; then
+    echo "ERROR: no raw pre-SFT result JSON found under $RAW_SFT_ROOT"
+    echo "Expected .../raw/interactive_results_*.json or .../raw/gaia_results_*.json"
+    exit 1
+  fi
+  printf '%s\n' "${RAW_RESULTS[@]}" > "$DATA_DIR/source_files.txt"
 fi
-printf '%s\n' "${RAW_RESULTS[@]}" > "$DATA_DIR/source_files.txt"
 
 MODEL_SOURCE="$GRAPH_EVALUATOR_BASE_MODEL"
 if [ ! -d "$MODEL_SOURCE" ]; then
@@ -76,14 +97,16 @@ fi
 echo "=============================================================="
 echo "  GRAPHRPO EVALUATOR PILOT FROM RAW SFT GENERATIONS"
 echo "  Raw root:       $RAW_SFT_ROOT"
-echo "  Input files:    ${#RAW_RESULTS[@]}"
+echo "  Input files:    $RAW_RESULT_COUNT (0 means prepared data is being reused)"
 echo "  Question cap:   $GRAPH_EVALUATOR_MAX_QUESTIONS"
 echo "  Base classifier:$MODEL_SOURCE"
 echo "  Data output:    $DATA_DIR"
 echo "  Model output:   $MODEL_DIR"
 echo "=============================================================="
 
-python scripts/prepare_graph_evaluator_data.py "${RAW_RESULTS[@]}" --output-dir "$DATA_DIR" --validation-fraction "$GRAPH_EVALUATOR_VALIDATION_FRACTION" --seed "$GRAPH_EVALUATOR_SEED" --auto-seed-attempts 10000 --require-both-classes --max-questions "$GRAPH_EVALUATOR_MAX_QUESTIONS"
+if [ "$REUSE_LATEST_PREPARED_DATA" != "1" ]; then
+  python scripts/prepare_graph_evaluator_data.py "${RAW_RESULTS[@]}" --output-dir "$DATA_DIR" --validation-fraction "$GRAPH_EVALUATOR_VALIDATION_FRACTION" --seed "$GRAPH_EVALUATOR_SEED" --auto-seed-attempts 10000 --require-both-classes --max-questions "$GRAPH_EVALUATOR_MAX_QUESTIONS"
+fi
 
 python scripts/train_graph_evaluator.py --train-file "$DATA_DIR/graph_evaluator_train.parquet" --validation-file "$DATA_DIR/graph_evaluator_validation.parquet" --model "$MODEL_SOURCE" --output-dir "$MODEL_DIR" --max-length "$GRAPH_EVALUATOR_MAX_LENGTH" --epochs "$GRAPH_EVALUATOR_EPOCHS" --batch-size "$GRAPH_EVALUATOR_BATCH_SIZE" --gradient-accumulation-steps "$GRAPH_EVALUATOR_GRAD_ACCUM" --seed "$GRAPH_EVALUATOR_SEED" 2>&1 | tee "$TRAIN_LOG"
 

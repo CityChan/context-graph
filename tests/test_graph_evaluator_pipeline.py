@@ -44,6 +44,9 @@ def test_question_cap_keeps_complete_groups_deterministically():
 
 def test_training_uses_class_balanced_loss():
     source = Path("scripts/train_graph_evaluator.py").read_text(encoding="utf-8")
+    assert source.index('os.environ.setdefault("USE_TF", "0")') < source.index(
+        "from transformers import"
+    )
     assert "class ClassWeightedTrainer" in source
     assert "balanced_class_weights(train_frame.label.to_numpy())" in source
     assert "cross_entropy" in source
@@ -62,3 +65,5 @@ def test_raw_sft_pilot_trains_calibrates_and_probes():
     assert "context-graph-evaluator-data" in source
     assert "context-graph-evaluators" in source
     assert '"$RAW_SFT_REAL"|"$RAW_SFT_REAL"/*' in source
+    assert "REUSE_LATEST_PREPARED_DATA" in source
+    assert "export USE_TF=0" in source
