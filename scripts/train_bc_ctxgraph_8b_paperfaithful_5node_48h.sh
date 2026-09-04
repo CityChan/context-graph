@@ -135,6 +135,7 @@ RUN_TAG=${RUN_TAG:-paperfaithful_5n_48h}
 EXPERIMENT_NAME=${EXPERIMENT_NAME:-"train_ctxgraph_bc_8b_${RUN_TAG}_${TS}"}
 SAVE_ROLLOUT_DATA=${SAVE_ROLLOUT_DATA:-0}
 ROLLOUT_DATA_DIR=${ROLLOUT_DATA_DIR:-}
+VALIDATION_DATA_DIR=${VALIDATION_DATA_DIR:-}
 if [ "$SAVE_ROLLOUT_DATA" = "1" ] && [ -z "$ROLLOUT_DATA_DIR" ]; then
   ROLLOUT_DATA_ROOT=${ROLLOUT_DATA_ROOT:-${SCRATCH:-/scratch/09281/chc_1996}/context-graph-rollouts}
   ROLLOUT_DATA_DIR="$ROLLOUT_DATA_ROOT/$EXPERIMENT_NAME"
@@ -143,6 +144,11 @@ ROLLOUT_DATA_ARGS=()
 if [ -n "$ROLLOUT_DATA_DIR" ]; then
   mkdir -p "$ROLLOUT_DATA_DIR"
   ROLLOUT_DATA_ARGS+=("trainer.rollout_data_dir=$ROLLOUT_DATA_DIR")
+fi
+VALIDATION_DATA_ARGS=()
+if [ -n "$VALIDATION_DATA_DIR" ]; then
+  mkdir -p "$VALIDATION_DATA_DIR"
+  VALIDATION_DATA_ARGS+=("trainer.validation_data_dir=$VALIDATION_DATA_DIR")
 fi
 TRAIN_DATA_FILE=${TRAIN_DATA_FILE:-data/bc_train.parquet}
 VAL_DATA_FILE=${VAL_DATA_FILE:-data/bc_test.parquet}
@@ -160,6 +166,10 @@ CONTEXT_LENGTH=${CONTEXT_LENGTH:-40960}
 PPO_MINI_BATCH_SIZE=${PPO_MINI_BATCH_SIZE:-16}
 TRAIN_BATCH_SIZE=${TRAIN_BATCH_SIZE:-32}
 ROLLOUT_N=${ROLLOUT_N:-8}
+ROLLOUT_TEMPERATURE=${ROLLOUT_TEMPERATURE:-1.0}
+VAL_ROLLOUT_N=${VAL_ROLLOUT_N:-1}
+VAL_DO_SAMPLE=${VAL_DO_SAMPLE:-False}
+VAL_TEMPERATURE=${VAL_TEMPERATURE:-0.0}
 TOTAL_TRAINING_STEPS=${TOTAL_TRAINING_STEPS:-50}
 VAL_BEFORE_TRAIN=${VAL_BEFORE_TRAIN:-True}
 TEST_FREQ=${TEST_FREQ:-10}
@@ -264,6 +274,7 @@ echo "  Embedder model: $EMBED_MODEL"
 echo "  Experiment: $EXPERIMENT_NAME"
 echo "  Logger: ${probe_msg}"
 echo "  Rollout data: ${ROLLOUT_DATA_DIR:-disabled}"
+echo "  Validation data: ${VALIDATION_DATA_DIR:-disabled}"
 echo "  Started: $(date)"
 echo "=============================================================="
 
@@ -564,6 +575,10 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu="$CONTEXT_LENGTH" \
   actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
   actor_rollout_ref.rollout.n="$ROLLOUT_N" \
+  actor_rollout_ref.rollout.temperature="$ROLLOUT_TEMPERATURE" \
+  actor_rollout_ref.rollout.val_kwargs.n="$VAL_ROLLOUT_N" \
+  actor_rollout_ref.rollout.val_kwargs.do_sample="$VAL_DO_SAMPLE" \
+  actor_rollout_ref.rollout.val_kwargs.temperature="$VAL_TEMPERATURE" \
   actor_rollout_ref.rollout.agent.num_workers=1 \
   actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=1 \
   actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=1 \
@@ -636,6 +651,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   trainer.experiment_name="$EXPERIMENT_NAME" \
   trainer.logger="$TRAINER_LOGGER" \
   "${ROLLOUT_DATA_ARGS[@]}" \
+  "${VALIDATION_DATA_ARGS[@]}" \
   "${GRAPH_RPO_ARGS[@]}" \
   "${RESUME_ARGS[@]}"
 RC=$?

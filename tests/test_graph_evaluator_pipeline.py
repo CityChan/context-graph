@@ -1,10 +1,17 @@
 from pathlib import Path
 
+import numpy as np
+
 from scripts.prepare_graph_evaluator_data import (
     binary_class_counts,
     has_both_classes,
     sample_question_groups,
     split_rows,
+)
+from scripts.graph_evaluator_metrics import (
+    binary_auroc,
+    positive_probabilities,
+    probability_metrics,
 )
 
 
@@ -52,6 +59,17 @@ def test_training_uses_class_balanced_loss():
     assert "cross_entropy" in source
 
 
+def test_graph_evaluator_metrics_cover_discrimination_and_calibration():
+    labels = np.array([0, 0, 1, 1])
+    logits = np.array([[4.0, 0.0], [3.0, 1.0], [1.0, 3.0], [0.0, 4.0]])
+    probabilities = positive_probabilities(logits, temperature=2.0)
+    metrics = probability_metrics(labels, probabilities)
+    assert binary_auroc(labels, probabilities) == 1.0
+    assert metrics["accuracy"] == 1.0
+    assert metrics["balanced_accuracy"] == 1.0
+    assert 0.0 <= metrics["ece_10_bin"] <= 1.0
+
+
 def test_raw_sft_pilot_trains_calibrates_and_probes():
     source = Path(
         "scripts/pilot_train_graph_rpo_evaluator_from_sft_raw.sh"
@@ -67,3 +85,26 @@ def test_raw_sft_pilot_trains_calibrates_and_probes():
     assert '"$RAW_SFT_REAL"|"$RAW_SFT_REAL"/*' in source
     assert "REUSE_LATEST_PREPARED_DATA" in source
     assert "export USE_TF=0" in source
+
+
+def test_browsecomp_target_evaluator_build_is_train_only_and_policy_frozen():
+    source = Path(
+        "scripts/build_bc_graph_rpo_evaluator_qwen3_8b_4node.sh"
+    ).read_text(encoding="utf-8")
+    assert "data/bc_train.parquet" in source
+    assert "evaluator collection must not use the BrowseComp test split" in source
+    assert "TRAINER_VAL_ONLY=True" in source
+    assert "VAL_DO_SAMPLE=True" in source
+    assert "VALIDATION_DATA_DIR" in source
+    assert "scripts/audit_bc_judge_results.py" in source
+    assert "--require-both-classes" in source
+    assert "GRAPH_EVALUATOR_PRETRAINED_MODEL" in source
+    assert "graph_rpo_evaluation.json" in source
+    trainer_source = Path("verl/trainer/ppo/ray_trainer.py").read_text(
+        encoding="utf-8"
+    )
+    assert (
+        'test_batch.meta_info["temperature"] = '
+        "self.config.actor_rollout_ref.rollout.val_kwargs.temperature"
+        in trainer_source
+    )

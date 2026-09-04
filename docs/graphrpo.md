@@ -58,6 +58,17 @@ under `$SCRATCH/context-graph-evaluator-data/`; model weights and calibration
 are written separately under `$SCRATCH/context-graph-evaluators/`. Path guards
 reject either output when it is configured inside the source SFT tree.
 
+Build the target-domain evaluator on a four- or five-node Vista allocation with
+`scripts/build_bc_graph_rpo_evaluator_qwen3_8b_4node.sh`. The workflow runs the
+original Qwen3-8B policy in validation-only mode on `bc_train.parquet`, samples
+multiple episodes per question, audits the fixed BrowseComp judge labels, and
+then fine-tunes the pilot checkpoint. It never updates the target policy and
+rejects `bc_test.parquet`. Derived target rollouts, evaluator Parquet data, and
+the frozen model are stored in separate `$SCRATCH` roots. The final directory
+contains both `graph_rpo_calibration.json` and `graph_rpo_evaluation.json`;
+inspect the question-disjoint validation discrimination and calibration metrics
+before fixing that exact checkpoint path for the policy run.
+
 ## BrowseComp judge audit
 
 BrowseComp task success is positive only after strict answer matching or a

@@ -29,6 +29,10 @@ from transformers import (
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from agents.graph_rpo import format_graph_evaluator_input
+from scripts.graph_evaluator_metrics import (
+    positive_probabilities,
+    probability_metrics,
+)
 
 
 def balanced_class_weights(labels: np.ndarray) -> torch.Tensor:
@@ -162,7 +166,12 @@ def main() -> None:
     )
     trainer.train()
     prediction = trainer.predict(validation_data)
-    temperature = fit_temperature(prediction.predictions, validation_frame.label.to_numpy())
+    validation_labels = validation_frame.label.to_numpy(dtype=np.int64)
+    temperature = fit_temperature(prediction.predictions, validation_labels)
+    uncalibrated_probabilities = positive_probabilities(prediction.predictions)
+    calibrated_probabilities = positive_probabilities(
+        prediction.predictions, temperature=temperature
+    )
     trainer.save_model(str(args.output_dir))
     tokenizer.save_pretrained(str(args.output_dir))
     calibration = {
@@ -183,7 +192,30 @@ def main() -> None:
     (args.output_dir / "graph_rpo_calibration.json").write_text(
         json.dumps(calibration, indent=2) + "\n", encoding="utf-8"
     )
+    prevalence = float(validation_labels.mean())
+    baseline_probabilities = np.full(len(validation_labels), prevalence)
+    evaluation = {
+        "schema_version": "contextgraph.graph_evaluator_evaluation.v1",
+        "validation_rows": len(validation_frame),
+        "validation_questions": int(validation_frame[split_key].astype(str).nunique()),
+        "question_disjoint": True,
+        "positive_prevalence": prevalence,
+        "temperature": temperature,
+        "uncalibrated": probability_metrics(
+            validation_labels, uncalibrated_probabilities
+        ),
+        "calibrated": probability_metrics(
+            validation_labels, calibrated_probabilities
+        ),
+        "constant_prevalence_baseline": probability_metrics(
+            validation_labels, baseline_probabilities
+        ),
+    }
+    (args.output_dir / "graph_rpo_evaluation.json").write_text(
+        json.dumps(evaluation, indent=2) + "\n", encoding="utf-8"
+    )
     print(json.dumps(calibration, indent=2))
+    print(json.dumps(evaluation, indent=2))
 
 
 if __name__ == "__main__":

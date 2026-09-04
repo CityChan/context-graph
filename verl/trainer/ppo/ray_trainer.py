@@ -656,8 +656,11 @@ class RayPPOTrainer:
         for test_data in self.val_dataloader:
             test_batch = DataProto.from_single_dict(test_data)
 
-            # Set temperature in meta_info (aligned with fit())
-            test_batch.meta_info["temperature"] = self.config.actor_rollout_ref.rollout.temperature
+            # Validation sampling must use the frozen validation protocol rather
+            # than inheriting the training-rollout temperature.  This matters
+            # when collecting multiple stochastic target-policy trajectories
+            # for a graph evaluator.
+            test_batch.meta_info["temperature"] = self.config.actor_rollout_ref.rollout.val_kwargs.temperature
 
             # Add uid to batch (aligned with fit() - always create new uids)
             test_batch.non_tensor_batch["uid"] = np.array(
