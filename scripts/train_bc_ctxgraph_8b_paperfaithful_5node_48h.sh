@@ -64,6 +64,19 @@ if [ -n "${WORK:-}" ] && [ -f "$WORK/.wandb_env" ]; then
   # shellcheck disable=SC1090
   source "$WORK/.wandb_env"
 fi
+if [ "${BC_REQUIRE_WANDB:-0}" = "1" ]; then
+  if [ "${BC_DISABLE_WANDB:-0}" = "1" ]; then
+    echo "ERROR: BC_REQUIRE_WANDB=1 conflicts with BC_DISABLE_WANDB=1"
+    exit 1
+  fi
+  if [ -z "${WANDB_API_KEY:-}" ]; then
+    echo "ERROR: BC_REQUIRE_WANDB=1 but WANDB_API_KEY is not set"
+    echo "       Put 'export WANDB_API_KEY=...' in \$WORK/.wandb_env"
+    exit 1
+  fi
+  unset WANDB_DISABLED
+  export WANDB_MODE=online
+fi
 
 # ── OpenAI judge (REQUIRED for BrowseComp — no LLM judge = no reward signal) ──
 if [ -n "${WORK:-}" ] && [ -f "$WORK/.openai_env" ]; then
