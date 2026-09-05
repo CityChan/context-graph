@@ -35,6 +35,7 @@ GRAPH_EVALUATOR_BATCH_SIZE=${GRAPH_EVALUATOR_BATCH_SIZE:-1}
 GRAPH_EVALUATOR_GRAD_ACCUM=${GRAPH_EVALUATOR_GRAD_ACCUM:-8}
 GRAPH_EVALUATOR_PROBE_PORT=${GRAPH_EVALUATOR_PROBE_PORT:-19002}
 REUSE_TARGET_ROLLOUTS=${REUSE_TARGET_ROLLOUTS:-0}
+export JUDGE_MODEL=${JUDGE_MODEL:-gpt-5-nano}
 RUN_TS=$(date +%Y%m%d_%H%M%S)
 EXPERIMENT_NAME=${EXPERIMENT_NAME:-bc_target_policy_qwen3_8b_evaldata_$RUN_TS}
 TARGET_ROLLOUT_DIR=${TARGET_ROLLOUT_DIR:-$SCRATCH_ROOT/context-graph-evaluator-rollouts/$EXPERIMENT_NAME}
@@ -149,7 +150,6 @@ if [ "$REUSE_TARGET_ROLLOUTS" != "1" ]; then
   export BC_CTXGRAPH_PROTOCOL=controller
   export BC_CONTROLLER_ACTION_POLICY=structural
   export PROCESS_REWARD_SPEC='[scope]'
-  export JUDGE_MODEL=${JUDGE_MODEL:-gpt-5-nano}
   export BC_DISABLE_WANDB=1
   export RUN_TAG=graph_evaluator_collection
   bash scripts/train_bc_ctxgraph_8b_paperfaithful_5node_48h.sh 2>&1 | tee "$COLLECTION_LOG"
