@@ -163,6 +163,10 @@ if [ -n "$VALIDATION_DATA_DIR" ]; then
   mkdir -p "$VALIDATION_DATA_DIR"
   VALIDATION_DATA_ARGS+=("trainer.validation_data_dir=$VALIDATION_DATA_DIR")
 fi
+DATA_SEED_ARGS=()
+if [ -n "${DATA_SEED:-}" ]; then
+  DATA_SEED_ARGS+=("data.seed=$DATA_SEED")
+fi
 TRAIN_DATA_FILE=${TRAIN_DATA_FILE:-data/bc_train.parquet}
 VAL_DATA_FILE=${VAL_DATA_FILE:-data/bc_test.parquet}
 DATASET_LABEL=${DATASET_LABEL:-BrowseComp-Plus}
@@ -643,6 +647,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   data.val_files="$VAL_DATA_FILE" \
   data.train_max_samples="$TRAIN_MAX_SAMPLES" \
   data.val_max_samples="$VAL_MAX_SAMPLES" \
+  "${DATA_SEED_ARGS[@]}" \
   data.train_batch_size="$TRAIN_BATCH_SIZE" \
   data.max_prompt_length="$PROMPT_LENGTH" \
   data.max_response_length="$RESPONSE_LENGTH" \
