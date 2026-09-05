@@ -58,6 +58,16 @@ under `$SCRATCH/context-graph-evaluator-data/`; model weights and calibration
 are written separately under `$SCRATCH/context-graph-evaluators/`. Path guards
 reject either output when it is configured inside the source SFT tree.
 
+For a quick target-domain bootstrap from the completed 20-step BrowseComp
+rollout pilot, run
+`scripts/pilot_train_graph_evaluator_from_bc_rollouts_4node_idev.sh` inside a
+four-node allocation. It trains a small independent classifier on one node,
+logs the evaluator run to W&B, calibrates it on a question-disjoint validation
+partition, and requires both AUROC discrimination and a Brier score no worse
+than the constant-prevalence baseline. This is only the evaluator bootstrap
+stage for alternating training; it does not update the actor or use
+`bc_test.parquet`.
+
 Build the target-domain evaluator on a four- or five-node Vista allocation with
 `scripts/build_bc_graph_rpo_evaluator_qwen3_8b_4node.sh`. The workflow runs the
 original Qwen3-8B policy in validation-only mode on `bc_train.parquet`, samples

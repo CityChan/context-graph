@@ -13,6 +13,7 @@ from scripts.graph_evaluator_metrics import (
     positive_probabilities,
     probability_metrics,
 )
+from scripts.check_graph_evaluator_quality import quality_result
 
 
 def test_split_is_question_disjoint_and_can_keep_both_classes():
@@ -57,6 +58,20 @@ def test_training_uses_class_balanced_loss():
     assert "class ClassWeightedTrainer" in source
     assert "balanced_class_weights(train_frame.label.to_numpy())" in source
     assert "cross_entropy" in source
+    assert 'choices=("none", "wandb")' in source
+    assert 'f"graph_evaluator/{section}_{metric}"' in source
+
+
+def test_graph_evaluator_quality_gate_requires_discrimination_and_brier_gain():
+    payload = {
+        "validation_rows": 20,
+        "validation_questions": 5,
+        "calibrated": {"auroc": 0.7, "brier": 0.15},
+        "constant_prevalence_baseline": {"brier": 0.2},
+    }
+    assert quality_result(payload, min_auroc=0.55, max_brier_ratio=1.0)["passed"]
+    payload["calibrated"]["auroc"] = 0.5
+    assert not quality_result(payload, min_auroc=0.55, max_brier_ratio=1.0)["passed"]
 
 
 def test_graph_evaluator_metrics_cover_discrimination_and_calibration():
@@ -112,3 +127,16 @@ def test_browsecomp_target_evaluator_build_is_train_only_and_policy_frozen():
         "self.config.actor_rollout_ref.rollout.val_kwargs.temperature"
         in trainer_source
     )
+
+
+def test_browsecomp_rollout_evaluator_pilot_is_wandb_audited_and_gated():
+    source = Path(
+        "scripts/pilot_train_graph_evaluator_from_bc_rollouts_4node_idev.sh"
+    ).read_text(encoding="utf-8")
+    assert "audit_bc_judge_results.py" in source
+    assert "prepare_graph_evaluator_data.py" in source
+    assert "--require-both-classes" in source
+    assert "--report-to wandb" in source
+    assert "check_graph_evaluator_quality.py" in source
+    assert "bc_test.parquet" in source
+    assert "does not update the actor" in source

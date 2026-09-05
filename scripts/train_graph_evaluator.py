@@ -92,7 +92,15 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--gradient-accumulation-steps", type=int, default=1)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--report-to", choices=("none", "wandb"), default="none")
+    parser.add_argument("--wandb-project", default="context-graph-evaluator")
+    parser.add_argument("--run-name")
     args = parser.parse_args()
+
+    if args.report_to == "wandb":
+        if not os.environ.get("WANDB_API_KEY"):
+            raise ValueError("--report-to=wandb requires WANDB_API_KEY")
+        os.environ["WANDB_PROJECT"] = args.wandb_project
 
     train_frame = pd.read_parquet(args.train_file)
     validation_frame = pd.read_parquet(args.validation_file)
@@ -151,7 +159,8 @@ def main() -> None:
         logging_steps=10,
         seed=args.seed,
         bf16=torch.cuda.is_available(),
-        report_to=[],
+        report_to=[] if args.report_to == "none" else [args.report_to],
+        run_name=args.run_name,
         save_total_limit=1,
     )
     class_weights = balanced_class_weights(train_frame.label.to_numpy())
@@ -213,6 +222,21 @@ def main() -> None:
     }
     (args.output_dir / "graph_rpo_evaluation.json").write_text(
         json.dumps(evaluation, indent=2) + "\n", encoding="utf-8"
+    )
+    trainer.log(
+        {
+            "graph_evaluator/temperature": temperature,
+            "graph_evaluator/positive_prevalence": prevalence,
+            **{
+                f"graph_evaluator/{section}_{metric}": value
+                for section in (
+                    "uncalibrated",
+                    "calibrated",
+                    "constant_prevalence_baseline",
+                )
+                for metric, value in evaluation[section].items()
+            },
+        }
     )
     print(json.dumps(calibration, indent=2))
     print(json.dumps(evaluation, indent=2))
