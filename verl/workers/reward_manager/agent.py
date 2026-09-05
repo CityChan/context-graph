@@ -266,7 +266,8 @@ class AgentLoopRewardManager(AbstractRewardManager):
                       "judge_relaxed_em", "judge_relaxed_only", "judge_llm",
                       "judge_parse_failure",
                       # GraphRPO evaluator/edit-credit telemetry
-                      "graph_rpo_valid_edits", "graph_rpo_scored_states",
+                      "graph_rpo_valid_edits", "graph_rpo_creditable_edits",
+                      "graph_rpo_scored_states",
                       "graph_rpo_delta_sum", "graph_rpo_delta_abs_sum"):
                 # One episode can emit main plus several branch streams. The
                 # environment stats are episode-level and duplicated on every

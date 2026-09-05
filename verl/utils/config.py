@@ -201,9 +201,33 @@ def validate_config(
         assert bool(plugin.get("structured_graph_controller", False)), (
             "GraphRPO requires structured_graph_controller=True"
         )
-        assert str(plugin.get("graph_rpo_evaluator_url", "")).strip(), (
-            "GraphRPO requires plugin.graph_rpo_evaluator_url"
+        graph_credit_backend = str(
+            plugin.get("graph_rpo_credit_backend", "external_evaluator")
+        ).strip().lower()
+        assert graph_credit_backend in {
+            "external_evaluator",
+            "reference_answer_likelihood",
+        }, (
+            "GraphRPO plugin.graph_rpo_credit_backend must be external_evaluator "
+            "or reference_answer_likelihood"
         )
+        if graph_credit_backend == "external_evaluator":
+            assert str(plugin.get("graph_rpo_evaluator_url", "")).strip(), (
+                "external-evaluator GraphRPO requires plugin.graph_rpo_evaluator_url"
+            )
+        else:
+            assert use_reference_policy, (
+                "reference-answer GraphRPO requires a frozen reference policy; "
+                "enable actor.use_kl_loss"
+            )
+            assert int(
+                plugin.get(
+                    "graph_rpo_reference_max_prompt_length",
+                    config.actor_rollout_ref.rollout.prompt_length,
+                )
+            ) > 0
+            assert int(plugin.get("graph_rpo_reference_max_answer_length", 128)) > 0
+        assert float(plugin.get("graph_rpo_delta_max", 1.0)) > 0.0
 
     # critic
     if use_critic:

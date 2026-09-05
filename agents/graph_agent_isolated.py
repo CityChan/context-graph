@@ -58,7 +58,14 @@ from .graph_controller import (
     graph_checkpoint_due,
 )
 from .graph_trace import GraphTraceRecorder
-from .graph_rpo import GraphRPOEvaluatorError, assign_graph_edit_credits
+from .graph_rpo import (
+    EXTERNAL_EVALUATOR_BACKEND,
+    REFERENCE_ANSWER_LIKELIHOOD_BACKEND,
+    GraphRPOEvaluatorError,
+    assign_graph_edit_credits,
+    graph_rpo_credit_backend,
+    prepare_reference_graph_edit_requests,
+)
 from .trajectory_capture import serialize_agent_trajectories
 
 
@@ -294,13 +301,17 @@ async def process_item(
         process_reward = None
     adv_estimator = str(getattr(context.config.algorithm, "adv_estimator", "")).lower()
     graph_rpo_enabled = adv_estimator in {"graphrpo", "advantageestimator.graphrpo"}
+    graph_rpo_backend = graph_rpo_credit_backend(config.plugin) if graph_rpo_enabled else None
     if graph_rpo_enabled and is_train:
         if not structured_graph_controller:
             raise ValueError(
                 "GraphRPO requires structured_graph_controller=True so each "
                 "edit span is an isolated structured decision"
             )
-        if not str(getattr(config.plugin, "graph_rpo_evaluator_url", "") or "").strip():
+        if (
+            graph_rpo_backend == EXTERNAL_EVALUATOR_BACKEND
+            and not str(getattr(config.plugin, "graph_rpo_evaluator_url", "") or "").strip()
+        ):
             raise GraphRPOEvaluatorError(
                 "GraphRPO requires actor_rollout_ref.rollout.plugin."
                 "graph_rpo_evaluator_url"
@@ -1599,15 +1610,24 @@ async def process_item(
                         if 'flat' in process_reward:
                             agent[name].set_cache('reward', 0 + 0.2)
 
+    reference_edit_requests = []
     if graph_rpo_enabled and is_train:
-        graph_rpo_metrics = await assign_graph_edit_credits(
-            agent=agent['main'],
-            graph_trace=graph_trace_payload,
-            question=query_text,
-            terminal_reward=score[1],
-            tokenizer=tokenizer,
-            plugin_config=config.plugin,
-        )
+        if graph_rpo_backend == EXTERNAL_EVALUATOR_BACKEND:
+            graph_rpo_metrics = await assign_graph_edit_credits(
+                agent=agent['main'],
+                graph_trace=graph_trace_payload,
+                question=query_text,
+                terminal_reward=score[1],
+                tokenizer=tokenizer,
+                plugin_config=config.plugin,
+            )
+        elif graph_rpo_backend == REFERENCE_ANSWER_LIKELIHOOD_BACKEND:
+            reference_edit_requests, graph_rpo_metrics = prepare_reference_graph_edit_requests(
+                graph_trace=graph_trace_payload,
+                terminal_reward=score[1],
+            )
+        else:  # pragma: no cover - graph_rpo_credit_backend validates this.
+            raise ValueError(f"unsupported GraphRPO credit backend: {graph_rpo_backend}")
         env.stats.update(graph_rpo_metrics)
 
     use_graph_reward = (
@@ -1616,6 +1636,21 @@ async def process_item(
 
     for name in agent if is_train else ['main']:
         out = await agent[name].get_data()
+        reference_edits_with_spans = []
+        if (
+            graph_rpo_enabled
+            and graph_rpo_backend == REFERENCE_ANSWER_LIKELIHOOD_BACKEND
+            and name == 'main'
+        ):
+            turn_token_indices = out['response_turn_token_indices']
+            for request in reference_edit_requests:
+                token_indices = turn_token_indices.get(request['assistant_turn_index'], [])
+                if token_indices:
+                    reference_edits_with_spans.append({
+                        **request,
+                        'response_token_indices': token_indices,
+                    })
+            env.stats['graph_rpo_creditable_edits'] = len(reference_edits_with_spans)
         agent_reward = score[1]
 
         # Every trajectory emitted from one gen_uid is another view of the
@@ -1657,6 +1692,16 @@ async def process_item(
                 **(
                     {'graph_edit_credit_mask': out['graph_edit_credit_mask']}
                     if graph_rpo_enabled
+                    else {}
+                ),
+                **(
+                    {
+                        'graph_rpo_reference_edits': reference_edits_with_spans,
+                        'graph_rpo_reference_question': query_text,
+                        'graph_rpo_reference_answer': getattr(env, 'label_answer', None),
+                    }
+                    if graph_rpo_enabled
+                    and graph_rpo_backend == REFERENCE_ANSWER_LIKELIHOOD_BACKEND
                     else {}
                 ),
                 'uid': uid,

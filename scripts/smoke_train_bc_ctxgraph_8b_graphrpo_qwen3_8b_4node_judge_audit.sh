@@ -1,6 +1,6 @@
 #!/bin/bash
 # One-command four-node GraphRPO smoke from the original Qwen3-8B snapshot.
-# This uses the deterministic graph evaluator and is for mechanics only.
+# This uses the frozen original Qwen3-8B as the answer-likelihood reference.
 set -euo pipefail
 
 PROJECT_ROOT=${PROJECT_ROOT:-/work/09281/chc_1996/vista/context-graph}
@@ -27,6 +27,7 @@ export TEST_FREQ=0
 export SAVE_FREQ=1
 export SAVE_ROLLOUT_DATA=1
 export JUDGE_MODEL=gpt-5-nano
+export GRAPH_RPO_CREDIT_BACKEND=reference_answer_likelihood
 
 if [ ! -s "$MODEL_PATH/config.json" ] || ! find -L "$MODEL_PATH" -maxdepth 1 -type f \( -name '*.safetensors' -o -name 'pytorch_model*.bin' \) -size +0c -print -quit 2>/dev/null | grep -q .; then
   echo "ERROR: original Qwen3-8B snapshot is incomplete: $MODEL_PATH"
@@ -66,7 +67,7 @@ wc -l "${ROLLOUT_FILES[@]}"
 python scripts/audit_bc_judge_results.py "${ROLLOUT_FILES[@]}" --fail-on-integrity-error
 
 echo "Key GraphRPO evidence:"
-grep -E 'TRAIN RUN COMPLETED|TRAIN RUN FAILED|graph_rpo_valid_edits|graph_rpo_scored_states|graph_rpo_delta_abs_sum|actor/pg_loss|actor/grad_norm|actor/kl_loss' "$SMOKE_LOG" | tail -20 || true
+grep -E 'TRAIN RUN COMPLETED|TRAIN RUN FAILED|graph_rpo_valid_edits|reference_creditable_edits|reference_scored_states|reference_delta_abs_sum|actor/pg_loss|actor/grad_norm|actor/kl_loss' "$SMOKE_LOG" | tail -20 || true
 
 echo "=============================================================="
 echo "  SMOKE + JUDGE AUDIT COMPLETED"

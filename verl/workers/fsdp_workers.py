@@ -1003,7 +1003,9 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
         data.meta_info["micro_batch_size"] = self.config.rollout.log_prob_micro_batch_size_per_gpu
         data.meta_info["max_token_len"] = self.config.rollout.log_prob_max_token_len_per_gpu
         data.meta_info["use_dynamic_bsz"] = self.config.rollout.log_prob_use_dynamic_bsz
-        data.meta_info["temperature"] = self.config.rollout.temperature
+        data.meta_info["temperature"] = data.meta_info.pop(
+            "log_prob_temperature_override", self.config.rollout.temperature
+        )
         # perform recompute log_prob
         with self.ulysses_sharding_manager:
             with adapter_ctx:
@@ -1032,6 +1034,9 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
         if self._is_lora:
             # if _is_lora, actor without lora applied is the ref
             data.meta_info["is_lora"] = True
+            data.meta_info["log_prob_temperature_override"] = data.meta_info.get(
+                "ref_log_prob_temperature", self.config.rollout.temperature
+            )
             data = self.compute_log_prob(data)
             # this old_log_probs is in fact ref_log_prob
             data = DataProto.from_dict(tensors={"ref_log_prob": data.batch["old_log_probs"]})
@@ -1042,7 +1047,9 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
 
         micro_batch_size = self.config.ref.log_prob_micro_batch_size_per_gpu
         data.meta_info["micro_batch_size"] = micro_batch_size
-        data.meta_info["temperature"] = self.config.rollout.temperature
+        data.meta_info["temperature"] = data.meta_info.get(
+            "ref_log_prob_temperature", self.config.rollout.temperature
+        )
         data.meta_info["max_token_len"] = self.config.ref.log_prob_max_token_len_per_gpu
         data.meta_info["use_dynamic_bsz"] = self.config.ref.log_prob_use_dynamic_bsz
         with self.ulysses_sharding_manager:

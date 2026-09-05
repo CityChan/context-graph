@@ -222,31 +222,57 @@ if [ "$ADV_ESTIMATOR" = "graphrpo" ]; then
     echo "ERROR: GraphRPO requires BC_CTXGRAPH_PROTOCOL=controller"
     exit 1
   fi
-  if [ -z "${GRAPH_RPO_EVALUATOR_URL:-}" ]; then
-    echo "ERROR: GraphRPO requires GRAPH_RPO_EVALUATOR_URL"
-    exit 1
-  fi
+  GRAPH_RPO_CREDIT_BACKEND=${GRAPH_RPO_CREDIT_BACKEND:-reference_answer_likelihood}
   GRAPH_RPO_ALPHA=${GRAPH_RPO_ALPHA:-1.0}
   GRAPH_RPO_BETA=${GRAPH_RPO_BETA:-1.0}
   GRAPH_RPO_EPSILON=${GRAPH_RPO_EPSILON:-1e-6}
-  GRAPH_RPO_VIEW_BUDGET=${GRAPH_RPO_VIEW_BUDGET:-2048}
-  GRAPH_RPO_PROBABILITY_EPSILON=${GRAPH_RPO_PROBABILITY_EPSILON:-1e-4}
-  GRAPH_RPO_CONFIDENCE_BOUND=${GRAPH_RPO_CONFIDENCE_BOUND:-8.0}
-  GRAPH_RPO_SERIALIZATION_PENALTY=${GRAPH_RPO_SERIALIZATION_PENALTY:-0.0}
   GRAPH_RPO_DELTA_MAX=${GRAPH_RPO_DELTA_MAX:-1.0}
   GRAPH_RPO_OPERATION_COSTS=${GRAPH_RPO_OPERATION_COSTS:-'{merge:0.0,prune:0.0,add_edge:0.0,select:0.0}'}
   GRAPH_RPO_ARGS+=(
     "algorithm.graphrpo_alpha=$GRAPH_RPO_ALPHA"
     "algorithm.graphrpo_beta=$GRAPH_RPO_BETA"
     "algorithm.graphrpo_epsilon=$GRAPH_RPO_EPSILON"
-    "+actor_rollout_ref.rollout.plugin.graph_rpo_evaluator_url=$GRAPH_RPO_EVALUATOR_URL"
-    "+actor_rollout_ref.rollout.plugin.graph_rpo_view_budget=$GRAPH_RPO_VIEW_BUDGET"
-    "+actor_rollout_ref.rollout.plugin.graph_rpo_probability_epsilon=$GRAPH_RPO_PROBABILITY_EPSILON"
-    "+actor_rollout_ref.rollout.plugin.graph_rpo_confidence_bound=$GRAPH_RPO_CONFIDENCE_BOUND"
-    "+actor_rollout_ref.rollout.plugin.graph_rpo_serialization_penalty=$GRAPH_RPO_SERIALIZATION_PENALTY"
+    "+actor_rollout_ref.rollout.plugin.graph_rpo_credit_backend=$GRAPH_RPO_CREDIT_BACKEND"
     "+actor_rollout_ref.rollout.plugin.graph_rpo_delta_max=$GRAPH_RPO_DELTA_MAX"
     "+actor_rollout_ref.rollout.plugin.graph_rpo_operation_costs=$GRAPH_RPO_OPERATION_COSTS"
   )
+  case "$GRAPH_RPO_CREDIT_BACKEND" in
+    reference_answer_likelihood)
+      if [ "$USE_KL_LOSS" != "True" ] && [ "$USE_KL_LOSS" != "true" ]; then
+        echo "ERROR: reference-answer GraphRPO requires USE_KL_LOSS=True to initialize the frozen reference policy"
+        exit 1
+      fi
+      GRAPH_RPO_REFERENCE_MAX_PROMPT_LENGTH=${GRAPH_RPO_REFERENCE_MAX_PROMPT_LENGTH:-$PROMPT_LENGTH}
+      GRAPH_RPO_REFERENCE_MAX_ANSWER_LENGTH=${GRAPH_RPO_REFERENCE_MAX_ANSWER_LENGTH:-128}
+      GRAPH_RPO_REFERENCE_ENABLE_THINKING=${GRAPH_RPO_REFERENCE_ENABLE_THINKING:-False}
+      GRAPH_RPO_ARGS+=(
+        "+actor_rollout_ref.rollout.plugin.graph_rpo_reference_max_prompt_length=$GRAPH_RPO_REFERENCE_MAX_PROMPT_LENGTH"
+        "+actor_rollout_ref.rollout.plugin.graph_rpo_reference_max_answer_length=$GRAPH_RPO_REFERENCE_MAX_ANSWER_LENGTH"
+        "+actor_rollout_ref.rollout.plugin.graph_rpo_reference_enable_thinking=$GRAPH_RPO_REFERENCE_ENABLE_THINKING"
+      )
+      ;;
+    external_evaluator)
+      if [ -z "${GRAPH_RPO_EVALUATOR_URL:-}" ]; then
+        echo "ERROR: external-evaluator GraphRPO requires GRAPH_RPO_EVALUATOR_URL"
+        exit 1
+      fi
+      GRAPH_RPO_VIEW_BUDGET=${GRAPH_RPO_VIEW_BUDGET:-2048}
+      GRAPH_RPO_PROBABILITY_EPSILON=${GRAPH_RPO_PROBABILITY_EPSILON:-1e-4}
+      GRAPH_RPO_CONFIDENCE_BOUND=${GRAPH_RPO_CONFIDENCE_BOUND:-8.0}
+      GRAPH_RPO_SERIALIZATION_PENALTY=${GRAPH_RPO_SERIALIZATION_PENALTY:-0.0}
+      GRAPH_RPO_ARGS+=(
+        "+actor_rollout_ref.rollout.plugin.graph_rpo_evaluator_url=$GRAPH_RPO_EVALUATOR_URL"
+        "+actor_rollout_ref.rollout.plugin.graph_rpo_view_budget=$GRAPH_RPO_VIEW_BUDGET"
+        "+actor_rollout_ref.rollout.plugin.graph_rpo_probability_epsilon=$GRAPH_RPO_PROBABILITY_EPSILON"
+        "+actor_rollout_ref.rollout.plugin.graph_rpo_confidence_bound=$GRAPH_RPO_CONFIDENCE_BOUND"
+        "+actor_rollout_ref.rollout.plugin.graph_rpo_serialization_penalty=$GRAPH_RPO_SERIALIZATION_PENALTY"
+      )
+      ;;
+    *)
+      echo "ERROR: GRAPH_RPO_CREDIT_BACKEND must be reference_answer_likelihood or external_evaluator"
+      exit 1
+      ;;
+  esac
 fi
 
 # Qwen3-8B advertises 40,960 positions. Longer runs must override both the
@@ -550,6 +576,9 @@ echo "  Launching ContextGraph ${ADV_ESTIMATOR} + v5 (Qwen3-8B dense, $NUM_NODES
 echo "  Optimization: lr=$TRAIN_LR use_kl_loss=$USE_KL_LOSS clip=[$CLIP_RATIO_LOW,$CLIP_RATIO_HIGH]"
 echo "  CG-specific: workflow=search_graph, process_reward=$PROCESS_REWARD_SPEC, lambda_compact=0.2, lambda_cost=0.02, consolidation K=5"
 echo "  Graph protocol: $BC_CTXGRAPH_PROTOCOL structured_controller=$BC_STRUCTURED_GRAPH_CONTROLLER controller_formatting=$BC_CONTROLLER_OWNED_TOOL_FORMATTING action_policy=$BC_CONTROLLER_ACTION_POLICY"
+if [ "$ADV_ESTIMATOR" = "graphrpo" ]; then
+  echo "  GraphRPO credit: $GRAPH_RPO_CREDIT_BACKEND"
+fi
 echo "  v5 add-ons: uniqueness_weight=0.10 (Improvement #1), auto_bind_branch_edges=True with min_overlap=0.05 (Improvement #3)"
 echo "  vLLM gpu_memory_utilization=0.6 + FSDP CPU offload"
 echo "  val_before_train=$VAL_BEFORE_TRAIN, save_freq=$SAVE_FREQ, val every $TEST_FREQ steps"

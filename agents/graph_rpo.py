@@ -5,6 +5,11 @@ record the policy-facing graph view immediately before and after every graph
 decision.  Once the verified terminal outcome is known, this module batches
 those frozen views to an external, frozen evaluator and broadcasts each valid
 edit's bounded utility increment over the tokens of its structured decision.
+
+The production alternative records the same edit-local spans and lets the PPO
+driver score the known correct answer under the already-loaded frozen
+reference policy.  Keeping that scoring on the trainer side avoids loading a
+second learned evaluator in the rollout workers.
 """
 
 from __future__ import annotations
@@ -18,6 +23,11 @@ import aiohttp
 
 GRAPH_EVALUATOR_SCHEMA_VERSION = "contextgraph.graph_evaluator.v1"
 STATE_CHANGING_GRAPH_OPS = frozenset({"merge", "prune", "add_edge", "select"})
+EXTERNAL_EVALUATOR_BACKEND = "external_evaluator"
+REFERENCE_ANSWER_LIKELIHOOD_BACKEND = "reference_answer_likelihood"
+GRAPH_RPO_CREDIT_BACKENDS = frozenset(
+    {EXTERNAL_EVALUATOR_BACKEND, REFERENCE_ANSWER_LIKELIHOOD_BACKEND}
+)
 
 
 class GraphRPOEvaluatorError(RuntimeError):
@@ -42,6 +52,78 @@ def _token_count(tokenizer: Any, text: str) -> int:
         return len(tokenizer.encode(text, add_special_tokens=False))
     except TypeError:
         return len(tokenizer.encode(text))
+
+
+def graph_rpo_credit_backend(plugin_config: Any) -> str:
+    """Return and validate the configured graph-credit backend."""
+    backend = str(
+        _config_get(plugin_config, "graph_rpo_credit_backend", EXTERNAL_EVALUATOR_BACKEND)
+        or EXTERNAL_EVALUATOR_BACKEND
+    ).strip().lower()
+    if backend not in GRAPH_RPO_CREDIT_BACKENDS:
+        choices = ", ".join(sorted(GRAPH_RPO_CREDIT_BACKENDS))
+        raise ValueError(f"graph_rpo_credit_backend must be one of {choices}; got {backend!r}")
+    return backend
+
+
+def valid_graph_edit_events(graph_trace: dict[str, Any]) -> list[dict[str, Any]]:
+    """Select successful model-authored edits that changed graph state."""
+    return [
+        event
+        for event in graph_trace.get("events", [])
+        if event.get("source") == "model"
+        and event.get("success") is True
+        and str(event.get("op", "")).lower() in STATE_CHANGING_GRAPH_OPS
+        and event.get("before_hash") != event.get("after_hash")
+    ]
+
+
+def prepare_reference_graph_edit_requests(
+    *,
+    graph_trace: dict[str, Any],
+    terminal_reward: float,
+) -> tuple[list[dict[str, int]], dict[str, float | int]]:
+    """Record edit identities for frozen-reference scoring in the PPO driver.
+
+    The large before/after views already live in ``graph_trace``.  Requests
+    therefore carry only an event sequence number and assistant-turn index;
+    the agent loop adds exact response-token indices after tokenization.
+    """
+    events = valid_graph_edit_events(graph_trace)
+    metrics: dict[str, float | int] = {
+        "graph_rpo_valid_edits": len(events),
+        "graph_rpo_creditable_edits": 0,
+    }
+    if not events:
+        return [], metrics
+
+    if float(terminal_reward) <= 0.0:
+        for event in events:
+            event["graph_rpo_delta"] = 0.0
+            event["graph_rpo_outcome_gated"] = True
+            event["graph_rpo_credit_backend"] = REFERENCE_ANSWER_LIKELIHOOD_BACKEND
+        return [], metrics
+
+    requests: list[dict[str, int]] = []
+    for event in events:
+        for key in ("rendered_before", "rendered_after"):
+            view = event.get(key)
+            if not isinstance(view, str) or not view:
+                raise GraphRPOEvaluatorError(
+                    f"graph trace event {event.get('seq')} is missing {key}"
+                )
+        turn_index = event.get("assistant_turn_index")
+        if not isinstance(turn_index, int):
+            raise GraphRPOEvaluatorError(
+                f"graph trace event {event.get('seq')} lacks an assistant turn index"
+            )
+        seq = event.get("seq")
+        if not isinstance(seq, int):
+            raise GraphRPOEvaluatorError("graph trace edit lacks an integer sequence number")
+        event["graph_rpo_credit_backend"] = REFERENCE_ANSWER_LIKELIHOOD_BACKEND
+        event["graph_rpo_outcome_gated"] = False
+        requests.append({"seq": seq, "assistant_turn_index": turn_index})
+    return requests, metrics
 
 
 def _parse_probabilities(payload: Any, expected: int) -> list[float]:
@@ -158,14 +240,7 @@ async def assign_graph_edit_credits(
     plugin_config: Any,
 ) -> dict[str, float | int]:
     """Evaluate valid model edits and attach their deltas to assistant turns."""
-    events = [
-        event
-        for event in graph_trace.get("events", [])
-        if event.get("source") == "model"
-        and event.get("success") is True
-        and str(event.get("op", "")).lower() in STATE_CHANGING_GRAPH_OPS
-        and event.get("before_hash") != event.get("after_hash")
-    ]
+    events = valid_graph_edit_events(graph_trace)
     metrics: dict[str, float | int] = {
         "graph_rpo_valid_edits": len(events),
         "graph_rpo_scored_states": 0,
@@ -247,6 +322,7 @@ async def assign_graph_edit_credits(
         agent.add_graph_edit_credit(turn_index, delta)
         event.update(
             {
+                "graph_rpo_credit_backend": EXTERNAL_EVALUATOR_BACKEND,
                 "graph_rpo_probability_before": probabilities[before_index],
                 "graph_rpo_probability_after": probabilities[after_index],
                 "graph_rpo_utility_before": utilities[before_index],

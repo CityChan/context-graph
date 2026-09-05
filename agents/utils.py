@@ -577,6 +577,22 @@ class AgentContext:
             credit * mask
             for credit, mask in zip(graph_edit_credit_mask, response_mask)
         ][:response_length]
+        response_turn_token_indices = {}
+        response_offset = 0
+        for turn_index in range(prompt_turn, len(self.chat_ids)):
+            if response_offset >= response_length:
+                break
+            turn_ids = self.chat_ids[turn_index]
+            turn_mask = self.token_mask[turn_index]
+            kept_length = min(len(turn_ids), response_length - response_offset)
+            token_indices = [
+                response_offset + local_index
+                for local_index, is_policy_token in enumerate(turn_mask[:kept_length])
+                if is_policy_token
+            ]
+            if token_indices:
+                response_turn_token_indices[turn_index] = token_indices
+            response_offset += kept_length
         return {
             'prompt_ids': prompt_ids,
             'response_ids': response_ids,
@@ -584,6 +600,7 @@ class AgentContext:
             'response_mask': response_mask,
             'process_reward_mask': process_reward_mask,
             'graph_edit_credit_mask': graph_edit_credit_mask,
+            'response_turn_token_indices': response_turn_token_indices,
             'num_turns': len(self.chat_ids),
             'messages': self.chat,
         }

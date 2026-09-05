@@ -657,6 +657,9 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
     @DistProfiler.annotate(color="olive", role="ref_compute_log_prob")
     def compute_ref_log_prob(self, data: DataProto):
         data.meta_info["calculate_entropy"] = False
+        data.meta_info["temperature"] = data.meta_info.get(
+            "ref_log_prob_temperature", self.config.rollout.temperature
+        )
         output = self.ref.compute_log_prob(data)
         if output is not None:
             output.batch["ref_log_prob"] = output.batch.pop("old_log_probs")

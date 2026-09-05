@@ -50,6 +50,12 @@ from verl.trainer.ppo.metric_utils import (
     process_validation_metrics,
 )
 from verl.trainer.ppo.reward import compute_reward, compute_reward_async
+from verl.trainer.ppo.reference_graph_credit import (
+    apply_reference_edit_credits,
+    build_reference_scoring_batch,
+    collect_reference_edit_plans,
+    mean_answer_log_likelihood,
+)
 from verl.trainer.ppo.utils import Role, WorkerType, need_critic, need_reference_policy, need_reward_model
 from verl.utils.checkpoint.checkpoint_manager import find_latest_ckpt_path, should_save_ckpt_esi
 from verl.utils.config import omega_conf_to_dataclass
@@ -1166,6 +1172,70 @@ class RayPPOTrainer:
         batch.meta_info["gen_uid_dummy"] = gen_uid_dummy
         return batch, gen_uid_dummy
 
+    def _uses_reference_answer_likelihood_graph_credit(self) -> bool:
+        if str(self.config.algorithm.adv_estimator).lower() != "graphrpo":
+            return False
+        plugin = self.config.actor_rollout_ref.rollout.plugin
+        return str(plugin.get("graph_rpo_credit_backend", "external_evaluator")).lower() == (
+            "reference_answer_likelihood"
+        )
+
+    def _compute_reference_answer_likelihood_graph_credit(
+        self,
+        batch: DataProto,
+    ) -> dict[str, float | int]:
+        """Score correct answers under the frozen reference and attach edit deltas."""
+        if not self.use_reference_policy:
+            raise RuntimeError(
+                "reference-answer GraphRPO requires an initialized frozen reference policy"
+            )
+        plans, keys = collect_reference_edit_plans(batch)
+        if not keys:
+            batch.batch["graph_edit_credit_mask"] = torch.zeros_like(
+                batch.batch["response_mask"], dtype=torch.float32
+            )
+            return {
+                "graphrpo/reference_creditable_edits": 0,
+                "graphrpo/reference_scored_states": 0,
+                "graphrpo/reference_delta_sum": 0.0,
+                "graphrpo/reference_delta_abs_sum": 0.0,
+                "graphrpo/reference_delta_mean": 0.0,
+            }
+
+        plugin = self.config.actor_rollout_ref.rollout.plugin
+        scoring_batch, answer_mask = build_reference_scoring_batch(
+            self.tokenizer,
+            keys,
+            max_prompt_length=int(
+                plugin.get(
+                    "graph_rpo_reference_max_prompt_length",
+                    self.config.actor_rollout_ref.rollout.prompt_length,
+                )
+            ),
+            max_answer_length=int(plugin.get("graph_rpo_reference_max_answer_length", 128)),
+            enable_thinking=bool(plugin.get("graph_rpo_reference_enable_thinking", False)),
+        )
+        reference_worker = self.actor_rollout_wg if self.ref_in_actor else self.ref_policy_wg
+        scoring_batch_padded, pad_size = pad_dataproto_to_divisor(
+            scoring_batch,
+            reference_worker.world_size,
+        )
+        ref_output = reference_worker.compute_ref_log_prob(scoring_batch_padded)
+        ref_output = unpad_dataproto(ref_output, pad_size)
+        likelihood_values = mean_answer_log_likelihood(
+            ref_output.batch["ref_log_prob"],
+            answer_mask,
+        )
+        likelihoods = dict(zip(keys, likelihood_values, strict=True))
+        raw_costs = plugin.get("graph_rpo_operation_costs", {}) or {}
+        return apply_reference_edit_credits(
+            batch,
+            plans,
+            likelihoods,
+            delta_max=float(plugin.get("graph_rpo_delta_max", 1.0)),
+            operation_costs=dict(raw_costs),
+        )
+
     def fit(self):
         """
         The training loop of PPO.
@@ -1363,6 +1433,12 @@ class RayPPOTrainer:
                             else:
                                 ref_log_prob = self.actor_rollout_wg.compute_ref_log_prob(batch)
                             batch = batch.union(ref_log_prob)
+
+                    if self._uses_reference_answer_likelihood_graph_credit():
+                        with marked_timer("reference_graph_credit", timing_raw, color="olive"):
+                            metrics.update(
+                                self._compute_reference_answer_likelihood_graph_credit(batch)
+                            )
 
                     # compute values
                     if self.use_critic:

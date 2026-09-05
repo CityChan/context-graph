@@ -308,6 +308,145 @@ def test_failed_episode_outcome_gates_graph_credit_without_evaluator(monkeypatch
     assert metrics["graph_rpo_scored_states"] == 0
 
 
+def test_reference_graph_requests_are_success_gated_and_auditable():
+    from agents.graph_rpo import prepare_reference_graph_edit_requests
+
+    event = {
+        "seq": 4,
+        "source": "model",
+        "success": True,
+        "op": "merge",
+        "before_hash": "before-hash",
+        "after_hash": "after-hash",
+        "rendered_before": "before graph",
+        "rendered_after": "after graph",
+        "assistant_turn_index": 7,
+    }
+    requests, metrics = prepare_reference_graph_edit_requests(
+        graph_trace={"events": [event]},
+        terminal_reward=1.0,
+    )
+    assert requests == [{"seq": 4, "assistant_turn_index": 7}]
+    assert metrics["graph_rpo_valid_edits"] == 1
+    assert event["graph_rpo_credit_backend"] == "reference_answer_likelihood"
+    assert event["graph_rpo_outcome_gated"] is False
+
+    failed_event = dict(event)
+    failed_event.pop("graph_rpo_delta", None)
+    requests, _ = prepare_reference_graph_edit_requests(
+        graph_trace={"events": [failed_event]},
+        terminal_reward=0.0,
+    )
+    assert requests == []
+    assert failed_event["graph_rpo_delta"] == 0.0
+    assert failed_event["graph_rpo_outcome_gated"] is True
+
+
+def test_reference_answer_batch_and_mean_likelihood_use_only_answer_tokens():
+    torch = _torch()
+    from verl.trainer.ppo.reference_graph_credit import (
+        ReferenceViewKey,
+        build_reference_scoring_batch,
+        mean_answer_log_likelihood,
+    )
+
+    class FakeTokenizer:
+        pad_token_id = 0
+        eos_token_id = 9
+
+        def apply_chat_template(self, messages, **_):
+            return [11, 12] + [ord(char) % 50 + 1 for char in messages[-1]["content"]]
+
+        def encode(self, text, **_):
+            return [ord(char) % 50 + 1 for char in text]
+
+    keys = [
+        ReferenceViewKey("question", "AB", "before"),
+        ReferenceViewKey("question", "C", "after"),
+    ]
+    scoring_batch, answer_mask = build_reference_scoring_batch(
+        FakeTokenizer(),
+        keys,
+        max_prompt_length=12,
+        max_answer_length=8,
+    )
+    assert scoring_batch.batch["prompts"].shape == (2, 12)
+    assert scoring_batch.batch["responses"].shape == (2, 2)
+    assert answer_mask.tolist() == [[1, 1], [1, 0]]
+    assert scoring_batch.meta_info["ref_log_prob_temperature"] == 1.0
+
+    likelihoods = mean_answer_log_likelihood(
+        torch.tensor([[-2.0, -4.0], [-1.5, -99.0]]),
+        answer_mask,
+    )
+    assert likelihoods == pytest.approx([-3.0, -1.5])
+
+
+def test_reference_answer_likelihood_delta_maps_to_edit_tokens():
+    torch = _torch()
+    from verl import DataProto
+    from verl.trainer.ppo.reference_graph_credit import (
+        apply_reference_edit_credits,
+        collect_reference_edit_plans,
+    )
+
+    event = {
+        "seq": 2,
+        "source": "model",
+        "success": True,
+        "op": "merge",
+        "rendered_before": "before graph",
+        "rendered_after": "after graph",
+    }
+    trace = {"events": [event]}
+    batch = DataProto.from_dict(
+        tensors={
+            "responses": torch.ones((2, 5), dtype=torch.long),
+            "response_mask": torch.tensor(
+                [[1, 1, 1, 1, 0], [1, 1, 0, 0, 0]], dtype=torch.long
+            ),
+        },
+        non_tensors={
+            "agent_name": np.array(["main", "branch-0"], dtype=object),
+            "gen_uid": np.array(["episode", "episode"], dtype=object),
+            "graph_rpo_reference_edits": np.array(
+                [[{"seq": 2, "response_token_indices": [1, 2]}], []], dtype=object
+            ),
+            "graph_rpo_reference_question": np.array(["question", "question"], dtype=object),
+            "graph_rpo_reference_answer": np.array(["answer", "answer"], dtype=object),
+            "graph_trace": np.array([trace, {"events": [dict(event)]}], dtype=object),
+            "env_stats": np.array([{}, {}], dtype=object),
+        },
+    )
+    plans, keys = collect_reference_edit_plans(batch)
+    assert len(plans) == 1
+    assert len(keys) == 2
+    likelihoods = {
+        plans[0].before_key: -2.0,
+        plans[0].after_key: -1.4,
+    }
+    metrics = apply_reference_edit_credits(
+        batch,
+        plans,
+        likelihoods,
+        delta_max=1.0,
+        operation_costs={"merge": 0.1},
+    )
+    assert torch.allclose(
+        batch.batch["graph_edit_credit_mask"],
+        torch.tensor([[0.0, 0.5, 0.5, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0, 0.0]]),
+    )
+    assert event["graph_rpo_answer_log_likelihood_before"] == pytest.approx(-2.0)
+    assert event["graph_rpo_answer_log_likelihood_after"] == pytest.approx(-1.4)
+    assert event["graph_rpo_delta"] == pytest.approx(0.5)
+    assert batch.non_tensor_batch["graph_trace"][1]["events"][0][
+        "graph_rpo_delta"
+    ] == pytest.approx(0.5)
+    assert batch.non_tensor_batch["env_stats"][1]["graph_rpo_scored_states"] == 2
+    assert metrics["graphrpo/reference_creditable_edits"] == 1
+    assert metrics["graphrpo/reference_scored_states"] == 2
+
+
 def test_graph_evaluator_rows_use_trace_root_and_binary_outcome():
     from scripts.prepare_graph_evaluator_data import result_rows
 
@@ -564,10 +703,13 @@ def test_graphrpo_training_wiring_is_explicit():
     assert trainer.count('trajectory_fields["task_reward"]') >= 2
     assert trainer.count('"judge_audit", "uid", "gen_uid"') >= 2
     assert "assign_graph_edit_credits" in agent
+    assert "prepare_reference_graph_edit_requests" in agent
+    assert "_compute_reference_answer_likelihood_graph_credit" in trainer
     assert "process_reward_min_precedence=graph_rpo_enabled" in agent
     assert "self.process_reward_min_precedence" in agent_utils
     assert "not graph_rpo_enabled and process_reward and 'graph' in process_reward" in agent
     assert '"graph_rpo_valid_edits"' in reward_manager
+    assert '"graph_rpo_creditable_edits"' in reward_manager
     assert '"graph_rpo_scored_states"' in reward_manager
     assert '"graph_rpo_delta_abs_sum"' in reward_manager
     for metric in (
@@ -592,7 +734,10 @@ def test_graphrpo_training_wiring_is_explicit():
         assert f'self.stats["{metric}"]' in local_search
     assert "export ADV_ESTIMATOR=graphrpo" in launcher
     assert "export POLICY_LOSS_MODE=graphrpo" in launcher
-    assert "serve_graph_evaluator_smoke.py" in smoke_launcher
+    assert "reference_answer_likelihood" in launcher
+    assert "GRAPH_RPO_EVALUATOR_URL:?" not in launcher
+    assert "reference_answer_likelihood" in smoke_launcher
+    assert "serve_graph_evaluator_smoke.py" not in smoke_launcher
     assert "global_step_174" in smoke_launcher
     assert "python -m verl.model_merger merge --backend fsdp" in smoke_launcher
     assert 'find -L "$MODEL_PATH"' in smoke_launcher
