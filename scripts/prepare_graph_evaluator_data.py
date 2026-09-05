@@ -36,18 +36,32 @@ def _question_from_trace(trace: dict[str, Any]) -> str:
     return ""
 
 
+def _binary_outcome(result: dict[str, Any]) -> float | None:
+    """Return the per-episode binary outcome, ignoring aggregate metrics."""
+    env_stats = result.get("env_stats") or {}
+    candidates = (
+        env_stats.get("task_reward") if isinstance(env_stats, dict) else None,
+        result.get("score"),
+        result.get("task_reward"),
+    )
+    for candidate in candidates:
+        try:
+            label = float(candidate)
+        except (TypeError, ValueError):
+            continue
+        if label in (0.0, 1.0):
+            return label
+    return None
+
+
 def result_rows(result: dict[str, Any]) -> list[dict[str, Any]]:
     if result.get("status") not in (None, "success"):
         return []
     trace = result.get("graph_trace")
     if not isinstance(trace, dict):
         return []
-    label = result.get("task_reward", (result.get("env_stats") or {}).get("task_reward"))
-    try:
-        label = float(label)
-    except (TypeError, ValueError):
-        return []
-    if label not in (0.0, 1.0):
+    label = _binary_outcome(result)
+    if label is None:
         return []
 
     question = str(result.get("question") or _question_from_trace(trace)).strip()

@@ -333,6 +333,47 @@ def test_graph_evaluator_rows_use_trace_root_and_binary_outcome():
     assert {row["label"] for row in rows} == {1}
 
 
+def test_graph_evaluator_ignores_aggregate_task_reward_for_episode_label():
+    from scripts.prepare_graph_evaluator_data import result_rows
+
+    result = {
+        "task_reward": 0.11139705882352942,
+        "score": 1.0,
+        "env_stats": {"task_reward": 1.0},
+        "graph_state": "final graph",
+        "graph_trace": {
+            "initial_graph": {
+                "root_id": "n1",
+                "nodes": [{"id": "n1", "content": "BrowseComp question"}],
+            },
+            "events": [],
+        },
+    }
+    rows = result_rows(result)
+    assert len(rows) == 1
+    assert rows[0]["label"] == 1
+
+
+def test_graph_evaluator_falls_back_to_per_episode_score():
+    from scripts.prepare_graph_evaluator_data import result_rows
+
+    result = {
+        "task_reward": 0.25,
+        "score": 0.0,
+        "graph_state": "final graph",
+        "graph_trace": {
+            "initial_graph": {
+                "root_id": "n1",
+                "nodes": [{"id": "n1", "content": "Question"}],
+            },
+            "events": [],
+        },
+    }
+    rows = result_rows(result)
+    assert len(rows) == 1
+    assert rows[0]["label"] == 0
+
+
 def test_graph_evaluator_loader_accepts_verl_jsonl(tmp_path):
     import json
 
@@ -451,6 +492,23 @@ def test_judge_audit_deduplicates_branch_streams_and_checks_reward(tmp_path):
     assert report["summary"]["task_reward_audit_mismatches"] == 0
 
 
+def test_judge_audit_uses_episode_outcome_before_aggregate_metric(tmp_path):
+    import json
+
+    from scripts.audit_bc_judge_results import audit_results
+
+    record = {
+        "task_reward": 0.11139705882352942,
+        "score": 1.0,
+        "env_stats": {"task_reward": 1.0},
+        "judge_audit": [{"judge_method": "strict_em", "score": 1}],
+    }
+    path = tmp_path / "aggregate-metric.jsonl"
+    path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+    report = audit_results([path])
+    assert report["summary"]["task_reward_audit_mismatches"] == 0
+
+
 def test_env_stats_metrics_are_episode_weighted_not_branch_weighted():
     _torch()
     from verl.workers.reward_manager.agent import AgentLoopRewardManager
@@ -503,6 +561,8 @@ def test_graphrpo_training_wiring_is_explicit():
     assert 'loss_mode == "graphrpo"' in actor
     assert '"graphrpo_loss_weights"' in actor
     assert 'trajectory_fields["task_reward"]' in trainer
+    assert trainer.count('trajectory_fields["task_reward"]') >= 2
+    assert trainer.count('"judge_audit", "uid", "gen_uid"') >= 2
     assert "assign_graph_edit_credits" in agent
     assert "process_reward_min_precedence=graph_rpo_enabled" in agent
     assert "self.process_reward_min_precedence" in agent_utils

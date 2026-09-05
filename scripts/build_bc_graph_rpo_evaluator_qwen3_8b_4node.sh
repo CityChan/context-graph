@@ -59,7 +59,11 @@ if [ -z "${SLURM_JOB_NODELIST:-}" ]; then
   exit 1
 fi
 mapfile -t BUILD_NODELIST < <(scontrol show hostnames "$SLURM_JOB_NODELIST")
-if [ "${#BUILD_NODELIST[@]}" -lt 4 ] || [ "${#BUILD_NODELIST[@]}" -gt 5 ]; then
+if [ "$REUSE_TARGET_ROLLOUTS" = "1" ] && [ "${#BUILD_NODELIST[@]}" -lt 1 ]; then
+  echo "ERROR: resuming evaluator preparation requires at least one allocated node."
+  exit 1
+fi
+if [ "$REUSE_TARGET_ROLLOUTS" != "1" ] && { [ "${#BUILD_NODELIST[@]}" -lt 4 ] || [ "${#BUILD_NODELIST[@]}" -gt 5 ]; }; then
   echo "ERROR: expected four or five allocated nodes; got ${#BUILD_NODELIST[@]}."
   exit 1
 fi

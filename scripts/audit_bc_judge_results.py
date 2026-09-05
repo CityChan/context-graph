@@ -36,6 +36,24 @@ def load_records(path: Path) -> list[dict[str, Any]]:
     return [record for record in payload if isinstance(record, dict)]
 
 
+def binary_outcome(record: dict[str, Any]) -> float | None:
+    """Return the per-episode outcome without mistaking batch metrics for labels."""
+    env_stats = record.get("env_stats") or {}
+    candidates = (
+        env_stats.get("task_reward") if isinstance(env_stats, dict) else None,
+        record.get("score"),
+        record.get("task_reward"),
+    )
+    for candidate in candidates:
+        try:
+            value = float(candidate)
+        except (TypeError, ValueError):
+            continue
+        if value in (0.0, 1.0):
+            return value
+    return None
+
+
 def audit_results(paths: Iterable[Path], max_samples: int = 20) -> dict[str, Any]:
     files = input_files(paths)
     decisions: list[dict[str, Any]] = []
@@ -68,11 +86,7 @@ def audit_results(paths: Iterable[Path], max_samples: int = 20) -> dict[str, Any
                 audit_scores = [float(audit.get("score", 0.0)) for audit in audits if isinstance(audit, dict)]
                 if audit_scores:
                     expected = sum(audit_scores) / len(audit_scores)
-                    observed = record.get("task_reward", (record.get("env_stats") or {}).get("task_reward"))
-                    try:
-                        observed = float(observed)
-                    except (TypeError, ValueError):
-                        observed = None
+                    observed = binary_outcome(record)
                     if observed is None or abs(observed - expected) > 1e-8:
                         reward_mismatches.append({
                             "source": str(path),

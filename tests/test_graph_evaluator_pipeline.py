@@ -100,6 +100,7 @@ def test_browsecomp_target_evaluator_build_is_train_only_and_policy_frozen():
     assert "--require-both-classes" in source
     assert "GRAPH_EVALUATOR_PRETRAINED_MODEL" in source
     assert "graph_rpo_evaluation.json" in source
+    assert 'if [ "$REUSE_TARGET_ROLLOUTS" = "1" ]' in source
     trainer_source = Path("verl/trainer/ppo/ray_trainer.py").read_text(
         encoding="utf-8"
     )

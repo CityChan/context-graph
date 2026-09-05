@@ -753,10 +753,42 @@ class RayPPOTrainer:
             for key in (
                 "messages", "env_stats", "is_finish", "termination_reason",
                 "agent_name", "graph_trace", "graph_state", "graph_rewards",
+                "judge_audit", "uid", "gen_uid",
             ):
                 values = test_batch.non_tensor_batch.get(key)
                 if values is not None and len(values) == len(scores):
                     trajectory_fields[key].extend(values.tolist() if hasattr(values, "tolist") else list(values))
+
+            extra_infos = test_batch.non_tensor_batch.get("extra_info")
+            if extra_infos is not None and len(extra_infos) == len(scores):
+                normalized_extra_infos = (
+                    extra_infos.tolist()
+                    if hasattr(extra_infos, "tolist")
+                    else list(extra_infos)
+                )
+                trajectory_fields["task_id"].extend(
+                    str(info.get("task_id", info.get("instance_id", "unknown")))
+                    if isinstance(info, dict) else "unknown"
+                    for info in normalized_extra_infos
+                )
+                trajectory_fields["question"].extend(
+                    str(info.get("query", info.get("problem_statement", "")))
+                    if isinstance(info, dict) else ""
+                    for info in normalized_extra_infos
+                )
+
+            # Validation reward metrics are episode-deduplicated and therefore
+            # may contain a batch mean repeated for every row. Persist the
+            # concrete terminal outcome from each trajectory instead.
+            env_stats = test_batch.non_tensor_batch.get("env_stats")
+            if env_stats is not None and len(env_stats) == len(scores):
+                normalized_env_stats = (
+                    env_stats.tolist() if hasattr(env_stats, "tolist") else list(env_stats)
+                )
+                trajectory_fields["task_reward"].extend(
+                    stats.get("task_reward") if isinstance(stats, dict) else None
+                    for stats in normalized_env_stats
+                )
 
             data_source_lst.append(test_batch.non_tensor_batch.get("data_source", ["unknown"] * reward_tensor.shape[0]))
 
