@@ -431,6 +431,11 @@ def test_counterfactual_qa_credits_paired_task_outcomes_without_success_gate():
     assert metrics["graph_rpo_delta_abs_sum"] == pytest.approx(0.9)
     assert metrics["graph_rpo_counterfactual_scored_states"] == 2
     assert metrics["graph_rpo_counterfactual_probe_rollouts"] == 4
+    assert metrics["graph_rpo_counterfactual_tagged_responses"] == 4
+    assert metrics["graph_rpo_counterfactual_tag_rate"] == 1.0
+    assert metrics["graph_rpo_counterfactual_positive_rewards"] == 2
+    assert metrics["graph_rpo_counterfactual_positive_rate"] == 0.5
+    assert metrics["graph_rpo_counterfactual_nonzero_edits"] == 1
     assert metrics["graph_rpo_counterfactual_delta_abs_sum"] == pytest.approx(0.9)
 
 
@@ -449,6 +454,54 @@ def test_counterfactual_qa_prompt_and_answer_extraction():
     assert "[n1] evidence" in messages[1]["content"]
     assert extract_counterfactual_answer("x <answer>first</answer> <answer>last</answer>") == "last"
     assert extract_counterfactual_answer("Final answer: fallback.") == "fallback"
+
+
+def test_counterfactual_qa_does_not_judge_malformed_probe_output():
+    from agents.graph_rpo import assign_counterfactual_graph_edit_credits
+
+    score_calls = []
+
+    async def generate_answer(view, sample_index, seed):
+        return "unfinished reasoning without a submitted answer"
+
+    async def score_answer(answer, audit_sink):
+        score_calls.append(answer)
+        return 1.0
+
+    class FakeAgent:
+        def add_graph_edit_credit(self, turn, credit):
+            self.credit = credit
+
+    event = {
+        "seq": 10,
+        "source": "model",
+        "success": True,
+        "op": "merge",
+        "before_hash": "a",
+        "after_hash": "b",
+        "rendered_before": "before graph",
+        "rendered_after": "after graph",
+        "assistant_turn_index": 4,
+    }
+    agent = FakeAgent()
+    metrics = asyncio.run(
+        assign_counterfactual_graph_edit_credits(
+            agent=agent,
+            graph_trace={"events": [event]},
+            question="question",
+            generate_answer=generate_answer,
+            score_answer=score_answer,
+            plugin_config={"graph_rpo_counterfactual_samples": 1},
+        )
+    )
+
+    assert score_calls == []
+    assert agent.credit == 0.0
+    assert metrics["graph_rpo_counterfactual_tag_rate"] == 0.0
+    assert metrics["graph_rpo_counterfactual_positive_rewards"] == 0
+    assert event["graph_rpo_counterfactual_before_judge_audits"][0][0][
+        "judge_method"
+    ] == "counterfactual_format_invalid"
 
 
 def test_local_search_can_score_counterfactual_answer_without_mutating_episode():
@@ -886,6 +939,8 @@ def test_graphrpo_training_wiring_is_explicit():
     assert '"graph_rpo_scored_states"' in reward_manager
     assert '"graph_rpo_delta_abs_sum"' in reward_manager
     assert '"graph_rpo_counterfactual_probe_rollouts"' in reward_manager
+    assert '"graph_rpo_counterfactual_tag_rate"' in reward_manager
+    assert '"graph_rpo_counterfactual_nonzero_edits"' in reward_manager
     assert '"graph_rpo_counterfactual_delta_abs_sum"' in reward_manager
     for metric in (
         "graph_compactness",
@@ -936,6 +991,8 @@ def test_graphrpo_training_wiring_is_explicit():
     assert "BC_REQUIRE_WANDB=1" in old_policy_smoke_launcher
     assert "old_policy_counterfactual_qa" in counterfactual_smoke_launcher
     assert "GRAPH_RPO_COUNTERFACTUAL_SAMPLES" in counterfactual_smoke_launcher
+    assert "GRAPH_RPO_COUNTERFACTUAL_ENABLE_THINKING=False" in counterfactual_smoke_launcher
+    assert "audit_counterfactual_graph_credit.py" in counterfactual_smoke_launcher
     assert "graph_rpo_counterfactual_probe_rollouts" in counterfactual_smoke_launcher
     assert "TOTAL_TRAINING_STEPS=2" in counterfactual_smoke_launcher
 

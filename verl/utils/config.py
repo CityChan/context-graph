@@ -242,6 +242,10 @@ def validate_config(
                 plugin.get("graph_rpo_counterfactual_top_p", 1.0)
             )
             assert 0.0 < counterfactual_top_p <= 1.0
+            counterfactual_enable_thinking = plugin.get(
+                "graph_rpo_counterfactual_enable_thinking", False
+            )
+            assert isinstance(counterfactual_enable_thinking, (bool, str))
         assert float(plugin.get("graph_rpo_delta_max", 1.0)) > 0.0
 
     # critic

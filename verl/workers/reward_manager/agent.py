@@ -271,6 +271,11 @@ class AgentLoopRewardManager(AbstractRewardManager):
                       "graph_rpo_delta_sum", "graph_rpo_delta_abs_sum",
                       "graph_rpo_counterfactual_scored_states",
                       "graph_rpo_counterfactual_probe_rollouts",
+                      "graph_rpo_counterfactual_tagged_responses",
+                      "graph_rpo_counterfactual_tag_rate",
+                      "graph_rpo_counterfactual_positive_rewards",
+                      "graph_rpo_counterfactual_positive_rate",
+                      "graph_rpo_counterfactual_nonzero_edits",
                       "graph_rpo_counterfactual_delta_sum",
                       "graph_rpo_counterfactual_delta_abs_sum"):
                 # One episode can emit main plus several branch streams. The

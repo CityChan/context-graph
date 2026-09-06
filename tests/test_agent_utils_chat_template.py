@@ -46,6 +46,15 @@ class _UserRequiredTokenizer:
         return "x " * len(tokens)
 
 
+class _ThinkingTokenizer(_UserRequiredTokenizer):
+    def __init__(self):
+        self.enable_thinking_values = []
+
+    def apply_chat_template(self, chat, **kwargs):
+        self.enable_thinking_values.append(kwargs.get("enable_thinking"))
+        return super().apply_chat_template(chat, **kwargs)
+
+
 def test_agent_context_defers_unrenderable_system_only_prefix():
     config = SimpleNamespace(
         prompt_length=128,
@@ -62,3 +71,29 @@ def test_agent_context_defers_unrenderable_system_only_prefix():
     assert context.chat_ids == [[], [10, 11, 20, 21]]
     assert context.prompt_ids_len == 4
     assert context.context() == [10, 11, 20, 21, 99]
+
+
+def test_agent_context_chat_template_override_applies_to_every_render(monkeypatch):
+    monkeypatch.setenv("QWEN_ENABLE_THINKING", "True")
+    config = SimpleNamespace(
+        prompt_length=128,
+        response_length=128,
+        plugin=SimpleNamespace(),
+    )
+    tokenizer = _ThinkingTokenizer()
+    chat = [
+        {"role": "system", "content": "system instructions"},
+        {"role": "user", "content": "task"},
+    ]
+
+    context = AgentContext(
+        chat,
+        tokenizer,
+        config,
+        prompt_turn=2,
+        chat_template_kwargs={"enable_thinking": False},
+    )
+    context.context()
+
+    assert tokenizer.enable_thinking_values
+    assert set(tokenizer.enable_thinking_values) == {False}

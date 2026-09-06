@@ -145,6 +145,16 @@ def extract_counterfactual_answer(response: str) -> str:
     return text
 
 
+def counterfactual_answer_format_valid(response: str) -> bool:
+    """Return whether a probe obeyed the single ``<answer>`` tag contract."""
+    matches = re.findall(
+        r"<answer>(.*?)</answer>",
+        str(response or ""),
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    return len(matches) == 1 and bool(matches[0].strip())
+
+
 async def assign_counterfactual_graph_edit_credits(
     *,
     agent: Any,
@@ -169,6 +179,11 @@ async def assign_counterfactual_graph_edit_credits(
         "graph_rpo_delta_abs_sum": 0.0,
         "graph_rpo_counterfactual_scored_states": 0,
         "graph_rpo_counterfactual_probe_rollouts": 0,
+        "graph_rpo_counterfactual_tagged_responses": 0,
+        "graph_rpo_counterfactual_tag_rate": 0.0,
+        "graph_rpo_counterfactual_positive_rewards": 0,
+        "graph_rpo_counterfactual_positive_rate": 0.0,
+        "graph_rpo_counterfactual_nonzero_edits": 0,
         "graph_rpo_counterfactual_delta_sum": 0.0,
         "graph_rpo_counterfactual_delta_abs_sum": 0.0,
     }
@@ -209,6 +224,7 @@ async def assign_counterfactual_graph_edit_credits(
         responses: list[str] = []
         answers: list[str] = []
         rewards: list[float] = []
+        format_valid: list[bool] = []
         audits: list[list[dict[str, Any]]] = []
         for sample_index in range(num_samples):
             # Common random numbers reduce variance: the paired before/after
@@ -216,8 +232,19 @@ async def assign_counterfactual_graph_edit_credits(
             seed = (base_seed + question_seed + sample_index) % (2**31)
             response = await generate_answer(view, sample_index, seed)
             answer = extract_counterfactual_answer(response)
+            response_format_valid = counterfactual_answer_format_valid(response)
             judge_audit: list[dict[str, Any]] = []
-            reward = float(await score_answer(answer, judge_audit))
+            if response_format_valid:
+                reward = float(await score_answer(answer, judge_audit))
+            else:
+                reward = 0.0
+                judge_audit.append(
+                    {
+                        "score": 0.0,
+                        "judge_method": "counterfactual_format_invalid",
+                        "parse_error": True,
+                    }
+                )
             if not math.isfinite(reward):
                 raise GraphRPOEvaluatorError("counterfactual task reward must be finite")
             if not 0.0 <= reward <= 1.0:
@@ -228,12 +255,14 @@ async def assign_counterfactual_graph_edit_credits(
             responses.append(response)
             answers.append(answer)
             rewards.append(reward)
+            format_valid.append(response_format_valid)
             audits.append(judge_audit)
         view_results[view] = {
             "seeds": seeds,
             "responses": responses,
             "answers": answers,
             "rewards": rewards,
+            "format_valid": format_valid,
             "judge_audits": audits,
             "utility": sum(rewards) / len(rewards),
         }
@@ -241,6 +270,21 @@ async def assign_counterfactual_graph_edit_credits(
     metrics["graph_rpo_counterfactual_scored_states"] = len(unique_views)
     metrics["graph_rpo_scored_states"] = len(unique_views)
     metrics["graph_rpo_counterfactual_probe_rollouts"] = len(unique_views) * num_samples
+    all_probe_results = [
+        (format_valid, reward)
+        for result in view_results.values()
+        for format_valid, reward in zip(result["format_valid"], result["rewards"])
+    ]
+    tagged_responses = sum(int(format_valid) for format_valid, _ in all_probe_results)
+    positive_rewards = sum(int(reward > 0.0) for _, reward in all_probe_results)
+    metrics["graph_rpo_counterfactual_tagged_responses"] = tagged_responses
+    metrics["graph_rpo_counterfactual_positive_rewards"] = positive_rewards
+    metrics["graph_rpo_counterfactual_tag_rate"] = (
+        tagged_responses / len(all_probe_results) if all_probe_results else 0.0
+    )
+    metrics["graph_rpo_counterfactual_positive_rate"] = (
+        positive_rewards / len(all_probe_results) if all_probe_results else 0.0
+    )
     for event in events:
         before = view_results[event["rendered_before"]]
         after = view_results[event["rendered_after"]]
@@ -266,6 +310,8 @@ async def assign_counterfactual_graph_edit_credits(
                 "graph_rpo_counterfactual_after_answers": after["answers"],
                 "graph_rpo_counterfactual_before_rewards": before["rewards"],
                 "graph_rpo_counterfactual_after_rewards": after["rewards"],
+                "graph_rpo_counterfactual_before_format_valid": before["format_valid"],
+                "graph_rpo_counterfactual_after_format_valid": after["format_valid"],
                 "graph_rpo_counterfactual_before_judge_audits": before["judge_audits"],
                 "graph_rpo_counterfactual_after_judge_audits": after["judge_audits"],
                 "graph_rpo_utility_before": before["utility"],
@@ -283,6 +329,10 @@ async def assign_counterfactual_graph_edit_credits(
         metrics["graph_rpo_counterfactual_delta_abs_sum"] = (
             float(metrics["graph_rpo_counterfactual_delta_abs_sum"]) + abs(delta)
         )
+        if abs(delta) > 1e-12:
+            metrics["graph_rpo_counterfactual_nonzero_edits"] = (
+                int(metrics["graph_rpo_counterfactual_nonzero_edits"]) + 1
+            )
         metrics["graph_rpo_delta_sum"] = float(metrics["graph_rpo_delta_sum"]) + delta
         metrics["graph_rpo_delta_abs_sum"] = (
             float(metrics["graph_rpo_delta_abs_sum"]) + abs(delta)

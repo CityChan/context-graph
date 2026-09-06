@@ -1640,6 +1640,16 @@ async def process_item(
             counterfactual_top_p = float(
                 getattr(config.plugin, 'graph_rpo_counterfactual_top_p', 1.0)
             )
+            raw_counterfactual_thinking = getattr(
+                config.plugin, 'graph_rpo_counterfactual_enable_thinking', False
+            )
+            if isinstance(raw_counterfactual_thinking, str):
+                counterfactual_enable_thinking = (
+                    raw_counterfactual_thinking.strip().lower()
+                    in ('1', 'true', 'yes', 'on')
+                )
+            else:
+                counterfactual_enable_thinking = bool(raw_counterfactual_thinking)
 
             async def generate_counterfactual_answer(graph_view, sample_index, seed):
                 probe_messages = format_counterfactual_qa_messages(
@@ -1652,6 +1662,9 @@ async def process_item(
                     config,
                     prompt_turn=len(probe_messages),
                     process_reward_min_precedence=True,
+                    chat_template_kwargs={
+                        'enable_thinking': counterfactual_enable_thinking,
+                    },
                 )
                 return await probe_agent.step(
                     max_new_tokens=counterfactual_max_tokens,

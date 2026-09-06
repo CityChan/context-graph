@@ -1,0 +1,55 @@
+import json
+
+from scripts.audit_counterfactual_graph_credit import audit_results
+
+
+def test_audit_counterfactual_graph_credit_deduplicates_episode_streams(tmp_path):
+    event = {
+        "seq": 4,
+        "graph_rpo_credit_backend": "old_policy_counterfactual_qa",
+        "graph_rpo_counterfactual_before_responses": ["<answer>wrong</answer>"],
+        "graph_rpo_counterfactual_after_responses": ["<answer>right</answer>"],
+        "graph_rpo_counterfactual_before_rewards": [0.0],
+        "graph_rpo_counterfactual_after_rewards": [1.0],
+        "graph_rpo_delta": 0.25,
+    }
+    record = {"gen_uid": "same-episode", "graph_trace": {"events": [event]}}
+    path = tmp_path / "rollouts.jsonl"
+    path.write_text(
+        json.dumps(record) + "\n" + json.dumps(record) + "\n",
+        encoding="utf-8",
+    )
+
+    report = audit_results([path])
+
+    assert report["summary"]["unique_episodes"] == 1
+    assert report["summary"]["counterfactual_edits"] == 1
+    assert report["summary"]["probe_responses"] == 2
+    assert report["summary"]["answer_tag_rate"] == 1.0
+    assert report["summary"]["positive_probe_rewards"] == 1
+    assert report["summary"]["paired_sample_reward_differences"] == 1
+    assert report["summary"]["nonzero_edit_deltas"] == 1
+    assert report["summary"]["delta_abs_sum"] == 0.25
+
+
+def test_audit_counterfactual_graph_credit_reports_truncated_probe(tmp_path):
+    event = {
+        "seq": 5,
+        "graph_rpo_credit_backend": "old_policy_counterfactual_qa",
+        "graph_rpo_counterfactual_before_responses": ["Wait, maybe"],
+        "graph_rpo_counterfactual_after_responses": ["<answer>still wrong</answer>"],
+        "graph_rpo_counterfactual_before_rewards": [0.0],
+        "graph_rpo_counterfactual_after_rewards": [0.0],
+        "graph_rpo_delta": 0.0,
+    }
+    path = tmp_path / "rollouts.jsonl"
+    path.write_text(
+        json.dumps({"gen_uid": "episode", "graph_trace": {"events": [event]}}),
+        encoding="utf-8",
+    )
+
+    report = audit_results([path])
+
+    assert report["summary"]["answer_tag_rate"] == 0.5
+    assert report["summary"]["nonzero_edit_deltas"] == 0
+    assert report["malformed_response_samples"][0]["response_tail"] == "Wait, maybe"

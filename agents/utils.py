@@ -390,15 +390,31 @@ def _apply_chat_template(tokenizer, chat, config, **kwargs):
     return tokenizer.apply_chat_template(chat, **template_kwargs)
 
 
-def truncate_prompt(chat, prompt_length, tokenizer, prompt_turn, config=None):
-    exceed_len = len(_apply_chat_template(tokenizer, chat[:prompt_turn], config)) + 8 - prompt_length
+def truncate_prompt(
+    chat,
+    prompt_length,
+    tokenizer,
+    prompt_turn,
+    config=None,
+    chat_template_kwargs=None,
+):
+    template_kwargs = dict(chat_template_kwargs or {})
+    exceed_len = len(
+        _apply_chat_template(
+            tokenizer, chat[:prompt_turn], config, **template_kwargs
+        )
+    ) + 8 - prompt_length
     _cut_idx = 0
     while exceed_len > 0:  # truncate long user prompt
         print('[PROMPT] now exceed', exceed_len, 'work on cut turn', _cut_idx)
         chat[_cut_idx]['content'] = tokenizer.decode(
             tokenizer.encode(chat[_cut_idx]['content'], add_special_tokens=False)[
                 exceed_len + 4:], add_special_tokens=False)
-        exceed_len = len(_apply_chat_template(tokenizer, chat[:prompt_turn], config)) + 8 - prompt_length
+        exceed_len = len(
+            _apply_chat_template(
+                tokenizer, chat[:prompt_turn], config, **template_kwargs
+            )
+        ) + 8 - prompt_length
         _cut_idx = _cut_idx + 1
         if _cut_idx >= prompt_turn:
             break
@@ -407,9 +423,17 @@ def truncate_prompt(chat, prompt_length, tokenizer, prompt_turn, config=None):
 
 class AgentContext:
     # Manage context of an agent
-    def __init__(self, chat, tokenizer, config, prompt_turn=2):
+    def __init__(
+        self,
+        chat,
+        tokenizer,
+        config,
+        prompt_turn=2,
+        chat_template_kwargs=None,
+    ):
         self.tokenizer = tokenizer
         self.config = config
+        self.chat_template_kwargs = dict(chat_template_kwargs or {})
         self.init_len = len(chat)
         self.prompt_turn = prompt_turn
 
@@ -426,7 +450,14 @@ class AgentContext:
         self.context_uid = str(uuid.uuid4())
 
         self.chat = copy.deepcopy([turn for turn in chat])
-        self.chat = truncate_prompt(self.chat, config.prompt_length, tokenizer, prompt_turn, config)
+        self.chat = truncate_prompt(
+            self.chat,
+            config.prompt_length,
+            tokenizer,
+            prompt_turn,
+            config,
+            chat_template_kwargs=self.chat_template_kwargs,
+        )
         self.chat_completions = [None for _ in range(len(self.chat))]
         self.chat_ids = [self.get_turn_context(i) for i in range(len(self.chat))]
         self.log_probs = [[0.0] * len(turn) for turn in self.chat_ids]
@@ -450,7 +481,9 @@ class AgentContext:
         try:
             return _apply_chat_template(
                 self.tokenizer, chat, self.config,
-                add_generation_prompt=False, tokenize=True
+                add_generation_prompt=False,
+                tokenize=True,
+                **self.chat_template_kwargs,
             )
         except Exception:
             if not any(turn.get('role') == 'user' for turn in chat):
@@ -467,11 +500,15 @@ class AgentContext:
         if self.generation_prompt is None:
             tokens = _apply_chat_template(
                 self.tokenizer, self.chat, self.config,
-                add_generation_prompt=False, tokenize=True
+                add_generation_prompt=False,
+                tokenize=True,
+                **self.chat_template_kwargs,
             )
             add_tokens = _apply_chat_template(
                 self.tokenizer, self.chat, self.config,
-                add_generation_prompt=True, tokenize=True
+                add_generation_prompt=True,
+                tokenize=True,
+                **self.chat_template_kwargs,
             )
             self.generation_prompt = add_tokens[len(tokens):]
         return self.generation_prompt
@@ -616,8 +653,15 @@ class Agent(AgentContext):
         config,
         prompt_turn=2,
         process_reward_min_precedence=False,
+        chat_template_kwargs=None,
     ):
-        super().__init__(conversations, tokenizer, config, prompt_turn=prompt_turn)
+        super().__init__(
+            conversations,
+            tokenizer,
+            config,
+            prompt_turn=prompt_turn,
+            chat_template_kwargs=chat_template_kwargs,
+        )
         self.llm_client = llm_client
         self.retry_cjk = getattr(config.plugin, "retry_cjk", 0)
         self.process_reward_min_precedence = bool(process_reward_min_precedence)

@@ -260,12 +260,14 @@ if [ "$ADV_ESTIMATOR" = "graphrpo" ]; then
       GRAPH_RPO_COUNTERFACTUAL_TEMPERATURE=${GRAPH_RPO_COUNTERFACTUAL_TEMPERATURE:-$ROLLOUT_TEMPERATURE}
       GRAPH_RPO_COUNTERFACTUAL_TOP_P=${GRAPH_RPO_COUNTERFACTUAL_TOP_P:-1.0}
       GRAPH_RPO_COUNTERFACTUAL_SEED=${GRAPH_RPO_COUNTERFACTUAL_SEED:-42}
+      GRAPH_RPO_COUNTERFACTUAL_ENABLE_THINKING=${GRAPH_RPO_COUNTERFACTUAL_ENABLE_THINKING:-False}
       GRAPH_RPO_ARGS+=(
         "+actor_rollout_ref.rollout.plugin.graph_rpo_counterfactual_samples=$GRAPH_RPO_COUNTERFACTUAL_SAMPLES"
         "+actor_rollout_ref.rollout.plugin.graph_rpo_counterfactual_max_new_tokens=$GRAPH_RPO_COUNTERFACTUAL_MAX_NEW_TOKENS"
         "+actor_rollout_ref.rollout.plugin.graph_rpo_counterfactual_temperature=$GRAPH_RPO_COUNTERFACTUAL_TEMPERATURE"
         "+actor_rollout_ref.rollout.plugin.graph_rpo_counterfactual_top_p=$GRAPH_RPO_COUNTERFACTUAL_TOP_P"
         "+actor_rollout_ref.rollout.plugin.graph_rpo_counterfactual_seed=$GRAPH_RPO_COUNTERFACTUAL_SEED"
+        "+actor_rollout_ref.rollout.plugin.graph_rpo_counterfactual_enable_thinking=$GRAPH_RPO_COUNTERFACTUAL_ENABLE_THINKING"
       )
       ;;
     reference_answer_likelihood|old_policy_answer_likelihood)
@@ -612,7 +614,7 @@ echo "  Graph protocol: $BC_CTXGRAPH_PROTOCOL structured_controller=$BC_STRUCTUR
 if [ "$ADV_ESTIMATOR" = "graphrpo" ]; then
   echo "  GraphRPO credit: $GRAPH_RPO_CREDIT_BACKEND"
   if [ "$GRAPH_RPO_CREDIT_BACKEND" = "old_policy_counterfactual_qa" ]; then
-    echo "  Counterfactual QA: samples/state=$GRAPH_RPO_COUNTERFACTUAL_SAMPLES max_tokens=$GRAPH_RPO_COUNTERFACTUAL_MAX_NEW_TOKENS temperature=$GRAPH_RPO_COUNTERFACTUAL_TEMPERATURE top_p=$GRAPH_RPO_COUNTERFACTUAL_TOP_P"
+    echo "  Counterfactual QA: samples/state=$GRAPH_RPO_COUNTERFACTUAL_SAMPLES max_tokens=$GRAPH_RPO_COUNTERFACTUAL_MAX_NEW_TOKENS temperature=$GRAPH_RPO_COUNTERFACTUAL_TEMPERATURE top_p=$GRAPH_RPO_COUNTERFACTUAL_TOP_P thinking=$GRAPH_RPO_COUNTERFACTUAL_ENABLE_THINKING"
   fi
 fi
 echo "  v5 add-ons: uniqueness_weight=0.10 (Improvement #1), auto_bind_branch_edges=True with min_overlap=0.05 (Improvement #3)"

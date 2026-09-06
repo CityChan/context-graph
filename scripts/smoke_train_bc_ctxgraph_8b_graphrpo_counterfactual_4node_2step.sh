@@ -6,7 +6,7 @@ set -euo pipefail
 
 PROJECT_ROOT=${PROJECT_ROOT:-/work/09281/chc_1996/vista/context-graph}
 SCRATCH_ROOT=${SCRATCH:-/scratch/09281/chc_1996}
-MODEL_SNAPSHOT=/work/09281/chc_1996/vista/cache/hub/models--Qwen--Qwen3-8B/snapshots/b968826d9c46dd6066d109eabc6255188de91218
+MODEL_SNAPSHOT=${MODEL_PATH:-/work/09281/chc_1996/vista/cache/hub/models--Qwen--Qwen3-8B/snapshots/b968826d9c46dd6066d109eabc6255188de91218}
 RUN_TS=$(date +%Y%m%d_%H%M%S)
 
 cd "$PROJECT_ROOT"
@@ -29,8 +29,9 @@ export SAVE_FREQ=2
 export SAVE_ROLLOUT_DATA=1
 export JUDGE_MODEL=gpt-5-nano
 export GRAPH_RPO_CREDIT_BACKEND=old_policy_counterfactual_qa
-export GRAPH_RPO_COUNTERFACTUAL_SAMPLES=${GRAPH_RPO_COUNTERFACTUAL_SAMPLES:-1}
+export GRAPH_RPO_COUNTERFACTUAL_SAMPLES=${GRAPH_RPO_COUNTERFACTUAL_SAMPLES:-2}
 export GRAPH_RPO_COUNTERFACTUAL_MAX_NEW_TOKENS=${GRAPH_RPO_COUNTERFACTUAL_MAX_NEW_TOKENS:-512}
+export GRAPH_RPO_COUNTERFACTUAL_ENABLE_THINKING=False
 export GRAPH_RPO_ALPHA=0.1
 export GRAPH_RPO_DELTA_MAX=0.25
 export BC_DISABLE_WANDB=0
@@ -74,6 +75,7 @@ if [ ! -d "$CHECKPOINT_ROOT/global_step_2/actor" ]; then
 fi
 
 python scripts/audit_bc_judge_results.py "${ROLLOUT_FILES[@]}" --fail-on-integrity-error
+python scripts/audit_counterfactual_graph_credit.py "${ROLLOUT_FILES[@]}" --fail-on-integrity-error --min-tag-rate 0.9 --require-nonzero-delta
 
 grep -Eq 'reward/graph_rpo_creditable_edits:[1-9]' "$SMOKE_LOG" || { echo "ERROR: no counterfactual graph edits received credit"; exit 1; }
 grep -Eq 'reward/graph_rpo_counterfactual_scored_states:[1-9]' "$SMOKE_LOG" || { echo "ERROR: counterfactual graph states were not scored"; exit 1; }
@@ -82,7 +84,7 @@ grep -q 'actor/pg_loss:' "$SMOKE_LOG" || { echo "ERROR: actor policy loss was no
 grep -q 'actor/grad_norm:' "$SMOKE_LOG" || { echo "ERROR: actor optimizer step was not logged"; exit 1; }
 
 echo "Key GraphRPO evidence:"
-grep -E 'training/global_step:|graph_rpo_creditable_edits|graph_rpo_counterfactual_(scored_states|probe_rollouts|delta_abs_sum)|actor/pg_loss|actor/grad_norm|actor/kl_loss' "$SMOKE_LOG" | tail -20
+grep -E 'training/global_step:|graph_rpo_creditable_edits|graph_rpo_counterfactual_(scored_states|probe_rollouts|tag_rate|positive_rate|nonzero_edits|delta_abs_sum)|actor/pg_loss|actor/grad_norm|actor/kl_loss' "$SMOKE_LOG" | tail -20
 
 echo "=============================================================="
 echo "  PAIRED-COUNTERFACTUAL GRAPHRPO TWO-STEP SMOKE COMPLETED"
