@@ -24,7 +24,10 @@ GRAPH_EVALUATOR_LEARNING_RATE=${GRAPH_EVALUATOR_LEARNING_RATE:-2e-5}
 GRAPH_EVALUATOR_BATCH_SIZE=${GRAPH_EVALUATOR_BATCH_SIZE:-1}
 GRAPH_EVALUATOR_GRAD_ACCUM=${GRAPH_EVALUATOR_GRAD_ACCUM:-8}
 GRAPH_EVALUATOR_VALIDATION_FRACTION=${GRAPH_EVALUATOR_VALIDATION_FRACTION:-0.2}
+GRAPH_EVALUATOR_MIN_TRAIN_MIXED_QUESTIONS=${GRAPH_EVALUATOR_MIN_TRAIN_MIXED_QUESTIONS:-10}
+GRAPH_EVALUATOR_MIN_VALIDATION_MIXED_QUESTIONS=${GRAPH_EVALUATOR_MIN_VALIDATION_MIXED_QUESTIONS:-5}
 GRAPH_EVALUATOR_MIN_AUROC=${GRAPH_EVALUATOR_MIN_AUROC:-0.55}
+GRAPH_EVALUATOR_MIN_WITHIN_QUESTION_AUROC=${GRAPH_EVALUATOR_MIN_WITHIN_QUESTION_AUROC:-0.55}
 GRAPH_EVALUATOR_MAX_BRIER_RATIO=${GRAPH_EVALUATOR_MAX_BRIER_RATIO:-1.0}
 GRAPH_EVALUATOR_SEED=${GRAPH_EVALUATOR_SEED:-42}
 GRAPH_EVALUATOR_PROBE_PORT=${GRAPH_EVALUATOR_PROBE_PORT:-19002}
@@ -92,7 +95,7 @@ echo "  W&B run:         $RUN_NAME"
 echo "=============================================================="
 
 python scripts/audit_bc_judge_results.py "$BOOTSTRAP_ROLLOUT_DIR" --fail-on-integrity-error
-python scripts/prepare_graph_evaluator_data.py "${ROLLOUT_FILES[@]}" --output-dir "$DATA_DIR" --validation-fraction "$GRAPH_EVALUATOR_VALIDATION_FRACTION" --seed "$GRAPH_EVALUATOR_SEED" --auto-seed-attempts 10000 --require-both-classes --max-questions "$GRAPH_EVALUATOR_MAX_QUESTIONS"
+python scripts/prepare_graph_evaluator_data.py "${ROLLOUT_FILES[@]}" --output-dir "$DATA_DIR" --validation-fraction "$GRAPH_EVALUATOR_VALIDATION_FRACTION" --seed "$GRAPH_EVALUATOR_SEED" --auto-seed-attempts 10000 --require-both-classes --min-train-mixed-questions "$GRAPH_EVALUATOR_MIN_TRAIN_MIXED_QUESTIONS" --min-validation-mixed-questions "$GRAPH_EVALUATOR_MIN_VALIDATION_MIXED_QUESTIONS" --max-questions "$GRAPH_EVALUATOR_MAX_QUESTIONS"
 
 srun --overlap --nodes=1 --ntasks=1 -w "$EVALUATOR_NODE" --chdir="$PROJECT_ROOT" python scripts/train_graph_evaluator.py --train-file "$DATA_DIR/graph_evaluator_train.parquet" --validation-file "$DATA_DIR/graph_evaluator_validation.parquet" --model "$GRAPH_EVALUATOR_BASE_MODEL" --output-dir "$MODEL_DIR" --max-length "$GRAPH_EVALUATOR_MAX_LENGTH" --epochs "$GRAPH_EVALUATOR_EPOCHS" --learning-rate "$GRAPH_EVALUATOR_LEARNING_RATE" --batch-size "$GRAPH_EVALUATOR_BATCH_SIZE" --gradient-accumulation-steps "$GRAPH_EVALUATOR_GRAD_ACCUM" --seed "$GRAPH_EVALUATOR_SEED" --report-to wandb --wandb-project context-graph-evaluator --run-name "$RUN_NAME" 2>&1 | tee "$TRAIN_LOG"
 
@@ -102,7 +105,7 @@ if [ ! -s "$MODEL_DIR/config.json" ] || [ ! -s "$MODEL_DIR/graph_rpo_calibration
 fi
 
 QUALITY_PASSED=1
-python scripts/check_graph_evaluator_quality.py "$MODEL_DIR/graph_rpo_evaluation.json" --min-auroc "$GRAPH_EVALUATOR_MIN_AUROC" --max-brier-ratio "$GRAPH_EVALUATOR_MAX_BRIER_RATIO" || QUALITY_PASSED=0
+python scripts/check_graph_evaluator_quality.py "$MODEL_DIR/graph_rpo_evaluation.json" --min-auroc "$GRAPH_EVALUATOR_MIN_AUROC" --max-brier-ratio "$GRAPH_EVALUATOR_MAX_BRIER_RATIO" --min-mixed-questions "$GRAPH_EVALUATOR_MIN_VALIDATION_MIXED_QUESTIONS" --min-within-question-auroc "$GRAPH_EVALUATOR_MIN_WITHIN_QUESTION_AUROC" || QUALITY_PASSED=0
 
 srun --overlap --nodes=1 --ntasks=1 -w "$EVALUATOR_NODE" --chdir="$PROJECT_ROOT" python -u scripts/serve_graph_evaluator.py --model "$MODEL_DIR" --host 0.0.0.0 --port "$GRAPH_EVALUATOR_PROBE_PORT" --device cuda --max-length "$GRAPH_EVALUATOR_MAX_LENGTH" --local-files-only >"$SERVER_LOG" 2>&1 &
 SERVER_STEP_PID=$!

@@ -5,11 +5,14 @@ import numpy as np
 from scripts.prepare_graph_evaluator_data import (
     binary_class_counts,
     has_both_classes,
+    mixed_question_count,
     sample_question_groups,
+    split_meets_constraints,
     split_rows,
 )
 from scripts.graph_evaluator_metrics import (
     binary_auroc,
+    grouped_binary_ranking_metrics,
     positive_probabilities,
     probability_metrics,
 )
@@ -50,6 +53,35 @@ def test_question_cap_keeps_complete_groups_deterministically():
     assert sampled == sample_question_groups(rows, max_questions=4, seed=42)
 
 
+def test_split_constraints_require_enough_mixed_questions():
+    train = [
+        {"question_hash": question, "label": label}
+        for question in ("q1", "q2", "q3")
+        for label in (0, 1)
+    ]
+    validation = [
+        {"question_hash": question, "label": label}
+        for question in ("q4", "q5")
+        for label in (0, 1)
+    ]
+    assert mixed_question_count(train) == 3
+    assert mixed_question_count(validation) == 2
+    assert split_meets_constraints(
+        train,
+        validation,
+        require_both_classes=True,
+        min_train_mixed_questions=3,
+        min_validation_mixed_questions=2,
+    )
+    assert not split_meets_constraints(
+        train,
+        validation,
+        require_both_classes=True,
+        min_train_mixed_questions=3,
+        min_validation_mixed_questions=3,
+    )
+
+
 def test_training_uses_class_balanced_loss():
     source = Path("scripts/train_graph_evaluator.py").read_text(encoding="utf-8")
     assert source.index('os.environ.setdefault("USE_TF", "0")') < source.index(
@@ -60,6 +92,7 @@ def test_training_uses_class_balanced_loss():
     assert "cross_entropy" in source
     assert 'choices=("none", "wandb")' in source
     assert 'f"graph_evaluator/{section}_{metric}"' in source
+    assert "within_question_episode_ranking" in source
 
 
 def test_graph_evaluator_quality_gate_requires_discrimination_and_brier_gain():
@@ -68,10 +101,23 @@ def test_graph_evaluator_quality_gate_requires_discrimination_and_brier_gain():
         "validation_questions": 5,
         "calibrated": {"auroc": 0.7, "brier": 0.15},
         "constant_prevalence_baseline": {"brier": 0.2},
+        "within_question_episode_ranking": {
+            "mixed_groups": 5,
+            "macro_auroc": 0.65,
+        },
     }
-    assert quality_result(payload, min_auroc=0.55, max_brier_ratio=1.0)["passed"]
+    kwargs = {
+        "min_auroc": 0.55,
+        "max_brier_ratio": 1.0,
+        "min_mixed_questions": 5,
+        "min_within_question_auroc": 0.55,
+    }
+    assert quality_result(payload, **kwargs)["passed"]
     payload["calibrated"]["auroc"] = 0.5
-    assert not quality_result(payload, min_auroc=0.55, max_brier_ratio=1.0)["passed"]
+    assert not quality_result(payload, **kwargs)["passed"]
+    payload["calibrated"]["auroc"] = 0.7
+    payload["within_question_episode_ranking"]["mixed_groups"] = 4
+    assert not quality_result(payload, **kwargs)["passed"]
 
 
 def test_graph_evaluator_metrics_cover_discrimination_and_calibration():
@@ -83,6 +129,17 @@ def test_graph_evaluator_metrics_cover_discrimination_and_calibration():
     assert metrics["accuracy"] == 1.0
     assert metrics["balanced_accuracy"] == 1.0
     assert 0.0 <= metrics["ece_10_bin"] <= 1.0
+
+
+def test_grouped_ranking_uses_only_within_question_comparisons():
+    labels = np.array([0, 1, 0, 1, 0])
+    scores = np.array([0.1, 0.9, 0.8, 0.2, 0.7])
+    questions = np.array(["q1", "q1", "q2", "q2", "q3"])
+    metrics = grouped_binary_ranking_metrics(labels, scores, questions)
+    assert metrics["mixed_groups"] == 2
+    assert metrics["positive_negative_pairs"] == 2
+    assert metrics["macro_auroc"] == 0.5
+    assert metrics["pair_weighted_auroc"] == 0.5
 
 
 def test_raw_sft_pilot_trains_calibrates_and_probes():
@@ -136,7 +193,9 @@ def test_browsecomp_rollout_evaluator_pilot_is_wandb_audited_and_gated():
     assert "audit_bc_judge_results.py" in source
     assert "prepare_graph_evaluator_data.py" in source
     assert "--require-both-classes" in source
+    assert "--min-validation-mixed-questions" in source
     assert "--report-to wandb" in source
     assert "check_graph_evaluator_quality.py" in source
+    assert "--min-within-question-auroc" in source
     assert "bc_test.parquet" in source
     assert "does not update the actor" in source

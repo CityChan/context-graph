@@ -149,6 +149,35 @@ def has_both_classes(rows: list[dict[str, Any]]) -> bool:
     return {int(row["label"]) for row in rows} == {0, 1}
 
 
+def mixed_question_count(rows: list[dict[str, Any]]) -> int:
+    labels_by_question: dict[str, set[int]] = {}
+    for row in rows:
+        labels_by_question.setdefault(str(row["question_hash"]), set()).add(
+            int(row["label"])
+        )
+    return sum(labels == {0, 1} for labels in labels_by_question.values())
+
+
+def split_meets_constraints(
+    train: list[dict[str, Any]],
+    validation: list[dict[str, Any]],
+    *,
+    require_both_classes: bool,
+    min_train_mixed_questions: int,
+    min_validation_mixed_questions: int,
+) -> bool:
+    if not train or not validation:
+        return False
+    if require_both_classes and not (
+        has_both_classes(train) and has_both_classes(validation)
+    ):
+        return False
+    return (
+        mixed_question_count(train) >= min_train_mixed_questions
+        and mixed_question_count(validation) >= min_validation_mixed_questions
+    )
+
+
 def sample_question_groups(
     rows: list[dict[str, Any]], max_questions: int, seed: int
 ) -> list[dict[str, Any]]:
@@ -181,6 +210,18 @@ def main() -> None:
         help="Require both binary labels in both question-disjoint partitions.",
     )
     parser.add_argument(
+        "--min-train-mixed-questions",
+        type=int,
+        default=0,
+        help="Require this many train questions to contain both outcome labels.",
+    )
+    parser.add_argument(
+        "--min-validation-mixed-questions",
+        type=int,
+        default=0,
+        help="Require this many validation questions to contain both outcome labels.",
+    )
+    parser.add_argument(
         "--max-questions",
         type=int,
         default=0,
@@ -191,6 +232,8 @@ def main() -> None:
         raise ValueError("validation fraction must be in (0, 1)")
     if args.auto_seed_attempts < 1:
         raise ValueError("auto seed attempts must be positive")
+    if args.min_train_mixed_questions < 0 or args.min_validation_mixed_questions < 0:
+        raise ValueError("minimum mixed-question counts must be non-negative")
 
     all_rows = build_rows(args.inputs)
     if not all_rows:
@@ -203,10 +246,12 @@ def main() -> None:
         candidate_train, candidate_validation = split_rows(
             rows, args.validation_fraction, candidate_seed
         )
-        if not candidate_train or not candidate_validation:
-            continue
-        if args.require_both_classes and not (
-            has_both_classes(candidate_train) and has_both_classes(candidate_validation)
+        if not split_meets_constraints(
+            candidate_train,
+            candidate_validation,
+            require_both_classes=args.require_both_classes,
+            min_train_mixed_questions=args.min_train_mixed_questions,
+            min_validation_mixed_questions=args.min_validation_mixed_questions,
         ):
             continue
         train, validation = candidate_train, candidate_validation
@@ -224,7 +269,8 @@ def main() -> None:
             "could not produce a valid question-disjoint split after "
             f"{args.auto_seed_attempts} seed attempts; rows={len(rows)}, "
             f"questions={question_count}, positive_questions={positive_questions}, "
-            f"negative_questions={negative_questions}. Collect more independently "
+            f"negative_questions={negative_questions}, "
+            f"mixed_questions={mixed_question_count(rows)}. Collect more independently "
             "sampled tasks, especially successful tasks."
         )
 
@@ -242,6 +288,8 @@ def main() -> None:
         "validation_rows": len(validation),
         "train_questions": len({row["question_hash"] for row in train}),
         "validation_questions": len({row["question_hash"] for row in validation}),
+        "train_mixed_questions": mixed_question_count(train),
+        "validation_mixed_questions": mixed_question_count(validation),
         "question_overlap": len(
             {row["question_hash"] for row in train}
             & {row["question_hash"] for row in validation}
@@ -251,6 +299,8 @@ def main() -> None:
         "validation_fraction": args.validation_fraction,
         "max_questions": args.max_questions,
         "require_both_classes": args.require_both_classes,
+        "min_train_mixed_questions": args.min_train_mixed_questions,
+        "min_validation_mixed_questions": args.min_validation_mixed_questions,
         "all_class_counts": binary_class_counts(rows),
         "train_class_counts": binary_class_counts(train),
         "validation_class_counts": binary_class_counts(validation),

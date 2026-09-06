@@ -63,10 +63,12 @@ rollout pilot, run
 `scripts/pilot_train_graph_evaluator_from_bc_rollouts_4node_idev.sh` inside a
 four-node allocation. It trains a small independent classifier on one node,
 logs the evaluator run to W&B, calibrates it on a question-disjoint validation
-partition, and requires both AUROC discrimination and a Brier score no worse
-than the constant-prevalence baseline. This is only the evaluator bootstrap
-stage for alternating training; it does not update the actor or use
-`bc_test.parquet`.
+partition, requires at least five validation questions with both successful and
+failed trajectories, and measures episode-balanced ranking within each such
+question. The policy-use gate requires both global AUROC discrimination, a
+Brier score no worse than the constant-prevalence baseline, and non-random
+within-question macro AUROC. This is only the evaluator bootstrap stage for
+alternating training; it does not update the actor or use `bc_test.parquet`.
 
 Build the target-domain evaluator on a four- or five-node Vista allocation with
 `scripts/build_bc_graph_rpo_evaluator_qwen3_8b_4node.sh`. The workflow runs the

@@ -30,6 +30,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from agents.graph_rpo import format_graph_evaluator_input
 from scripts.graph_evaluator_metrics import (
+    grouped_binary_ranking_metrics,
     positive_probabilities,
     probability_metrics,
 )
@@ -104,7 +105,7 @@ def main() -> None:
 
     train_frame = pd.read_parquet(args.train_file)
     validation_frame = pd.read_parquet(args.validation_file)
-    required = {"question", "graph_view", "label", "task_id"}
+    required = {"question", "graph_view", "label", "task_id", "episode_id"}
     for name, frame in (("train", train_frame), ("validation", validation_frame)):
         missing = required - set(frame.columns)
         if missing:
@@ -203,6 +204,24 @@ def main() -> None:
     )
     prevalence = float(validation_labels.mean())
     baseline_probabilities = np.full(len(validation_labels), prevalence)
+    question_ids = validation_frame[split_key].astype(str).to_numpy()
+    view_ranking = grouped_binary_ranking_metrics(
+        validation_labels, calibrated_probabilities, question_ids
+    )
+    episode_frame = validation_frame[[split_key, "episode_id", "label"]].copy()
+    episode_frame["probability"] = calibrated_probabilities
+    episode_frame = (
+        episode_frame.groupby([split_key, "episode_id", "label"], as_index=False)[
+            "probability"
+        ]
+        .mean()
+        .reset_index(drop=True)
+    )
+    episode_ranking = grouped_binary_ranking_metrics(
+        episode_frame.label.to_numpy(dtype=np.int64),
+        episode_frame.probability.to_numpy(dtype=np.float64),
+        episode_frame[split_key].astype(str).to_numpy(),
+    )
     evaluation = {
         "schema_version": "contextgraph.graph_evaluator_evaluation.v1",
         "validation_rows": len(validation_frame),
@@ -219,6 +238,8 @@ def main() -> None:
         "constant_prevalence_baseline": probability_metrics(
             validation_labels, baseline_probabilities
         ),
+        "within_question_view_ranking": view_ranking,
+        "within_question_episode_ranking": episode_ranking,
     }
     (args.output_dir / "graph_rpo_evaluation.json").write_text(
         json.dumps(evaluation, indent=2) + "\n", encoding="utf-8"
@@ -233,6 +254,8 @@ def main() -> None:
                     "uncalibrated",
                     "calibrated",
                     "constant_prevalence_baseline",
+                    "within_question_view_ranking",
+                    "within_question_episode_ranking",
                 )
                 for metric, value in evaluation[section].items()
             },
