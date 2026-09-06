@@ -1,4 +1,14 @@
 #!/bin/bash
+#SBATCH -J graphrpo-cf-smoke
+#SBATCH -o logs/graphrpo-cf-smoke.%j.out
+#SBATCH -e logs/graphrpo-cf-smoke.%j.err
+#SBATCH -p gh
+#SBATCH -N 4
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=72
+#SBATCH -t 02:00:00
+#SBATCH -A AST24021
+
 # Two-step formal evaluator-free GraphRPO smoke. The pre-update Qwen3-8B
 # policy answers paired before/after graph-conditioned QA probes, and the
 # ordinary BrowseComp task judge supplies the utility difference.
