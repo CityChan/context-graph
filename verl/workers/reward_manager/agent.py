@@ -230,6 +230,22 @@ class AgentLoopRewardManager(AbstractRewardManager):
         # shaping with task accuracy.
         env_stats_arr = data.non_tensor_batch.get("env_stats", None)
         if env_stats_arr is not None:
+            def _env_stat_by_episode(key: str) -> dict[Any, float]:
+                gen_uid_to_values: dict[Any, list[float]] = defaultdict(list)
+                for gen_uid, original_index in zip(gen_uid_list, keep_indices):
+                    if original_index >= len(env_stats_arr):
+                        continue
+                    stats = env_stats_arr[original_index]
+                    if isinstance(stats, dict) and key in stats:
+                        try:
+                            gen_uid_to_values[gen_uid].append(float(stats[key]))
+                        except (TypeError, ValueError):
+                            pass
+                return {
+                    gen_uid: _safe_mean(values)
+                    for gen_uid, values in gen_uid_to_values.items()
+                }
+
             for k in ("task_reward", "graph_shaping", "graph_reward",
                       "graph_n_nodes", "graph_n_edges", "graph_n_active",
                       "graph_n_folded", "graph_n_pruned",
@@ -283,19 +299,22 @@ class AgentLoopRewardManager(AbstractRewardManager):
                 # stream, so average within gen_uid first and then across
                 # episodes. Repeating that scalar preserves VeRL's expected
                 # batch-shaped reward_extra_info without branch-count bias.
-                gen_uid_to_values: dict[Any, list[float]] = defaultdict(list)
-                for gen_uid, original_index in zip(gen_uid_list, keep_indices):
-                    if original_index >= len(env_stats_arr):
-                        continue
-                    s = env_stats_arr[original_index]
-                    if isinstance(s, dict) and k in s:
-                        try:
-                            gen_uid_to_values[gen_uid].append(float(s[k]))
-                        except (TypeError, ValueError):
-                            pass
-                if not gen_uid_to_values:
+                per_episode = _env_stat_by_episode(k)
+                if not per_episode:
                     continue
-                per_episode = [_safe_mean(values) for values in gen_uid_to_values.values()]
-                reward_extra_info[k] = repeat(_safe_mean(per_episode))
+                reward_extra_info[k] = repeat(_safe_mean(list(per_episode.values())))
+
+            # These are ratios of event counts, not means of per-episode
+            # ratios. Episodes with no sampled probes report a local rate of
+            # zero; averaging those zeros understates the true batch rate.
+            probes = _env_stat_by_episode("graph_rpo_counterfactual_probe_rollouts")
+            if probes:
+                tagged = _env_stat_by_episode("graph_rpo_counterfactual_tagged_responses")
+                positive = _env_stat_by_episode("graph_rpo_counterfactual_positive_rewards")
+                probe_total = sum(probes.values())
+                tag_rate = sum(tagged.get(uid, 0.0) for uid in probes) / probe_total if probe_total else 0.0
+                positive_rate = sum(positive.get(uid, 0.0) for uid in probes) / probe_total if probe_total else 0.0
+                reward_extra_info["graph_rpo_counterfactual_tag_rate"] = repeat(tag_rate)
+                reward_extra_info["graph_rpo_counterfactual_positive_rate"] = repeat(positive_rate)
 
         return reward_extra_info

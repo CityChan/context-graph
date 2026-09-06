@@ -945,6 +945,8 @@ def test_graphrpo_training_wiring_is_explicit():
     assert '"graph_rpo_counterfactual_tag_rate"' in reward_manager
     assert '"graph_rpo_counterfactual_nonzero_edits"' in reward_manager
     assert '"graph_rpo_counterfactual_delta_abs_sum"' in reward_manager
+    assert 'tag_rate = sum(tagged.get(uid, 0.0) for uid in probes) / probe_total' in reward_manager
+    assert 'positive_rate = sum(positive.get(uid, 0.0) for uid in probes) / probe_total' in reward_manager
     for metric in (
         "graph_compactness",
         "graph_structural",
@@ -995,6 +997,7 @@ def test_graphrpo_training_wiring_is_explicit():
     assert "old_policy_counterfactual_qa" in counterfactual_smoke_launcher
     assert "GRAPH_RPO_COUNTERFACTUAL_SAMPLES" in counterfactual_smoke_launcher
     assert "GRAPH_RPO_COUNTERFACTUAL_ENABLE_THINKING=False" in counterfactual_smoke_launcher
+    assert "RUN_TAG=${RUN_TAG:-graphrpo_counterfactual_4n_bs3_n8_2step}" in counterfactual_smoke_launcher
     assert "audit_counterfactual_graph_credit.py" in counterfactual_smoke_launcher
     assert "graph_rpo_counterfactual_probe_rollouts" in counterfactual_smoke_launcher
     assert "TOTAL_TRAINING_STEPS=2" in counterfactual_smoke_launcher

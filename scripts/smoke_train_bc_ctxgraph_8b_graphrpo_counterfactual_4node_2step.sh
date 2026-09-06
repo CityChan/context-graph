@@ -24,7 +24,7 @@ cd "$PROJECT_ROOT"
 
 export MODEL_PATH="$MODEL_SNAPSHOT"
 export EXPECTED_NUM_NODES=4
-export RUN_TAG=graphrpo_counterfactual_zeroshot_4n_bs3_n8_2step
+export RUN_TAG=${RUN_TAG:-graphrpo_counterfactual_4n_bs3_n8_2step}
 export EXPERIMENT_NAME="train_ctxgraph_bc_8b_${RUN_TAG}_${RUN_TS}"
 export CHECKPOINT_ROOT="$SCRATCH_ROOT/context-graph-ckpts/$EXPERIMENT_NAME"
 export ROLLOUT_DATA_DIR="$SCRATCH_ROOT/context-graph-rollouts/$EXPERIMENT_NAME"
