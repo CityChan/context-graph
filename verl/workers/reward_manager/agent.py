@@ -268,7 +268,11 @@ class AgentLoopRewardManager(AbstractRewardManager):
                       # GraphRPO evaluator/edit-credit telemetry
                       "graph_rpo_valid_edits", "graph_rpo_creditable_edits",
                       "graph_rpo_scored_states",
-                      "graph_rpo_delta_sum", "graph_rpo_delta_abs_sum"):
+                      "graph_rpo_delta_sum", "graph_rpo_delta_abs_sum",
+                      "graph_rpo_counterfactual_scored_states",
+                      "graph_rpo_counterfactual_probe_rollouts",
+                      "graph_rpo_counterfactual_delta_sum",
+                      "graph_rpo_counterfactual_delta_abs_sum"):
                 # One episode can emit main plus several branch streams. The
                 # environment stats are episode-level and duplicated on every
                 # stream, so average within gen_uid first and then across

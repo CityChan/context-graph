@@ -12,9 +12,11 @@ enabled only when `algorithm.adv_estimator=graphrpo` and
   group receives zero outcome advantage, and every question must contain at
   least two non-dummy episodes.
 - Valid policy-generated `merge`, `prune`, `add_edge`, and `select` decisions
-  receive the clipped graph-utility increment on successful
-  episodes. `pass`, automatic edits, failed edits, and failed episodes receive
-  no graph increment.
+  receive a clipped graph-utility increment. `pass`, automatic edits, and
+  failed edits receive no graph increment. The formal counterfactual backend
+  evaluates edits from both successful and unsuccessful main episodes; the
+  older evaluator and answer-likelihood backends retain their historical
+  terminal-success gate.
 - Edit increments and non-positive process labels are broadcast across their
   generated assistant-turn spans. Multiple process labels use the most
   negative applicable value.
@@ -26,7 +28,41 @@ GraphRPO deliberately requires the structured graph controller. This makes one
 controller response exactly one edit decision span and prevents legacy XML
 graph calls from being mixed with environment actions.
 
-## Current-policy answer-likelihood utility
+## Formal evaluator-free utility: paired old-policy QA outcomes
+
+`GRAPH_RPO_CREDIT_BACKEND=old_policy_counterfactual_qa` is the default formal
+backend. After an episode has produced its graph-edit trace, but before the
+actor optimizer step, the same fixed pre-update policy receives a tool-free QA
+prompt containing either the graph immediately before an edit or the graph
+immediately after it. Both sides use matched sampling seeds. Their independently
+generated answers are scored by the environment's ordinary task judge, and
+the edit utility is
+
+`mean(R_after) - mean(R_before) - operation_cost`,
+
+clipped by `GRAPH_RPO_DELTA_MAX`. Set
+`GRAPH_RPO_COUNTERFACTUAL_SAMPLES` to the number of downstream answers sampled
+per graph state. Probe generations and their judge audits are stored in the
+graph trace for replay, but probe tokens are not emitted as policy-training
+trajectories.
+
+This estimates how useful the graph state is to the policy that actually
+consumes it. It does not teacher-force the benchmark answer and does not use
+the frozen reference model as a value estimator. The reference model remains
+only in the low-variance KL regularizer. Because failed main trajectories are
+not gated out, an intermediate edit may still receive positive local credit
+when its after-state improves downstream answer success, or negative credit
+when it damages it. If every paired downstream answer receives the same task
+reward, the estimator correctly supplies zero local utility; increasing the
+number or diversity of rollouts is then necessary rather than substituting a
+structural heuristic.
+
+The counterfactual prompt is a graph-conditioned downstream QA probe, not a
+full replay of search/tool continuation from the edit point. That keeps the
+counterfactual tractable and isolates the usefulness of the serialized memory
+available to the answering policy.
+
+## Diagnostic current-policy answer-likelihood utility
 
 Set `GRAPH_RPO_CREDIT_BACKEND=old_policy_answer_likelihood` to compute graph
 utility without a separate learned evaluator. For every successful episode,
@@ -39,9 +75,9 @@ difference, less any configured operation cost, clipped by
 The scoring pass uses the current actor under `no_grad` before `update_actor`
 and caches ordinary scalar values. Thus one rollout batch is scored by a fixed
 old-policy snapshot even though the actor changes between GRPO steps. The
-generated answer is never used as the scoring target. This backend is a
-self-evaluation signal rather than an independent evaluator, so start with a
-small coefficient such as `GRAPH_RPO_ALPHA=0.1` and
+generated answer is never used as the scoring target. This backend is retained
+as a cheaper diagnostic ablation rather than the formal graph-value estimator,
+so start with a small coefficient such as `GRAPH_RPO_ALPHA=0.1` and
 `GRAPH_RPO_DELTA_MAX=0.25`, retain the verified terminal-outcome gate, and
 compare against `GRAPH_RPO_ALPHA=0` in the formal ablation.
 
@@ -123,8 +159,8 @@ judge metrics are also episode-weighted rather than branch-stream-weighted.
 
 For mechanics-only validation on an existing four- or five-node allocation,
 `scripts/smoke_train_bc_ctxgraph_8b_graphrpo_5node_idev.sh` performs one
-optimizer step with the selected credit backend. It defaults to the frozen
-reference answer-likelihood backend.
+optimizer step with the selected credit backend. It defaults to paired
+old-policy counterfactual QA.
 
 On an existing four-node allocation, run the original Qwen3-8B zero-shot
 judge-audit variant, including rollout persistence and post-run audit, with:
@@ -133,9 +169,15 @@ judge-audit variant, including rollout persistence and post-run audit, with:
 bash scripts/smoke_train_bc_ctxgraph_8b_graphrpo_qwen3_8b_4node_judge_audit.sh
 ```
 
-To test the evaluator-free current-policy backend for two optimizer steps from
-the original Qwen3-8B snapshot, with required W&B logging and post-run signal
-checks, use:
+Run the formal paired-counterfactual backend for two optimizer steps with:
+
+```bash
+bash scripts/smoke_train_bc_ctxgraph_8b_graphrpo_counterfactual_4node_2step.sh
+```
+
+To test the older teacher-forced current-policy likelihood ablation for two
+optimizer steps from the original Qwen3-8B snapshot, with required W&B logging
+and post-run signal checks, use:
 
 ```bash
 bash scripts/smoke_train_bc_ctxgraph_8b_graphrpo_old_policy_4node_2step.sh

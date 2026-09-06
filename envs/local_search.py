@@ -577,6 +577,31 @@ Once you’re confident everything is covered and verified, submit the final ans
 
         return {'observation': observation.strip()}
 
+    async def score_answer(self, predicted_answer, audit_sink=None):
+        """Score an arbitrary answer without mutating the episode state."""
+        if '<q1>' in self.label_answer:
+            label_answer_dict = extract_q_dict(self.label_answer)
+            predicted_answer_dict = extract_q_dict(predicted_answer)
+            all_reward = []
+            for key, label in label_answer_dict.items():
+                if key in predicted_answer_dict:
+                    reward = await judge(
+                        self.question,
+                        label,
+                        predicted_answer_dict[key],
+                        audit_sink=audit_sink,
+                    )
+                    all_reward.append(reward)
+                else:
+                    all_reward.append(0)
+            return sum(all_reward) / len(all_reward)
+        return await judge(
+            self.question,
+            self.label_answer,
+            predicted_answer,
+            audit_sink=audit_sink,
+        )
+
     async def get_reward(self, item, messages, context):
         if self.env_fail:  # If env fail, direct return 0 reward
             return "", 0, {}
@@ -613,29 +638,8 @@ Once you’re confident everything is covered and verified, submit the final ans
             self.predicted_answer = (ans, "", 0.0)
         # print(self.label_answer)
         # print(self.predicted_answer[0])
-        if '<q1>' in self.label_answer:
-            label_answer_dict = extract_q_dict(self.label_answer)
-            predicted_answer_dict = extract_q_dict(self.predicted_answer[0])
-            all_reward = []
-            for k in label_answer_dict:
-                if k in predicted_answer_dict:
-                    reward = await judge(
-                        self.question,
-                        label_answer_dict[k],
-                        predicted_answer_dict[k],
-                        audit_sink=self.judge_audit,
-                    )
-                    all_reward.append(reward)
-                else:
-                    all_reward.append(0)
-            reward = sum(all_reward) / len(all_reward)
-            self._record_judge_stats()
-            return "", reward, {}
-        reward = await judge(
-            self.question,
-            self.label_answer,
-            self.predicted_answer[0],
-            audit_sink=self.judge_audit,
+        reward = await self.score_answer(
+            self.predicted_answer[0], audit_sink=self.judge_audit
         )
         self._record_judge_stats()
         return "", reward, {}

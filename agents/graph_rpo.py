@@ -6,6 +6,13 @@ decision.  Once the verified terminal outcome is known, this module batches
 those frozen views to an external, frozen evaluator and broadcasts each valid
 edit's bounded utility increment over the tokens of its structured decision.
 
+The counterfactual QA backend estimates graph utility with paired downstream
+answer rollouts from the pre-update policy.  For each graph edit it samples
+answers from the before/after graph views with matched seeds, scores those
+answers with the task's normal correctness judge, and credits the edit with
+the bounded difference in mean task reward.  Probe tokens are never returned
+as training trajectories.
+
 The answer-likelihood alternatives record the same edit-local spans and let
 the PPO driver score the known correct answer under either the frozen
 reference policy or a no-grad snapshot of the current policy before its
@@ -15,8 +22,10 @@ second learned evaluator in the rollout workers.
 
 from __future__ import annotations
 
+import hashlib
 import math
-from collections.abc import Mapping
+import re
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
 import aiohttp
@@ -27,12 +36,18 @@ STATE_CHANGING_GRAPH_OPS = frozenset({"merge", "prune", "add_edge", "select"})
 EXTERNAL_EVALUATOR_BACKEND = "external_evaluator"
 REFERENCE_ANSWER_LIKELIHOOD_BACKEND = "reference_answer_likelihood"
 OLD_POLICY_ANSWER_LIKELIHOOD_BACKEND = "old_policy_answer_likelihood"
+OLD_POLICY_COUNTERFACTUAL_QA_BACKEND = "old_policy_counterfactual_qa"
 ANSWER_LIKELIHOOD_BACKENDS = frozenset(
     {REFERENCE_ANSWER_LIKELIHOOD_BACKEND, OLD_POLICY_ANSWER_LIKELIHOOD_BACKEND}
 )
 GRAPH_RPO_CREDIT_BACKENDS = frozenset(
-    {EXTERNAL_EVALUATOR_BACKEND, *ANSWER_LIKELIHOOD_BACKENDS}
+    {
+        EXTERNAL_EVALUATOR_BACKEND,
+        OLD_POLICY_COUNTERFACTUAL_QA_BACKEND,
+        *ANSWER_LIKELIHOOD_BACKENDS,
+    }
 )
+COUNTERFACTUAL_QA_PROMPT_VERSION = "contextgraph.counterfactual_qa.v1"
 
 
 class GraphRPOEvaluatorError(RuntimeError):
@@ -62,8 +77,12 @@ def _token_count(tokenizer: Any, text: str) -> int:
 def graph_rpo_credit_backend(plugin_config: Any) -> str:
     """Return and validate the configured graph-credit backend."""
     backend = str(
-        _config_get(plugin_config, "graph_rpo_credit_backend", EXTERNAL_EVALUATOR_BACKEND)
-        or EXTERNAL_EVALUATOR_BACKEND
+        _config_get(
+            plugin_config,
+            "graph_rpo_credit_backend",
+            OLD_POLICY_COUNTERFACTUAL_QA_BACKEND,
+        )
+        or OLD_POLICY_COUNTERFACTUAL_QA_BACKEND
     ).strip().lower()
     if backend not in GRAPH_RPO_CREDIT_BACKENDS:
         choices = ", ".join(sorted(GRAPH_RPO_CREDIT_BACKENDS))
@@ -81,6 +100,194 @@ def valid_graph_edit_events(graph_trace: dict[str, Any]) -> list[dict[str, Any]]
         and str(event.get("op", "")).lower() in STATE_CHANGING_GRAPH_OPS
         and event.get("before_hash") != event.get("after_hash")
     ]
+
+
+def format_counterfactual_qa_messages(
+    question: str, graph_view: str
+) -> list[dict[str, str]]:
+    """Build a tool-free downstream QA probe conditioned on one graph state."""
+    return [
+        {
+            "role": "system",
+            "content": (
+                "Answer the question using the supplied ContextGraph memory. "
+                "Do not search or call tools. Give your final answer inside exactly one "
+                "<answer>...</answer> tag. For multi-part questions, preserve the requested "
+                "<q1>...</q1> answer format inside that tag."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"Question:\n{question.strip()}\n\n"
+                f"ContextGraph memory:\n{graph_view.strip()}"
+            ),
+        },
+    ]
+
+
+def extract_counterfactual_answer(response: str) -> str:
+    """Extract the policy's submitted answer while retaining a robust fallback."""
+    text = str(response or "").strip()
+    matches = re.findall(r"<answer>(.*?)</answer>", text, flags=re.IGNORECASE | re.DOTALL)
+    if matches:
+        return matches[-1].strip()
+    match = re.search(
+        r"(?:^|\n)\s*(?:final\s+answer|answer)\s*[:=]\s*(.+?)(?:\n|$)",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if match:
+        return match.group(1).strip().rstrip(".")
+    for line in reversed(text.splitlines()):
+        if line.strip():
+            return line.strip().rstrip(".")
+    return text
+
+
+async def assign_counterfactual_graph_edit_credits(
+    *,
+    agent: Any,
+    graph_trace: dict[str, Any],
+    question: str,
+    generate_answer: Callable[[str, int, int], Awaitable[str]],
+    score_answer: Callable[[str, list[dict[str, Any]]], Awaitable[float]],
+    plugin_config: Any,
+) -> dict[str, float | int]:
+    """Credit edits by paired pre-update-policy QA outcomes on before/after views.
+
+    This estimator deliberately does not gate on the reward of the original
+    episode: an edit can receive positive or negative local credit even when
+    the main trajectory ultimately answered incorrectly.
+    """
+    events = valid_graph_edit_events(graph_trace)
+    metrics: dict[str, float | int] = {
+        "graph_rpo_valid_edits": len(events),
+        "graph_rpo_creditable_edits": 0,
+        "graph_rpo_scored_states": 0,
+        "graph_rpo_delta_sum": 0.0,
+        "graph_rpo_delta_abs_sum": 0.0,
+        "graph_rpo_counterfactual_scored_states": 0,
+        "graph_rpo_counterfactual_probe_rollouts": 0,
+        "graph_rpo_counterfactual_delta_sum": 0.0,
+        "graph_rpo_counterfactual_delta_abs_sum": 0.0,
+    }
+    if not events:
+        return metrics
+
+    num_samples = int(
+        _config_get(plugin_config, "graph_rpo_counterfactual_samples", 2)
+    )
+    delta_max = float(_config_get(plugin_config, "graph_rpo_delta_max", 1.0))
+    base_seed = int(_config_get(plugin_config, "graph_rpo_counterfactual_seed", 42))
+    raw_costs = _config_get(plugin_config, "graph_rpo_operation_costs", {}) or {}
+    operation_costs = {
+        str(key).lower(): float(value) for key, value in dict(raw_costs).items()
+    }
+    if num_samples <= 0:
+        raise ValueError("graph_rpo_counterfactual_samples must be positive")
+    if delta_max <= 0.0:
+        raise ValueError("graph_rpo_delta_max must be positive")
+    if any(value < 0.0 for value in operation_costs.values()):
+        raise ValueError("GraphRPO operation costs must be non-negative")
+
+    unique_views: list[str] = []
+    for event in events:
+        for key in ("rendered_before", "rendered_after"):
+            view = event.get(key)
+            if not isinstance(view, str) or not view:
+                raise GraphRPOEvaluatorError(
+                    f"graph trace event {event.get('seq')} is missing {key}"
+                )
+            if view not in unique_views:
+                unique_views.append(view)
+
+    question_seed = int(hashlib.sha256(question.encode("utf-8")).hexdigest()[:8], 16)
+    view_results: dict[str, dict[str, Any]] = {}
+    for view in unique_views:
+        seeds: list[int] = []
+        responses: list[str] = []
+        answers: list[str] = []
+        rewards: list[float] = []
+        audits: list[list[dict[str, Any]]] = []
+        for sample_index in range(num_samples):
+            # Common random numbers reduce variance: the paired before/after
+            # probes use the same seed for each sample index.
+            seed = (base_seed + question_seed + sample_index) % (2**31)
+            response = await generate_answer(view, sample_index, seed)
+            answer = extract_counterfactual_answer(response)
+            judge_audit: list[dict[str, Any]] = []
+            reward = float(await score_answer(answer, judge_audit))
+            if not math.isfinite(reward):
+                raise GraphRPOEvaluatorError("counterfactual task reward must be finite")
+            if not 0.0 <= reward <= 1.0:
+                raise GraphRPOEvaluatorError(
+                    "counterfactual task reward must be in [0, 1]"
+                )
+            seeds.append(seed)
+            responses.append(response)
+            answers.append(answer)
+            rewards.append(reward)
+            audits.append(judge_audit)
+        view_results[view] = {
+            "seeds": seeds,
+            "responses": responses,
+            "answers": answers,
+            "rewards": rewards,
+            "judge_audits": audits,
+            "utility": sum(rewards) / len(rewards),
+        }
+
+    metrics["graph_rpo_counterfactual_scored_states"] = len(unique_views)
+    metrics["graph_rpo_scored_states"] = len(unique_views)
+    metrics["graph_rpo_counterfactual_probe_rollouts"] = len(unique_views) * num_samples
+    for event in events:
+        before = view_results[event["rendered_before"]]
+        after = view_results[event["rendered_after"]]
+        op = str(event["op"]).lower()
+        operation_cost = operation_costs.get(op, 0.0)
+        raw_delta = float(after["utility"]) - float(before["utility"]) - operation_cost
+        delta = min(max(raw_delta, -delta_max), delta_max)
+        turn_index = event.get("assistant_turn_index")
+        if not isinstance(turn_index, int):
+            raise GraphRPOEvaluatorError(
+                f"graph trace event {event.get('seq')} lacks an assistant turn index"
+            )
+        agent.add_graph_edit_credit(turn_index, delta)
+        event.update(
+            {
+                "graph_rpo_credit_backend": OLD_POLICY_COUNTERFACTUAL_QA_BACKEND,
+                "graph_rpo_counterfactual_prompt_version": COUNTERFACTUAL_QA_PROMPT_VERSION,
+                "graph_rpo_counterfactual_samples": num_samples,
+                "graph_rpo_counterfactual_seeds": before["seeds"],
+                "graph_rpo_counterfactual_before_responses": before["responses"],
+                "graph_rpo_counterfactual_after_responses": after["responses"],
+                "graph_rpo_counterfactual_before_answers": before["answers"],
+                "graph_rpo_counterfactual_after_answers": after["answers"],
+                "graph_rpo_counterfactual_before_rewards": before["rewards"],
+                "graph_rpo_counterfactual_after_rewards": after["rewards"],
+                "graph_rpo_counterfactual_before_judge_audits": before["judge_audits"],
+                "graph_rpo_counterfactual_after_judge_audits": after["judge_audits"],
+                "graph_rpo_utility_before": before["utility"],
+                "graph_rpo_utility_after": after["utility"],
+                "graph_rpo_operation_cost": operation_cost,
+                "graph_rpo_delta_unclipped": raw_delta,
+                "graph_rpo_delta": delta,
+                "graph_rpo_outcome_gated": False,
+            }
+        )
+        metrics["graph_rpo_creditable_edits"] = int(metrics["graph_rpo_creditable_edits"]) + 1
+        metrics["graph_rpo_counterfactual_delta_sum"] = (
+            float(metrics["graph_rpo_counterfactual_delta_sum"]) + delta
+        )
+        metrics["graph_rpo_counterfactual_delta_abs_sum"] = (
+            float(metrics["graph_rpo_counterfactual_delta_abs_sum"]) + abs(delta)
+        )
+        metrics["graph_rpo_delta_sum"] = float(metrics["graph_rpo_delta_sum"]) + delta
+        metrics["graph_rpo_delta_abs_sum"] = (
+            float(metrics["graph_rpo_delta_abs_sum"]) + abs(delta)
+        )
+    return metrics
 
 
 def prepare_reference_graph_edit_requests(

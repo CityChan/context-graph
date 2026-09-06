@@ -202,15 +202,17 @@ def validate_config(
             "GraphRPO requires structured_graph_controller=True"
         )
         graph_credit_backend = str(
-            plugin.get("graph_rpo_credit_backend", "external_evaluator")
+            plugin.get("graph_rpo_credit_backend", "old_policy_counterfactual_qa")
         ).strip().lower()
         assert graph_credit_backend in {
             "external_evaluator",
+            "old_policy_counterfactual_qa",
             "reference_answer_likelihood",
             "old_policy_answer_likelihood",
         }, (
             "GraphRPO plugin.graph_rpo_credit_backend must be external_evaluator, "
-            "reference_answer_likelihood, or old_policy_answer_likelihood"
+            "old_policy_counterfactual_qa, reference_answer_likelihood, or "
+            "old_policy_answer_likelihood"
         )
         if graph_credit_backend == "external_evaluator":
             assert str(plugin.get("graph_rpo_evaluator_url", "")).strip(), (
@@ -232,6 +234,14 @@ def validate_config(
                 )
             ) > 0
             assert int(plugin.get("graph_rpo_reference_max_answer_length", 128)) > 0
+        if graph_credit_backend == "old_policy_counterfactual_qa":
+            assert int(plugin.get("graph_rpo_counterfactual_samples", 2)) > 0
+            assert int(plugin.get("graph_rpo_counterfactual_max_new_tokens", 512)) >= 10
+            assert float(plugin.get("graph_rpo_counterfactual_temperature", 1.0)) >= 0.0
+            counterfactual_top_p = float(
+                plugin.get("graph_rpo_counterfactual_top_p", 1.0)
+            )
+            assert 0.0 < counterfactual_top_p <= 1.0
         assert float(plugin.get("graph_rpo_delta_max", 1.0)) > 0.0
 
     # critic

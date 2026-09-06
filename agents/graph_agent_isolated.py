@@ -61,8 +61,11 @@ from .graph_trace import GraphTraceRecorder
 from .graph_rpo import (
     ANSWER_LIKELIHOOD_BACKENDS,
     EXTERNAL_EVALUATOR_BACKEND,
+    OLD_POLICY_COUNTERFACTUAL_QA_BACKEND,
     GraphRPOEvaluatorError,
+    assign_counterfactual_graph_edit_credits,
     assign_graph_edit_credits,
+    format_counterfactual_qa_messages,
     graph_rpo_credit_backend,
     prepare_reference_graph_edit_requests,
 )
@@ -1619,6 +1622,58 @@ async def process_item(
                 question=query_text,
                 terminal_reward=score[1],
                 tokenizer=tokenizer,
+                plugin_config=config.plugin,
+            )
+        elif graph_rpo_backend == OLD_POLICY_COUNTERFACTUAL_QA_BACKEND:
+            if not hasattr(env, 'score_answer'):
+                raise GraphRPOEvaluatorError(
+                    "old_policy_counterfactual_qa requires an environment "
+                    "with score_answer(predicted_answer, audit_sink)"
+                )
+
+            counterfactual_max_tokens = int(
+                getattr(config.plugin, 'graph_rpo_counterfactual_max_new_tokens', 512)
+            )
+            counterfactual_temperature = float(
+                getattr(config.plugin, 'graph_rpo_counterfactual_temperature', 1.0)
+            )
+            counterfactual_top_p = float(
+                getattr(config.plugin, 'graph_rpo_counterfactual_top_p', 1.0)
+            )
+
+            async def generate_counterfactual_answer(graph_view, sample_index, seed):
+                probe_messages = format_counterfactual_qa_messages(
+                    query_text, graph_view
+                )
+                probe_agent = Agent(
+                    llm_client,
+                    probe_messages,
+                    tokenizer,
+                    config,
+                    prompt_turn=len(probe_messages),
+                    process_reward_min_precedence=True,
+                )
+                return await probe_agent.step(
+                    max_new_tokens=counterfactual_max_tokens,
+                    completion_kwargs={
+                        'sampling_params': {
+                            'temperature': counterfactual_temperature,
+                            'top_p': counterfactual_top_p,
+                            'max_tokens': counterfactual_max_tokens,
+                            'seed': seed,
+                        }
+                    },
+                ) or ''
+
+            async def score_counterfactual_answer(answer, audit_sink):
+                return await env.score_answer(answer, audit_sink=audit_sink)
+
+            graph_rpo_metrics = await assign_counterfactual_graph_edit_credits(
+                agent=agent['main'],
+                graph_trace=graph_trace_payload,
+                question=query_text,
+                generate_answer=generate_counterfactual_answer,
+                score_answer=score_counterfactual_answer,
                 plugin_config=config.plugin,
             )
         elif graph_rpo_backend in ANSWER_LIKELIHOOD_BACKENDS:

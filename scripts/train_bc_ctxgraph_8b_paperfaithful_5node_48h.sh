@@ -239,7 +239,7 @@ if [ "$ADV_ESTIMATOR" = "graphrpo" ]; then
     echo "ERROR: GraphRPO requires BC_CTXGRAPH_PROTOCOL=controller"
     exit 1
   fi
-  GRAPH_RPO_CREDIT_BACKEND=${GRAPH_RPO_CREDIT_BACKEND:-reference_answer_likelihood}
+  GRAPH_RPO_CREDIT_BACKEND=${GRAPH_RPO_CREDIT_BACKEND:-old_policy_counterfactual_qa}
   GRAPH_RPO_ALPHA=${GRAPH_RPO_ALPHA:-1.0}
   GRAPH_RPO_BETA=${GRAPH_RPO_BETA:-1.0}
   GRAPH_RPO_EPSILON=${GRAPH_RPO_EPSILON:-1e-6}
@@ -254,6 +254,20 @@ if [ "$ADV_ESTIMATOR" = "graphrpo" ]; then
     "+actor_rollout_ref.rollout.plugin.graph_rpo_operation_costs=$GRAPH_RPO_OPERATION_COSTS"
   )
   case "$GRAPH_RPO_CREDIT_BACKEND" in
+    old_policy_counterfactual_qa)
+      GRAPH_RPO_COUNTERFACTUAL_SAMPLES=${GRAPH_RPO_COUNTERFACTUAL_SAMPLES:-2}
+      GRAPH_RPO_COUNTERFACTUAL_MAX_NEW_TOKENS=${GRAPH_RPO_COUNTERFACTUAL_MAX_NEW_TOKENS:-512}
+      GRAPH_RPO_COUNTERFACTUAL_TEMPERATURE=${GRAPH_RPO_COUNTERFACTUAL_TEMPERATURE:-$ROLLOUT_TEMPERATURE}
+      GRAPH_RPO_COUNTERFACTUAL_TOP_P=${GRAPH_RPO_COUNTERFACTUAL_TOP_P:-1.0}
+      GRAPH_RPO_COUNTERFACTUAL_SEED=${GRAPH_RPO_COUNTERFACTUAL_SEED:-42}
+      GRAPH_RPO_ARGS+=(
+        "+actor_rollout_ref.rollout.plugin.graph_rpo_counterfactual_samples=$GRAPH_RPO_COUNTERFACTUAL_SAMPLES"
+        "+actor_rollout_ref.rollout.plugin.graph_rpo_counterfactual_max_new_tokens=$GRAPH_RPO_COUNTERFACTUAL_MAX_NEW_TOKENS"
+        "+actor_rollout_ref.rollout.plugin.graph_rpo_counterfactual_temperature=$GRAPH_RPO_COUNTERFACTUAL_TEMPERATURE"
+        "+actor_rollout_ref.rollout.plugin.graph_rpo_counterfactual_top_p=$GRAPH_RPO_COUNTERFACTUAL_TOP_P"
+        "+actor_rollout_ref.rollout.plugin.graph_rpo_counterfactual_seed=$GRAPH_RPO_COUNTERFACTUAL_SEED"
+      )
+      ;;
     reference_answer_likelihood|old_policy_answer_likelihood)
       if [ "$USE_KL_LOSS" != "True" ] && [ "$USE_KL_LOSS" != "true" ]; then
         if [ "$GRAPH_RPO_CREDIT_BACKEND" = "reference_answer_likelihood" ]; then
@@ -288,7 +302,7 @@ if [ "$ADV_ESTIMATOR" = "graphrpo" ]; then
       )
       ;;
     *)
-      echo "ERROR: GRAPH_RPO_CREDIT_BACKEND must be reference_answer_likelihood, old_policy_answer_likelihood, or external_evaluator"
+      echo "ERROR: GRAPH_RPO_CREDIT_BACKEND must be old_policy_counterfactual_qa, reference_answer_likelihood, old_policy_answer_likelihood, or external_evaluator"
       exit 1
       ;;
   esac
@@ -597,6 +611,9 @@ echo "  CG-specific: workflow=search_graph, process_reward=$PROCESS_REWARD_SPEC,
 echo "  Graph protocol: $BC_CTXGRAPH_PROTOCOL structured_controller=$BC_STRUCTURED_GRAPH_CONTROLLER controller_formatting=$BC_CONTROLLER_OWNED_TOOL_FORMATTING action_policy=$BC_CONTROLLER_ACTION_POLICY"
 if [ "$ADV_ESTIMATOR" = "graphrpo" ]; then
   echo "  GraphRPO credit: $GRAPH_RPO_CREDIT_BACKEND"
+  if [ "$GRAPH_RPO_CREDIT_BACKEND" = "old_policy_counterfactual_qa" ]; then
+    echo "  Counterfactual QA: samples/state=$GRAPH_RPO_COUNTERFACTUAL_SAMPLES max_tokens=$GRAPH_RPO_COUNTERFACTUAL_MAX_NEW_TOKENS temperature=$GRAPH_RPO_COUNTERFACTUAL_TEMPERATURE top_p=$GRAPH_RPO_COUNTERFACTUAL_TOP_P"
+  fi
 fi
 echo "  v5 add-ons: uniqueness_weight=0.10 (Improvement #1), auto_bind_branch_edges=True with min_overlap=0.05 (Improvement #3)"
 echo "  vLLM gpu_memory_utilization=0.6 + FSDP CPU offload"
