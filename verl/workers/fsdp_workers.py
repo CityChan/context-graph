@@ -1029,6 +1029,41 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
         return output
 
     @register(dispatch_mode=make_nd_compute_dataproto_dispatch_fn(mesh_name="actor"))
+    @DistProfiler.annotate(color="olive", role="actor_compute_answer_log_prob")
+    def compute_answer_log_prob(self, data: DataProto):
+        """Score teacher-forced answers under the pre-update actor without entropy."""
+        assert self._is_actor
+        if self._is_offload_param:
+            load_fsdp_model_to_gpu(self.actor_module_fsdp)
+
+        data.meta_info["micro_batch_size"] = self.config.rollout.log_prob_micro_batch_size_per_gpu
+        data.meta_info["max_token_len"] = self.config.rollout.log_prob_max_token_len_per_gpu
+        data.meta_info["use_dynamic_bsz"] = self.config.rollout.log_prob_use_dynamic_bsz
+        data.meta_info["temperature"] = data.meta_info.pop(
+            "log_prob_temperature_override", self.config.rollout.temperature
+        )
+        with self.ulysses_sharding_manager:
+            answer_log_probs, _ = self.actor.compute_log_prob(
+                data=data,
+                calculate_entropy=False,
+            )
+            output = DataProto.from_dict(
+                tensors={"answer_log_probs": answer_log_probs},
+                meta_info={"temperature": data.meta_info["temperature"]},
+            )
+
+        output = output.to("cpu")
+        if self.world_size > 1 and fsdp_version(self.actor.actor_module) == 1:
+            self.actor.actor_module._handle.reshard(True)
+        if self._is_offload_param:
+            offload_fsdp_model_to_cpu(self.actor_module_fsdp)
+            log_gpu_memory_usage(
+                "After offload actor model during compute_answer_log_prob",
+                logger=logger,
+            )
+        return output
+
+    @register(dispatch_mode=make_nd_compute_dataproto_dispatch_fn(mesh_name="actor"))
     @DistProfiler.annotate(color="olive", role="ref_compute_log_prob")
     def compute_ref_log_prob(self, data: DataProto):
         if self._is_lora:

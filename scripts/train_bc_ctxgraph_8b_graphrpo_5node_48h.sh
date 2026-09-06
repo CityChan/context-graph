@@ -1,6 +1,6 @@
 #!/bin/bash
-# GraphRPO specialization using the trainer's already-loaded frozen reference
-# policy to score correct-answer likelihood before and after each graph edit.
+# GraphRPO specialization. The selected backend scores correct-answer
+# likelihood before and after each graph edit without changing rollout workers.
 set -euo pipefail
 
 export ADV_ESTIMATOR=graphrpo

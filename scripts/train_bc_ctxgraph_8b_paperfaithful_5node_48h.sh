@@ -254,10 +254,12 @@ if [ "$ADV_ESTIMATOR" = "graphrpo" ]; then
     "+actor_rollout_ref.rollout.plugin.graph_rpo_operation_costs=$GRAPH_RPO_OPERATION_COSTS"
   )
   case "$GRAPH_RPO_CREDIT_BACKEND" in
-    reference_answer_likelihood)
+    reference_answer_likelihood|old_policy_answer_likelihood)
       if [ "$USE_KL_LOSS" != "True" ] && [ "$USE_KL_LOSS" != "true" ]; then
-        echo "ERROR: reference-answer GraphRPO requires USE_KL_LOSS=True to initialize the frozen reference policy"
-        exit 1
+        if [ "$GRAPH_RPO_CREDIT_BACKEND" = "reference_answer_likelihood" ]; then
+          echo "ERROR: reference-answer GraphRPO requires USE_KL_LOSS=True to initialize the frozen reference policy"
+          exit 1
+        fi
       fi
       GRAPH_RPO_REFERENCE_MAX_PROMPT_LENGTH=${GRAPH_RPO_REFERENCE_MAX_PROMPT_LENGTH:-$PROMPT_LENGTH}
       GRAPH_RPO_REFERENCE_MAX_ANSWER_LENGTH=${GRAPH_RPO_REFERENCE_MAX_ANSWER_LENGTH:-128}
@@ -286,7 +288,7 @@ if [ "$ADV_ESTIMATOR" = "graphrpo" ]; then
       )
       ;;
     *)
-      echo "ERROR: GRAPH_RPO_CREDIT_BACKEND must be reference_answer_likelihood or external_evaluator"
+      echo "ERROR: GRAPH_RPO_CREDIT_BACKEND must be reference_answer_likelihood, old_policy_answer_likelihood, or external_evaluator"
       exit 1
       ;;
   esac

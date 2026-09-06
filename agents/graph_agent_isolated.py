@@ -59,8 +59,8 @@ from .graph_controller import (
 )
 from .graph_trace import GraphTraceRecorder
 from .graph_rpo import (
+    ANSWER_LIKELIHOOD_BACKENDS,
     EXTERNAL_EVALUATOR_BACKEND,
-    REFERENCE_ANSWER_LIKELIHOOD_BACKEND,
     GraphRPOEvaluatorError,
     assign_graph_edit_credits,
     graph_rpo_credit_backend,
@@ -1621,10 +1621,11 @@ async def process_item(
                 tokenizer=tokenizer,
                 plugin_config=config.plugin,
             )
-        elif graph_rpo_backend == REFERENCE_ANSWER_LIKELIHOOD_BACKEND:
+        elif graph_rpo_backend in ANSWER_LIKELIHOOD_BACKENDS:
             reference_edit_requests, graph_rpo_metrics = prepare_reference_graph_edit_requests(
                 graph_trace=graph_trace_payload,
                 terminal_reward=score[1],
+                credit_backend=graph_rpo_backend,
             )
         else:  # pragma: no cover - graph_rpo_credit_backend validates this.
             raise ValueError(f"unsupported GraphRPO credit backend: {graph_rpo_backend}")
@@ -1639,7 +1640,7 @@ async def process_item(
         reference_edits_with_spans = []
         if (
             graph_rpo_enabled
-            and graph_rpo_backend == REFERENCE_ANSWER_LIKELIHOOD_BACKEND
+            and graph_rpo_backend in ANSWER_LIKELIHOOD_BACKENDS
             and name == 'main'
         ):
             turn_token_indices = out['response_turn_token_indices']
@@ -1701,7 +1702,7 @@ async def process_item(
                         'graph_rpo_reference_answer': getattr(env, 'label_answer', None),
                     }
                     if graph_rpo_enabled
-                    and graph_rpo_backend == REFERENCE_ANSWER_LIKELIHOOD_BACKEND
+                    and graph_rpo_backend in ANSWER_LIKELIHOOD_BACKENDS
                     else {}
                 ),
                 'uid': uid,

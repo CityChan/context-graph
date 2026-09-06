@@ -342,6 +342,29 @@ def test_reference_graph_requests_are_success_gated_and_auditable():
     assert failed_event["graph_rpo_outcome_gated"] is True
 
 
+def test_old_policy_graph_requests_record_selected_backend():
+    from agents.graph_rpo import prepare_reference_graph_edit_requests
+
+    event = {
+        "seq": 5,
+        "source": "model",
+        "success": True,
+        "op": "prune",
+        "before_hash": "before-hash",
+        "after_hash": "after-hash",
+        "rendered_before": "before graph",
+        "rendered_after": "after graph",
+        "assistant_turn_index": 8,
+    }
+    requests, _ = prepare_reference_graph_edit_requests(
+        graph_trace={"events": [event]},
+        terminal_reward=1.0,
+        credit_backend="old_policy_answer_likelihood",
+    )
+    assert requests == [{"seq": 5, "assistant_turn_index": 8}]
+    assert event["graph_rpo_credit_backend"] == "old_policy_answer_likelihood"
+
+
 def test_reference_answer_batch_and_mean_likelihood_use_only_answer_tokens():
     torch = _torch()
     from verl.trainer.ppo.reference_graph_credit import (
@@ -374,6 +397,7 @@ def test_reference_answer_batch_and_mean_likelihood_use_only_answer_tokens():
     assert scoring_batch.batch["responses"].shape == (2, 2)
     assert answer_mask.tolist() == [[1, 1], [1, 0]]
     assert scoring_batch.meta_info["ref_log_prob_temperature"] == 1.0
+    assert scoring_batch.meta_info["log_prob_temperature_override"] == 1.0
 
     likelihoods = mean_answer_log_likelihood(
         torch.tensor([[-2.0, -4.0], [-1.5, -99.0]]),
@@ -445,6 +469,39 @@ def test_reference_answer_likelihood_delta_maps_to_edit_tokens():
     assert batch.non_tensor_batch["env_stats"][1]["graph_rpo_scored_states"] == 2
     assert metrics["graphrpo/reference_creditable_edits"] == 1
     assert metrics["graphrpo/reference_scored_states"] == 2
+
+
+def test_old_policy_answer_likelihood_uses_separate_metric_namespace():
+    torch = _torch()
+    from verl import DataProto
+    from verl.trainer.ppo.reference_graph_credit import (
+        ReferenceEditPlan,
+        ReferenceViewKey,
+        apply_reference_edit_credits,
+    )
+
+    before_key = ReferenceViewKey("question", "answer", "before")
+    after_key = ReferenceViewKey("question", "answer", "after")
+    event = {"seq": 1, "op": "add_edge"}
+    batch = DataProto.from_dict(
+        tensors={
+            "responses": torch.ones((1, 3), dtype=torch.long),
+            "response_mask": torch.ones((1, 3), dtype=torch.long),
+        }
+    )
+    plan = ReferenceEditPlan(0, event, before_key, after_key, [0, 1])
+    metrics = apply_reference_edit_credits(
+        batch,
+        [plan],
+        {before_key: -2.0, after_key: -1.8},
+        delta_max=0.25,
+        credit_backend="old_policy_answer_likelihood",
+        metric_namespace="old_policy",
+    )
+    assert event["graph_rpo_credit_backend"] == "old_policy_answer_likelihood"
+    assert metrics["graphrpo/old_policy_creditable_edits"] == 1
+    assert metrics["graphrpo/old_policy_scored_states"] == 2
+    assert metrics["graphrpo/old_policy_delta_sum"] == pytest.approx(0.2)
 
 
 def test_graph_evaluator_rows_use_trace_root_and_binary_outcome():
@@ -695,6 +752,13 @@ def test_graphrpo_training_wiring_is_explicit():
     audit_smoke_launcher = (
         root / "scripts/smoke_train_bc_ctxgraph_8b_graphrpo_qwen3_8b_4node_judge_audit.sh"
     ).read_text(encoding="utf-8")
+    old_policy_smoke_launcher = (
+        root / "scripts/smoke_train_bc_ctxgraph_8b_graphrpo_old_policy_4node_2step.sh"
+    ).read_text(encoding="utf-8")
+    paperfaithful_launcher = (
+        root / "scripts/train_bc_ctxgraph_8b_paperfaithful_5node_48h.sh"
+    ).read_text(encoding="utf-8")
+    fsdp_worker = (root / "verl/workers/fsdp_workers.py").read_text(encoding="utf-8")
 
     assert "AdvantageEstimator.GRAPHRPO" in trainer
     assert 'loss_mode == "graphrpo"' in actor
@@ -704,7 +768,10 @@ def test_graphrpo_training_wiring_is_explicit():
     assert trainer.count('"judge_audit", "uid", "gen_uid"') >= 2
     assert "assign_graph_edit_credits" in agent
     assert "prepare_reference_graph_edit_requests" in agent
-    assert "_compute_reference_answer_likelihood_graph_credit" in trainer
+    assert "_compute_answer_likelihood_graph_credit" in trainer
+    assert "old_policy_answer_likelihood" in trainer
+    assert "compute_answer_log_prob" in trainer
+    assert "def compute_answer_log_prob" in fsdp_worker
     assert "process_reward_min_precedence=graph_rpo_enabled" in agent
     assert "self.process_reward_min_precedence" in agent_utils
     assert "not graph_rpo_enabled and process_reward and 'graph' in process_reward" in agent
@@ -735,6 +802,7 @@ def test_graphrpo_training_wiring_is_explicit():
     assert "export ADV_ESTIMATOR=graphrpo" in launcher
     assert "export POLICY_LOSS_MODE=graphrpo" in launcher
     assert "reference_answer_likelihood" in launcher
+    assert "old_policy_answer_likelihood" in paperfaithful_launcher
     assert "GRAPH_RPO_EVALUATOR_URL:?" not in launcher
     assert "reference_answer_likelihood" in smoke_launcher
     assert "serve_graph_evaluator_smoke.py" not in smoke_launcher
@@ -753,6 +821,11 @@ def test_graphrpo_training_wiring_is_explicit():
     assert "export ROLLOUT_N=8" in audit_smoke_launcher
     assert "audit_bc_judge_results.py" in audit_smoke_launcher
     assert "SMOKE + JUDGE AUDIT COMPLETED" in audit_smoke_launcher
+    assert "old_policy_answer_likelihood" in old_policy_smoke_launcher
+    assert "TOTAL_TRAINING_STEPS=2" in old_policy_smoke_launcher
+    assert "GRAPH_RPO_ALPHA=0.1" in old_policy_smoke_launcher
+    assert "GRAPH_RPO_DELTA_MAX=0.25" in old_policy_smoke_launcher
+    assert "BC_REQUIRE_WANDB=1" in old_policy_smoke_launcher
 
     base_launcher = (
         root / "scripts/train_bc_ctxgraph_8b_paperfaithful_5node_48h.sh"

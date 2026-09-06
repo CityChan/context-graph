@@ -207,19 +207,24 @@ def validate_config(
         assert graph_credit_backend in {
             "external_evaluator",
             "reference_answer_likelihood",
+            "old_policy_answer_likelihood",
         }, (
-            "GraphRPO plugin.graph_rpo_credit_backend must be external_evaluator "
-            "or reference_answer_likelihood"
+            "GraphRPO plugin.graph_rpo_credit_backend must be external_evaluator, "
+            "reference_answer_likelihood, or old_policy_answer_likelihood"
         )
         if graph_credit_backend == "external_evaluator":
             assert str(plugin.get("graph_rpo_evaluator_url", "")).strip(), (
                 "external-evaluator GraphRPO requires plugin.graph_rpo_evaluator_url"
             )
-        else:
+        elif graph_credit_backend == "reference_answer_likelihood":
             assert use_reference_policy, (
                 "reference-answer GraphRPO requires a frozen reference policy; "
                 "enable actor.use_kl_loss"
             )
+        if graph_credit_backend in {
+            "reference_answer_likelihood",
+            "old_policy_answer_likelihood",
+        }:
             assert int(
                 plugin.get(
                     "graph_rpo_reference_max_prompt_length",

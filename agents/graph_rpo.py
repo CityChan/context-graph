@@ -6,9 +6,10 @@ decision.  Once the verified terminal outcome is known, this module batches
 those frozen views to an external, frozen evaluator and broadcasts each valid
 edit's bounded utility increment over the tokens of its structured decision.
 
-The production alternative records the same edit-local spans and lets the PPO
-driver score the known correct answer under the already-loaded frozen
-reference policy.  Keeping that scoring on the trainer side avoids loading a
+The answer-likelihood alternatives record the same edit-local spans and let
+the PPO driver score the known correct answer under either the frozen
+reference policy or a no-grad snapshot of the current policy before its
+optimizer step. Keeping that scoring on the trainer side avoids loading a
 second learned evaluator in the rollout workers.
 """
 
@@ -25,8 +26,12 @@ GRAPH_EVALUATOR_SCHEMA_VERSION = "contextgraph.graph_evaluator.v1"
 STATE_CHANGING_GRAPH_OPS = frozenset({"merge", "prune", "add_edge", "select"})
 EXTERNAL_EVALUATOR_BACKEND = "external_evaluator"
 REFERENCE_ANSWER_LIKELIHOOD_BACKEND = "reference_answer_likelihood"
+OLD_POLICY_ANSWER_LIKELIHOOD_BACKEND = "old_policy_answer_likelihood"
+ANSWER_LIKELIHOOD_BACKENDS = frozenset(
+    {REFERENCE_ANSWER_LIKELIHOOD_BACKEND, OLD_POLICY_ANSWER_LIKELIHOOD_BACKEND}
+)
 GRAPH_RPO_CREDIT_BACKENDS = frozenset(
-    {EXTERNAL_EVALUATOR_BACKEND, REFERENCE_ANSWER_LIKELIHOOD_BACKEND}
+    {EXTERNAL_EVALUATOR_BACKEND, *ANSWER_LIKELIHOOD_BACKENDS}
 )
 
 
@@ -82,13 +87,19 @@ def prepare_reference_graph_edit_requests(
     *,
     graph_trace: dict[str, Any],
     terminal_reward: float,
+    credit_backend: str = REFERENCE_ANSWER_LIKELIHOOD_BACKEND,
 ) -> tuple[list[dict[str, int]], dict[str, float | int]]:
-    """Record edit identities for frozen-reference scoring in the PPO driver.
+    """Record edit identities for answer-likelihood scoring in the PPO driver.
 
     The large before/after views already live in ``graph_trace``.  Requests
     therefore carry only an event sequence number and assistant-turn index;
     the agent loop adds exact response-token indices after tokenization.
     """
+    credit_backend = str(credit_backend).strip().lower()
+    if credit_backend not in ANSWER_LIKELIHOOD_BACKENDS:
+        choices = ", ".join(sorted(ANSWER_LIKELIHOOD_BACKENDS))
+        raise ValueError(f"answer-likelihood backend must be one of {choices}")
+
     events = valid_graph_edit_events(graph_trace)
     metrics: dict[str, float | int] = {
         "graph_rpo_valid_edits": len(events),
@@ -101,7 +112,7 @@ def prepare_reference_graph_edit_requests(
         for event in events:
             event["graph_rpo_delta"] = 0.0
             event["graph_rpo_outcome_gated"] = True
-            event["graph_rpo_credit_backend"] = REFERENCE_ANSWER_LIKELIHOOD_BACKEND
+            event["graph_rpo_credit_backend"] = credit_backend
         return [], metrics
 
     requests: list[dict[str, int]] = []
@@ -120,7 +131,7 @@ def prepare_reference_graph_edit_requests(
         seq = event.get("seq")
         if not isinstance(seq, int):
             raise GraphRPOEvaluatorError("graph trace edit lacks an integer sequence number")
-        event["graph_rpo_credit_backend"] = REFERENCE_ANSWER_LIKELIHOOD_BACKEND
+        event["graph_rpo_credit_backend"] = credit_backend
         event["graph_rpo_outcome_gated"] = False
         requests.append({"seq": seq, "assistant_turn_index": turn_index})
     return requests, metrics

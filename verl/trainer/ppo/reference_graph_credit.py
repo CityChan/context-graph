@@ -1,9 +1,9 @@
-"""Frozen-reference answer-likelihood credit for GraphRPO graph edits.
+"""Teacher-forced answer-likelihood credit for GraphRPO graph edits.
 
 This module intentionally contains no model lifecycle logic.  It prepares
-teacher-forced ``(graph view, correct answer)`` examples for the reference
-worker already owned by the PPO trainer, and maps the resulting answer
-log-likelihood differences back to the policy tokens that emitted each edit.
+teacher-forced ``(graph view, correct answer)`` examples for a policy worker
+already owned by the PPO trainer, and maps the resulting answer log-likelihood
+differences back to the policy tokens that emitted each edit.
 """
 
 from __future__ import annotations
@@ -245,7 +245,10 @@ def build_reference_scoring_batch(
             "position_ids": compute_position_id_with_mask(attention_mask),
             "response_mask": response_mask,
         },
-        meta_info={"ref_log_prob_temperature": 1.0},
+        meta_info={
+            "ref_log_prob_temperature": 1.0,
+            "log_prob_temperature_override": 1.0,
+        },
     )
     return scoring_batch, response_mask
 
@@ -275,6 +278,8 @@ def apply_reference_edit_credits(
     *,
     delta_max: float,
     operation_costs: dict[str, float] | None = None,
+    credit_backend: str = "reference_answer_likelihood",
+    metric_namespace: str = "reference",
 ) -> dict[str, float | int]:
     """Write answer-likelihood deltas to edit-token advantages and trace audit data."""
     if delta_max <= 0.0:
@@ -290,7 +295,7 @@ def apply_reference_edit_credits(
         before = float(likelihoods[plan.before_key])
         after = float(likelihoods[plan.after_key])
         if not math.isfinite(before) or not math.isfinite(after):
-            raise ValueError("reference-answer GraphRPO received a non-finite likelihood")
+            raise ValueError("answer-likelihood GraphRPO received a non-finite likelihood")
         op = str(plan.event.get("op", "")).lower()
         operation_cost = costs.get(op, 0.0)
         raw_delta = after - before - operation_cost
@@ -298,7 +303,7 @@ def apply_reference_edit_credits(
         credit_mask[plan.row_index, plan.response_token_indices] += delta
         plan.event.update(
             {
-                "graph_rpo_credit_backend": "reference_answer_likelihood",
+                "graph_rpo_credit_backend": credit_backend,
                 "graph_rpo_answer_log_likelihood_before": before,
                 "graph_rpo_answer_log_likelihood_after": after,
                 "graph_rpo_operation_cost": operation_cost,
@@ -352,10 +357,11 @@ def apply_reference_edit_credits(
                     if isinstance(event, dict) and event.get("seq") in audit_by_seq:
                         event.update(audit_by_seq[event["seq"]])
 
+    prefix = f"graphrpo/{metric_namespace}"
     return {
-        "graphrpo/reference_creditable_edits": len(plans),
-        "graphrpo/reference_scored_states": len(likelihoods),
-        "graphrpo/reference_delta_sum": delta_sum,
-        "graphrpo/reference_delta_abs_sum": delta_abs_sum,
-        "graphrpo/reference_delta_mean": delta_sum / len(plans) if plans else 0.0,
+        f"{prefix}_creditable_edits": len(plans),
+        f"{prefix}_scored_states": len(likelihoods),
+        f"{prefix}_delta_sum": delta_sum,
+        f"{prefix}_delta_abs_sum": delta_abs_sum,
+        f"{prefix}_delta_mean": delta_sum / len(plans) if plans else 0.0,
     }

@@ -1172,34 +1172,48 @@ class RayPPOTrainer:
         batch.meta_info["gen_uid_dummy"] = gen_uid_dummy
         return batch, gen_uid_dummy
 
-    def _uses_reference_answer_likelihood_graph_credit(self) -> bool:
+    def _answer_likelihood_graph_credit_backend(self) -> str | None:
         if str(self.config.algorithm.adv_estimator).lower() != "graphrpo":
-            return False
+            return None
         plugin = self.config.actor_rollout_ref.rollout.plugin
-        return str(plugin.get("graph_rpo_credit_backend", "external_evaluator")).lower() == (
-            "reference_answer_likelihood"
-        )
+        backend = str(plugin.get("graph_rpo_credit_backend", "external_evaluator")).lower()
+        if backend in {
+            "reference_answer_likelihood",
+            "old_policy_answer_likelihood",
+        }:
+            return backend
+        return None
 
-    def _compute_reference_answer_likelihood_graph_credit(
+    def _compute_answer_likelihood_graph_credit(
         self,
         batch: DataProto,
+        backend: str,
     ) -> dict[str, float | int]:
-        """Score correct answers under the frozen reference and attach edit deltas."""
-        if not self.use_reference_policy:
+        """Score correct answers before actor update and attach edit-local deltas."""
+        if backend == "reference_answer_likelihood" and not self.use_reference_policy:
             raise RuntimeError(
                 "reference-answer GraphRPO requires an initialized frozen reference policy"
             )
+        if backend not in {
+            "reference_answer_likelihood",
+            "old_policy_answer_likelihood",
+        }:
+            raise ValueError(f"unsupported answer-likelihood GraphRPO backend: {backend}")
+        metric_namespace = (
+            "reference" if backend == "reference_answer_likelihood" else "old_policy"
+        )
+        metric_prefix = f"graphrpo/{metric_namespace}"
         plans, keys = collect_reference_edit_plans(batch)
         if not keys:
             batch.batch["graph_edit_credit_mask"] = torch.zeros_like(
                 batch.batch["response_mask"], dtype=torch.float32
             )
             return {
-                "graphrpo/reference_creditable_edits": 0,
-                "graphrpo/reference_scored_states": 0,
-                "graphrpo/reference_delta_sum": 0.0,
-                "graphrpo/reference_delta_abs_sum": 0.0,
-                "graphrpo/reference_delta_mean": 0.0,
+                f"{metric_prefix}_creditable_edits": 0,
+                f"{metric_prefix}_scored_states": 0,
+                f"{metric_prefix}_delta_sum": 0.0,
+                f"{metric_prefix}_delta_abs_sum": 0.0,
+                f"{metric_prefix}_delta_mean": 0.0,
             }
 
         plugin = self.config.actor_rollout_ref.rollout.plugin
@@ -1215,15 +1229,26 @@ class RayPPOTrainer:
             max_answer_length=int(plugin.get("graph_rpo_reference_max_answer_length", 128)),
             enable_thinking=bool(plugin.get("graph_rpo_reference_enable_thinking", False)),
         )
-        reference_worker = self.actor_rollout_wg if self.ref_in_actor else self.ref_policy_wg
+        if backend == "reference_answer_likelihood":
+            scoring_worker = self.actor_rollout_wg if self.ref_in_actor else self.ref_policy_wg
+        else:
+            # This call happens after rollout old-log-prob recomputation and before
+            # update_actor. compute_answer_log_prob runs under no_grad in the actor
+            # worker, so these batch-local utility values are detached from optimization.
+            scoring_worker = self.actor_rollout_wg
         scoring_batch_padded, pad_size = pad_dataproto_to_divisor(
             scoring_batch,
-            reference_worker.world_size,
+            scoring_worker.world_size,
         )
-        ref_output = reference_worker.compute_ref_log_prob(scoring_batch_padded)
-        ref_output = unpad_dataproto(ref_output, pad_size)
+        if backend == "reference_answer_likelihood":
+            score_output = scoring_worker.compute_ref_log_prob(scoring_batch_padded)
+            score_key = "ref_log_prob"
+        else:
+            score_output = scoring_worker.compute_answer_log_prob(scoring_batch_padded)
+            score_key = "answer_log_probs"
+        score_output = unpad_dataproto(score_output, pad_size)
         likelihood_values = mean_answer_log_likelihood(
-            ref_output.batch["ref_log_prob"],
+            score_output.batch[score_key],
             answer_mask,
         )
         likelihoods = dict(zip(keys, likelihood_values, strict=True))
@@ -1234,6 +1259,8 @@ class RayPPOTrainer:
             likelihoods,
             delta_max=float(plugin.get("graph_rpo_delta_max", 1.0)),
             operation_costs=dict(raw_costs),
+            credit_backend=backend,
+            metric_namespace=metric_namespace,
         )
 
     def fit(self):
@@ -1434,10 +1461,14 @@ class RayPPOTrainer:
                                 ref_log_prob = self.actor_rollout_wg.compute_ref_log_prob(batch)
                             batch = batch.union(ref_log_prob)
 
-                    if self._uses_reference_answer_likelihood_graph_credit():
-                        with marked_timer("reference_graph_credit", timing_raw, color="olive"):
+                    answer_likelihood_backend = self._answer_likelihood_graph_credit_backend()
+                    if answer_likelihood_backend is not None:
+                        with marked_timer("answer_likelihood_graph_credit", timing_raw, color="olive"):
                             metrics.update(
-                                self._compute_reference_answer_likelihood_graph_credit(batch)
+                                self._compute_answer_likelihood_graph_credit(
+                                    batch,
+                                    answer_likelihood_backend,
+                                )
                             )
 
                     # compute values
