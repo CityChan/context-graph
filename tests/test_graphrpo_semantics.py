@@ -1007,6 +1007,8 @@ def test_graphrpo_training_wiring_is_explicit():
     assert "returned no valid formal job ID" in counterfactual_stage2_submitter
     assert "smoke_train_bc_ctxgraph_8b_graphrpo_counterfactual_4node_2step.sh" in counterfactual_stage2_submitter
     assert "train_bc_ctxgraph_8b_graphrpo_5node_48h.sh" in counterfactual_stage2_submitter
+    assert "TRAINER_NODES=$((EXPECTED_NUM_NODES - 1))" in launcher
+    assert "TRAIN_BATCH_SIZE=${TRAIN_BATCH_SIZE:-$((TRAINER_NODES * 8))}" in launcher
 
     base_launcher = (
         root / "scripts/train_bc_ctxgraph_8b_paperfaithful_5node_48h.sh"

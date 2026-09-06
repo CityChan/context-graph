@@ -38,6 +38,11 @@ fi
 
 export MODEL_PATH
 export EXPECTED_NUM_NODES=${EXPECTED_NUM_NODES:-5}
+TRAINER_NODES=$((EXPECTED_NUM_NODES - 1))
+# Preserve the five-node protocol's eight prompts per trainer. With rollout_n=8,
+# this also keeps the effective batch divisible by both data parallelism and
+# the default global PPO minibatch (16 samples per trainer).
+export TRAIN_BATCH_SIZE=${TRAIN_BATCH_SIZE:-$((TRAINER_NODES * 8))}
 export ADV_ESTIMATOR=graphrpo
 export POLICY_LOSS_MODE=graphrpo
 export BC_CTXGRAPH_PROTOCOL=controller
