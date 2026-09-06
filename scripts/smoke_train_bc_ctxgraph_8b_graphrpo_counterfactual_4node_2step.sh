@@ -16,6 +16,7 @@ set -euo pipefail
 
 PROJECT_ROOT=${PROJECT_ROOT:-/work/09281/chc_1996/vista/context-graph}
 SCRATCH_ROOT=${SCRATCH:-/scratch/09281/chc_1996}
+SFT_FSDP_CHECKPOINT=${SFT_FSDP_CHECKPOINT:-$SCRATCH_ROOT/contextgraph_sft_checkpoints/miroverse_full_policy_qwen3_8b_bs16_1ep_v1/global_step_174}
 MODEL_SNAPSHOT=${MODEL_PATH:-/work/09281/chc_1996/vista/cache/hub/models--Qwen--Qwen3-8B/snapshots/b968826d9c46dd6066d109eabc6255188de91218}
 RUN_TS=$(date +%Y%m%d_%H%M%S)
 
@@ -48,8 +49,21 @@ export BC_DISABLE_WANDB=0
 export BC_REQUIRE_WANDB=1
 
 if [ ! -s "$MODEL_PATH/config.json" ] || ! find -L "$MODEL_PATH" -maxdepth 1 -type f \( -name '*.safetensors' -o -name 'pytorch_model*.bin' \) -size +0c -print -quit 2>/dev/null | grep -q .; then
-  echo "ERROR: original Qwen3-8B snapshot is incomplete: $MODEL_PATH"
-  exit 1
+  if [ ! -d "$SFT_FSDP_CHECKPOINT" ]; then
+    echo "ERROR: neither a complete model nor the stage-1 SFT checkpoint is available"
+    echo "  model: $MODEL_PATH"
+    echo "  checkpoint: $SFT_FSDP_CHECKPOINT"
+    exit 1
+  fi
+  if [ -e "$MODEL_PATH" ] && [ -n "$(find "$MODEL_PATH" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]; then
+    echo "ERROR: incomplete merged-model directory is not empty: $MODEL_PATH"
+    exit 1
+  fi
+  source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
+  conda activate cxtgraph
+  mkdir -p "$(dirname "$MODEL_PATH")"
+  echo "Merging stage-1 SFT checkpoint: $SFT_FSDP_CHECKPOINT -> $MODEL_PATH"
+  python -m verl.model_merger merge --backend fsdp --local_dir "$SFT_FSDP_CHECKPOINT" --target_dir "$MODEL_PATH"
 fi
 
 mkdir -p "$PROJECT_ROOT/logs"

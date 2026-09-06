@@ -912,6 +912,9 @@ def test_graphrpo_training_wiring_is_explicit():
     counterfactual_smoke_launcher = (
         root / "scripts/smoke_train_bc_ctxgraph_8b_graphrpo_counterfactual_4node_2step.sh"
     ).read_text(encoding="utf-8")
+    counterfactual_stage2_submitter = (
+        root / "scripts/submit_stage2_graphrpo_counterfactual.sh"
+    ).read_text(encoding="utf-8")
     paperfaithful_launcher = (
         root / "scripts/train_bc_ctxgraph_8b_paperfaithful_5node_48h.sh"
     ).read_text(encoding="utf-8")
@@ -995,6 +998,9 @@ def test_graphrpo_training_wiring_is_explicit():
     assert "audit_counterfactual_graph_credit.py" in counterfactual_smoke_launcher
     assert "graph_rpo_counterfactual_probe_rollouts" in counterfactual_smoke_launcher
     assert "TOTAL_TRAINING_STEPS=2" in counterfactual_smoke_launcher
+    assert "--dependency=afterok:" in counterfactual_stage2_submitter
+    assert "smoke_train_bc_ctxgraph_8b_graphrpo_counterfactual_4node_2step.sh" in counterfactual_stage2_submitter
+    assert "train_bc_ctxgraph_8b_graphrpo_5node_48h.sh" in counterfactual_stage2_submitter
 
     base_launcher = (
         root / "scripts/train_bc_ctxgraph_8b_paperfaithful_5node_48h.sh"
