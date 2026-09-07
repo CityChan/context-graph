@@ -1371,6 +1371,7 @@ async def process_item(
     finalizer_attempted = bool(
         final_answer_reserve
         and not (getattr(env, 'is_finish', False) or getattr(env, 'finish', False))
+        and (not must_branch or bool(branches))
     )
     forced_finish = False
     if finalizer_attempted:

@@ -12,6 +12,15 @@ from decimal import Decimal, InvalidOperation
 FUNCTION_RE = re.compile(r"<function=([^>]+)>(.*?)</function>", re.DOTALL)
 PARAMETER_RE = re.compile(r"<parameter=([^>]+)>(.*?)</parameter>", re.DOTALL)
 NUMBER_RE = re.compile(r"[-+]?\d[\d,]*(?:\.\d+)?")
+ANSWER_BLOCK_RES = (
+    re.compile(r"<parameter=answer>\s*(.*?)\s*</parameter>", re.IGNORECASE | re.DOTALL),
+    re.compile(r"<answer>\s*(.*?)\s*</answer>", re.IGNORECASE | re.DOTALL),
+)
+ANSWER_MARKER_RE = re.compile(
+    r"(?:your\s+best\s+answer|final\s+answer|answer)\s*(?:>|=|:)\s*"
+    r"[\"']?\s*[$€£]?\s*([-+]?\d[\d,]*(?:\.\d+)?)",
+    re.IGNORECASE,
+)
 
 
 def _unwrap(value):
@@ -28,8 +37,21 @@ def _unwrap(value):
 
 
 def extract_numeric_answer(value: str) -> Decimal | None:
-    """Extract the last numeric value and normalize formatting-equivalent forms."""
-    matches = NUMBER_RE.findall(str(value or ""))
+    """Extract a submitted answer, preferring explicit answer fields over prose."""
+    text = str(value or "")
+    candidate = None
+    for pattern in ANSWER_BLOCK_RES:
+        match = pattern.search(text)
+        if match:
+            numbers = NUMBER_RE.findall(match.group(1))
+            if numbers:
+                candidate = numbers[0]
+                break
+    if candidate is None:
+        marker_match = ANSWER_MARKER_RE.search(text)
+        if marker_match:
+            candidate = marker_match.group(1)
+    matches = NUMBER_RE.findall(text) if candidate is None else [candidate]
     if not matches:
         return None
     try:

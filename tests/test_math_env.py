@@ -1,4 +1,5 @@
 import asyncio
+from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -27,6 +28,23 @@ def test_math_env_is_selected_for_math_ability():
 
 def test_numeric_answer_normalizes_commas_and_decimal_equivalence():
     assert extract_numeric_answer("#### 1,234.0") == extract_numeric_answer("1234")
+
+
+def test_numeric_answer_prefers_explicit_submission_over_trailing_numbers():
+    cases = [
+        ("answer>13,140 explanation>computed correctly confidence>96% - 97%/90%", "13140"),
+        ("<answer>220</answer> explanation>66 + 132 + 22 = 220 confidence>99", "220"),
+        ('<finish> answer="75" explanation="25 + 50 = 75" confidence="9" </finish>', "75"),
+        ("YOUR BEST ANSWER: 15 EXPLANATION: 90 - 75 = 15 CONFIDENCE: 100%", "15"),
+        ("answer=32850 explanation=the calculation later mentions 13140", "32850"),
+    ]
+
+    for text, expected in cases:
+        assert extract_numeric_answer(text) == Decimal(expected)
+
+
+def test_numeric_answer_falls_back_to_last_number_without_answer_marker():
+    assert extract_numeric_answer("First compute 6 times 7, giving 42") == Decimal("42")
 
 
 def test_math_env_finish_and_exact_reward():

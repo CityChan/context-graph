@@ -216,9 +216,9 @@ if [ ! -d "$CHECKPOINT_ROOT/global_step_$TOTAL_TRAINING_STEPS/actor" ]; then
 fi
 grep -q 'actor/pg_loss:' "$RUN_LOG" || { echo "ERROR: actor policy loss was not logged"; exit 1; }
 grep -q 'actor/grad_norm:' "$RUN_LOG" || { echo "ERROR: actor optimizer step was not logged"; exit 1; }
-grep -Eq 'reward/graph_explicit_ops[^0-9]*([1-9]|0\.[0-9]*[1-9])' "$RUN_LOG" || { echo "ERROR: no explicit ContextGraph operation was observed"; exit 1; }
+grep -Eq '\[GRAPH CONTROLLER (MERGE|PRUNE|ADD_EDGE|SELECT)\]' "$RUN_LOG" || { echo "ERROR: no successful model-selected ContextGraph operation was observed"; exit 1; }
 grep -Eq 'graphrpo/old_policy_scored_states:[1-9]' "$RUN_LOG" || { echo "ERROR: GraphRPO did not score graph states"; exit 1; }
 
 echo "Key training evidence:"
-grep -E 'training/global_step:|reward/task_reward|reward/graph_explicit_ops|old_policy_scored_states|actor/pg_loss|actor/grad_norm|actor/kl_loss' "$RUN_LOG" | tail -30
+grep -E 'training/global_step:|\[GRAPH CONTROLLER (MERGE|PRUNE|ADD_EDGE|SELECT)\]|old_policy_scored_states|actor/pg_loss|actor/grad_norm|actor/kl_loss' "$RUN_LOG" | tail -30
 echo "GSM8K ContextGraph GraphRPO smoke completed; checkpoint=$CHECKPOINT_ROOT/global_step_$TOTAL_TRAINING_STEPS log=$RUN_LOG"

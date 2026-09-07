@@ -17,7 +17,7 @@ def test_ctxgraph_smoke_exercises_real_contextgraph_graphrpo_path():
         "+actor_rollout_ref.rollout.plugin.must_branch=True",
         "+actor_rollout_ref.rollout.plugin.graph_rpo_credit_backend=old_policy_answer_likelihood",
         "+actor_rollout_ref.rollout.plugin.graph_rpo_scope_process_reward=False",
-        "reward/graph_explicit_ops",
+        r"\[GRAPH CONTROLLER (MERGE|PRUNE|ADD_EDGE|SELECT)\]",
         "graphrpo/old_policy_scored_states",
         "actor/grad_norm:",
     ]
@@ -40,6 +40,7 @@ def test_ctxgraph_runtime_enforces_branch_and_can_disable_external_scope_judge()
 
     assert "and must_branch" in agent_source
     assert "and not branches" in agent_source
+    assert "and (not must_branch or bool(branches))" in agent_source
     assert "fn_call['function'] == 'think'" in agent_source
     assert 'required_labels = ["graphrpo"]' in agent_source
     assert 'getattr(config.plugin, "graph_rpo_scope_process_reward", True)' in agent_source
