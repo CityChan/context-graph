@@ -131,4 +131,8 @@ echo "Wiki-18 search log: $SEARCH_LOG"
 if [ "$RC" -ne 0 ]; then
   exit "$RC"
 fi
-python "$PROJECT_ROOT/scripts/audit_skillrl_search_reference.py" --sources searchR1_nq,searchR1_hotpotqa --require-training-health "$RUN_LOG"
+if [[ "${TRAINER_VAL_ONLY:-False}" =~ ^([Tt]rue|1)$ ]]; then
+  python "$PROJECT_ROOT/scripts/audit_skillrl_search_reference.py" --sources searchR1_nq,searchR1_hotpotqa "$RUN_LOG"
+else
+  python "$PROJECT_ROOT/scripts/audit_skillrl_search_reference.py" --sources searchR1_nq,searchR1_hotpotqa --require-training-health "$RUN_LOG"
+fi
