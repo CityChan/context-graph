@@ -363,7 +363,14 @@ def extract_json_tool(text: str):
                 try: return p(frag)
                 except Exception: pass
         return None
-    for kind, body in re.findall(r"<(tool_call|answer|search)>\s*(.*?)\s*</\1>", text, flags=re.S):
+    native_action = re.search(r"<(answer|search)>\s*(.*?)\s*</\1>", text, flags=re.S)
+    if native_action:
+        kind, body = native_action.groups()
+        if kind == "answer":
+            return [{"function": "finish", "arguments": {"answer": body.strip()}}]
+        return [{"function": "search", "arguments": {"query": body.strip(), "topk": 3}}]
+
+    for kind, body in re.findall(r"<(tool_call)>\s*(.*?)\s*</\1>", text, flags=re.S):
         body = body.strip()
         if kind == "tool_call":
             if body.startswith("```") and body.endswith("```"):
@@ -372,10 +379,6 @@ def extract_json_tool(text: str):
             if isinstance(obj, dict) and "name" in obj:
                 args = obj.get("arguments", {})
                 calls.append({"function": obj["name"], "arguments": args if isinstance(args, dict) else {}})
-        elif kind == "answer":
-            calls.append({"function": "finish", "arguments": {"answer": body}})
-        elif kind == "search":
-            calls.append({"function": "search", "arguments": {"query": body}})
     aligned_calls = []
     for fn in calls:
         if fn['function'] == "search":
@@ -397,7 +400,6 @@ def extract_fn_call(text):
         return None
     if '<tool_call>' in text or '<answer>' in text or '<search>' in text:
         json_tool = extract_json_tool(text)
-        print(json_tool)
         if len(json_tool) > 0:
             return json_tool
         else:

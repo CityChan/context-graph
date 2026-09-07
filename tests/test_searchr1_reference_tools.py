@@ -75,10 +75,20 @@ def test_searchr1_prompt_requires_a_short_answer_and_only_search_tools():
 
 def test_searchr1_native_action_tags_are_parsed():
     assert extract_fn_call("<think>Need evidence.</think><search>Jane Austen author</search>") == [
-        {"function": "search", "arguments": {"query": "Jane Austen author", "topk": 5}}
+        {"function": "search", "arguments": {"query": "Jane Austen author", "topk": 3}}
     ]
     assert extract_fn_call("<think>Done.</think><answer>Jane Austen</answer>") == [
         {"function": "finish", "arguments": {"answer": "Jane Austen"}}
+    ]
+
+
+def test_searchr1_executes_only_the_first_native_action():
+    response = (
+        "<think>Need evidence.</think><search>Jane Austen author</search>"
+        "<answer>Charles Dickens</answer>"
+    )
+    assert extract_fn_call(response) == [
+        {"function": "search", "arguments": {"query": "Jane Austen author", "topk": 3}}
     ]
 
 
