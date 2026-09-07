@@ -472,9 +472,12 @@ class AlgoConfig(BaseConfig):
     foldgrpo_process_reward_mode: str = "relative_extrema"
     # GraphRPO Eq. (15): A_tilde = A_group + alpha * edit_delta + beta * Q.
     # ``graphrpo_epsilon`` lower-bounds the population-standard-deviation
-    # denominator used by the binary group-relative outcome advantage.
+    # denominator used by the group-relative outcome advantage. Formal
+    # GraphRPO uses binary verified rewards by default; controlled reward
+    # ablations may explicitly opt in to finite scalar terminal rewards.
     graphrpo_alpha: float = 1.0
     graphrpo_beta: float = 1.0
     graphrpo_epsilon: float = 1e-6
+    graphrpo_require_binary_reward: bool = True
     # Whether to fix bad positive advantages
     fix_bad_positive_adv: bool = False

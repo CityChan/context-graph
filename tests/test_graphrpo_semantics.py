@@ -160,6 +160,31 @@ def test_graphrpo_rejects_empty_episode_and_nonbinary_reward():
         )
 
 
+def test_graphrpo_scalar_reward_ablation_and_zero_local_credit():
+    torch = _torch()
+    from verl.trainer.ppo.core_algos import compute_graphrpo_advantage
+
+    mask = torch.ones((2, 3), dtype=torch.float32)
+    edit = torch.tensor([[0.5, -0.5, 0.25], [0.1, 0.2, 0.3]], dtype=torch.float32)
+    process = torch.tensor([[0.0, -1.0, -0.5], [-0.2, 0.0, -0.7]], dtype=torch.float32)
+    advantages, _ = compute_graphrpo_advantage(
+        token_level_rewards=_terminal_rewards([0.2, 2.2], width=3),
+        response_mask=mask,
+        index=np.array(["q", "q"], dtype=object),
+        gen_uid=np.array(["episode-0", "episode-1"], dtype=object),
+        graph_edit_credit_mask=edit,
+        process_reward_mask=process,
+        config={
+            "graphrpo_alpha": 0.0,
+            "graphrpo_beta": 0.0,
+            "graphrpo_require_binary_reward": False,
+        },
+    )
+
+    assert torch.allclose(advantages[0], torch.full((3,), -1.0))
+    assert torch.allclose(advantages[1], torch.full((3,), 1.0))
+
+
 def test_graphrpo_policy_loss_uses_precomputed_global_weights():
     torch = _torch()
     from verl.trainer.ppo.core_algos import compute_policy_loss_graphrpo

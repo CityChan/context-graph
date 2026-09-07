@@ -2,6 +2,9 @@ from pathlib import Path
 
 
 SCRIPT = Path("scripts/smoke_train_gsm8k_ctxgraph_graphrpo_1node_10step.sh")
+QERL_ALIGNED_SCRIPT = Path(
+    "scripts/smoke_train_gsm8k_ctxgraph_graphrpo_nocredit_lora32_10step.sh"
+)
 
 
 def test_ctxgraph_smoke_exercises_real_contextgraph_graphrpo_path():
@@ -44,3 +47,24 @@ def test_ctxgraph_runtime_enforces_branch_and_can_disable_external_scope_judge()
     assert "fn_call['function'] == 'think'" in agent_source
     assert 'required_labels = ["graphrpo"]' in agent_source
     assert 'getattr(config.plugin, "graph_rpo_scope_process_reward", True)' in agent_source
+
+
+def test_qerl_aligned_smoke_has_zero_local_credit_lora_and_matched_reward_scale():
+    source = QERL_ALIGNED_SCRIPT.read_text()
+
+    required = [
+        "algorithm.graphrpo_alpha=0.0",
+        "algorithm.graphrpo_beta=0.0",
+        "algorithm.graphrpo_require_binary_reward=False",
+        "actor_rollout_ref.model.lora_rank=32",
+        "actor_rollout_ref.model.lora_alpha=32",
+        "actor_rollout_ref.model.target_modules=all-linear",
+        "actor_rollout_ref.actor.optim.lr=1e-5",
+        "actor_rollout_ref.actor.use_kl_loss=False",
+        "+actor_rollout_ref.rollout.plugin.math_correctness_reward_weight=2.0",
+        "+actor_rollout_ref.rollout.plugin.math_format_reward_weight=0.2",
+        'trainer.logger=\'["console","wandb"]\'',
+        "actor/lora_adapter",
+    ]
+    for setting in required:
+        assert setting in source

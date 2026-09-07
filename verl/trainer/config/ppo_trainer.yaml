@@ -129,6 +129,9 @@ algorithm:
   graphrpo_alpha: 1.0
   graphrpo_beta: 1.0
   graphrpo_epsilon: 1.0e-6
+  # Preserve formal binary GraphRPO rewards unless an ablation explicitly
+  # enables finite scalar terminal rewards (for example, QeRL-style 2.0+0.2).
+  graphrpo_require_binary_reward: True
 
   # Whether to fix bad positive advantages
   fix_bad_positive_adv: False

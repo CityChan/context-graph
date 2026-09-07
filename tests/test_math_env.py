@@ -3,8 +3,10 @@ from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from agents.prompts import create_chat
-from envs.math_env import MathEnv, extract_numeric_answer
+from envs.math_env import MathEnv, extract_numeric_answer, has_contextgraph_finish_format
 
 
 def _item(answer="42"):
@@ -67,6 +69,42 @@ def test_math_env_rejects_wrong_answer():
         "<function=finish><parameter=answer>41</parameter></function>"
     ))
     assert asyncio.run(env.get_reward(None, [], None))[1] == 0
+
+
+def test_math_env_qerl_aligned_reward_uses_contextgraph_finish_format():
+    config = SimpleNamespace(
+        plugin={
+            "math_correctness_reward_weight": 2.0,
+            "math_format_reward_weight": 0.2,
+        }
+    )
+    env = MathEnv(config, None, "math")
+    asyncio.run(env.init_env(_item()))
+    response = "<function=finish><parameter=answer>42</parameter></function>"
+    asyncio.run(env.run_action(response))
+    reward = asyncio.run(env.get_reward(None, [], None))
+
+    assert has_contextgraph_finish_format(response)
+    assert reward[1] == pytest.approx(2.2)
+    assert env.stats["math_correctness_reward"] == pytest.approx(2.0)
+    assert env.stats["math_format_reward"] == pytest.approx(0.2)
+    assert env.judge_audit[-1]["total_reward"] == pytest.approx(2.2)
+
+
+def test_math_env_format_reward_does_not_require_correctness():
+    config = SimpleNamespace(
+        plugin={
+            "math_correctness_reward_weight": 2.0,
+            "math_format_reward_weight": 0.2,
+        }
+    )
+    env = MathEnv(config, None, "math")
+    asyncio.run(env.init_env(_item()))
+    asyncio.run(env.run_action(
+        "<function=finish><parameter=answer>41</parameter></function>"
+    ))
+
+    assert asyncio.run(env.get_reward(None, [], None))[1] == pytest.approx(0.2)
 
 
 def test_math_graph_prompt_exposes_contextgraph_protocol():

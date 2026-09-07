@@ -107,6 +107,9 @@ class NaiveRewardLoopManager(RewardLoopManagerBase):
         env_stats = extra_info.get("env_stats") if isinstance(extra_info, dict) else None
         if isinstance(env_stats, dict):
             for k in ("task_reward", "graph_shaping", "graph_reward",
+                      "math_correctness", "math_format_valid",
+                      "math_correctness_reward", "math_format_reward",
+                      "math_total_reward",
                       "graph_n_nodes", "graph_n_edges", "graph_n_active",
                       "main_turn", "is_branch", "branch_success",
                       "concise_main", "scope_judge", "skill_bank_enabled",

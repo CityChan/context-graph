@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 import re
+from collections.abc import Mapping
 from collections import Counter
 from decimal import Decimal, InvalidOperation
 
@@ -21,6 +23,20 @@ ANSWER_MARKER_RE = re.compile(
     r"[\"']?\s*[$€£]?\s*([-+]?\d[\d,]*(?:\.\d+)?)",
     re.IGNORECASE,
 )
+
+
+def has_contextgraph_finish_format(value: str) -> bool:
+    """Return whether a response contains a valid ContextGraph finish call."""
+    for match in FUNCTION_RE.finditer(str(value or "")):
+        if match.group(1).strip().lower() != "finish":
+            continue
+        arguments = {
+            key.strip().lower(): content.strip()
+            for key, content in PARAMETER_RE.findall(match.group(2))
+        }
+        if arguments.get("answer"):
+            return True
+    return False
 
 
 def _unwrap(value):
@@ -86,6 +102,7 @@ class MathEnv:
         self.question = ""
         self.label_answer = ""
         self.predicted_answer = None
+        self.final_response = None
         self.is_finish = False
         self.env_fail = False
 
@@ -94,6 +111,7 @@ class MathEnv:
         self.question = str(extra["query"])
         self.label_answer = str(extra["answer"])
         self.predicted_answer = None
+        self.final_response = None
         self.is_finish = False
         self.judge_audit = []
         self.instance_info = extra
@@ -123,6 +141,7 @@ class MathEnv:
             if not answer:
                 return {"observation": '[Error] The "finish" function requires an answer.'}
             self.predicted_answer = answer
+            self.final_response = str(response or "")
             self.is_finish = True
             self.stats["finish"] += 1
             self.stats["is_finish"] = 1
@@ -149,14 +168,50 @@ class MathEnv:
 
     async def get_reward(self, item, messages, context):
         prediction = self.predicted_answer
+        format_source = self.final_response
         if prediction is None:
             for message in reversed(messages or []):
                 role = message.get("role") if isinstance(message, dict) else getattr(message, "role", None)
                 if role == "assistant":
                     content = message.get("content", "") if isinstance(message, dict) else getattr(message, "content", "")
                     prediction = str(content or "").strip()
+                    format_source = prediction
                     break
-        reward = await self.score_answer(prediction or "", audit_sink=self.judge_audit)
+        correctness = await self.score_answer(prediction or "", audit_sink=self.judge_audit)
+        plugin = getattr(self.config, "plugin", None)
+
+        def reward_weight(name, default):
+            raw = plugin.get(name, default) if isinstance(plugin, Mapping) else getattr(plugin, name, default)
+            value = float(raw)
+            if not math.isfinite(value) or value < 0.0:
+                raise ValueError(f"{name} must be a finite non-negative number")
+            return value
+
+        correctness_weight = reward_weight("math_correctness_reward_weight", 1.0)
+        format_weight = reward_weight("math_format_reward_weight", 0.0)
+        format_valid = has_contextgraph_finish_format(format_source or "")
+        correctness_reward = correctness_weight * correctness
+        format_reward = format_weight * float(format_valid)
+        reward = correctness_reward + format_reward
+        self.stats["math_correctness"] = int(correctness)
+        self.stats["math_format_valid"] = int(format_valid)
+        self.stats["math_correctness_reward"] = correctness_reward
+        self.stats["math_format_reward"] = format_reward
+        self.stats["math_total_reward"] = reward
+        if self.judge_audit:
+            self.judge_audit[-1].update({
+                "format_valid": bool(format_valid),
+                "correctness_reward": correctness_reward,
+                "format_reward": format_reward,
+                "total_reward": reward,
+            })
+        print("[MATH REWARD] " + json.dumps({
+            "correctness": correctness,
+            "format_valid": bool(format_valid),
+            "correctness_reward": correctness_reward,
+            "format_reward": format_reward,
+            "total_reward": reward,
+        }, ensure_ascii=False))
         self.stats["judge_calls"] = len(self.judge_audit)
         self.stats["judge_positive"] = sum(audit["score"] > 0 for audit in self.judge_audit)
         self.stats["judge_strict_em"] = sum(bool(audit["strict_em"]) for audit in self.judge_audit)

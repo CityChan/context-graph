@@ -636,7 +636,9 @@ def compute_graphrpo_advantage(
     Terminal rewards are deduplicated by ``gen_uid`` so branch streams cannot
     alter group statistics.  Unlike the legacy FoldGRPO path, this estimator
     uses the population standard deviation and adds graph/process credit after
-    outcome normalization exactly as specified in Section 4.2.
+    outcome normalization exactly as specified in Section 4.2. Binary rewards
+    remain the default contract; finite scalar rewards require an explicit
+    ablation opt-in through ``graphrpo_require_binary_reward=False``.
     """
     if epsilon <= 0.0:
         raise ValueError("GraphRPO epsilon must be positive")
@@ -650,15 +652,20 @@ def compute_graphrpo_advantage(
     episode_reward: dict[Any, torch.Tensor] = {}
     episode_question: dict[Any, Any] = {}
     group_episodes: dict[Any, list[Any]] = defaultdict(list)
+    require_binary_reward = bool(
+        config.get("graphrpo_require_binary_reward", True)
+        if config is not None
+        else True
+    )
     for row, (question_id, episode_id) in enumerate(zip(question_ids, episode_ids, strict=True)):
         if episode_id in excluded:
             continue
         reward = terminal_scores[row]
         if not torch.isfinite(reward):
             raise ValueError(f"GraphRPO terminal reward is non-finite for {episode_id!r}")
-        if not bool(torch.isclose(reward, torch.zeros_like(reward), atol=1e-6)) and not bool(
-            torch.isclose(reward, torch.ones_like(reward), atol=1e-6)
-        ):
+        if require_binary_reward and not bool(
+            torch.isclose(reward, torch.zeros_like(reward), atol=1e-6)
+        ) and not bool(torch.isclose(reward, torch.ones_like(reward), atol=1e-6)):
             raise ValueError(
                 "GraphRPO requires verified binary task rewards; "
                 f"episode {episode_id!r} has {reward.item():.6g}"
