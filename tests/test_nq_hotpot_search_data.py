@@ -1,8 +1,11 @@
 import asyncio
+from pathlib import Path
+
 import pandas as pd
 import pytest
 
 from envs.local_search import LocalSearch, searchr1_em_score
+from envs.wiki18_search_server import BatchedSearchEngine, split_contents, truncate_words
 from scripts.prepare_nq_hotpot_search_data import balanced_sample, convert_frame
 
 
@@ -71,6 +74,54 @@ def test_local_search_uses_searchr1_em_without_external_judge():
     assert asyncio.run(env.score_answer("author", audit_sink=audit)) == 1
     assert audit[0]["judge_method"] == "searchr1_em"
     assert audit[0]["judge_model"] is None
+
+
+def test_wiki18_contents_are_exposed_as_title_and_passage():
+    assert split_contents('"Pride and Prejudice"\nA novel by Jane Austen.') == (
+        "Pride and Prejudice",
+        "A novel by Jane Austen.",
+    )
+    assert truncate_words("one two three four", 3).startswith("one two three\n")
+
+
+def test_wiki18_server_batches_concurrent_searches():
+    class FakeRetriever:
+        def __init__(self):
+            self.calls = []
+
+        def search_batch(self, queries, topk):
+            self.calls.append((queries, topk))
+            return [[{"docid": query, "score": 1.0}] * topk for query in queries]
+
+    async def run():
+        retriever = FakeRetriever()
+        engine = BatchedSearchEngine(retriever, max_batch_size=8, timeout_ms=20)
+        await engine.start()
+        try:
+            results = await asyncio.gather(engine.submit("first", 2), engine.submit("second", 3))
+        finally:
+            await engine.stop()
+        return retriever.calls, results
+
+    calls, results = asyncio.run(run())
+    assert calls == [(["first", "second"], 3)]
+    assert [len(result) for result in results] == [2, 3]
+
+
+def test_nq_hotpot_wrapper_uses_wiki18_without_skillrl_checkout():
+    root = Path(__file__).resolve().parents[1]
+    download = (root / "scripts/download_nq_hotpot_search_data_vista.sh").read_text(encoding="utf-8")
+    launcher = (root / "scripts/train_nq_hotpot_grpo_qwen25_7b_4node_idev.sh").read_text(encoding="utf-8")
+    baseline = (root / "scripts/train_bc_baseline_8b_4node_24h_v3_32k.sh").read_text(encoding="utf-8")
+
+    assert "PeterJinGo/wiki-18-e5-index" in download
+    assert "PeterJinGo/wiki-18-corpus" in download
+    assert "intfloat/e5-base-v2" in download
+    assert "git clone" not in download
+    assert "wiki18_search_server.py" in launcher
+    assert "--faiss-gpu" in launcher
+    assert 'export EXTERNAL_SEARCH_URL="$SEARCH_URL"' in launcher
+    assert "EXTERNAL_SEARCH_URL=${EXTERNAL_SEARCH_URL:-}" in baseline
 
 
 def test_converted_rows_survive_parquet_round_trip(tmp_path):

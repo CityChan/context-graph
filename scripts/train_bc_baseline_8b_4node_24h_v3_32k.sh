@@ -105,6 +105,7 @@ export NCCL_P2P_LEVEL=NVL
 PROJECT_ROOT=/work/09281/chc_1996/vista/context-graph
 MODEL_PATH=${MODEL_PATH:-Qwen/Qwen3-8B}
 EMBED_MODEL=${EMBED_MODEL:-Qwen/Qwen3-Embedding-8B}
+EXTERNAL_SEARCH_URL=${EXTERNAL_SEARCH_URL:-}
 export HF_HOME=${HF_HOME:-/work/09281/chc_1996/vista/cache}
 export HF_HUB_CACHE=${HF_HUB_CACHE:-$HF_HOME/hub}
 cd "$PROJECT_ROOT"
@@ -204,22 +205,26 @@ for f in "$TRAIN_PARQUET" "$VAL_PARQUET"; do
     exit 1
   fi
 done
-# HF corpus + embedding datasets (will use HF cache from \$HF_HOME/hub)
-CORPUS_DATASET="Tevatron/browsecomp-plus-corpus"
-CORPUS_EMBEDDING_DATASET="miaolu3/browsecomp-plus"
-CORPUS_CACHE_DIR="$HF_HOME/hub/datasets--${CORPUS_DATASET//\//--}"
-EMBED_CACHE_DIR_DS="$HF_HOME/hub/datasets--${CORPUS_EMBEDDING_DATASET//\//--}"
-if [ ! -d "$CORPUS_CACHE_DIR" ]; then
-  echo "ERROR: corpus dataset not cached at $CORPUS_CACHE_DIR"
-  echo "       login node: hf download $CORPUS_DATASET --repo-type=dataset"
-  exit 1
+if [ -z "$EXTERNAL_SEARCH_URL" ]; then
+  # HF corpus + embedding datasets (will use HF cache from \$HF_HOME/hub)
+  CORPUS_DATASET="Tevatron/browsecomp-plus-corpus"
+  CORPUS_EMBEDDING_DATASET="miaolu3/browsecomp-plus"
+  CORPUS_CACHE_DIR="$HF_HOME/hub/datasets--${CORPUS_DATASET//\//--}"
+  EMBED_CACHE_DIR_DS="$HF_HOME/hub/datasets--${CORPUS_EMBEDDING_DATASET//\//--}"
+  if [ ! -d "$CORPUS_CACHE_DIR" ]; then
+    echo "ERROR: corpus dataset not cached at $CORPUS_CACHE_DIR"
+    echo "       login node: hf download $CORPUS_DATASET --repo-type=dataset"
+    exit 1
+  fi
+  if [ ! -d "$EMBED_CACHE_DIR_DS" ]; then
+    echo "ERROR: embedding dataset not cached at $EMBED_CACHE_DIR_DS"
+    echo "       login node: hf download $CORPUS_EMBEDDING_DATASET --repo-type=dataset"
+    exit 1
+  fi
+  probe "BC parquets + HF datasets ok"
+else
+  probe "configured train/validation parquets ok; external search=$EXTERNAL_SEARCH_URL"
 fi
-if [ ! -d "$EMBED_CACHE_DIR_DS" ]; then
-  echo "ERROR: embedding dataset not cached at $EMBED_CACHE_DIR_DS"
-  echo "       login node: hf download $CORPUS_EMBEDDING_DATASET --repo-type=dataset"
-  exit 1
-fi
-probe "BC parquets + HF datasets ok"
 
 RESUME_ARGS=()
 if [ -n "${RESUME_CHECKPOINT_PATH:-}" ]; then
@@ -249,19 +254,21 @@ fi
 # ── Pre-flight: 8B + embedder weights must be present (offline) ──
 probe "checking model caches"
 TRAINER_CACHE_DIR="$HF_HUB_CACHE/models--${MODEL_PATH//\//--}"
-EMBED_CACHE_DIR="$HF_HUB_CACHE/models--${EMBED_MODEL//\//--}"
 if [ ! -d "$TRAINER_CACHE_DIR" ]; then
   echo "ERROR: $MODEL_PATH not found at $TRAINER_CACHE_DIR"
   echo "       From a login node, run: hf download $MODEL_PATH"
   exit 1
 fi
-if [ ! -d "$EMBED_CACHE_DIR" ]; then
-  echo "ERROR: $EMBED_MODEL not found at $EMBED_CACHE_DIR"
-  echo "       From a login node, run: hf download $EMBED_MODEL"
-  exit 1
-fi
 probe "trainer cache: $TRAINER_CACHE_DIR"
-probe "embedder cache: $EMBED_CACHE_DIR"
+if [ -z "$EXTERNAL_SEARCH_URL" ]; then
+  EMBED_CACHE_DIR="$HF_HUB_CACHE/models--${EMBED_MODEL//\//--}"
+  if [ ! -d "$EMBED_CACHE_DIR" ]; then
+    echo "ERROR: $EMBED_MODEL not found at $EMBED_CACHE_DIR"
+    echo "       From a login node, run: hf download $EMBED_MODEL"
+    exit 1
+  fi
+  probe "embedder cache: $EMBED_CACHE_DIR"
+fi
 
 # ── Topology: NODE0 = dedicated search server (no Ray), NODE1 = Ray head, NODE2-3 = workers ──
 SEARCH_NODE=${NODELIST[0]}
@@ -275,8 +282,13 @@ echo "  Trainer Ray head:      $TRAINER_HEAD_NODE ($TRAINER_HEAD_IP)"
 echo "  Trainer workers:       ${NODELIST[@]:2}"
 
 # ── Start envs/search_server.py on dedicated SEARCH_NODE ──
-probe "starting envs/search_server.py with $EMBED_MODEL on dedicated $SEARCH_NODE:18999"
-srun --overlap --nodes=1 --ntasks=1 -w "$SEARCH_NODE" bash -c "
+SEARCH_PID=""
+if [ -n "$EXTERNAL_SEARCH_URL" ]; then
+  export LOCAL_SEARCH_URL="$EXTERNAL_SEARCH_URL"
+  probe "using wrapper-managed search server at $LOCAL_SEARCH_URL"
+else
+  probe "starting envs/search_server.py with $EMBED_MODEL on dedicated $SEARCH_NODE:18999"
+  srun --overlap --nodes=1 --ntasks=1 -w "$SEARCH_NODE" bash -c "
   source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
   conda activate cxtgraph
   cd $PROJECT_ROOT
@@ -292,28 +304,30 @@ srun --overlap --nodes=1 --ntasks=1 -w "$SEARCH_NODE" bash -c "
     --port 18999 \
     --corpus Tevatron/browsecomp-plus-corpus \
     --corpus-embedding-dataset miaolu3/browsecomp-plus
-" >/tmp/hp_server_$$.log 2>&1 &
-SEARCH_PID=$!
+  " >/tmp/hp_server_$$.log 2>&1 &
+  SEARCH_PID=$!
 
-probe "waiting for search server /health (up to ${BC_SEARCH_TIMEOUT_SECONDS}s)"
-HEALTH_OK=0
-for _ in $(seq 1 "$BC_SEARCH_TIMEOUT_SECONDS"); do
-  if curl --noproxy '*' -fsS "http://${SEARCH_NODE_IP}:18999/health" >/dev/null 2>&1; then
-    HEALTH_OK=1
-    break
-  fi
-  if ! kill -0 "$SEARCH_PID" 2>/dev/null; then
-    echo "ERROR: search server exited before becoming healthy. Last 80 lines:"
+  probe "waiting for search server /health (up to ${BC_SEARCH_TIMEOUT_SECONDS}s)"
+  HEALTH_OK=0
+  for _ in $(seq 1 "$BC_SEARCH_TIMEOUT_SECONDS"); do
+    if curl --noproxy '*' -fsS "http://${SEARCH_NODE_IP}:18999/health" >/dev/null 2>&1; then
+      HEALTH_OK=1
+      break
+    fi
+    if ! kill -0 "$SEARCH_PID" 2>/dev/null; then
+      echo "ERROR: search server exited before becoming healthy. Last 80 lines:"
+      tail -80 /tmp/hp_server_$$.log || true
+      exit 1
+    fi
+    sleep 1
+  done
+  if [ "$HEALTH_OK" != "1" ]; then
+    echo "ERROR: search server did not become healthy within ${BC_SEARCH_TIMEOUT_SECONDS}s. Last 80 lines:"
     tail -80 /tmp/hp_server_$$.log || true
+    kill "$SEARCH_PID" 2>/dev/null || true
     exit 1
   fi
-  sleep 1
-done
-if [ "$HEALTH_OK" != "1" ]; then
-  echo "ERROR: search server did not become healthy within ${BC_SEARCH_TIMEOUT_SECONDS}s. Last 80 lines:"
-  tail -80 /tmp/hp_server_$$.log || true
-  kill "$SEARCH_PID" 2>/dev/null || true
-  exit 1
+  export LOCAL_SEARCH_URL="http://${SEARCH_NODE_IP}:18999"
 fi
 
 probe "waiting for search server /search probe (up to ${BC_SEARCH_TIMEOUT_SECONDS}s)"
@@ -321,22 +335,23 @@ SEARCH_OK=0
 for _ in $(seq 1 "$BC_SEARCH_TIMEOUT_SECONDS"); do
   if curl --noproxy '*' -fsS -X POST -H 'Content-Type: application/json' \
       -d '{"query":"Eiffel Tower","k":1}' \
-      "http://${SEARCH_NODE_IP}:18999/search" >/dev/null 2>&1; then
+      "$LOCAL_SEARCH_URL/search" >/dev/null 2>&1; then
     SEARCH_OK=1
     break
   fi
-  if ! kill -0 "$SEARCH_PID" 2>/dev/null; then
+  if [ -n "$SEARCH_PID" ] && ! kill -0 "$SEARCH_PID" 2>/dev/null; then
     break
   fi
   sleep 1
 done
 if [ "$SEARCH_OK" != "1" ]; then
-  echo "ERROR: search server not reachable at ${SEARCH_NODE_IP}:18999. Last 80 lines:"
-  tail -80 /tmp/hp_server_$$.log || true
-  kill "$SEARCH_PID" 2>/dev/null || true
+  echo "ERROR: search server not reachable at $LOCAL_SEARCH_URL"
+  if [ -n "$SEARCH_PID" ]; then
+    tail -80 /tmp/hp_server_$$.log || true
+    kill "$SEARCH_PID" 2>/dev/null || true
+  fi
   exit 1
 fi
-export LOCAL_SEARCH_URL="http://${SEARCH_NODE_IP}:18999"
 probe "search server up at $LOCAL_SEARCH_URL"
 
 # ── Stale Ray cleanup on both nodes ──
@@ -408,7 +423,9 @@ sleep 20
 probe "all $((NUM_NODES - 2)) trainer workers launched, cluster settling"
 
 cleanup() {
-  kill "$SEARCH_PID" 2>/dev/null || true
+  if [ -n "$SEARCH_PID" ]; then
+    kill "$SEARCH_PID" 2>/dev/null || true
+  fi
   kill "$RAY_HEAD_PID" 2>/dev/null || true
   for pid in "${WORKER_PIDS[@]}"; do
     kill "$pid" 2>/dev/null || true
