@@ -70,6 +70,15 @@ def test_dummy_padding_is_loss_inert_and_not_node_count_based():
     assert "self.actor_rollout_wg.world_size" in source
     assert "ppo_mini_batch_size * self.config.trainer.nnodes" not in source
     assert 'dummy_sample.batch["response_mask"] = torch.zeros_like' in source
+    assert 'if "overlong_mask" in dummy_sample.batch:' in source
+
+
+def test_standard_grpo_does_not_require_contextgraph_rollout_mask():
+    source = (ROOT / "verl" / "trainer" / "ppo" / "ray_trainer.py").read_text(encoding="utf-8")
+
+    assert 'if "mask_rollout" in batch.batch:' in source
+    assert 'mask_rollout = batch.batch["mask_rollout"]' in source
+    assert "metrics['optimization_masked_rollouts'] = optimization_masked_rollouts" in source
 
 
 def test_actor_preserves_overlong_mask_for_policy_loss():

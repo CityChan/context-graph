@@ -1209,7 +1209,8 @@ class RayPPOTrainer:
         # Dummy tokens must not contribute to policy, entropy, or KL losses.
         # Keep this zero independently of overlong_mask as defense in depth.
         dummy_sample.batch["response_mask"] = torch.zeros_like(dummy_sample.batch["response_mask"])
-        dummy_sample.batch["overlong_mask"] = torch.zeros_like(dummy_sample.batch["overlong_mask"])
+        if "overlong_mask" in dummy_sample.batch:
+            dummy_sample.batch["overlong_mask"] = torch.zeros_like(dummy_sample.batch["overlong_mask"])
         dummy_sample.batch["attention_mask"] = torch.zeros_like(dummy_sample.batch["attention_mask"])
         dummy_sample.non_tensor_batch["uid"] = np.array([uuid.uuid4(),], dtype=object)
         gen_uid_dummy = uuid.uuid4()
@@ -1423,14 +1424,16 @@ class RayPPOTrainer:
                     if "response_mask" not in batch.batch.keys():
                         batch.batch["response_mask"] = compute_response_mask(batch)
 
-                    # mask_rollout is an optimization decision supplied by the
-                    # agent loop. It is independent from explicit termination
-                    # metrics such as overlong/token_limit/no_finish.
+                    # mask_rollout is an optional optimization decision supplied
+                    # by ContextGraph agent loops. Standard single-turn rollouts
+                    # do not emit it and should keep every generated response.
                     if self.config.algorithm.mask_overlong:
-                        batch.batch["overlong_mask"] = (~(batch.batch["mask_rollout"]).bool()).int()
-                        metrics.update({
-                            'optimization_masked_rollouts': batch.batch["mask_rollout"].sum().item()
-                        })
+                        optimization_masked_rollouts = 0
+                        if "mask_rollout" in batch.batch:
+                            mask_rollout = batch.batch["mask_rollout"]
+                            batch.batch["overlong_mask"] = (~mask_rollout.bool()).int()
+                            optimization_masked_rollouts = mask_rollout.sum().item()
+                        metrics['optimization_masked_rollouts'] = optimization_masked_rollouts
 
                     # TODO@Miao[DONE]: pad batch size to muliplicative of mini_batch_size
                     loss_mode = self.config.actor_rollout_ref.actor.policy_loss.get(
