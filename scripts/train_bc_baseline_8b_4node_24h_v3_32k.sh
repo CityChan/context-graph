@@ -66,18 +66,19 @@ if [ -n "${WORK:-}" ] && [ -f "$WORK/.wandb_env" ]; then
   # shellcheck disable=SC1090
   source "$WORK/.wandb_env"
 fi
-export WANDB_API_KEY=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
 
 # ── OpenAI judge (REQUIRED for BrowseComp — no LLM judge = no reward signal) ──
 if [ -n "${WORK:-}" ] && [ -f "$WORK/.openai_env" ]; then
   # shellcheck disable=SC1090
   source "$WORK/.openai_env"
 fi
-if [ -z "${OPENAI_API_KEY:-}" ] || [ "$OPENAI_API_KEY" = "dummy" ]; then
+REQUIRE_OPENAI_JUDGE=${REQUIRE_OPENAI_JUDGE:-1}
+if [ "$REQUIRE_OPENAI_JUDGE" = 1 ] && { [ -z "${OPENAI_API_KEY:-}" ] || [ "$OPENAI_API_KEY" = "dummy" ]; }; then
   echo "ERROR: OPENAI_API_KEY not set. BC training requires the OpenAI judge."
   echo "       echo 'export OPENAI_API_KEY=sk-...' > \$WORK/.openai_env && chmod 600 \$WORK/.openai_env"
   exit 1
 fi
+export OPENAI_API_KEY=${OPENAI_API_KEY:-dummy}
 JUDGE_MODEL=${JUDGE_MODEL:-gpt-5-nano}  # match upstream paper; override JUDGE_MODEL=gpt-4o-mini for cheaper runs
 
 # ── Conda + CUDA ──
@@ -131,6 +132,7 @@ fi
 
 TS=$(date +%Y%m%d_%H%M%S)
 RUN_TAG=${RUN_TAG:-4n_24h_v3_32k}
+TASK_LABEL=${TASK_LABEL:-BrowseComp-Plus}
 EXPERIMENT_NAME=${EXPERIMENT_NAME:-"train_baseline_bc_8b_${RUN_TAG}_${TS}"}
 TRAIN_DATA_FILE=${TRAIN_DATA_FILE:-data/bc_train.parquet}
 VAL_DATA_FILE=${VAL_DATA_FILE:-data/bc_test.parquet}
@@ -181,7 +183,7 @@ fi
 probe() { printf '+++ [%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 
 echo "=============================================================="
-echo "  TRAIN: Vanilla ReAct baseline on BrowseComp-Plus (8B, 4 nodes [1 search + 3 trainer], 30 steps, 24h training, 32K-resp)"
+echo "  TRAIN: Vanilla ReAct baseline on $TASK_LABEL (4 nodes [1 search + 3 trainer])"
 echo "  Job: ${SLURM_JOB_ID:-<idev>}   Head: $NODE0 ($NODE0_IP)"
 echo "  Worker(s): ${NODELIST[@]:1}"
 echo "  Trainer model:  $MODEL_PATH"
@@ -192,13 +194,13 @@ echo "  Started: $(date)"
 echo "=============================================================="
 
 # ── Pre-flight: BrowseComp data parquets + HF datasets must exist ──
-probe "checking BrowseComp artefacts"
-TRAIN_PARQUET="$PROJECT_ROOT/$TRAIN_DATA_FILE"
-VAL_PARQUET="$PROJECT_ROOT/$VAL_DATA_FILE"
+probe "checking $TASK_LABEL training artefacts"
+if [[ "$TRAIN_DATA_FILE" = /* ]]; then TRAIN_PARQUET=$TRAIN_DATA_FILE; else TRAIN_PARQUET="$PROJECT_ROOT/$TRAIN_DATA_FILE"; fi
+if [[ "$VAL_DATA_FILE" = /* ]]; then VAL_PARQUET=$VAL_DATA_FILE; else VAL_PARQUET="$PROJECT_ROOT/$VAL_DATA_FILE"; fi
 for f in "$TRAIN_PARQUET" "$VAL_PARQUET"; do
   if [ ! -f "$f" ]; then
     echo "ERROR: missing $f"
-    echo "       Run: gdown 'https://drive.google.com/uc?id=1aX5xXAN5R-gLKd8A0AY-troxXJRawyAM' -O bc.zip && unzip bc.zip -d data/"
+    echo "       Prepare the configured train/validation parquet files before launching."
     exit 1
   fi
 done
@@ -419,7 +421,7 @@ probe "querying ray status"
 ray status || echo "WARN: ray status check failed"
 
 echo "=============================================================="
-echo "  Launching Vanilla ReAct GRPO baseline (4 nodes [1 search + 3 trainer], 30 steps, 32K resp [24h], BrowseComp-Plus)"
+echo "  Launching Vanilla ReAct GRPO baseline on $TASK_LABEL"
 echo "  workflow=search_base, no branch/graph/consolidation, process_reward=[flat]"
 echo "  vLLM gpu_memory_utilization=0.6 + FSDP CPU offload"
 echo "  val_before_train=True (step 0 = zero-shot ReAct), val every 10 steps, save every 10 steps"

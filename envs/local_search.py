@@ -8,6 +8,7 @@ from collections import Counter
 import ast
 import asyncio, json, httpx
 import logging
+import string
 
 # call this once early (after your logging.basicConfig if you use it)
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -172,6 +173,22 @@ def relaxed_em(label: str, pred: str) -> bool:
     ca,cb=Counter(A),Counter(B);
     if sum((ca&cb).values())/min(len(A),len(B) or 1)>=0.9: return True
     return False
+
+
+def searchr1_normalize_answer(value: str) -> str:
+    """Match Search-R1's QA exact-match normalization."""
+    value = str(value).lower()
+    punctuation = set(string.punctuation)
+    value = "".join(character for character in value if character not in punctuation)
+    value = re.sub(r"\b(a|an|the)\b", " ", value)
+    return " ".join(value.split())
+
+
+def searchr1_em_score(labels, prediction: str) -> bool:
+    if isinstance(labels, str):
+        labels = [labels]
+    normalized_prediction = searchr1_normalize_answer(prediction)
+    return any(searchr1_normalize_answer(label) == normalized_prediction for label in labels)
 
 
 async def call_openai(messages, model='gpt-5-nano', max_retries=3):
@@ -440,6 +457,15 @@ class LocalSearch:
         extra = extra.item() if hasattr(extra, 'ndim') and extra.ndim == 0 else extra[0]
         self.question = extra['query']
         self.label_answer = extra['answer']
+        aliases = extra.get('answer_aliases', [self.label_answer])
+        if hasattr(aliases, 'tolist'):
+            aliases = aliases.tolist()
+        if isinstance(aliases, str):
+            aliases = [aliases]
+        self.answer_aliases = [str(answer) for answer in aliases if str(answer).strip()]
+        if not self.answer_aliases:
+            self.answer_aliases = [self.label_answer]
+        self.reward_mode = extra.get('reward_mode', 'default')
         self.predicted_answer = None
         self.judge_audit = []
         self.instance_info = copy.deepcopy(extra)
@@ -579,6 +605,27 @@ Once you’re confident everything is covered and verified, submit the final ans
 
     async def score_answer(self, predicted_answer, audit_sink=None):
         """Score an arbitrary answer without mutating the episode state."""
+        if getattr(self, 'reward_mode', 'default') == 'searchr1_em':
+            score = int(searchr1_em_score(self.answer_aliases, predicted_answer))
+            audit = {
+                "question": self.question,
+                "correct_answers": self.answer_aliases,
+                "predicted_answer": predicted_answer,
+                "strict_em": bool(score),
+                "judge_model": None,
+                "judge_method": "searchr1_em",
+                "score": score,
+            }
+            if audit_sink is not None:
+                audit_sink.append(copy.deepcopy(audit))
+            print("[JUDGE AUDIT] " + json.dumps({
+                "score": score,
+                "method": "searchr1_em",
+                "strict_em": bool(score),
+                "judge_model": None,
+            }, ensure_ascii=False))
+            print(f"[Judged] score={score}\nLabel: {self.answer_aliases[0]}\nModel: " + predicted_answer.split('\n')[0])
+            return score
         if '<q1>' in self.label_answer:
             label_answer_dict = extract_q_dict(self.label_answer)
             predicted_answer_dict = extract_q_dict(predicted_answer)
