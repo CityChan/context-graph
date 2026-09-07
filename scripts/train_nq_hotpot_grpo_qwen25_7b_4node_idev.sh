@@ -117,6 +117,8 @@ export MAX_SESSION=${MAX_SESSION:-4}
 export VAL_MAX_SESSION=${VAL_MAX_SESSION:-4}
 export TURN_MAX_NEW_TOKENS=${TURN_MAX_NEW_TOKENS:-512}
 export FINAL_ANSWER_RESERVE=${FINAL_ANSWER_RESERVE:-1024}
+export WORKFLOW_OVERRIDE=searchr1
+export SEARCH_TOPK_CAP=${SEARCH_TOPK_CAP:-3}
 export RUN_TAG=${RUN_TAG:-searchr1_nq_hotpot_qwen25_7b_grpo_10step}
 export EXPERIMENT_NAME=${EXPERIMENT_NAME:-$RUN_TAG-$TS}
 export BC_SEARCH_TIMEOUT_SECONDS=60
@@ -132,7 +134,7 @@ if [ "$RC" -ne 0 ]; then
   exit "$RC"
 fi
 if [[ "${TRAINER_VAL_ONLY:-False}" =~ ^([Tt]rue|1)$ ]]; then
-  python "$PROJECT_ROOT/scripts/audit_skillrl_search_reference.py" --sources searchR1_nq,searchR1_hotpotqa "$RUN_LOG"
+  python "$PROJECT_ROOT/scripts/audit_skillrl_search_reference.py" --sources searchR1_nq,searchR1_hotpotqa --require-all-benchmarks "$RUN_LOG"
 else
-  python "$PROJECT_ROOT/scripts/audit_skillrl_search_reference.py" --sources searchR1_nq,searchR1_hotpotqa --require-training-health "$RUN_LOG"
+  python "$PROJECT_ROOT/scripts/audit_skillrl_search_reference.py" --sources searchR1_nq,searchR1_hotpotqa --require-all-benchmarks --require-training-health "$RUN_LOG"
 fi

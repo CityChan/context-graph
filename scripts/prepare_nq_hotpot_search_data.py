@@ -84,7 +84,7 @@ def convert_frame(frame: pd.DataFrame, split: str, seed: int) -> tuple[pd.DataFr
             "answer": aliases[0],
             "answer_aliases": aliases,
             "reward_mode": "searchr1_em",
-            "workflow": "search_base",
+            "workflow": "searchr1",
             "split": split,
             "source": "PeterJinGo/nq_hotpotqa_train",
             "source_index": int(source_index),

@@ -50,6 +50,14 @@ I've uploaded a python code repository in the directory /testbed. Consider the f
         user_prompt = SEARCH_EXAMPLE + '\n\n' + problem_statement
         chat = [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}]
         return chat
+    elif workflow == 'searchr1':
+        tool_description = PARALLEL_TOOL_PROMPT.format(
+            description=convert_tools_to_description(search_tool(searchr1=True))
+        )
+        system_prompt = SEARCHR1_SYSTEM_PROMPT + '\n\n' + tool_description
+        user_prompt = SEARCHR1_USER_PROMPT.format(Question=problem_statement)
+        chat = [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}]
+        return chat
     elif workflow == 'search_base':  # From https://github.com/texttron/BrowseComp-Plus/blob/main/search_agent/prompts.py
         tool_description = PARALLEL_TOOL_PROMPT.format(description=convert_tools_to_description(search_tool()))
         system_prompt = 'You are an expert research agent focused on comprehensive research strategy, execution, and final report writing. Your core goal is to be maximally helpful to the user by researching their query thoroughly and creating an excellent research report that answers the query very well.'  + '\n\n' + tool_description
@@ -491,6 +499,20 @@ Exact Answer: {{your succinct, final answer}}
 Confidence: {{your confidence score between 0% and 100% for your answer}}
 
 Use finish tool to submit your answer.
+""".strip()
+
+
+SEARCHR1_SYSTEM_PROMPT = """
+You are a question-answering agent that can use a search engine. Work step by step, but keep every turn brief. Use exactly one function call per turn. Search when external information is needed. Once you have enough information, call finish. In finish.answer, provide only the shortest final answer span, without explanation, citations, confidence, or restating the question.
+""".strip()
+
+
+SEARCHR1_USER_PROMPT = """
+Answer the given question.
+
+Question: {Question}
+
+First use the search function to retrieve relevant evidence. You may search again if needed. When ready, call finish and put only the succinct answer in its answer field. For example, use `Beijing`, not `The answer is Beijing because ...`.
 """.strip()
 
 CODE_SYSTEM_PROMPT = '''You are OpenHands agent, a helpful AI assistant that can interact with a computer to solve tasks.

@@ -42,8 +42,9 @@ def summarize_log(
     scores = {}
     score_history = {}
     for source in sources:
-        key = f"val/{source}/test_score"
-        values = extract_numbers(text, key)
+        current_key = f"val-core/{source}/reward/mean@1"
+        legacy_key = f"val/{source}/test_score"
+        values = extract_numbers(text, current_key) or extract_numbers(text, legacy_key)
         if values:
             scores[source] = values[-1]
             score_history[source] = values
@@ -70,7 +71,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--require-all-benchmarks",
         action="store_true",
-        help="Require all seven Search-R1 validation metrics.",
+        help="Require one validation metric for every source selected by --sources.",
     )
     parser.add_argument(
         "--sources",

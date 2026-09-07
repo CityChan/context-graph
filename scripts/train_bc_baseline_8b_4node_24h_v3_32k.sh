@@ -165,12 +165,18 @@ VAL_MAX_SESSION=${VAL_MAX_SESSION:-10}
 TURN_MAX_NEW_TOKENS=${TURN_MAX_NEW_TOKENS:-768}
 FINAL_ANSWER_RESERVE=${FINAL_ANSWER_RESERVE:-2048}
 FINAL_ANSWER_SAFETY_MARGIN=${FINAL_ANSWER_SAFETY_MARGIN:-64}
+WORKFLOW_OVERRIDE=${WORKFLOW_OVERRIDE:-}
+SEARCH_TOPK_CAP=${SEARCH_TOPK_CAP:-10}
 ENTROPY_FROM_LOGITS_WITH_CHUNKING=${ENTROPY_FROM_LOGITS_WITH_CHUNKING:-True}
 CHECKPOINT_ROOT=${CHECKPOINT_ROOT:-${SCRATCH:-/scratch/09281/chc_1996}/context-graph-ckpts/$EXPERIMENT_NAME}
 
 # Qwen3-8B advertises 40,960 positions. Longer evaluations must override both
 # the actor/reference HF config and vLLM's independently loaded HF config.
 LONG_CONTEXT_ARGS=()
+WORKFLOW_OVERRIDE_ARGS=()
+if [ -n "$WORKFLOW_OVERRIDE" ]; then
+  WORKFLOW_OVERRIDE_ARGS+=("+actor_rollout_ref.rollout.plugin.workflow_override=$WORKFLOW_OVERRIDE")
+fi
 if [ "$CONTEXT_LENGTH" -gt 40960 ]; then
   BC_YARN_FACTOR=${BC_YARN_FACTOR:-2.0}
   BC_YARN_ORIGINAL_LENGTH=${BC_YARN_ORIGINAL_LENGTH:-32768}
@@ -495,6 +501,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   actor_rollout_ref.actor.entropy_from_logits_with_chunking="$ENTROPY_FROM_LOGITS_WITH_CHUNKING" \
   actor_rollout_ref.model.enable_gradient_checkpointing=True \
   +actor_rollout_ref.rollout.plugin.workflow=search_base \
+  +actor_rollout_ref.rollout.plugin.search_topk_cap="$SEARCH_TOPK_CAP" \
   +actor_rollout_ref.rollout.plugin.max_turn="$MAX_TURN" \
   +actor_rollout_ref.rollout.plugin.retry_cjk=10 \
   +actor_rollout_ref.rollout.plugin.turn_max_new_tokens="$TURN_MAX_NEW_TOKENS" \
@@ -525,6 +532,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   trainer.project_name=context-graph \
   trainer.experiment_name="$EXPERIMENT_NAME" \
   trainer.logger="$TRAINER_LOGGER" \
+  "${WORKFLOW_OVERRIDE_ARGS[@]}" \
   "${RESUME_ARGS[@]}"
 RC=$?
 set -e

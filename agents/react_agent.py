@@ -57,8 +57,9 @@ async def process_item(
     except Exception as e:
         print(f"[Error] during environment init: {str(e)}")
 
-    workflow = _get(item.non_tensor_batch['extra_info']).get('workflow', None) or getattr(config.plugin, "workflow",
-                                                                                          "search")
+    extra_info = _get(item.non_tensor_batch['extra_info'])
+    workflow_override = getattr(config.plugin, "workflow_override", None)
+    workflow = workflow_override or extra_info.get('workflow', None) or getattr(config.plugin, "workflow", "search")
     user_prompt = create_chat(env.instance_info['problem_statement'], workflow, item)
     max_turn = getattr(config.plugin, 'max_turn', 64) if config.plugin else 64
     final_answer_reserve = max(int(getattr(config.plugin, 'final_answer_reserve', 0) or 0), 0)

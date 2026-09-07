@@ -146,9 +146,14 @@ def test_nq_hotpot_wrapper_uses_wiki18_without_skillrl_checkout():
     assert "conda activate cxtgraph" in launcher
     assert "--gpus-per-node" not in launcher
     assert 'TRAINER_VAL_ONLY:-False' in launcher
+    assert 'export WORKFLOW_OVERRIDE=searchr1' in launcher
+    assert 'export SEARCH_TOPK_CAP=${SEARCH_TOPK_CAP:-3}' in launcher
+    assert launcher.count('--require-all-benchmarks') == 2
     assert '--require-training-health "$RUN_LOG"' in launcher
     assert 'export EXTERNAL_SEARCH_URL="$SEARCH_URL"' in launcher
     assert "EXTERNAL_SEARCH_URL=${EXTERNAL_SEARCH_URL:-}" in baseline
+    assert 'WORKFLOW_OVERRIDE=${WORKFLOW_OVERRIDE:-}' in baseline
+    assert 'plugin.workflow_override=$WORKFLOW_OVERRIDE' in baseline
 
 
 def test_converted_rows_survive_parquet_round_trip(tmp_path):
@@ -160,3 +165,4 @@ def test_converted_rows_survive_parquet_round_trip(tmp_path):
     row = restored.loc[restored.data_source == "searchR1_nq"].iloc[0]
     assert row.extra_info["query"] == "Who wrote it?"
     assert list(row.extra_info["answer_aliases"]) == ["The Author", "Author"]
+    assert row.extra_info["workflow"] == "searchr1"
