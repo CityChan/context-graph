@@ -54,18 +54,23 @@ export HF_HOME
 hf download Qwen/Qwen2.5-7B-Instruct --local-dir "$QWEN_MODEL"
 hf download Jianwen/Search-7B-SFT --local-dir "$SFT_MODEL"
 hf download intfloat/e5-base-v2 --local-dir "$E5_MODEL"
-hf download PeterJinGo/wiki-18-e5-index --repo-type dataset --include part_aa part_ab --local-dir "$RETRIEVER_ROOT"
-hf download PeterJinGo/wiki-18-corpus --repo-type dataset --include wiki-18.jsonl.gz --local-dir "$RETRIEVER_ROOT"
 
 INDEX_FILE=$RETRIEVER_ROOT/e5_Flat.index
 CORPUS_FILE=$RETRIEVER_ROOT/wiki-18.jsonl
 if [ ! -s "$INDEX_FILE" ]; then
+  hf download PeterJinGo/wiki-18-e5-index --repo-type dataset --include part_aa part_ab --local-dir "$RETRIEVER_ROOT"
+  EXPECTED_INDEX_SIZE=$(($(stat -c %s "$RETRIEVER_ROOT/part_aa") + $(stat -c %s "$RETRIEVER_ROOT/part_ab")))
   cat "$RETRIEVER_ROOT/part_aa" "$RETRIEVER_ROOT/part_ab" > "$INDEX_FILE.partial"
+  test "$(stat -c %s "$INDEX_FILE.partial")" -eq "$EXPECTED_INDEX_SIZE"
   mv "$INDEX_FILE.partial" "$INDEX_FILE"
+  rm -f "$RETRIEVER_ROOT/part_aa" "$RETRIEVER_ROOT/part_ab"
 fi
 if [ ! -s "$CORPUS_FILE" ]; then
+  hf download PeterJinGo/wiki-18-corpus --repo-type dataset --include wiki-18.jsonl.gz --local-dir "$RETRIEVER_ROOT"
+  gzip -t "$RETRIEVER_ROOT/wiki-18.jsonl.gz"
   gzip -cd "$RETRIEVER_ROOT/wiki-18.jsonl.gz" > "$CORPUS_FILE.partial"
   mv "$CORPUS_FILE.partial" "$CORPUS_FILE"
+  rm -f "$RETRIEVER_ROOT/wiki-18.jsonl.gz"
 fi
 
 cd "$SKILLRL_ROOT"
