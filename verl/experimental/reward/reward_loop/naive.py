@@ -109,7 +109,8 @@ class NaiveRewardLoopManager(RewardLoopManagerBase):
             for k in ("task_reward", "graph_shaping", "graph_reward",
                       "graph_n_nodes", "graph_n_edges", "graph_n_active",
                       "main_turn", "is_branch", "branch_success",
-                      "concise_main", "scope_judge"):
+                      "concise_main", "scope_judge", "skill_bank_enabled",
+                      "skill_bank_injected"):
                 if k in env_stats and k not in reward_extra_info:
                     try:
                         reward_extra_info[k] = float(env_stats[k])

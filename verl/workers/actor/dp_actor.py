@@ -426,6 +426,8 @@ class DataParallelPPOActor(BasePPOActor):
         # Include rollout_log_probs for computing rollout_corr metrics in bypass mode
         if "rollout_log_probs" in data.batch.keys():
             select_keys.append("rollout_log_probs")
+        if "overlong_mask" in data.batch.keys():
+            select_keys.append("overlong_mask")
         if "graphrpo_loss_weights" in data.batch.keys():
             select_keys.append("graphrpo_loss_weights")
 

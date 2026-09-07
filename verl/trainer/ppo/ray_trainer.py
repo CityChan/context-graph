@@ -95,6 +95,25 @@ def _scalarize_reward_extra_info(name, values):
         return None
 
 
+def _global_actor_mini_batch_size(config) -> int:
+    """Return the rollout-expanded actor minibatch size on the controller.
+
+    ``ppo_mini_batch_size`` is configured in prompt units. FSDP workers expand
+    it by ``rollout.n`` before dividing it across data-parallel ranks, so the
+    controller must use the same expanded size when deciding whether padding
+    is required. The trainer node count is not part of this calculation.
+    """
+    prompt_mini_batch_size = int(config.actor_rollout_ref.actor.ppo_mini_batch_size)
+    rollout_n = int(config.actor_rollout_ref.rollout.n)
+    global_mini_batch_size = prompt_mini_batch_size * rollout_n
+    if global_mini_batch_size <= 0:
+        raise ValueError(
+            "actor ppo_mini_batch_size and rollout.n must define a positive "
+            f"global minibatch size, got {prompt_mini_batch_size} * {rollout_n}"
+        )
+    return global_mini_batch_size
+
+
 @dataclass
 class ResourcePoolManager:
     """
@@ -1156,19 +1175,24 @@ class RayPPOTrainer:
         )
         metrics.update(global_balance_stats)
 
-    def _pad_dummy_sample(self, batch: DataProto):
+    def _pad_dummy_sample(self, batch: DataProto, divisor: int | None = None):
         """Pad dummy sample to make batch size divisible by mini_batch_size"""
-        print(f"pad batch size from {len(batch)} to {len(batch) + self.config.actor_rollout_ref.actor.ppo_mini_batch_size - len(batch) % self.config.actor_rollout_ref.actor.ppo_mini_batch_size}")
-        global_mini_bs = self.config.actor_rollout_ref.actor.ppo_mini_batch_size * self.config.trainer.nnodes
+        divisor = divisor or _global_actor_mini_batch_size(self.config)
+        num_padding = (-len(batch)) % divisor
+        if num_padding == 0:
+            return batch, None
+        print(f"pad batch size from {len(batch)} to {len(batch) + num_padding}")
         assert 'response_mask' in batch.batch, "response_mask is required for defining padding dummy sample"
         dummy_sample = deepcopy(batch[0:1])
-        dummy_sample.batch["response_mask"] = torch.ones_like(dummy_sample.batch["response_mask"])
+        # Dummy tokens must not contribute to policy, entropy, or KL losses.
+        # Keep this zero independently of overlong_mask as defense in depth.
+        dummy_sample.batch["response_mask"] = torch.zeros_like(dummy_sample.batch["response_mask"])
         dummy_sample.batch["overlong_mask"] = torch.zeros_like(dummy_sample.batch["overlong_mask"])
         dummy_sample.batch["attention_mask"] = torch.zeros_like(dummy_sample.batch["attention_mask"])
         dummy_sample.non_tensor_batch["uid"] = np.array([uuid.uuid4(),], dtype=object)
         gen_uid_dummy = uuid.uuid4()
         dummy_sample.non_tensor_batch["gen_uid"] = np.array([gen_uid_dummy,], dtype=object)
-        batch = DataProto.concat([batch] + [dummy_sample for _ in range(global_mini_bs - len(batch) % global_mini_bs)])
+        batch = DataProto.concat([batch] + [dummy_sample for _ in range(num_padding)])
         batch.meta_info["gen_uid_dummy"] = gen_uid_dummy
         return batch, gen_uid_dummy
 
@@ -1385,8 +1409,18 @@ class RayPPOTrainer:
                         })
 
                     # TODO@Miao[DONE]: pad batch size to muliplicative of mini_batch_size
-                    if len(batch) % (self.config.actor_rollout_ref.actor.ppo_mini_batch_size * self.config.trainer.nnodes) != 0:
-                        batch, gen_uid_dummy = self._pad_dummy_sample(batch)
+                    loss_mode = self.config.actor_rollout_ref.actor.policy_loss.get(
+                        "loss_mode", "vanilla"
+                    )
+                    padding_divisor = (
+                        self.actor_rollout_wg.world_size
+                        if loss_mode == "graphrpo"
+                        else _global_actor_mini_batch_size(self.config)
+                    )
+                    if len(batch) % padding_divisor != 0:
+                        batch, gen_uid_dummy = self._pad_dummy_sample(
+                            batch, divisor=padding_divisor
+                        )
 
                     # Balance the number of valid tokens across DP ranks.
                     # NOTE: This usually changes the order of data in the `batch`,

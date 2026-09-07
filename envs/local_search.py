@@ -451,6 +451,17 @@ class LocalSearch:
         self.double_check = getattr(self.config.plugin, "double_check", False)
         self.donotgiveup = False
         self.must_search = getattr(self.config.plugin, "must_search", True)
+        self.use_skills_only_memory = bool(
+            getattr(self.config.plugin, "use_skills_only_memory", False)
+        )
+        self.stats['skill_bank_enabled'] = int(self.use_skills_only_memory)
+        self.stats['skill_bank_injected'] = 0
+        self.skills_json_path = str(
+            getattr(self.config.plugin, "skills_json_path", "")
+        ).strip()
+        self.skills_top_k = max(0, int(getattr(self.config.plugin, "skills_top_k", 6)))
+        if self.use_skills_only_memory and not self.skills_json_path:
+            raise ValueError("plugin.skills_json_path is required when static SkillBank is enabled")
         self.search_topk_cap = max(1, int(getattr(self.config.plugin, "search_topk_cap", 10)))
         self.search_snippet_words = max(1, int(getattr(self.config.plugin, "search_snippet_words", 512)))
         self.search_snippet_chars = max(128, int(getattr(self.config.plugin, "search_snippet_chars", 12000)))
@@ -477,6 +488,16 @@ class LocalSearch:
         self.judge_audit = []
         self.instance_info = copy.deepcopy(extra)
         self.instance_info['problem_statement'] = self.instance_info['query']
+        self.search_skill_context = None
+        self.search_skill_context_injected = False
+        if self.use_skills_only_memory:
+            from envs.search_skill_bank import format_search_skills
+
+            self.search_skill_context = format_search_skills(
+                self.question,
+                self.skills_json_path,
+                self.skills_top_k,
+            )
 
     async def run_action(self, response):
         self.stats['action'] += 1
@@ -606,6 +627,14 @@ Once you’re confident everything is covered and verified, submit the final ans
                 else:
                     # Clearer error for unsupported functions
                     observation = f'[Error] The function "{name}" is not supported.'
+            if (
+                observation
+                and self.search_skill_context
+                and not self.search_skill_context_injected
+            ):
+                observation += f"\n\n{self.search_skill_context}"
+                self.search_skill_context_injected = True
+                self.stats['skill_bank_injected'] = 1
             observation += "\n\n* Please reflect on the information we have obtained, and keep searching for additional information if we still can not answer the question. Do not give the answer if the information is still not enough."
 
         return {'observation': observation.strip()}

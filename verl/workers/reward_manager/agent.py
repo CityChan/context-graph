@@ -252,6 +252,7 @@ class AgentLoopRewardManager(AbstractRewardManager):
                       "graph_n_cross_edges", "graph_n_summaries",
                       "graph_compactness", "graph_structural",
                       "graph_merge_bonus", "graph_prune_bonus",
+                      "skill_bank_enabled", "skill_bank_injected",
                       "graph_usage_bonus", "graph_uniqueness_bonus",
                       "graph_uniqueness_raw", "graph_cost_penalty",
                       "graph_invalid_op_penalty", "graph_bloat_penalty",

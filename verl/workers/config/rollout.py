@@ -128,6 +128,9 @@ class PlugInConfig(BaseConfig):
     must_finish: bool = False
     double_check: bool = False
     must_search: bool = True
+    use_skills_only_memory: bool = False
+    skills_json_path: str = ""
+    skills_top_k: int = 6
     val_max_turn: int = 20
     val_response_length: int = 16384
 
