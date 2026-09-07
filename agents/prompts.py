@@ -51,10 +51,7 @@ I've uploaded a python code repository in the directory /testbed. Consider the f
         chat = [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}]
         return chat
     elif workflow == 'searchr1':
-        tool_description = PARALLEL_TOOL_PROMPT.format(
-            description=convert_tools_to_description(search_tool(searchr1=True))
-        )
-        system_prompt = SEARCHR1_SYSTEM_PROMPT + '\n\n' + tool_description
+        system_prompt = SEARCHR1_SYSTEM_PROMPT
         user_prompt = SEARCHR1_USER_PROMPT.format(Question=problem_statement)
         chat = [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}]
         return chat
@@ -503,16 +500,17 @@ Use finish tool to submit your answer.
 
 
 SEARCHR1_SYSTEM_PROMPT = """
-You are a question-answering agent that can use a search engine. Work step by step, but keep every turn brief. Use exactly one function call per turn. Search when external information is needed. Once you have enough information, call finish. In finish.answer, provide only the shortest final answer span, without explanation, citations, confidence, or restating the question.
+You are a helpful and harmless assistant.
 """.strip()
 
 
 SEARCHR1_USER_PROMPT = """
-Answer the given question.
+You are an expert agent tasked with answering the given question step-by-step.
+Your question: {Question}
 
-Question: {Question}
-
-First use the search function to retrieve relevant evidence. You may search again if needed. When ready, call finish and put only the succinct answer in its answer field. For example, use `Beijing`, not `The answer is Beijing because ...`.
+First conduct reasoning inside <think> and </think> tags. Then choose only one action:
+(1) If you need external knowledge, call the search engine with <search>your query</search>.
+(2) If you have enough information, provide only the shortest final answer span inside <answer> and </answer>, without detailed explanation. For example, <answer>Beijing</answer>.
 """.strip()
 
 CODE_SYSTEM_PROMPT = '''You are OpenHands agent, a helpful AI assistant that can interact with a computer to solve tasks.

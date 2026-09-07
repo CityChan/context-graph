@@ -6,6 +6,7 @@ import pytest
 from scripts.audit_skillrl_search_reference import extract_last_number, summarize_log
 from scripts.sample_searchr1_reference_data import stratified_sample
 from agents.prompts import create_chat
+from envs.local_search import extract_fn_call
 
 
 def test_stratified_sample_is_balanced_and_deterministic():
@@ -65,11 +66,20 @@ def test_searchr1_prompt_requires_a_short_answer_and_only_search_tools():
     rendered = "\n".join(message["content"] for message in chat)
 
     assert "shortest final answer span" in rendered
-    assert "without explanation" in rendered
-    assert "<function=search>" not in rendered
-    assert "BEGIN FUNCTION #1: search" in rendered
-    assert "BEGIN FUNCTION #2: finish" in rendered
+    assert "without detailed explanation" in rendered
+    assert "<search>your query</search>" in rendered
+    assert "<answer>Beijing</answer>" in rendered
+    assert "BEGIN FUNCTION" not in rendered
     assert "open_page" not in rendered
+
+
+def test_searchr1_native_action_tags_are_parsed():
+    assert extract_fn_call("<think>Need evidence.</think><search>Jane Austen author</search>") == [
+        {"function": "search", "arguments": {"query": "Jane Austen author", "topk": 5}}
+    ]
+    assert extract_fn_call("<think>Done.</think><answer>Jane Austen</answer>") == [
+        {"function": "finish", "arguments": {"answer": "Jane Austen"}}
+    ]
 
 
 def test_audit_parser_uses_last_metric_value(tmp_path: Path):

@@ -160,7 +160,7 @@ The tool simply logs your thought process for better transparency and does not e
     return [execute_bash, str_replace_editor, think, finish]
 
 
-def search_tool(*, searchr1=False):
+def search_tool():
     search = {
         'type': 'function',
         'function': {
@@ -213,13 +213,7 @@ def search_tool(*, searchr1=False):
         'type': 'function',
         'function': {
             'name': 'finish',
-            'description': (
-                "Return the final answer when you have enough information. Put only the shortest answer span "
-                "in the answer field; do not put reasoning, explanation, citations, or confidence in that field."
-                if searchr1
-                else "Return the final result when you have a definitive answer or cannot progress further. "
-                "Provide a concise answer plus a brief, evidence-grounded explanation."
-            ),
+            'description': """Return the final result when you have a definitive answer or cannot progress further. Provide a concise answer plus a brief, evidence-grounded explanation.""",
             'parameters': {
                 'type': 'object',
                 'properties': {
@@ -236,11 +230,11 @@ def search_tool(*, searchr1=False):
                         'description': 'Confidence: your confidence score between 0% and 100% for your answer',
                     },
                 },
-                'required': ['answer'] if searchr1 else ['answer', 'explanation'],
+                'required': ['answer', 'explanation'],
             },
         },
     }
-    return [search, finish] if searchr1 else [search, open_page, finish]
+    return [search, open_page, finish]
 
 
 def branch_tool():
