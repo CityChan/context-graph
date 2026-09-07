@@ -15,6 +15,10 @@ MODEL_PATH=${MODEL_PATH:-Qwen/Qwen2.5-1.5B-Instruct}
 TOTAL_TRAINING_STEPS=${TOTAL_TRAINING_STEPS:-10}
 TS=$(date +%Y%m%d_%H%M%S)
 RUN_TAG=${RUN_TAG:-gsm8k-qwen25-1p5b-grpo-10step-fixed}
+CACHE_TAG=${SLURM_JOB_ID:-local}-$TS-$$
+VLLM_CACHE_ROOT=${VLLM_CACHE_ROOT:-/tmp/contextgraph-gsm8k-vllm-$CACHE_TAG}
+TORCHINDUCTOR_CACHE_DIR=${TORCHINDUCTOR_CACHE_DIR:-/tmp/contextgraph-gsm8k-inductor-$CACHE_TAG}
+TRITON_CACHE_DIR=${TRITON_CACHE_DIR:-/tmp/contextgraph-gsm8k-triton-$CACHE_TAG}
 CHECKPOINT_ROOT=${CHECKPOINT_ROOT:-$SCRATCH/context-graph-ckpts/$RUN_TAG-$TS}
 RUN_LOG=${RUN_LOG:-$PROJECT_ROOT/logs/$RUN_TAG-$TS.log}
 
@@ -26,7 +30,7 @@ fi
 source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
 conda activate cxtgraph
 cd "$PROJECT_ROOT"
-mkdir -p logs "$GSM8K_DATA_DIR" "$CHECKPOINT_ROOT"
+mkdir -p logs "$GSM8K_DATA_DIR" "$CHECKPOINT_ROOT" "$VLLM_CACHE_ROOT" "$TORCHINDUCTOR_CACHE_DIR" "$TRITON_CACHE_DIR"
 
 if [ ! -e "$CUDA_TARGET_LIB/libnvrtc.so.12" ] && [ ! -e "$CUDA_LIB/libnvrtc.so.12" ]; then
   echo "ERROR: libnvrtc.so.12 is missing under $CUDA_HOME."
@@ -49,7 +53,8 @@ if [ "$VISIBLE_GPUS" -lt "$NUM_GPUS" ]; then
   exit 2
 fi
 
-export HF_HOME HF_HUB_CACHE TOKENIZERS_PARALLELISM=false
+export HF_HOME HF_HUB_CACHE VLLM_CACHE_ROOT TORCHINDUCTOR_CACHE_DIR TRITON_CACHE_DIR
+export TOKENIZERS_PARALLELISM=false TORCHDYNAMO_DISABLE=1
 unset HF_HUB_OFFLINE TRANSFORMERS_OFFLINE RAY_ADDRESS
 ray stop --force >/dev/null 2>&1 || true
 
@@ -60,6 +65,7 @@ fi
 echo "GSM8K GRPO smoke: model=$MODEL_PATH gpus=$NUM_GPUS steps=$TOTAL_TRAINING_STEPS"
 echo "log=$RUN_LOG"
 echo "checkpoints=$CHECKPOINT_ROOT"
+echo "node-local caches: vllm=$VLLM_CACHE_ROOT inductor=$TORCHINDUCTOR_CACHE_DIR triton=$TRITON_CACHE_DIR"
 
 set +e
 python -m verl.trainer.main_ppo \
@@ -76,17 +82,20 @@ python -m verl.trainer.main_ppo \
   actor_rollout_ref.actor.use_kl_loss=True \
   actor_rollout_ref.actor.kl_loss_coef=0.001 \
   actor_rollout_ref.actor.fsdp_config.model_dtype=bfloat16 \
+  actor_rollout_ref.actor.fsdp_config.use_torch_compile=False \
   actor_rollout_ref.actor.fsdp_config.param_offload=False \
   actor_rollout_ref.actor.fsdp_config.optimizer_offload=False \
   actor_rollout_ref.ref.strategy=fsdp \
   actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=1 \
   actor_rollout_ref.ref.fsdp_config.model_dtype=bfloat16 \
+  actor_rollout_ref.ref.fsdp_config.use_torch_compile=False \
   actor_rollout_ref.ref.fsdp_config.param_offload=True \
   actor_rollout_ref.rollout.name=vllm \
   actor_rollout_ref.rollout.mode=async \
   actor_rollout_ref.rollout.dtype=bfloat16 \
   actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
   actor_rollout_ref.rollout.gpu_memory_utilization=0.5 \
+  actor_rollout_ref.rollout.enforce_eager=True \
   actor_rollout_ref.rollout.free_cache_engine=False \
   +actor_rollout_ref.rollout.engine_kwargs.vllm.enable_sleep_mode=False \
   actor_rollout_ref.rollout.calculate_log_probs=True \

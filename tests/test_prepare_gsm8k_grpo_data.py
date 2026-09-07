@@ -28,3 +28,14 @@ def test_launcher_carries_vista_cuda_and_disables_vllm_sleep_mode():
     assert 'LD_LIBRARY_PATH="${CONDA_PREFIX}/lib:$CUDA_TARGET_LIB:$CUDA_LIB:' in source
     assert "actor_rollout_ref.rollout.free_cache_engine=False" in source
     assert "+actor_rollout_ref.rollout.engine_kwargs.vllm.enable_sleep_mode=False" in source
+
+
+def test_launcher_isolates_jit_caches_and_uses_eager_mode():
+    source = Path("scripts/smoke_train_gsm8k_grpo_1node_10step.sh").read_text()
+
+    assert "VLLM_CACHE_ROOT=${VLLM_CACHE_ROOT:-/tmp/contextgraph-gsm8k-vllm-$CACHE_TAG}" in source
+    assert "TORCHINDUCTOR_CACHE_DIR=${TORCHINDUCTOR_CACHE_DIR:-/tmp/contextgraph-gsm8k-inductor-$CACHE_TAG}" in source
+    assert "TRITON_CACHE_DIR=${TRITON_CACHE_DIR:-/tmp/contextgraph-gsm8k-triton-$CACHE_TAG}" in source
+    assert "TORCHDYNAMO_DISABLE=1" in source
+    assert "actor_rollout_ref.rollout.enforce_eager=True" in source
+    assert source.count("fsdp_config.use_torch_compile=False") == 2
