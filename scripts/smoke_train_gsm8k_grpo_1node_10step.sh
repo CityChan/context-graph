@@ -9,7 +9,6 @@ GSM8K_DATA_DIR=${GSM8K_DATA_DIR:-${SCRATCH:?SCRATCH must be set}/context-graph-d
 HF_HOME=${HF_HOME:-/work/09281/chc_1996/vista/cache}
 HF_HUB_CACHE=${HF_HUB_CACHE:-$HF_HOME/hub}
 MODEL_PATH=${MODEL_PATH:-Qwen/Qwen2.5-1.5B-Instruct}
-NUM_GPUS=${NUM_GPUS:-4}
 TOTAL_TRAINING_STEPS=${TOTAL_TRAINING_STEPS:-10}
 TS=$(date +%Y%m%d_%H%M%S)
 RUN_TAG=${RUN_TAG:-gsm8k-qwen25-1p5b-grpo-10step-fixed}
@@ -27,6 +26,11 @@ cd "$PROJECT_ROOT"
 mkdir -p logs "$GSM8K_DATA_DIR" "$CHECKPOINT_ROOT"
 
 VISIBLE_GPUS=$(nvidia-smi -L | wc -l)
+NUM_GPUS=${NUM_GPUS:-$VISIBLE_GPUS}
+if [ "$NUM_GPUS" -lt 1 ]; then
+  echo "ERROR: no GPU is visible on $(hostname)."
+  exit 2
+fi
 if [ "$VISIBLE_GPUS" -lt "$NUM_GPUS" ]; then
   echo "ERROR: requested $NUM_GPUS GPUs but only $VISIBLE_GPUS are visible on $(hostname)."
   exit 2
