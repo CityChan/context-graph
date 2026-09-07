@@ -42,7 +42,11 @@ fi
 conda activate "$ENV_NAME"
 
 if ! python -c "import faiss; assert hasattr(faiss, 'GpuMultipleClonerOptions')" >/dev/null 2>&1; then
-  conda install -y -n "$ENV_NAME" -c conda-forge "faiss-gpu=1.9.0"
+  # A cloned Vista environment retains exact defaults-channel Python/libuuid
+  # specs in its history. The ARM CUDA Faiss build is from conda-forge and
+  # requires the matching conda-forge Python ABI and modern libuuid. Let conda
+  # migrate those base packages inside this independent environment only.
+  conda install -y -n "$ENV_NAME" --override-channels -c conda-forge --update-specs "python=3.10.19" "libuuid>=2.41.3" "numpy<2" "cuda-version=12.8" "faiss-gpu=1.9.0"
 fi
 python -m pip install --upgrade "huggingface_hub[cli]"
 python -m pip install -e "$SKILLRL_ROOT"
