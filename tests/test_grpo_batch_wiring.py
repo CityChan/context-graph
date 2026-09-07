@@ -37,6 +37,32 @@ def test_controller_minibatch_matches_worker_rollout_expansion():
     assert 96 % helper(config) == 0
 
 
+def test_standard_grpo_does_not_require_project_workflow_plugin():
+    helper = _load_function(
+        ROOT / "verl" / "trainer" / "ppo" / "ray_trainer.py",
+        "_configured_rollout_workflow",
+    )
+    standard_config = SimpleNamespace(
+        actor_rollout_ref=SimpleNamespace(rollout=SimpleNamespace())
+    )
+    project_config = SimpleNamespace(
+        actor_rollout_ref=SimpleNamespace(
+            rollout=SimpleNamespace(plugin=SimpleNamespace(workflow="search_graph"))
+        )
+    )
+
+    assert helper(standard_config) is None
+    assert helper(project_config) == "search_graph"
+
+
+def test_workflow_is_attached_conditionally_in_train_and_validation():
+    source = (ROOT / "verl" / "trainer" / "ppo" / "ray_trainer.py").read_text(encoding="utf-8")
+
+    assert source.count("workflow = _configured_rollout_workflow(self.config)") == 2
+    assert source.count("if workflow is not None:") == 2
+    assert "self.config.actor_rollout_ref.rollout.plugin.workflow" not in source
+
+
 def test_dummy_padding_is_loss_inert_and_not_node_count_based():
     source = (ROOT / "verl" / "trainer" / "ppo" / "ray_trainer.py").read_text(encoding="utf-8")
 

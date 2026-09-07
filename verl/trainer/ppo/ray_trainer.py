@@ -114,6 +114,25 @@ def _global_actor_mini_batch_size(config) -> int:
     return global_mini_batch_size
 
 
+def _configured_rollout_workflow(config) -> str | None:
+    """Return the optional project workflow without requiring plugin config.
+
+    Upstream single-turn PPO/GRPO configurations do not define
+    ``actor_rollout_ref.rollout.plugin``. ContextGraph launchers add it for
+    their custom agent loops, so the shared trainer must treat it as optional.
+    """
+    rollout_config = config.actor_rollout_ref.rollout
+    plugin = (
+        rollout_config.get("plugin", None)
+        if hasattr(rollout_config, "get")
+        else getattr(rollout_config, "plugin", None)
+    )
+    if plugin is None:
+        return None
+    workflow = plugin.get("workflow", None) if hasattr(plugin, "get") else getattr(plugin, "workflow", None)
+    return None if workflow is None else str(workflow)
+
+
 @dataclass
 class ResourcePoolManager:
     """
@@ -704,10 +723,13 @@ class RayPPOTrainer:
                 [str(uuid.uuid4()) for _ in range(len(test_batch.batch))], dtype=object
             )
 
-            # Add workflow to batch (aligned with fit())
-            test_batch.non_tensor_batch["workflow"] = np.array(
-                [self.config.actor_rollout_ref.rollout.plugin.workflow for _ in range(len(test_batch.batch))], dtype=object
-            )
+            # Project agent loops require a workflow; upstream single-turn
+            # PPO/GRPO intentionally has no rollout.plugin section.
+            workflow = _configured_rollout_workflow(self.config)
+            if workflow is not None:
+                test_batch.non_tensor_batch["workflow"] = np.full(
+                    len(test_batch.batch), workflow, dtype=object
+                )
 
             # we only do validation on rule-based rm
             if self.config.reward_model.enable and test_batch[0].non_tensor_batch["reward_model"]["style"] == "model":
@@ -1378,9 +1400,11 @@ class RayPPOTrainer:
                     [str(uuid.uuid4()) for _ in range(len(batch.batch))], dtype=object
                 )
 
-                batch.non_tensor_batch["workflow"] = np.array(
-                    [self.config.actor_rollout_ref.rollout.plugin.workflow for _ in range(len(batch.batch))], dtype=object
-                )
+                workflow = _configured_rollout_workflow(self.config)
+                if workflow is not None:
+                    batch.non_tensor_batch["workflow"] = np.full(
+                        len(batch.batch), workflow, dtype=object
+                    )
 
                 is_last_step = self.global_steps >= self.total_training_steps
                 with marked_timer("step", timing_raw):
