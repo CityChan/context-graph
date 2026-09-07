@@ -8,6 +8,9 @@ PROJECT_ROOT=${PROJECT_ROOT:-/work/09281/chc_1996/vista/context-graph}
 GSM8K_DATA_DIR=${GSM8K_DATA_DIR:-${SCRATCH:?SCRATCH must be set}/context-graph-data/gsm8k}
 HF_HOME=${HF_HOME:-/work/09281/chc_1996/vista/cache}
 HF_HUB_CACHE=${HF_HUB_CACHE:-$HF_HOME/hub}
+CUDA_HOME=${CUDA_HOME:-/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8}
+CUDA_TARGET_LIB=$CUDA_HOME/targets/sbsa-linux/lib
+CUDA_LIB=$CUDA_HOME/lib64
 MODEL_PATH=${MODEL_PATH:-Qwen/Qwen2.5-1.5B-Instruct}
 TOTAL_TRAINING_STEPS=${TOTAL_TRAINING_STEPS:-10}
 TS=$(date +%Y%m%d_%H%M%S)
@@ -25,6 +28,16 @@ conda activate cxtgraph
 cd "$PROJECT_ROOT"
 mkdir -p logs "$GSM8K_DATA_DIR" "$CHECKPOINT_ROOT"
 
+if [ ! -e "$CUDA_TARGET_LIB/libnvrtc.so.12" ] && [ ! -e "$CUDA_LIB/libnvrtc.so.12" ]; then
+  echo "ERROR: libnvrtc.so.12 is missing under $CUDA_HOME."
+  exit 2
+fi
+
+export CUDA_HOME
+export PATH="$CUDA_HOME/bin:$PATH"
+export LD_LIBRARY_PATH="${CONDA_PREFIX}/lib:$CUDA_TARGET_LIB:$CUDA_LIB:${LD_LIBRARY_PATH:-}"
+export LIBRARY_PATH="$CUDA_TARGET_LIB:$CUDA_LIB:${LIBRARY_PATH:-}"
+
 VISIBLE_GPUS=$(nvidia-smi -L | wc -l)
 NUM_GPUS=${NUM_GPUS:-$VISIBLE_GPUS}
 if [ "$NUM_GPUS" -lt 1 ]; then
@@ -38,6 +51,7 @@ fi
 
 export HF_HOME HF_HUB_CACHE TOKENIZERS_PARALLELISM=false
 unset HF_HUB_OFFLINE TRANSFORMERS_OFFLINE RAY_ADDRESS
+ray stop --force >/dev/null 2>&1 || true
 
 if [ ! -s "$GSM8K_DATA_DIR/train.parquet" ] || [ ! -s "$GSM8K_DATA_DIR/test.parquet" ]; then
   python scripts/prepare_gsm8k_grpo_data.py --output-dir "$GSM8K_DATA_DIR"
@@ -61,16 +75,20 @@ python -m verl.trainer.main_ppo \
   actor_rollout_ref.actor.ppo_epochs=1 \
   actor_rollout_ref.actor.use_kl_loss=True \
   actor_rollout_ref.actor.kl_loss_coef=0.001 \
+  actor_rollout_ref.actor.fsdp_config.model_dtype=bfloat16 \
   actor_rollout_ref.actor.fsdp_config.param_offload=False \
   actor_rollout_ref.actor.fsdp_config.optimizer_offload=False \
   actor_rollout_ref.ref.strategy=fsdp \
   actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=1 \
+  actor_rollout_ref.ref.fsdp_config.model_dtype=bfloat16 \
   actor_rollout_ref.ref.fsdp_config.param_offload=True \
   actor_rollout_ref.rollout.name=vllm \
   actor_rollout_ref.rollout.mode=async \
   actor_rollout_ref.rollout.dtype=bfloat16 \
   actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
   actor_rollout_ref.rollout.gpu_memory_utilization=0.5 \
+  actor_rollout_ref.rollout.free_cache_engine=False \
+  +actor_rollout_ref.rollout.engine_kwargs.vllm.enable_sleep_mode=False \
   actor_rollout_ref.rollout.calculate_log_probs=True \
   actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=1 \
   actor_rollout_ref.rollout.n=4 \
