@@ -144,6 +144,7 @@ def test_nq_hotpot_wrapper_uses_wiki18_without_skillrl_checkout():
     assert "wiki18_search_server.py" in launcher
     assert "--embedding-path" in launcher
     assert "conda activate cxtgraph" in launcher
+    assert "--gpus-per-node" not in launcher
     assert 'TRAINER_VAL_ONLY:-False' in launcher
     assert '--require-training-health "$RUN_LOG"' in launcher
     assert 'export EXTERNAL_SEARCH_URL="$SEARCH_URL"' in launcher

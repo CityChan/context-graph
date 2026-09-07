@@ -64,7 +64,7 @@ export NO_PROXY="${NO_PROXY:+$NO_PROXY,}127.0.0.1,localhost,$SEARCH_NODE,$SEARCH
 export no_proxy="$NO_PROXY"
 
 echo "Starting Wiki-18 search on $SEARCH_NODE ($SEARCH_NODE_IP); log=$SEARCH_LOG"
-srun --overlap --nodes=1 --ntasks=1 --gpus-per-node=1 -w "$SEARCH_NODE" \
+srun --overlap --nodes=1 --ntasks=1 -w "$SEARCH_NODE" \
   bash "$PROJECT_ROOT/scripts/train_nq_hotpot_grpo_qwen25_7b_4node_idev.sh" wiki18_server \
   >"$SEARCH_LOG" 2>&1 &
 WIKI18_SEARCH_PID=$!
