@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Minimal rule-reward GRPO benchmark for one four-GPU Vista GH200 node.
+# Minimal rule-reward GRPO benchmark for one Vista GH200 compute node.
 # Run this inside an active idev allocation; no search server or API key is used.
 set -euo pipefail
 
@@ -11,6 +11,8 @@ HF_HUB_CACHE=${HF_HUB_CACHE:-$HF_HOME/hub}
 CUDA_HOME=${CUDA_HOME:-/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8}
 CUDA_TARGET_LIB=$CUDA_HOME/targets/sbsa-linux/lib
 CUDA_LIB=$CUDA_HOME/lib64
+CUDA_INCLUDE=$CUDA_HOME/include
+NVPL_INCLUDE=/home1/apps/nvidia/Linux_aarch64/25.3/math_libs/12.8/targets/sbsa-linux/include
 MODEL_PATH=${MODEL_PATH:-Qwen/Qwen2.5-1.5B-Instruct}
 TOTAL_TRAINING_STEPS=${TOTAL_TRAINING_STEPS:-10}
 TS=$(date +%Y%m%d_%H%M%S)
@@ -19,6 +21,8 @@ CACHE_TAG=${SLURM_JOB_ID:-local}-$TS-$$
 VLLM_CACHE_ROOT=${VLLM_CACHE_ROOT:-/tmp/contextgraph-gsm8k-vllm-$CACHE_TAG}
 TORCHINDUCTOR_CACHE_DIR=${TORCHINDUCTOR_CACHE_DIR:-/tmp/contextgraph-gsm8k-inductor-$CACHE_TAG}
 TRITON_CACHE_DIR=${TRITON_CACHE_DIR:-/tmp/contextgraph-gsm8k-triton-$CACHE_TAG}
+XDG_CACHE_HOME=${XDG_CACHE_HOME:-/tmp/contextgraph-gsm8k-xdg-$CACHE_TAG}
+CUDA_CACHE_PATH=${CUDA_CACHE_PATH:-/tmp/contextgraph-gsm8k-cuda-$CACHE_TAG}
 CHECKPOINT_ROOT=${CHECKPOINT_ROOT:-$SCRATCH/context-graph-ckpts/$RUN_TAG-$TS}
 RUN_LOG=${RUN_LOG:-$PROJECT_ROOT/logs/$RUN_TAG-$TS.log}
 
@@ -30,7 +34,7 @@ fi
 source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
 conda activate cxtgraph
 cd "$PROJECT_ROOT"
-mkdir -p logs "$GSM8K_DATA_DIR" "$CHECKPOINT_ROOT" "$VLLM_CACHE_ROOT" "$TORCHINDUCTOR_CACHE_DIR" "$TRITON_CACHE_DIR"
+mkdir -p logs "$GSM8K_DATA_DIR" "$CHECKPOINT_ROOT" "$VLLM_CACHE_ROOT" "$TORCHINDUCTOR_CACHE_DIR" "$TRITON_CACHE_DIR" "$XDG_CACHE_HOME" "$CUDA_CACHE_PATH"
 
 if [ ! -e "$CUDA_TARGET_LIB/libnvrtc.so.12" ] && [ ! -e "$CUDA_LIB/libnvrtc.so.12" ]; then
   echo "ERROR: libnvrtc.so.12 is missing under $CUDA_HOME."
@@ -38,12 +42,24 @@ if [ ! -e "$CUDA_TARGET_LIB/libnvrtc.so.12" ] && [ ! -e "$CUDA_LIB/libnvrtc.so.1
 fi
 
 export CUDA_HOME
-export PATH="$CUDA_HOME/bin:$PATH"
+export CUDACXX="$CUDA_HOME/bin/nvcc"
+export CC=${GSM8K_CC:-gcc}
+export CXX=${GSM8K_CXX:-g++}
+export CUDAHOSTCXX=${GSM8K_CUDAHOSTCXX:-g++}
+export PATH="${CONDA_PREFIX}/bin:$CUDA_HOME/bin:$PATH"
+hash -r
 export LD_LIBRARY_PATH="${CONDA_PREFIX}/lib:$CUDA_TARGET_LIB:$CUDA_LIB:${LD_LIBRARY_PATH:-}"
 export LIBRARY_PATH="$CUDA_TARGET_LIB:$CUDA_LIB:${LIBRARY_PATH:-}"
+export CPATH="$NVPL_INCLUDE:$CUDA_INCLUDE:${CPATH:-}"
+export PYTHONPATH="$PROJECT_ROOT:${PYTHONPATH:-}"
+export NCCL_HOSTID="${SLURMD_NODENAME:-$(hostname -s)}"
 
 VISIBLE_GPUS=$(nvidia-smi -L | wc -l)
 NUM_GPUS=${NUM_GPUS:-$VISIBLE_GPUS}
+if ! [[ "$NUM_GPUS" =~ ^[0-9]+$ ]]; then
+  echo "ERROR: NUM_GPUS must be a positive integer, got: $NUM_GPUS"
+  exit 2
+fi
 if [ "$NUM_GPUS" -lt 1 ]; then
   echo "ERROR: no GPU is visible on $(hostname)."
   exit 2
@@ -53,10 +69,30 @@ if [ "$VISIBLE_GPUS" -lt "$NUM_GPUS" ]; then
   exit 2
 fi
 
-export HF_HOME HF_HUB_CACHE VLLM_CACHE_ROOT TORCHINDUCTOR_CACHE_DIR TRITON_CACHE_DIR
-export TOKENIZERS_PARALLELISM=false TORCHDYNAMO_DISABLE=1
+export HF_HOME HF_HUB_CACHE VLLM_CACHE_ROOT TORCHINDUCTOR_CACHE_DIR TRITON_CACHE_DIR XDG_CACHE_HOME CUDA_CACHE_PATH
+export FLASHINFER_WORKSPACE_BASE=/tmp
+export HF_HUB_DISABLE_FILE_LOCKING=1
+export TOKENIZERS_PARALLELISM=false TORCHDYNAMO_DISABLE=1 HYDRA_FULL_ERROR=1
+export VLLM_WORKER_MULTIPROC_METHOD=spawn NCCL_P2P_LEVEL=NVL
+export RAY_memory_usage_threshold=0.99 RAY_memory_monitor_refresh_ms=0
 unset HF_HUB_OFFLINE TRANSFORMERS_OFFLINE RAY_ADDRESS
 ray stop --force >/dev/null 2>&1 || true
+
+cleanup() {
+  ray stop --force >/dev/null 2>&1 || true
+}
+trap cleanup EXIT INT TERM
+
+for command_name in nvidia-smi gcc g++ nvcc; do
+  if ! command -v "$command_name" >/dev/null 2>&1; then
+    echo "ERROR: required command is unavailable: $command_name"
+    exit 2
+  fi
+done
+
+python -c "import ctypes; ctypes.CDLL('libnvrtc.so.12'); print('libnvrtc.so.12: OK')"
+python -c "import torch; count=torch.cuda.device_count(); print('torch:', torch.__version__, 'cuda:', torch.version.cuda, 'available:', torch.cuda.is_available(), 'devices:', count); assert torch.cuda.is_available() and count >= int('$NUM_GPUS')"
+python -c "import vllm, verl; print('vllm:', vllm.__version__, 'verl: OK')"
 
 if [ ! -s "$GSM8K_DATA_DIR/train.parquet" ] || [ ! -s "$GSM8K_DATA_DIR/test.parquet" ]; then
   python scripts/prepare_gsm8k_grpo_data.py --output-dir "$GSM8K_DATA_DIR"
@@ -66,6 +102,7 @@ echo "GSM8K GRPO smoke: model=$MODEL_PATH gpus=$NUM_GPUS steps=$TOTAL_TRAINING_S
 echo "log=$RUN_LOG"
 echo "checkpoints=$CHECKPOINT_ROOT"
 echo "node-local caches: vllm=$VLLM_CACHE_ROOT inductor=$TORCHINDUCTOR_CACHE_DIR triton=$TRITON_CACHE_DIR"
+echo "runtime: CC=$CC CXX=$CXX CUDA_HOME=$CUDA_HOME VLLM_WORKER_MULTIPROC_METHOD=$VLLM_WORKER_MULTIPROC_METHOD"
 
 set +e
 python -m verl.trainer.main_ppo \
@@ -96,6 +133,7 @@ python -m verl.trainer.main_ppo \
   actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
   actor_rollout_ref.rollout.gpu_memory_utilization=0.5 \
   actor_rollout_ref.rollout.enforce_eager=True \
+  actor_rollout_ref.rollout.max_num_seqs=64 \
   actor_rollout_ref.rollout.free_cache_engine=False \
   +actor_rollout_ref.rollout.engine_kwargs.vllm.enable_sleep_mode=False \
   actor_rollout_ref.rollout.calculate_log_probs=True \
