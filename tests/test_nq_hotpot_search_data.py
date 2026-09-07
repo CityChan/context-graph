@@ -1,11 +1,15 @@
 import asyncio
 from pathlib import Path
+from types import SimpleNamespace
+import sys
 
+import numpy as np
 import pandas as pd
 import pytest
 
 from envs.local_search import LocalSearch, searchr1_em_score
 from envs.wiki18_search_server import BatchedSearchEngine, split_contents, truncate_words
+from scripts.convert_faiss_index_to_numpy import convert
 from scripts.prepare_nq_hotpot_search_data import balanced_sample, convert_frame
 
 
@@ -108,6 +112,24 @@ def test_wiki18_server_batches_concurrent_searches():
     assert [len(result) for result in results] == [2, 3]
 
 
+def test_faiss_index_conversion_is_chunked_and_float16(tmp_path, monkeypatch):
+    vectors = np.arange(24, dtype=np.float32).reshape(6, 4)
+
+    class FakeIndex:
+        ntotal = 6
+        d = 4
+
+        def reconstruct_n(self, start, count):
+            return vectors[start : start + count]
+
+    monkeypatch.setitem(sys.modules, "faiss", SimpleNamespace(read_index=lambda _: FakeIndex()))
+    output = tmp_path / "embeddings.npy"
+    convert(tmp_path / "input.index", output, chunk_rows=2)
+    restored = np.load(output)
+    assert restored.dtype == np.float16
+    np.testing.assert_array_equal(restored, vectors.astype(np.float16))
+
+
 def test_nq_hotpot_wrapper_uses_wiki18_without_skillrl_checkout():
     root = Path(__file__).resolve().parents[1]
     download = (root / "scripts/download_nq_hotpot_search_data_vista.sh").read_text(encoding="utf-8")
@@ -117,9 +139,11 @@ def test_nq_hotpot_wrapper_uses_wiki18_without_skillrl_checkout():
     assert "PeterJinGo/wiki-18-e5-index" in download
     assert "PeterJinGo/wiki-18-corpus" in download
     assert "intfloat/e5-base-v2" in download
+    assert "convert_faiss_index_to_numpy.py" in download
     assert "git clone" not in download
     assert "wiki18_search_server.py" in launcher
-    assert "--faiss-gpu" in launcher
+    assert "--embedding-path" in launcher
+    assert "conda activate cxtgraph" in launcher
     assert 'export EXTERNAL_SEARCH_URL="$SEARCH_URL"' in launcher
     assert "EXTERNAL_SEARCH_URL=${EXTERNAL_SEARCH_URL:-}" in baseline
 

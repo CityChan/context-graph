@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Serve the Search-R1 Wiki-18 E5/FAISS index through ContextGraph's API.
+"""Serve the Search-R1 Wiki-18 E5 index through ContextGraph's API.
 
 The retrieval math and corpus layout follow Search-R1's Apache-2.0
 ``retrieval_server.py``.  This implementation is local to this repository and
-adds request batching plus the ``/search`` and ``/open`` endpoints expected by
-``envs.local_search``; it does not require a Search-R1 or SkillRL checkout.
+adds request batching, a GPU PyTorch exact-search backend, and the ``/search``
+and ``/open`` endpoints expected by ``envs.local_search``. It does not require
+a Search-R1 or SkillRL checkout, or a GPU-enabled FAISS Python package.
 """
 
 from __future__ import annotations
@@ -44,41 +45,48 @@ def truncate_words(text: str, limit: int) -> str:
 
 
 class Wiki18Retriever:
-    """Exact dense retrieval over the published Search-R1 Wiki-18 index."""
+    """Exact dense retrieval over the published Search-R1 Wiki-18 vectors."""
 
-    def __init__(self, index_path: str, corpus_path: str, model_path: str, use_gpu: bool):
-        import faiss
+    def __init__(
+        self,
+        embedding_path: str,
+        corpus_path: str,
+        model_path: str,
+        query_batch_size: int,
+    ):
+        import numpy as np
         import torch
         from datasets import load_dataset
         from transformers import AutoModel, AutoTokenizer
 
-        self.faiss = faiss
         self.torch = torch
         self.corpus = load_dataset(
             "json", data_files=corpus_path, split="train", num_proc=8
         )
-        self.index = faiss.read_index(index_path)
-        if self.index.ntotal != len(self.corpus):
+        stored_embeddings = np.load(embedding_path, mmap_mode="r")
+        if stored_embeddings.ndim != 2 or stored_embeddings.shape[0] != len(self.corpus):
             raise RuntimeError(
-                f"index/corpus mismatch: index={self.index.ntotal}, corpus={len(self.corpus)}"
+                f"embedding/corpus mismatch: embeddings={stored_embeddings.shape}, "
+                f"corpus={len(self.corpus)}"
             )
-        if use_gpu:
-            if not torch.cuda.is_available():
-                raise RuntimeError("--faiss-gpu requested but CUDA is unavailable")
-            options = faiss.GpuMultipleClonerOptions()
-            options.useFloat16 = True
-            options.shard = True
-            self.index = faiss.index_cpu_to_all_gpus(self.index, co=options)
+        if not torch.cuda.is_available():
+            raise RuntimeError("Wiki-18 exact search requires a CUDA-enabled PyTorch")
+        self.device = torch.device("cuda")
+        # The official Search-R1 GPU FAISS path also clones the flat index in
+        # float16.  Copying the same vectors into a torch tensor preserves that
+        # retrieval precision while avoiding unavailable ARM FAISS GPU bindings.
+        self.embeddings = torch.from_numpy(stored_embeddings).to(
+            self.device, dtype=torch.float16
+        )
+        self.query_batch_size = query_batch_size
 
         self.tokenizer = AutoTokenizer.from_pretrained(
             model_path, use_fast=True, local_files_only=True
         )
         self.model = AutoModel.from_pretrained(model_path, local_files_only=True)
         self.model.eval()
-        self.device = torch.device("cuda" if use_gpu else "cpu")
         self.model.to(self.device)
-        if use_gpu:
-            self.model.half()
+        self.model.half()
 
     def encode(self, queries: list[str]):
         torch = self.torch
@@ -101,9 +109,22 @@ class Wiki18Retriever:
 
     def search_batch(self, queries: list[str], topk: int) -> list[list[dict[str, Any]]]:
         embeddings = self.encode(queries)
-        scores, row_ids = self.index.search(embeddings, topk)
+        query_tensor = self.torch.from_numpy(embeddings).to(
+            self.device, dtype=self.torch.float16
+        )
+        score_chunks = []
+        row_id_chunks = []
+        for start in range(0, len(queries), self.query_batch_size):
+            query_chunk = query_tensor[start : start + self.query_batch_size]
+            similarities = query_chunk @ self.embeddings.T
+            scores, row_ids = self.torch.topk(similarities, k=topk, dim=1)
+            score_chunks.append(scores.float().cpu())
+            row_id_chunks.append(row_ids.cpu())
+            del similarities, scores, row_ids
+        scores = self.torch.cat(score_chunks).tolist()
+        row_ids = self.torch.cat(row_id_chunks).tolist()
         batches: list[list[dict[str, Any]]] = []
-        for hit_ids, hit_scores in zip(row_ids.tolist(), scores.tolist()):
+        for hit_ids, hit_scores in zip(row_ids, scores):
             results = []
             for row_id, score in zip(hit_ids, hit_scores):
                 if row_id < 0:
@@ -207,7 +228,7 @@ def serve(args: argparse.Namespace) -> None:
 
     started = time.time()
     retriever = Wiki18Retriever(
-        args.index_path, args.corpus_path, args.model_path, args.faiss_gpu
+        args.embedding_path, args.corpus_path, args.model_path, args.query_batch_size
     )
     engine = BatchedSearchEngine(retriever, args.max_batch_size, args.batch_timeout_ms)
     app = FastAPI()
@@ -224,15 +245,15 @@ def serve(args: argparse.Namespace) -> None:
     async def health() -> dict[str, Any]:
         return {
             "status": "healthy",
-            "backend": "wiki18_e5_faiss",
+            "backend": "wiki18_e5_torch_exact",
             "corpus_size": len(retriever.corpus),
-            "index_size": int(retriever.index.ntotal),
+            "index_size": int(retriever.embeddings.shape[0]),
         }
 
     @app.get("/stats")
     async def stats() -> dict[str, Any]:
         return {
-            "backend": "wiki18_e5_faiss",
+            "backend": "wiki18_e5_torch_exact",
             "corpus_size": len(retriever.corpus),
             "requests": engine.request_count,
             "pending": engine.queue.qsize(),
@@ -262,14 +283,14 @@ def serve(args: argparse.Namespace) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Serve Search-R1 Wiki-18 retrieval")
-    parser.add_argument("--index-path", required=True)
+    parser.add_argument("--embedding-path", required=True)
     parser.add_argument("--corpus-path", required=True)
     parser.add_argument("--model-path", required=True)
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=18999)
-    parser.add_argument("--faiss-gpu", action="store_true")
     parser.add_argument("--max-batch-size", type=int, default=256)
     parser.add_argument("--batch-timeout-ms", type=float, default=5.0)
+    parser.add_argument("--query-batch-size", type=int, default=16)
     return parser.parse_args()
 
 

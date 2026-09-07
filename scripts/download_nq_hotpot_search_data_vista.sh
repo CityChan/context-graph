@@ -38,6 +38,7 @@ fi
 
 echo "Downloading the official Search-R1 Wiki-18 corpus, E5 index, and encoder"
 INDEX_FILE=$RETRIEVER_ROOT/e5_Flat.index
+EMBEDDINGS_FILE=$RETRIEVER_ROOT/e5_Flat.fp16.npy
 CORPUS_FILE=$RETRIEVER_ROOT/wiki-18.jsonl
 if [ ! -s "$INDEX_FILE" ]; then
   hf download PeterJinGo/wiki-18-e5-index --repo-type dataset --include part_aa part_ab --local-dir "$RETRIEVER_ROOT"
@@ -57,23 +58,27 @@ if [ ! -s "$CORPUS_FILE" ]; then
   mv "$CORPUS_FILE.partial" "$CORPUS_FILE"
   rm -f "$RETRIEVER_ROOT/wiki-18.jsonl.gz"
 fi
-hf download intfloat/e5-base-v2 --local-dir "$E5_MODEL_DIR"
+hf download intfloat/e5-base-v2 --include config.json tokenizer_config.json special_tokens_map.json tokenizer.json vocab.txt model.safetensors --local-dir "$E5_MODEL_DIR"
 
 if [ "$PREPARE_RETRIEVER_ENV" = 1 ]; then
   if [ ! -x "$RETRIEVER_ENV/bin/python" ]; then
     echo "Creating isolated Wiki-18 retriever environment at $RETRIEVER_ENV"
     conda create -y -p "$RETRIEVER_ENV" --override-channels -c conda-forge \
-      "python=3.10.19" "libuuid>=2.41.3" "numpy<2" "cuda-version=12.8" \
-      "faiss-gpu=1.9.0" pytorch transformers datasets fastapi uvicorn
+      "python=3.10.19" "libuuid>=2.41.3" "numpy<2" "faiss-cpu=1.9.0"
   fi
-  conda run -p "$RETRIEVER_ENV" python -c "import datasets, faiss, fastapi, torch, transformers, uvicorn; assert hasattr(faiss, 'GpuMultipleClonerOptions'); print({'faiss': faiss.__version__, 'torch': torch.__version__, 'transformers': transformers.__version__})"
+  conda run -p "$RETRIEVER_ENV" python -c "import faiss; assert hasattr(faiss, 'read_index'); print({'faiss': faiss.__version__})"
+fi
+
+if [ ! -s "$EMBEDDINGS_FILE" ]; then
+  echo "Converting the flat FAISS index to a GPU-PyTorch-compatible FP16 matrix"
+  conda run -p "$RETRIEVER_ENV" python scripts/convert_faiss_index_to_numpy.py --index "$INDEX_FILE" --output "$EMBEDDINGS_FILE"
 fi
 
 if [ "$PREBUILD_CORPUS_CACHE" = 1 ]; then
   echo "Materializing the Wiki-18 Arrow cache once on the login node"
-  HF_HOME="$HF_HOME" HF_HUB_CACHE="$HF_HUB_CACHE" conda run -p "$RETRIEVER_ENV" python -c "from datasets import load_dataset; corpus=load_dataset('json',data_files='$CORPUS_FILE',split='train',num_proc=8); print({'wiki18_rows':len(corpus),'columns':corpus.column_names})"
+  HF_HOME="$HF_HOME" HF_HUB_CACHE="$HF_HUB_CACHE" python -c "from datasets import load_dataset; corpus=load_dataset('json',data_files='$CORPUS_FILE',split='train',num_proc=8); print({'wiki18_rows':len(corpus),'columns':corpus.column_names})"
 fi
 
-python -c "from pathlib import Path; import json, pandas as pd; root=Path('$PROCESSED_DIR'); required=[root/'train.parquet',root/'validation.parquet',root/'validation_diag.parquet',root/'manifest.json',Path('$INDEX_FILE'),Path('$CORPUS_FILE'),Path('$E5_MODEL_DIR/config.json'),Path('$RETRIEVER_ENV/bin/python')]; missing=[str(p) for p in required if not p.is_file() or p.stat().st_size==0]; assert not missing, f'missing artifacts: {missing}'; frames={p.stem:pd.read_parquet(p) for p in required[:3]}; assert all(set(f.data_source)=={'searchR1_nq','searchR1_hotpotqa'} for f in frames.values()); print(json.dumps({k:{'rows':len(v),'sources':v.data_source.value_counts().to_dict()} for k,v in frames.items()},indent=2))"
+python -c "from pathlib import Path; import json, pandas as pd; root=Path('$PROCESSED_DIR'); required=[root/'train.parquet',root/'validation.parquet',root/'validation_diag.parquet',root/'manifest.json',Path('$INDEX_FILE'),Path('$EMBEDDINGS_FILE'),Path('$CORPUS_FILE'),Path('$E5_MODEL_DIR/config.json'),Path('$RETRIEVER_ENV/bin/python')]; missing=[str(p) for p in required if not p.is_file() or p.stat().st_size==0]; assert not missing, f'missing artifacts: {missing}'; frames={p.stem:pd.read_parquet(p) for p in required[:3]}; assert all(set(f.data_source)=={'searchR1_nq','searchR1_hotpotqa'} for f in frames.values()); print(json.dumps({k:{'rows':len(v),'sources':v.data_source.value_counts().to_dict()} for k,v in frames.items()},indent=2))"
 echo "Prepared NQ/HotpotQA data at $PROCESSED_DIR"
 echo "Prepared Wiki-18 retrieval stack at $RETRIEVER_ROOT"

@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Run inside an active four-node Vista idev allocation. Node 0 runs the
-# official Search-R1 Wiki-18 E5/FAISS retriever; nodes 1-3 run Qwen2.5-7B GRPO.
+# official Search-R1 Wiki-18 E5 exact retriever; nodes 1-3 run Qwen2.5-7B GRPO.
 
 set -euo pipefail
 
@@ -9,7 +9,6 @@ PROJECT_ROOT=${PROJECT_ROOT:-/work/09281/chc_1996/vista/context-graph}
 SEARCH_DATA_ROOT=${SEARCH_DATA_ROOT:-${SCRATCH:?SCRATCH must be set}/context-graph-data/searchr1_nq_hotpotqa}
 DATA_ROOT=${DATA_ROOT:-$SEARCH_DATA_ROOT/processed}
 RETRIEVER_ROOT=${RETRIEVER_ROOT:-$SEARCH_DATA_ROOT/wiki18}
-RETRIEVER_ENV=${RETRIEVER_ENV:-$SEARCH_DATA_ROOT/wiki18_retriever_env}
 E5_MODEL_DIR=${E5_MODEL_DIR:-$RETRIEVER_ROOT/e5-base-v2}
 HF_HOME=${HF_HOME:-/work/09281/chc_1996/vista/cache}
 HF_HUB_CACHE=${HF_HUB_CACHE:-$HF_HOME/hub}
@@ -20,14 +19,14 @@ SEARCH_LOG=${SEARCH_LOG:-$PROJECT_ROOT/logs/wiki18-search-$TS.log}
 
 run_wiki18_server() {
   source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
-  conda activate "$RETRIEVER_ENV"
+  conda activate cxtgraph
   export HF_HOME HF_HUB_CACHE HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
   cd "$PROJECT_ROOT"
   exec python -u envs/wiki18_search_server.py \
-    --index-path "$RETRIEVER_ROOT/e5_Flat.index" \
+    --embedding-path "$RETRIEVER_ROOT/e5_Flat.fp16.npy" \
     --corpus-path "$RETRIEVER_ROOT/wiki-18.jsonl" \
     --model-path "$E5_MODEL_DIR" \
-    --port 18999 --faiss-gpu
+    --port 18999
 }
 
 if [ "${1:-}" = wiki18_server ]; then
@@ -44,10 +43,9 @@ mkdir -p "$PROJECT_ROOT/logs"
 for path in \
   "$DATA_ROOT/train.parquet" \
   "$DATA_ROOT/validation_diag.parquet" \
-  "$RETRIEVER_ROOT/e5_Flat.index" \
+  "$RETRIEVER_ROOT/e5_Flat.fp16.npy" \
   "$RETRIEVER_ROOT/wiki-18.jsonl" \
-  "$E5_MODEL_DIR/config.json" \
-  "$RETRIEVER_ENV/bin/python"; do
+  "$E5_MODEL_DIR/config.json"; do
   if [ ! -s "$path" ]; then
     echo "ERROR: missing Wiki-18 experiment artifact: $path"
     echo "Run scripts/download_nq_hotpot_search_data_vista.sh on a login node first."
