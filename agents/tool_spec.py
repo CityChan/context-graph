@@ -237,6 +237,49 @@ def search_tool():
     return [search, open_page, finish]
 
 
+def math_tool():
+    """Tools for a self-contained, rule-scored math episode."""
+    think = {
+        'type': 'function',
+        'function': {
+            'name': 'think',
+            'description': 'Record one concise intermediate calculation or reasoning step.',
+            'parameters': {
+                'type': 'object',
+                'properties': {
+                    'reasoning': {
+                        'type': 'string',
+                        'description': 'A concise calculation or reasoning step.',
+                    },
+                },
+                'required': ['reasoning'],
+            },
+        },
+    }
+    finish = {
+        'type': 'function',
+        'function': {
+            'name': 'finish',
+            'description': 'Submit the final numeric answer after completing the calculation.',
+            'parameters': {
+                'type': 'object',
+                'properties': {
+                    'answer': {
+                        'type': 'string',
+                        'description': 'The final numeric answer, for example "42" or "#### 42".',
+                    },
+                    'explanation': {
+                        'type': 'string',
+                        'description': 'A brief derivation supporting the answer.',
+                    },
+                },
+                'required': ['answer'],
+            },
+        },
+    }
+    return [think, finish]
+
+
 def branch_tool():
     branch = {
         'type': 'function',

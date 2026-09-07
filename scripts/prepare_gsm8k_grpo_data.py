@@ -21,6 +21,7 @@ def extract_ground_truth(answer: str) -> str:
 def convert_example(example: dict, split: str, index: int) -> dict:
     question = str(example["question"]).strip()
     answer = str(example["answer"])
+    ground_truth = extract_ground_truth(answer)
     return {
         "data_source": "openai/gsm8k",
         "prompt": [
@@ -35,9 +36,17 @@ def convert_example(example: dict, split: str, index: int) -> dict:
         "ability": "math",
         "reward_model": {
             "style": "rule",
-            "ground_truth": extract_ground_truth(answer),
+            "ground_truth": ground_truth,
         },
-        "extra_info": {"split": split, "index": index},
+        "extra_info": {
+            "split": split,
+            "index": index,
+            "query": question,
+            "answer": ground_truth,
+            "answer_aliases": [ground_truth],
+            "reward_mode": "gsm8k_exact",
+            "workflow": "math_graph",
+        },
     }
 
 

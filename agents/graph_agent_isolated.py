@@ -230,6 +230,14 @@ def make_graph_aware_run_action(env, child_graph: ContextGraph):
                         edge_relation=EdgeRelation.CAUSAL,
                         metadata={'tool': 'open_page', 'raw_content': observation},
                     )
+                elif fn_call['function'] == 'think':
+                    child_graph.add_node(
+                        observation[:500],
+                        NodeType.OBSERVATION,
+                        parent_id=child_graph.active_node_id,
+                        edge_relation=EdgeRelation.CAUSAL,
+                        metadata={'tool': 'think', 'raw_content': observation},
+                    )
         except Exception as e:
             print(f'[GRAPH ISOLATED] tracking observation in child graph failed: {e}')
         return observation
@@ -296,6 +304,7 @@ async def process_item(
 
     max_turn = getattr(config.plugin, 'max_turn', 64) if config.plugin else 64
     max_session = getattr(config.plugin, "max_session", 5)
+    must_branch = bool(getattr(config.plugin, "must_branch", False))
     if not is_train:
         max_session = getattr(config.plugin, "val_max_session", max_session)
     session_timeout = getattr(config.plugin, "session_timeout", 90 * 60)
@@ -325,7 +334,10 @@ async def process_item(
             process_reward = [process_reward]
         else:
             process_reward = list(process_reward)
-        for required_label in ("scope", "graphrpo"):
+        required_labels = ["graphrpo"]
+        if bool(getattr(config.plugin, "graph_rpo_scope_process_reward", True)):
+            required_labels.insert(0, "scope")
+        for required_label in required_labels:
             if required_label not in process_reward:
                 process_reward.append(required_label)
     max_traj = getattr(config.plugin, "max_traj", None)
@@ -793,6 +805,17 @@ async def process_item(
                 )
 
         # ── Regular tools on main agent: add observation to PARENT graph ──
+        elif (
+            fn_call is not None
+            and fn_call['function'] == 'finish'
+            and must_branch
+            and not branches
+        ):
+            observation = (
+                "[ContextGraph requirement] Create at least one branch for an "
+                "independent sub-calculation before submitting the final answer."
+            )
+
         else:
             trace_before = graph_trace.capture(graph)
             observation = await run_action(env, response)
@@ -833,6 +856,14 @@ async def process_item(
                             'command': fn_call['arguments'].get('command', '')[:100],
                             'raw_content': observation,
                         },
+                    )
+                elif fn_call['function'] == 'think':
+                    new_evidence_node_id = graph.add_node(
+                        observation[:500],
+                        NodeType.OBSERVATION,
+                        parent_id=graph.active_node_id,
+                        edge_relation=EdgeRelation.CAUSAL,
+                        metadata={'tool': 'think', 'raw_content': observation},
                     )
             if new_evidence_node_id is not None:
                 graph_trace.record(

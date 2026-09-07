@@ -35,10 +35,13 @@ def select_env(ability, config, extra_info=None):
     elif 'DiscoveryBench' in ability:
         from envs.discoverybench_env import DiscoveryBenchEnv
         EnvClass = DiscoveryBenchEnv
+    elif ability.lower() == 'math' or 'GSM8K' in ability:
+        from envs.math_env import MathEnv
+        EnvClass = MathEnv
     else:
         raise ValueError(
             f"Unknown ability: {ability}. Supported: ALFWorld@*, LocalSearch, GAIA, "
-            "ScienceWorld@*, ScienceAgentBench, DiscoveryBench."
+            "ScienceWorld@*, ScienceAgentBench, DiscoveryBench, math/GSM8K."
         )
     return EnvClass
 

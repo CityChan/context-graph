@@ -1,4 +1,4 @@
-from .tool_spec import convert_tools_to_description, codeact_tool, search_tool, branch_tool, graph_tool, alfworld_tool, scienceworld_tool, TOOL_PROMPT, PARALLEL_TOOL_PROMPT
+from .tool_spec import convert_tools_to_description, codeact_tool, search_tool, math_tool, branch_tool, graph_tool, alfworld_tool, scienceworld_tool, TOOL_PROMPT, PARALLEL_TOOL_PROMPT
 
 
 def create_chat(
@@ -129,6 +129,37 @@ I've uploaded a python code repository in the directory /testbed. Consider the f
         user_prompt = problem_statement
         chat = [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}]
         return chat
+    elif workflow == 'math_graph':
+        graph_tools = graph_tool() if expose_graph_tools else []
+        tools = math_tool() + branch_tool() + graph_tools
+        tool_description = PARALLEL_TOOL_PROMPT.format(
+            description=convert_tools_to_description(tools)
+        )
+        graph_guidance = (
+            "Use branch for a genuinely independent sub-calculation. Use merge, add_edge, "
+            "select, or prune only when the graph contains useful intermediate states."
+            if expose_graph_tools
+            else
+            "A controller may temporarily enter [GRAPH ACTION MODE]. Only in that marked "
+            "mode, follow its JSON response schema instead of the normal XML tool protocol. "
+            "When environment mode resumes, return to XML tool calls."
+        )
+        system_prompt = (
+            "You are a careful mathematical reasoning agent. Solve the numeric word problem "
+            "exactly. Keep each turn concise and output exactly one XML tool call with no "
+            "markdown. You must use branch at least once for an independent sub-calculation "
+            "before finishing; use think only for concise intermediate calculations. "
+            "Branch agents must return their result to the parent instead of finishing the "
+            f"whole problem. {graph_guidance}\n\n{tool_description}"
+        )
+        user_prompt = (
+            f"Solve this problem:\n\n{problem_statement}\n\n"
+            "Submit the exact final numeric answer with the finish tool."
+        )
+        return [
+            {'role': 'system', 'content': system_prompt},
+            {'role': 'user', 'content': user_prompt},
+        ]
     elif workflow == 'search_parallel':
         # TODO
         return None

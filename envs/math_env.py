@@ -1,0 +1,143 @@
+"""Self-contained exact-match math environment for ContextGraph training."""
+
+from __future__ import annotations
+
+import copy
+import json
+import re
+from collections import Counter
+from decimal import Decimal, InvalidOperation
+
+
+FUNCTION_RE = re.compile(r"<function=([^>]+)>(.*?)</function>", re.DOTALL)
+PARAMETER_RE = re.compile(r"<parameter=([^>]+)>(.*?)</parameter>", re.DOTALL)
+NUMBER_RE = re.compile(r"[-+]?\d[\d,]*(?:\.\d+)?")
+
+
+def _unwrap(value):
+    if hasattr(value, "ndim") and value.ndim == 0:
+        return value.item()
+    if isinstance(value, (list, tuple)):
+        return value[0]
+    try:
+        if getattr(value, "ndim", 0) > 0:
+            return value[0]
+    except (IndexError, TypeError):
+        pass
+    return value
+
+
+def extract_numeric_answer(value: str) -> Decimal | None:
+    """Extract the last numeric value and normalize formatting-equivalent forms."""
+    matches = NUMBER_RE.findall(str(value or ""))
+    if not matches:
+        return None
+    try:
+        return Decimal(matches[-1].replace(",", ""))
+    except InvalidOperation:
+        return None
+
+
+def extract_fn_call(text: str):
+    matches = list(FUNCTION_RE.finditer(text or ""))
+    if not matches:
+        return None
+    match = matches[-1]
+    return {
+        "function": match.group(1).strip(),
+        "arguments": {
+            key.strip(): value.strip()
+            for key, value in PARAMETER_RE.findall(match.group(2))
+        },
+    }
+
+
+class MathEnv:
+    """No-server GSM8K environment with deterministic exact numeric reward."""
+
+    def __init__(self, config, tokenizer, ability):
+        self.config = config
+        self.tokenizer = tokenizer
+        self.ability = ability
+        self.stats = Counter()
+        self.judge_audit = []
+        self.question = ""
+        self.label_answer = ""
+        self.predicted_answer = None
+        self.is_finish = False
+        self.env_fail = False
+
+    async def init_env(self, item):
+        extra = copy.deepcopy(_unwrap(item.non_tensor_batch["extra_info"]))
+        self.question = str(extra["query"])
+        self.label_answer = str(extra["answer"])
+        self.predicted_answer = None
+        self.is_finish = False
+        self.judge_audit = []
+        self.instance_info = extra
+        self.instance_info["problem_statement"] = self.question
+
+    async def run_action(self, response):
+        self.stats["action"] += 1
+        fn_call = extract_fn_call(response)
+        if fn_call is None:
+            return {"observation": "No function call was detected in the model response."}
+
+        name = fn_call["function"]
+        arguments = fn_call["arguments"]
+        if name == "think":
+            self.stats["think"] += 1
+            reasoning = arguments.get("reasoning", "").strip()
+            if not reasoning:
+                return {"observation": '[Error] The "think" function requires reasoning.'}
+            return {
+                "observation": (
+                    f"Intermediate calculation recorded: {reasoning}\n"
+                    "Continue or submit the final answer."
+                )
+            }
+        if name == "finish":
+            answer = arguments.get("answer", "").strip()
+            if not answer:
+                return {"observation": '[Error] The "finish" function requires an answer.'}
+            self.predicted_answer = answer
+            self.is_finish = True
+            self.stats["finish"] += 1
+            self.stats["is_finish"] = 1
+            return {"action": "finish"}
+        return {"observation": f'[Error] The function "{name}" is not supported by MathEnv.'}
+
+    async def score_answer(self, predicted_answer, audit_sink=None):
+        expected = extract_numeric_answer(self.label_answer)
+        predicted = extract_numeric_answer(predicted_answer)
+        score = int(expected is not None and predicted is not None and expected == predicted)
+        audit = {
+            "question": self.question,
+            "correct_answer": self.label_answer,
+            "predicted_answer": str(predicted_answer),
+            "strict_em": bool(score),
+            "judge_model": None,
+            "judge_method": "gsm8k_exact",
+            "score": score,
+        }
+        if audit_sink is not None:
+            audit_sink.append(copy.deepcopy(audit))
+        print("[JUDGE AUDIT] " + json.dumps(audit, ensure_ascii=False))
+        return score
+
+    async def get_reward(self, item, messages, context):
+        prediction = self.predicted_answer
+        if prediction is None:
+            for message in reversed(messages or []):
+                role = message.get("role") if isinstance(message, dict) else getattr(message, "role", None)
+                if role == "assistant":
+                    content = message.get("content", "") if isinstance(message, dict) else getattr(message, "content", "")
+                    prediction = str(content or "").strip()
+                    break
+        reward = await self.score_answer(prediction or "", audit_sink=self.judge_audit)
+        self.stats["judge_calls"] = len(self.judge_audit)
+        self.stats["judge_positive"] = sum(audit["score"] > 0 for audit in self.judge_audit)
+        self.stats["judge_strict_em"] = sum(bool(audit["strict_em"]) for audit in self.judge_audit)
+        self.stats["judge_llm"] = 0
+        self.stats["judge_parse_failure"] = 0
+        return "", reward, {}

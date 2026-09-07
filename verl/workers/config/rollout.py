@@ -120,10 +120,12 @@ class PlugInConfig(BaseConfig):
     retry_cjk: int = 10 
     max_new_tokens: int = 2048
     max_session: int = 1
+    must_branch: bool = False
     session_timeout: int = 3600 
     enable_summary: bool = False
     branch_len: int = 256 
     process_reward: str = "flat"
+    graph_rpo_scope_process_reward: bool = True
     max_traj: int = 3
     must_finish: bool = False
     double_check: bool = False

@@ -18,7 +18,15 @@ def test_convert_example_uses_verl_gsm8k_schema():
     assert row["prompt"][0]["role"] == "user"
     assert 'after "####"' in row["prompt"][0]["content"]
     assert row["reward_model"] == {"style": "rule", "ground_truth": "42"}
-    assert row["extra_info"] == {"split": "train", "index": 3}
+    assert row["extra_info"] == {
+        "split": "train",
+        "index": 3,
+        "query": "What is 6 times 7?",
+        "answer": "42",
+        "answer_aliases": ["42"],
+        "reward_mode": "gsm8k_exact",
+        "workflow": "math_graph",
+    }
 
 
 def test_launcher_carries_vista_cuda_and_disables_vllm_sleep_mode():
