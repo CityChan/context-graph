@@ -1,7 +1,8 @@
 #!/bin/bash
 
-# Two-node Vista diagnostic for the official SkillRL Search environment.
-# Node 0 hosts the 64 GB FAISS index; node 1 uses four GPUs for eval/training.
+# Two-node Vista evaluation diagnostic for the official SkillRL Search
+# environment. Node 0 hosts the 64 GB FAISS index on one GH200; node 1 runs
+# validation on one GH200. GRPO training needs a separate five-node allocation.
 
 set -euo pipefail
 
@@ -10,8 +11,6 @@ REFERENCE_ROOT=${REFERENCE_ROOT:-${SCRATCH:?SCRATCH must be set}/skillrl_search_
 SKILLRL_ROOT=${SKILLRL_ROOT:-$REFERENCE_ROOT/SkillRL}
 ENV_NAME=${ENV_NAME:-skillrl_search}
 HF_HOME=${HF_HOME:-/work/09281/chc_1996/vista/cache}
-RUN_MODE=${RUN_MODE:-eval_ladder}
-TRAIN_STEPS=${TRAIN_STEPS:-10}
 PORT=${PORT:-8030}
 RUN_TAG=${RUN_TAG:-$(date +%Y%m%d_%H%M%S)}
 
@@ -40,15 +39,13 @@ run_retriever() {
 run_trainer() {
   local model_path=$1
   local use_skills=$2
-  local val_only=$3
-  local experiment=$4
-  local total_steps=$5
+  local experiment=$3
   activate_reference_env
   cd "$SKILLRL_ROOT"
   ray stop --force >/dev/null 2>&1 || true
   unset RAY_ADDRESS
   export MODEL_PATH=$model_path
-  bash examples/grpo_trainer/run_search_skills.sh vllm data.train_files="$DATA_ROOT/train_diag.parquet" data.val_files="$DATA_ROOT/test_diag.parquet" data.train_batch_size=16 data.val_batch_size=448 data.max_prompt_length=6000 data.max_response_length=1024 actor_rollout_ref.actor.optim.lr=1e-6 actor_rollout_ref.actor.ppo_mini_batch_size=128 actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=1 actor_rollout_ref.actor.kl_loss_coef=0.01 actor_rollout_ref.actor.invalid_action_penalty_coef=0.1 actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=4 actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=4 actor_rollout_ref.rollout.gpu_memory_utilization=0.55 env.rollout.n=8 env.search.search_url="http://$RETRIEVER_NODE:$PORT/retrieve" env.use_skills_only_memory="$use_skills" trainer.logger="['console']" trainer.experiment_name="$experiment" trainer.default_local_dir="$CHECKPOINT_ROOT/$experiment" trainer.val_only="$val_only" trainer.total_epochs=1 trainer.total_training_steps="$total_steps" trainer.test_freq=5 trainer.save_freq=1 trainer.val_before_train=True
+  bash examples/grpo_trainer/run_search_skills.sh vllm data.train_files="$DATA_ROOT/train_diag.parquet" data.val_files="$DATA_ROOT/test_diag.parquet" data.train_batch_size=16 data.val_batch_size=448 data.max_prompt_length=6000 data.max_response_length=1024 actor_rollout_ref.actor.optim.lr=1e-6 actor_rollout_ref.actor.ppo_mini_batch_size=128 actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=1 actor_rollout_ref.actor.kl_loss_coef=0.01 actor_rollout_ref.actor.invalid_action_penalty_coef=0.1 actor_rollout_ref.actor.fsdp_config.optimizer_offload=True actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=4 actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=4 actor_rollout_ref.rollout.gpu_memory_utilization=0.55 env.rollout.n=8 env.search.search_url="http://$RETRIEVER_NODE:$PORT/retrieve" env.use_skills_only_memory="$use_skills" trainer.logger="['console']" trainer.experiment_name="$experiment" trainer.default_local_dir="$CHECKPOINT_ROOT/$experiment" trainer.n_gpus_per_node=1 trainer.nnodes=1 trainer.val_only=True trainer.total_epochs=1 trainer.total_training_steps=1 trainer.test_freq=1 trainer.save_freq=-1 trainer.val_before_train=True
 }
 
 if [ "${1:-}" = retriever ]; then
@@ -73,19 +70,19 @@ fi
 
 RETRIEVER_NODE=${IDEV_NODES[0]}
 TRAINER_NODE=${IDEV_NODES[1]}
-export PROJECT_ROOT REFERENCE_ROOT SKILLRL_ROOT ENV_NAME HF_HOME RUN_MODE TRAIN_STEPS PORT RUN_TAG RETRIEVER_NODE
+export PROJECT_ROOT REFERENCE_ROOT SKILLRL_ROOT ENV_NAME HF_HOME PORT RUN_TAG RETRIEVER_NODE
 mkdir -p "$LOG_ROOT" "$CHECKPOINT_ROOT"
 
 for required in "$QWEN_MODEL/config.json" "$SFT_MODEL/config.json" "$E5_MODEL/config.json" "$RETRIEVER_ROOT/e5_Flat.index" "$RETRIEVER_ROOT/wiki-18.jsonl" "$DATA_ROOT/train_diag.parquet" "$DATA_ROOT/test_diag.parquet"; do
   if [ ! -s "$required" ]; then
-    echo "ERROR: missing $required; run scripts/prepare_skillrl_search_reference_vista.sh on a login node."
+    echo "ERROR: missing $required; submit scripts/prepare_skillrl_search_reference_vista_batch.sh first."
     exit 2
   fi
 done
 
 echo "RUN_TAG=$RUN_TAG"
-echo "retriever_node=$RETRIEVER_NODE trainer_node=$TRAINER_NODE mode=$RUN_MODE"
-srun --overlap --nodes=1 --ntasks=1 --gpus-per-node=4 -w "$RETRIEVER_NODE" bash "$PROJECT_ROOT/scripts/run_skillrl_search_reference_2node_idev.sh" retriever > "$LOG_ROOT/retriever.log" 2>&1 &
+echo "retriever_node=$RETRIEVER_NODE evaluation_node=$TRAINER_NODE"
+srun --overlap --nodes=1 --ntasks=1 --gpus-per-node=1 -w "$RETRIEVER_NODE" bash "$PROJECT_ROOT/scripts/run_skillrl_search_reference_2node_idev.sh" retriever > "$LOG_ROOT/retriever.log" 2>&1 &
 RETRIEVER_JOB_PID=$!
 cleanup() {
   kill "$RETRIEVER_JOB_PID" >/dev/null 2>&1 || true
@@ -109,46 +106,23 @@ fi
 run_one() {
   local model_path=$1
   local use_skills=$2
-  local val_only=$3
-  local experiment=$4
-  local total_steps=$5
+  local experiment=$3
   local log_path=$LOG_ROOT/$experiment.log
   set +e
-  srun --overlap --nodes=1 --ntasks=1 --gpus-per-node=4 -w "$TRAINER_NODE" bash "$PROJECT_ROOT/scripts/run_skillrl_search_reference_2node_idev.sh" trainer "$model_path" "$use_skills" "$val_only" "$experiment" "$total_steps" 2>&1 | tee "$log_path"
+  srun --overlap --nodes=1 --ntasks=1 --gpus-per-node=1 -w "$TRAINER_NODE" bash "$PROJECT_ROOT/scripts/run_skillrl_search_reference_2node_idev.sh" trainer "$model_path" "$use_skills" "$experiment" 2>&1 | tee "$log_path"
   local rc=${PIPESTATUS[0]}
   set -e
   if [ "$rc" -ne 0 ]; then
     echo "ERROR: $experiment exited $rc; inspect $log_path"
     exit "$rc"
   fi
-  if [ "$val_only" = false ]; then
-    python "$PROJECT_ROOT/scripts/audit_skillrl_search_reference.py" --require-all-benchmarks --require-training-health "$log_path"
-  else
-    python "$PROJECT_ROOT/scripts/audit_skillrl_search_reference.py" --require-all-benchmarks "$log_path"
-  fi
+  python "$PROJECT_ROOT/scripts/audit_skillrl_search_reference.py" --require-all-benchmarks "$log_path"
 }
 
-case "$RUN_MODE" in
-  eval_ladder)
-    run_one "$QWEN_MODEL" false true qwen25_7b_instruct_eval 1
-    run_one "$SFT_MODEL" true true search_7b_sft_eval 1
-    if [ -s "$RL_MODEL/config.json" ]; then
-      run_one "$RL_MODEL" true true search_7b_rl_eval 1
-    else
-      echo "RL checkpoint not present; rerun preparation with DOWNLOAD_RL=1 to add the third rung."
-    fi
-    ;;
-  train_smoke)
-    run_one "$SFT_MODEL" true false search_7b_sft_grpo_${TRAIN_STEPS}step "$TRAIN_STEPS"
-    checkpoint=$CHECKPOINT_ROOT/search_7b_sft_grpo_${TRAIN_STEPS}step/global_step_${TRAIN_STEPS}/actor
-    if [ ! -d "$checkpoint" ]; then
-      echo "ERROR: expected checkpoint missing: $checkpoint"
-      exit 1
-    fi
-    echo "GRPO smoke passed: finite logged health metrics and checkpoint $checkpoint"
-    ;;
-  *)
-    echo "ERROR: RUN_MODE must be eval_ladder or train_smoke, got $RUN_MODE"
-    exit 2
-    ;;
-esac
+run_one "$QWEN_MODEL" false qwen25_7b_instruct_eval
+run_one "$SFT_MODEL" true search_7b_sft_eval
+if [ -s "$RL_MODEL/config.json" ]; then
+  run_one "$RL_MODEL" true search_7b_rl_eval
+else
+  echo "RL checkpoint not present; resubmit preparation with DOWNLOAD_RL=1 to add the third rung."
+fi

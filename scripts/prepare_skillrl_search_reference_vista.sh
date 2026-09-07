@@ -1,7 +1,8 @@
 #!/bin/bash
 
 # Prepare a pinned, independent SkillRL/Search-R1 reference stack on Vista.
-# Run this once on a login node; do not run it inside the cxtgraph environment.
+# Invoke this through the one-node sbatch wrapper; do not run it inside the
+# cxtgraph environment.
 
 set -euo pipefail
 

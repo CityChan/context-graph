@@ -45,22 +45,22 @@ ALFWorld uses `envs/alfworld_env.py` and does not need a search server.
 
 ## SkillRL Search-R1 reference diagnostic
 
-- `prepare_skillrl_search_reference_vista.sh`: creates a separate `skillrl_search`
-  environment, pins the upstream SkillRL repository, downloads the Qwen2.5-7B
-  and Search-R1 artifacts, and builds deterministic data subsets. Run it on a
-  Vista login node. It never modifies the formal `cxtgraph` environment.
+- `prepare_skillrl_search_reference_vista_batch.sh`: one-node Vista batch entry
+  point for all setup, downloads, index assembly, corpus decompression, and data
+  sampling. It calls `prepare_skillrl_search_reference_vista.sh`, creates a
+  separate `skillrl_search` environment, and never modifies the formal
+  `cxtgraph` environment.
 - `run_skillrl_search_reference_2node_idev.sh`: uses one GH200 node for the
-  official dense retriever and one for four-GPU evaluation or a short GRPO run.
-  `RUN_MODE=eval_ladder` compares Qwen2.5-7B-Instruct and the released Search
-  SFT checkpoint on all seven benchmarks. `RUN_MODE=train_smoke TRAIN_STEPS=10`
-  performs optimizer updates from the SFT checkpoint and requires finite health
-  metrics plus the expected checkpoint.
+  official dense retriever and one GH200 node for evaluation. It compares
+  Qwen2.5-7B-Instruct and the released Search SFT checkpoint on all seven
+  benchmarks; the optional released RL checkpoint adds a third rung.
 - `sample_searchr1_reference_data.py` and
   `audit_skillrl_search_reference.py`: deterministic sampling and log auditing.
 
 This is an intentionally independent reference path for diagnosing the local RL
-implementation. The upstream launcher currently sets `trainer.total_epochs=0`;
-the wrapper explicitly overrides it so the requested optimizer steps really run.
+implementation. The two-node script is evaluation-only. A paper-scale GRPO
+update on Vista requires a separate allocation with one retriever node and four
+one-GH200 trainer nodes.
 
 ## Multi-turn ContextGraph SFT
 
