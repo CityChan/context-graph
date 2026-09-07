@@ -11,6 +11,7 @@ REFERENCE_ROOT=${REFERENCE_ROOT:-${SCRATCH:?SCRATCH must be set}/skillrl_search_
 SKILLRL_ROOT=${SKILLRL_ROOT:-$REFERENCE_ROOT/SkillRL}
 ENV_NAME=${ENV_NAME:-skillrl_search}
 HF_HOME=${HF_HOME:-/work/09281/chc_1996/vista/cache}
+EVAL_TARGET=${EVAL_TARGET:-all}
 PORT=${PORT:-8030}
 RUN_TAG=${RUN_TAG:-$(date +%Y%m%d_%H%M%S)}
 
@@ -119,10 +120,31 @@ run_one() {
   python "$PROJECT_ROOT/scripts/audit_skillrl_search_reference.py" --require-all-benchmarks "$log_path"
 }
 
-run_one "$QWEN_MODEL" false qwen25_7b_instruct_eval
-run_one "$SFT_MODEL" true search_7b_sft_eval
-if [ -s "$RL_MODEL/config.json" ]; then
-  run_one "$RL_MODEL" true search_7b_rl_eval
-else
-  echo "RL checkpoint not present; resubmit preparation with DOWNLOAD_RL=1 to add the third rung."
-fi
+case "$EVAL_TARGET" in
+  qwen)
+    run_one "$QWEN_MODEL" false qwen25_7b_instruct_eval
+    ;;
+  sft)
+    run_one "$SFT_MODEL" true search_7b_sft_eval
+    ;;
+  rl)
+    if [ ! -s "$RL_MODEL/config.json" ]; then
+      echo "ERROR: RL checkpoint not present; resubmit preparation with DOWNLOAD_RL=1."
+      exit 2
+    fi
+    run_one "$RL_MODEL" true search_7b_rl_eval
+    ;;
+  all)
+    run_one "$QWEN_MODEL" false qwen25_7b_instruct_eval
+    run_one "$SFT_MODEL" true search_7b_sft_eval
+    if [ -s "$RL_MODEL/config.json" ]; then
+      run_one "$RL_MODEL" true search_7b_rl_eval
+    else
+      echo "RL checkpoint not present; resubmit preparation with DOWNLOAD_RL=1 to add the third rung."
+    fi
+    ;;
+  *)
+    echo "ERROR: EVAL_TARGET must be qwen, sft, rl, or all; got $EVAL_TARGET"
+    exit 2
+    ;;
+esac

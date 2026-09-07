@@ -53,7 +53,8 @@ ALFWorld uses `envs/alfworld_env.py` and does not need a search server.
 - `run_skillrl_search_reference_2node_idev.sh`: uses one GH200 node for the
   official dense retriever and one GH200 node for evaluation. It compares
   Qwen2.5-7B-Instruct and the released Search SFT checkpoint on all seven
-  benchmarks; the optional released RL checkpoint adds a third rung.
+  benchmarks; the optional released RL checkpoint adds a third rung. Set
+  `EVAL_TARGET=qwen`, `sft`, or `rl` to run only one rung; the default is `all`.
 - `sample_searchr1_reference_data.py` and
   `audit_skillrl_search_reference.py`: deterministic sampling and log auditing.
 
