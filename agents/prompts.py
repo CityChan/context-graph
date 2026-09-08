@@ -129,21 +129,29 @@ I've uploaded a python code repository in the directory /testbed. Consider the f
         user_prompt = problem_statement
         chat = [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}]
         return chat
-    elif workflow == 'math_graph':
+    elif workflow in ('math_branch', 'math_graph'):
+        expose_graph_tools = expose_graph_tools and workflow == 'math_graph'
         graph_tools = graph_tool() if expose_graph_tools else []
         tools = math_tool() + branch_tool() + graph_tools
         tool_description = PARALLEL_TOOL_PROMPT.format(
             description=convert_tools_to_description(tools)
         )
-        graph_guidance = (
-            "Use branch for a genuinely independent sub-calculation. Use merge, add_edge, "
-            "select, or prune only when the graph contains useful intermediate states."
-            if expose_graph_tools
-            else
-            "A controller may temporarily enter [GRAPH ACTION MODE]. Only in that marked "
-            "mode, follow its JSON response schema instead of the normal XML tool protocol. "
-            "When environment mode resumes, return to XML tool calls."
-        )
+        if expose_graph_tools:
+            graph_guidance = (
+                "Use branch for a genuinely independent sub-calculation. Use merge, add_edge, "
+                "select, or prune only when the graph contains useful intermediate states."
+            )
+        elif workflow == 'math_graph':
+            graph_guidance = (
+                "A controller may temporarily enter [GRAPH ACTION MODE]. Only in that marked "
+                "mode, follow its JSON response schema instead of the normal XML tool protocol. "
+                "When environment mode resumes, return to XML tool calls."
+            )
+        else:
+            graph_guidance = (
+                "Use branch for a genuinely independent sub-calculation, then return its result "
+                "to the main trajectory before finishing."
+            )
         system_prompt = (
             "You are a careful mathematical reasoning agent. Solve the numeric word problem "
             "exactly. Keep each turn concise and output exactly one XML tool call with no "

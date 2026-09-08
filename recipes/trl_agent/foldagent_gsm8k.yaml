@@ -1,0 +1,27 @@
+actor_rollout_ref:
+  rollout:
+    prompt_length: 1024
+    response_length: 2048
+    plugin:
+      workflow: math_branch
+      max_turn: 8
+      turn_max_new_tokens: 256
+      max_session: 2
+      session_timeout: 600
+      enable_summary: false
+      branch_len: 1024
+      final_answer_reserve: 192
+      final_answer_safety_margin: 64
+      max_traj: 3
+      must_finish: true
+      must_search: false
+      process_reward:
+        - scope
+      math_correctness_reward_weight: 1.0
+      math_format_reward_weight: 0.0
+algorithm:
+  adv_estimator: foldgrpo
+  epsilon: 1.0e-6
+  norm_adv_by_std_in_grpo: true
+  fix_bad_positive_adv: false
+  foldgrpo_process_reward_mode: paper_signed

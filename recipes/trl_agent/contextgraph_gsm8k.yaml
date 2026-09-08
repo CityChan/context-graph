@@ -1,0 +1,38 @@
+actor_rollout_ref:
+  rollout:
+    prompt_length: 1024
+    response_length: 2048
+    plugin:
+      workflow: math_graph
+      max_turn: 8
+      turn_max_new_tokens: 256
+      max_session: 2
+      session_timeout: 600
+      enable_summary: false
+      branch_len: 1024
+      final_answer_reserve: 192
+      final_answer_safety_margin: 64
+      max_traj: 3
+      must_finish: true
+      must_search: false
+      must_branch: true
+      structured_graph_controller: true
+      controller_action_policy: structural
+      initial_consolidation_turn: 1
+      consolidation_interval: 1
+      graph_controller_min_completion_tokens: 128
+      graph_rpo_credit_backend: old_policy_counterfactual_qa
+      graph_rpo_scope_process_reward: false
+      graph_rpo_delta_max: 0.25
+      graph_rpo_counterfactual_samples: 1
+      graph_rpo_counterfactual_max_new_tokens: 128
+      process_reward:
+        - graphrpo
+      math_correctness_reward_weight: 1.0
+      math_format_reward_weight: 0.0
+algorithm:
+  adv_estimator: graphrpo
+  graphrpo_alpha: 1.0
+  graphrpo_beta: 1.0
+  graphrpo_epsilon: 1.0e-6
+  graphrpo_require_binary_reward: true
