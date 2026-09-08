@@ -26,6 +26,12 @@ NVPL_INCLUDE=/home1/apps/nvidia/Linux_aarch64/25.3/math_libs/12.8/targets/sbsa-l
 MODEL_PATH=${MODEL_PATH:-Qwen/Qwen2.5-1.5B-Instruct}
 export CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0}
 TOTAL_TRAINING_STEPS=${TOTAL_TRAINING_STEPS:-10}
+TRAIN_BATCH_SIZE=${TRAIN_BATCH_SIZE:-4}
+ROLLOUT_N=${ROLLOUT_N:-4}
+PPO_MINI_BATCH_SIZE=${PPO_MINI_BATCH_SIZE:-4}
+SAVE_FREQ=${SAVE_FREQ:-$TOTAL_TRAINING_STEPS}
+TEST_FREQ=${TEST_FREQ:-5}
+VAL_BEFORE_TRAIN=${VAL_BEFORE_TRAIN:-True}
 TS=$(date +%Y%m%d_%H%M%S)
 RUN_TAG=${RUN_TAG:-gsm8k-qwen25-1p5b-ctxgraph-graphrpo-nocredit-lora32-qerlreward-10step}
 CACHE_TAG=${SLURM_JOB_ID:-local}-$TS-$$
@@ -116,6 +122,9 @@ echo "log=$RUN_LOG"
 echo "checkpoints=$CHECKPOINT_ROOT"
 echo "rollouts=$ROLLOUT_DATA_DIR"
 echo "protocol=ContextGraph GraphRPO + alpha=beta=0 + LoRA32 + reward(2.0 correctness + 0.2 format)"
+echo "batching=train_batch_size=$TRAIN_BATCH_SIZE rollout_n=$ROLLOUT_N ppo_mini_batch_size=$PPO_MINI_BATCH_SIZE"
+echo "schedule=AdamW8bit lr=1e-5 cosine warmup=0.1 weight_decay=0.1 betas=0.9,0.99 clip=0.2/0.28 max_grad_norm=0.2"
+echo "validation=before_train=$VAL_BEFORE_TRAIN test_freq=$TEST_FREQ save_freq=$SAVE_FREQ"
 export WANDB_RUN_GROUP=${WANDB_RUN_GROUP:-ctxgraph-gsm8k-qerl-aligned}
 export WANDB_TAGS=${WANDB_TAGS:-ctxgraph,gsm8k,graphrpo,no-edit-credit,lora32,qerl-reward}
 
@@ -136,12 +145,20 @@ python -m scripts.train_graph \
   actor_rollout_ref.actor.strategy=fsdp \
   actor_rollout_ref.actor.optim.lr=1e-5 \
   actor_rollout_ref.actor.optim.lr_warmup_steps_ratio=0.1 \
-  actor_rollout_ref.actor.ppo_mini_batch_size=4 \
+  actor_rollout_ref.actor.optim.lr_scheduler_type=cosine \
+  actor_rollout_ref.actor.optim.optimizer=AdamW8bit \
+  actor_rollout_ref.actor.optim.optimizer_impl=bitsandbytes.optim \
+  actor_rollout_ref.actor.optim.weight_decay=0.1 \
+  actor_rollout_ref.actor.optim.betas='[0.9,0.99]' \
+  actor_rollout_ref.actor.optim.clip_grad=0.2 \
+  actor_rollout_ref.actor.ppo_mini_batch_size="$PPO_MINI_BATCH_SIZE" \
   actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=1 \
   actor_rollout_ref.actor.ppo_epochs=1 \
   actor_rollout_ref.actor.use_kl_loss=False \
   actor_rollout_ref.actor.kl_loss_coef=0.001 \
   actor_rollout_ref.actor.policy_loss.loss_mode=graphrpo \
+  actor_rollout_ref.actor.clip_ratio_low=0.2 \
+  actor_rollout_ref.actor.clip_ratio_high=0.28 \
   actor_rollout_ref.actor.fsdp_config.model_dtype=bfloat16 \
   actor_rollout_ref.actor.fsdp_config.use_torch_compile=False \
   actor_rollout_ref.actor.fsdp_config.param_offload=False \
@@ -166,7 +183,7 @@ python -m scripts.train_graph \
   actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=1 \
   actor_rollout_ref.rollout.prompt_length=1024 \
   actor_rollout_ref.rollout.response_length=2048 \
-  actor_rollout_ref.rollout.n=4 \
+  actor_rollout_ref.rollout.n="$ROLLOUT_N" \
   actor_rollout_ref.rollout.temperature=1.0 \
   actor_rollout_ref.rollout.val_kwargs.n=1 \
   actor_rollout_ref.rollout.val_kwargs.temperature=0 \
@@ -203,15 +220,15 @@ python -m scripts.train_graph \
   data.val_files="$GSM8K_DATA_DIR/test.parquet" \
   data.train_max_samples=128 \
   data.val_max_samples=32 \
-  data.train_batch_size=4 \
+  data.train_batch_size="$TRAIN_BATCH_SIZE" \
   data.max_prompt_length=1024 \
   data.max_response_length=2048 \
   data.return_raw_chat=True \
   reward_manager.name=naive \
-  trainer.val_before_train=True \
+  trainer.val_before_train="$VAL_BEFORE_TRAIN" \
   trainer.total_training_steps="$TOTAL_TRAINING_STEPS" \
-  trainer.test_freq=5 \
-  trainer.save_freq="$TOTAL_TRAINING_STEPS" \
+  trainer.test_freq="$TEST_FREQ" \
+  trainer.save_freq="$SAVE_FREQ" \
   trainer.n_gpus_per_node="$NUM_GPUS" \
   trainer.nnodes=1 \
   trainer.project_name=context-graph \

@@ -5,6 +5,9 @@ SCRIPT = Path("scripts/smoke_train_gsm8k_ctxgraph_graphrpo_1node_10step.sh")
 QERL_ALIGNED_SCRIPT = Path(
     "scripts/smoke_train_gsm8k_ctxgraph_graphrpo_nocredit_lora32_10step.sh"
 )
+QERL_MATCHED_200_SCRIPT = Path(
+    "scripts/train_gsm8k_ctxgraph_graphrpo_nocredit_lora32_200step.sh"
+)
 
 
 def test_ctxgraph_smoke_exercises_real_contextgraph_graphrpo_path():
@@ -60,11 +63,35 @@ def test_qerl_aligned_smoke_has_zero_local_credit_lora_and_matched_reward_scale(
         "actor_rollout_ref.model.lora_alpha=32",
         "actor_rollout_ref.model.target_modules=all-linear",
         "actor_rollout_ref.actor.optim.lr=1e-5",
+        "actor_rollout_ref.actor.optim.lr_scheduler_type=cosine",
+        "actor_rollout_ref.actor.optim.optimizer=AdamW8bit",
+        "actor_rollout_ref.actor.optim.weight_decay=0.1",
+        "actor_rollout_ref.actor.optim.betas='[0.9,0.99]'",
+        "actor_rollout_ref.actor.optim.clip_grad=0.2",
+        "actor_rollout_ref.actor.clip_ratio_high=0.28",
         "actor_rollout_ref.actor.use_kl_loss=False",
         "+actor_rollout_ref.rollout.plugin.math_correctness_reward_weight=2.0",
         "+actor_rollout_ref.rollout.plugin.math_format_reward_weight=0.2",
         'trainer.logger=\'["console","wandb"]\'',
         "actor/lora_adapter",
+    ]
+    for setting in required:
+        assert setting in source
+
+
+def test_qerl_matched_200_step_wrapper_uses_one_g16_group_without_validation():
+    source = QERL_MATCHED_200_SCRIPT.read_text()
+
+    required = [
+        "TOTAL_TRAINING_STEPS=${TOTAL_TRAINING_STEPS:-200}",
+        "TRAIN_BATCH_SIZE=${TRAIN_BATCH_SIZE:-1}",
+        "ROLLOUT_N=${ROLLOUT_N:-16}",
+        "PPO_MINI_BATCH_SIZE=${PPO_MINI_BATCH_SIZE:-1}",
+        "SAVE_FREQ=${SAVE_FREQ:-50}",
+        "TEST_FREQ=${TEST_FREQ:--1}",
+        "VAL_BEFORE_TRAIN=${VAL_BEFORE_TRAIN:-False}",
+        "gsm8k-framework-comparison",
+        "smoke_train_gsm8k_ctxgraph_graphrpo_nocredit_lora32_10step.sh",
     ]
     for setting in required:
         assert setting in source
