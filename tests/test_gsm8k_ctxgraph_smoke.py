@@ -79,7 +79,7 @@ def test_qerl_aligned_smoke_has_zero_local_credit_lora_and_matched_reward_scale(
         assert setting in source
 
 
-def test_qerl_matched_200_step_wrapper_uses_one_g16_group_without_validation():
+def test_full_ctxgraph_200_step_wrapper_uses_one_g16_group_without_validation():
     source = QERL_MATCHED_200_SCRIPT.read_text()
 
     required = [
@@ -91,6 +91,7 @@ def test_qerl_matched_200_step_wrapper_uses_one_g16_group_without_validation():
         "TEST_FREQ=${TEST_FREQ:--1}",
         "VAL_BEFORE_TRAIN=${VAL_BEFORE_TRAIN:-False}",
         "gsm8k-framework-comparison",
+        "is not a pure TRL-vs-verl framework",
         "smoke_train_gsm8k_ctxgraph_graphrpo_nocredit_lora32_10step.sh",
     ]
     for setting in required:
