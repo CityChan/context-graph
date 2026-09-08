@@ -468,6 +468,14 @@ class AgentLoopWorkerBase:
         output.extra_fields["raw_prompt"] = kwargs["raw_prompt"]
         if "data_source" in kwargs:
             output.extra_fields.setdefault("data_source", kwargs["data_source"])
+        # The async agent-loop path rebuilds a DataProto from AgentLoopOutput,
+        # so prompt/sample identities must be copied explicitly.  GRPO groups
+        # sibling completions by ``uid``; ``gen_uid`` remains unique per
+        # completion for retry de-duplication.  Keep an identity emitted by a
+        # custom multi-output loop instead of replacing it with the input one.
+        for identity_key in ("uid", "gen_uid"):
+            if identity_key in kwargs:
+                output.extra_fields.setdefault(identity_key, kwargs[identity_key])
 
         # Some AgentLoop may have already computed the reward score, e.g SWE-agent.
 

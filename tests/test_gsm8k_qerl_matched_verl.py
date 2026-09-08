@@ -5,6 +5,7 @@ from scripts.prepare_gsm8k_grpo_data import convert_example
 
 
 LAUNCHER = Path("scripts/train_gsm8k_verl_grpo_qerlmatched_lora32_200step.sh")
+AGENT_LOOP = Path("verl/experimental/agent_loop/agent_loop.py")
 
 
 def test_qerl_xml_reward_matches_upstream_string_semantics():
@@ -60,3 +61,10 @@ def test_single_turn_launcher_excludes_contextgraph_agent_path():
 
     assert "context_graph_isolated_agent" not in source
     assert "graph_rpo_credit_backend" not in source
+
+
+def test_async_agent_loop_preserves_grpo_grouping_ids():
+    source = AGENT_LOOP.read_text()
+
+    assert 'for identity_key in ("uid", "gen_uid"):' in source
+    assert 'output.extra_fields.setdefault(identity_key, kwargs[identity_key])' in source
