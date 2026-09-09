@@ -77,6 +77,21 @@ def test_trainer_keeps_attention_and_policy_masks_separate():
     assert "torch.tensor_split" in source
 
 
+def test_training_entrypoint_does_not_import_qerl_reward_stack():
+    source = (ROOT / "trl_agent" / "train.py").read_text(encoding="utf-8")
+    modeling = (ROOT / "trl_agent" / "modeling.py").read_text(encoding="utf-8")
+    assert "from qerl import" not in source
+    assert "from trl_agent.modeling import build_model_and_peft" in source
+    assert "from utils.rewards import" not in modeling
+    assert "prepare_model_for_kbit_training" in modeling
+
+
+def test_graphtrl_setup_imports_real_training_entrypoint():
+    source = (ROOT / "scripts" / "setup_graphtrl_env.sh").read_text(encoding="utf-8")
+    assert "import tensordict, torch, trl, trl_agent.train, vllm" in source
+    assert "OmegaConf.load('recipes/trl_agent/foldagent_gsm8k.yaml')" in source
+
+
 @pytest.mark.parametrize(
     ("name", "kind", "estimator"),
     [

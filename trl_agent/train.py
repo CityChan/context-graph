@@ -10,10 +10,10 @@ from datasets import Dataset, load_dataset
 from omegaconf import OmegaConf
 from trl import TrlParser
 
-from qerl import build_model_and_peft
 from utils.configs import ModelConfig, QeRLConfig
 
 from scripts.prepare_gsm8k_grpo_data import convert_example
+from trl_agent.modeling import build_model_and_peft
 from trl_agent.trainer import AgentGRPOTrainer
 
 
