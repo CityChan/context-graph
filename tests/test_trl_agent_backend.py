@@ -88,6 +88,8 @@ def test_training_entrypoint_does_not_import_qerl_reward_stack():
 
 def test_graphtrl_setup_imports_real_training_entrypoint():
     source = (ROOT / "scripts" / "setup_graphtrl_env.sh").read_text(encoding="utf-8")
+    assert '"ray[default]"' in source
+    assert '"codetiming"' in source
     assert "import tensordict, torch, trl, trl_agent.train, vllm" in source
     assert "OmegaConf.load('recipes/trl_agent/foldagent_gsm8k.yaml')" in source
 

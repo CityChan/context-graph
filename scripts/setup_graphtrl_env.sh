@@ -13,7 +13,7 @@ if ! conda env list | awk '{print $1}' | grep -qx "$TARGET_ENV"; then
   conda create -n "$TARGET_ENV" --clone "$SOURCE_ENV" -y
 fi
 conda activate "$TARGET_ENV"
-python -m pip install "hydra-core" "omegaconf" "tensordict>=0.8.0,<=0.10.0,!=0.9.0" "aiohttp" "httpx" "pydantic" "unidiff"
+python -m pip install "hydra-core" "omegaconf" "ray[default]" "tensordict>=0.8.0,<=0.10.0,!=0.9.0" "codetiming" "aiohttp" "httpx" "pydantic" "unidiff"
 cd "$PROJECT_ROOT"
 export PYTHONPATH="$PROJECT_ROOT:$QERL_ROOT:${PYTHONPATH:-}"
 python -c "from omegaconf import OmegaConf; import tensordict, torch, trl, trl_agent.train, vllm; config=OmegaConf.load('recipes/trl_agent/foldagent_gsm8k.yaml'); assert config.algorithm.adv_estimator == 'foldgrpo'; print('graphtrl ready:', torch.__version__, trl.__version__, vllm.__version__, tensordict.__version__)"
