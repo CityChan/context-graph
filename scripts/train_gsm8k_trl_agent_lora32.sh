@@ -1,5 +1,5 @@
 #!/bin/bash
-# QeRL/TRL colocated-vLLM training for FoldAgent or ContextGraph on one GH200.
+# QeRL/TRL colocated-vLLM training for FoldAgent or ContextGraph.
 set -euo pipefail
 
 PROJECT_ROOT=${PROJECT_ROOT:-/work/09281/chc_1996/vista/context-graph}
@@ -24,6 +24,23 @@ RUN_TAG=${RUN_TAG:-trl-${AGENT_KIND}-gsm8k-qwen25-1p5b-lora32-${TOTAL_TRAINING_S
 RUN_NAME=${RUN_NAME:-${RUN_TAG}-${SLURM_JOB_ID:-local}-$TS}
 CHECKPOINT_ROOT=${CHECKPOINT_ROOT:-${SCRATCH:?SCRATCH must be set}/context-graph-trl-ckpts/$RUN_NAME}
 MASTER_PORT=${MASTER_PORT:-29539}
+TRL_NUM_MACHINES=${TRL_NUM_MACHINES:-1}
+TRL_NUM_PROCESSES=${TRL_NUM_PROCESSES:-$TRL_NUM_MACHINES}
+TRL_MACHINE_RANK=${TRL_MACHINE_RANK:-${SLURM_PROCID:-0}}
+TRL_MASTER_ADDR=${TRL_MASTER_ADDR:-localhost}
+
+if [ "$TRL_NUM_MACHINES" -lt 1 ] || [ "$TRL_NUM_PROCESSES" -lt 1 ]; then
+  echo "ERROR: TRL_NUM_MACHINES and TRL_NUM_PROCESSES must be positive" >&2
+  exit 2
+fi
+if [ "$TRL_NUM_PROCESSES" -ne "$TRL_NUM_MACHINES" ]; then
+  echo "ERROR: this launcher supports exactly one trainer process per machine" >&2
+  exit 2
+fi
+if [ "$TRL_MACHINE_RANK" -lt 0 ] || [ "$TRL_MACHINE_RANK" -ge "$TRL_NUM_MACHINES" ]; then
+  echo "ERROR: TRL_MACHINE_RANK=$TRL_MACHINE_RANK is outside [0,$((TRL_NUM_MACHINES - 1))]" >&2
+  exit 2
+fi
 
 case "$AGENT_KIND" in
   foldagent) AGENT_CONFIG=${AGENT_CONFIG:-$PROJECT_ROOT/recipes/trl_agent/foldagent_gsm8k.yaml} ;;
@@ -43,7 +60,8 @@ export CPATH="/home1/apps/nvidia/Linux_aarch64/25.3/math_libs/12.8/targets/sbsa-
 export HF_HOME=${HF_HOME:-/work/09281/chc_1996/vista/cache}
 export TRANSFORMERS_CACHE="$HF_HOME"
 export PYTHONPATH="$PROJECT_ROOT:$QERL_ROOT:${PYTHONPATH:-}"
-export PYTHONNOUSERSITE=1 CC=gcc CXX=g++ RANK=0 LOCAL_RANK=0 WORLD_SIZE=1 MASTER_ADDR=localhost MASTER_PORT
+export PYTHONNOUSERSITE=1 CC=gcc CXX=g++ MASTER_ADDR="$TRL_MASTER_ADDR" MASTER_PORT
+unset RANK LOCAL_RANK WORLD_SIZE
 export VLLM_ALLOW_RUNTIME_LORA_UPDATING=True VLLM_USE_V1=0 VLLM_ATTENTION_BACKEND=FLASH_ATTN TORCHDYNAMO_DISABLE=1
 export WANDB_PROJECT=${WANDB_PROJECT:-context-graph}
 export WANDB_RUN_GROUP=${WANDB_RUN_GROUP:-trl-agent-framework}
@@ -61,10 +79,18 @@ if [ -n "$TRAIN_DATA_PATH" ]; then
 fi
 
 python -c "import ctypes, omegaconf, tensordict, torch, trl, vllm, verl; ctypes.CDLL('libnvrtc.so.12'); assert torch.cuda.is_available() and torch.cuda.device_count() == 1; print('runtime OK:', torch.__version__, trl.__version__, vllm.__version__)"
-echo "TRL agent training: agent=$AGENT_KIND dataset=$DATASET_NAME model=$MODEL_PATH steps=$TOTAL_TRAINING_STEPS config=$AGENT_CONFIG"
+echo "TRL agent training: agent=$AGENT_KIND dataset=$DATASET_NAME model=$MODEL_PATH steps=$TOTAL_TRAINING_STEPS config=$AGENT_CONFIG machines=$TRL_NUM_MACHINES rank=$TRL_MACHINE_RANK"
 echo "checkpoint=$CHECKPOINT_ROOT run=$RUN_NAME"
 
-accelerate launch --config_file "$QERL_ROOT/recipes/accelerate_configs/single_gpu.yaml" --num_processes=1 --main_process_port "$MASTER_PORT" -m trl_agent.train \
+if [ "$TRL_NUM_MACHINES" -gt 1 ]; then
+  ACCELERATE_CONFIG=$QERL_ROOT/recipes/accelerate_configs/ddp.yaml
+  ACCELERATE_DISTRIBUTED_ARGS=(--num_machines "$TRL_NUM_MACHINES" --num_processes "$TRL_NUM_PROCESSES" --machine_rank "$TRL_MACHINE_RANK" --main_process_ip "$TRL_MASTER_ADDR")
+else
+  ACCELERATE_CONFIG=$QERL_ROOT/recipes/accelerate_configs/single_gpu.yaml
+  ACCELERATE_DISTRIBUTED_ARGS=(--num_processes 1)
+fi
+
+accelerate launch --config_file "$ACCELERATE_CONFIG" "${ACCELERATE_DISTRIBUTED_ARGS[@]}" --main_process_port "$MASTER_PORT" -m trl_agent.train \
   --agent-kind "$AGENT_KIND" \
   --agent-config "$AGENT_CONFIG" \
   "${TRAIN_DATA_ARGS[@]}" \
@@ -96,6 +122,7 @@ accelerate launch --config_file "$QERL_ROOT/recipes/accelerate_configs/single_gp
   --lora-alpha 32 \
   --fast-inference True \
   --vllm-gpu-memory-utilization "$VLLM_GPU_MEMORY_UTILIZATION" \
+  --vllm-tensor-parallel-size 1 \
   --random-state 2025 \
   --loss-type grpo \
   --beta 0.0 \
@@ -106,6 +133,10 @@ accelerate launch --config_file "$QERL_ROOT/recipes/accelerate_configs/single_gp
   --ln False \
   --disable-noise True \
   --vllm-enable-sleep-mode False
+
+if [ "$TRL_MACHINE_RANK" -ne 0 ]; then
+  exit 0
+fi
 
 FINAL_CHECKPOINT=$CHECKPOINT_ROOT/checkpoint-$TOTAL_TRAINING_STEPS
 test -s "$FINAL_CHECKPOINT/trainer_state.json"

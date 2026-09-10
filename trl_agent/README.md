@@ -1,8 +1,11 @@
 # TRL agent backend
 
 This backend runs the existing FoldAgent and isolated ContextGraph loops on top
-of QeRL's TRL trainer and colocated vLLM engine. It is intended for single-GPU
-throughput experiments and framework comparisons.
+of QeRL's TRL trainer and colocated vLLM engine. Single-GPU runs are validated;
+the multi-node path is experimental until it passes the documented Vista
+smoke. It uses DDP with one colocated vLLM replica per rank. Distributed runs
+must keep each generation group rank-local: `per_device_train_batch_size *
+steps_per_generation` must be divisible by `num_generations`.
 
 The adapter preserves the agent-training semantics that a flattened completion
 would lose:
@@ -53,6 +56,13 @@ cd /work/09281/chc_1996/vista/context-graph && bash scripts/train_gsm8k_trl_cont
 
 All launchers use the same Qwen2.5-1.5B, LoRA 32/32, AdamW8bit, G16, and
 colocated-vLLM training settings as the existing QeRL control.
+
+The BrowseComp-Plus launcher uses four GH200 nodes as one retriever plus three
+DDP trainer ranks. Run a one-step distributed smoke before the 50-step job:
+
+```bash
+cd /work/09281/chc_1996/vista/context-graph && TOTAL_TRAINING_STEPS=1 SAVE_STEPS=1 bash scripts/train_bc_trl_contextgraph_qwen3_8b_lora32_50step_4node.sh
+```
 
 The initial GraphRPO backend supports graph credits computed during rollout:
 `old_policy_counterfactual_qa` and `external_evaluator`. The two answer-

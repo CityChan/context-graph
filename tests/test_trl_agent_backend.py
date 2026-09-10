@@ -90,6 +90,9 @@ def test_trainer_keeps_attention_and_policy_masks_separate():
     assert "if old_per_token_logps is None" in source
     assert '"foldgrpo_loss_weights"' in source
     assert "1.0 / len(outputs)" in source
+    assert "local_generation_batch_size % self.num_generations" in source
+    assert "distributed agent training must keep generation groups rank-local" in source
+    assert "self.accelerator.gather(local_mean)" in source
 
 
 def test_training_entrypoint_does_not_import_qerl_reward_stack():
@@ -152,6 +155,12 @@ def test_shared_launcher_preflights_the_selected_gpu_and_defaults_to_full_data()
     assert visibility in source
     assert source.index(visibility) < source.index(preflight)
     assert "CUDA_VISIBLE_DEVICES=0 accelerate launch" not in source
+    assert "TRL_NUM_MACHINES=${TRL_NUM_MACHINES:-1}" in source
+    assert "TRL_MACHINE_RANK=${TRL_MACHINE_RANK:-${SLURM_PROCID:-0}}" in source
+    assert "recipes/accelerate_configs/ddp.yaml" in source
+    assert '--machine_rank "$TRL_MACHINE_RANK"' in source
+    assert "--vllm-tensor-parallel-size 1" in source
+    assert 'unset RANK LOCAL_RANK WORLD_SIZE' in source
     assert "'reward/correctness'" in source
     assert "'reward/soft_format_valid'" in source
     assert "'training/old_policy_logps_recomputed'" in source
@@ -187,24 +196,28 @@ def test_contextgraph_bc_qwen3_8b_lora_50step_launcher_is_protocol_labeled():
     assert "MODEL_PATH=${MODEL_PATH:-Qwen/Qwen3-8B}" in source
     assert "TOTAL_TRAINING_STEPS=${TOTAL_TRAINING_STEPS:-50}" in source
     assert "TRAIN_MAX_SAMPLES=${TRAIN_MAX_SAMPLES:-128}" in source
-    assert "contextgraph-bc-qwen3-8b-lora32-50step" in source
+    assert "trl-contextgraph-bc-qwen3-8b-lora32-" in source
     assert "contextgraph_browsecomp_plus.yaml" in source
     assert "envs/search_server.py" in source
     assert "#SBATCH -N 4" in source
     assert 'if [ "${#BC_TRL_NODES[@]}" -lt 4 ]; then' in source
-    assert 'SEARCH_NODES=("${BC_TRL_NODES[@]:0:3}")' in source
-    assert "TRAIN_NODE=${BC_TRL_NODES[3]}" in source
+    assert "SEARCH_NODE=${BC_TRL_NODES[0]}" in source
+    assert 'TRAIN_NODES=("${BC_TRL_NODES[@]:1:3}")' in source
     assert "4-node topology" in source
-    assert "Starting one 3-node Slurm retriever step" in source
-    assert "srun --overlap --nodes=3 --ntasks=3 --ntasks-per-node=1" in source
-    assert "SEARCH_STEP_PID=$!" in source
-    assert "SEARCH_PIDS" not in source
-    assert "LOCAL_SEARCH_URL=$(IFS=,;" in source
-    assert 'bash -lc "source $CONDA_BASE/etc/profile.d/conda.sh; conda activate cxtgraph;' in source
+    assert "Starting BC-P retriever on" in source
+    assert "'[retriever-launch] host='" in source
+    assert "BC_SEARCH_LAUNCH_TIMEOUT_SECONDS=${BC_SEARCH_LAUNCH_TIMEOUT_SECONDS:-30}" in source
+    assert "SEARCH_PID=$!" in source
+    assert "export LOCAL_SEARCH_URL=$SEARCH_URL" in source
+    assert "export TRL_NUM_MACHINES=3 TRL_NUM_PROCESSES=3" in source
+    assert "Launching distributed TRL ContextGraph BC-P" in source
+    assert 'srun --overlap --nodes=3 --ntasks=3 --ntasks-per-node=1 --gpus-per-node=1' in source
+    assert 'bash -lc "echo' in source
+    assert "conda activate cxtgraph" in source
     assert "conda run --no-capture-output" not in source
     assert "SEARCH_DEADLINE=$((SECONDS + BC_SEARCH_TIMEOUT_SECONDS))" in source
     assert "--connect-timeout 2 --max-time 5" in source
-    assert "Waiting for retrievers" in source
+    assert "Waiting for retriever" in source
     assert "workflow: search_graph" in recipe
     assert "must_search: true" in recipe
     assert "graph_rpo_credit_backend: old_policy_counterfactual_qa" in recipe

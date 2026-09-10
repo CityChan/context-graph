@@ -66,7 +66,13 @@ def _pad_rows(
 
 
 class AgentGRPOTrainer(GRPOTrainer):
-    """Fast single-GPU TRL trainer for project-native agent trajectories."""
+    """TRL trainer for project-native agent trajectories.
+
+    Multi-process training uses one colocated vLLM replica per DDP rank.  To
+    keep FoldGRPO/GraphRPO groups intact, every rank must receive a local
+    generation batch containing an integer number of complete generation
+    groups.
+    """
 
     def __init__(
         self,
@@ -100,10 +106,23 @@ class AgentGRPOTrainer(GRPOTrainer):
     def _validate_agent_training_config(self) -> None:
         if not self.use_vllm or self.vllm_mode != "colocate":
             raise ValueError("AgentGRPOTrainer requires colocated vLLM")
-        if self.accelerator.num_processes != 1:
-            raise NotImplementedError(
-                "The initial TRL agent backend is single-GPU; use verl for distributed runs"
+        if self.accelerator.num_processes > 1:
+            if self.vllm_tensor_parallel_size != 1:
+                raise NotImplementedError(
+                    "distributed agent training requires one colocated vLLM replica per rank "
+                    "(vllm_tensor_parallel_size=1)"
+                )
+            local_generation_batch_size = (
+                self.args.per_device_train_batch_size
+                * self.args.steps_per_generation
             )
+            if local_generation_batch_size % self.num_generations != 0:
+                raise ValueError(
+                    "distributed agent training must keep generation groups rank-local: "
+                    "per_device_train_batch_size * steps_per_generation must be divisible "
+                    f"by num_generations; got {self.args.per_device_train_batch_size} * "
+                    f"{self.args.steps_per_generation} vs {self.num_generations}"
+                )
         if self.beta != 0.0:
             raise NotImplementedError("TRL agent training currently requires beta=0")
         if self.use_liger_loss:
@@ -607,6 +626,30 @@ class AgentGRPOTrainer(GRPOTrainer):
             (((low | high) * policy_mask).sum() / token_count).item()
         )
         return loss
+
+    def log(self, logs: dict[str, float], start_time: float | None = None) -> None:
+        """Aggregate custom agent telemetry before the parent logs on rank zero."""
+        mode = "train" if self.model.training else "eval"
+        if self.accelerator.num_processes > 1:
+            sum_metrics = {
+                "num_tokens",
+                "agent/trajectories",
+                "agent/vllm_generate_calls",
+                "agent/generated_tokens",
+                "agent/masked_rollouts",
+            }
+            for key, values in self._metrics[mode].items():
+                if not values:
+                    continue
+                local_mean = torch.tensor(
+                    [sum(values) / len(values)],
+                    dtype=torch.float64,
+                    device=self.accelerator.device,
+                )
+                gathered = self.accelerator.gather(local_mean)
+                aggregate = gathered.sum() if key in sum_metrics else gathered.mean()
+                self._metrics[mode][key] = [aggregate.item()]
+        super().log(logs, start_time)
 
 
 __all__ = ["AgentGRPOTrainer"]
