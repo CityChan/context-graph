@@ -192,6 +192,9 @@ def test_contextgraph_bc_qwen3_8b_lora_50step_launcher_is_protocol_labeled():
     assert "envs/search_server.py" in source
     assert 'if [ "${#BC_TRL_NODES[@]}" -lt 2 ]; then' in source
     assert "extra allocation node(s) idle" in source
+    assert "SEARCH_DEADLINE=$((SECONDS + BC_SEARCH_TIMEOUT_SECONDS))" in source
+    assert "--connect-timeout 2 --max-time 10" in source
+    assert "Waiting for BC-P retriever" in source
     assert "workflow: search_graph" in recipe
     assert "must_search: true" in recipe
     assert "graph_rpo_credit_backend: old_policy_counterfactual_qa" in recipe

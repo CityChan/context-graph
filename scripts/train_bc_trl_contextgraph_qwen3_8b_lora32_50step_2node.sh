@@ -68,8 +68,11 @@ srun --overlap --nodes=1 --ntasks=1 -w "$SEARCH_NODE" "$CONDA_BASE/bin/conda" ru
 SEARCH_PID=$!
 
 SEARCH_OK=0
-for _ in $(seq 1 "$BC_SEARCH_TIMEOUT_SECONDS"); do
-  if curl --noproxy '*' -fsS -X POST -H 'Content-Type: application/json' -d '{"query":"Eiffel Tower","k":1}' "http://$SEARCH_NODE_IP:$SEARCH_PORT/search" >/dev/null 2>&1; then
+SEARCH_DEADLINE=$((SECONDS + BC_SEARCH_TIMEOUT_SECONDS))
+SEARCH_ATTEMPT=0
+while [ "$SECONDS" -lt "$SEARCH_DEADLINE" ]; do
+  SEARCH_ATTEMPT=$((SEARCH_ATTEMPT + 1))
+  if curl --noproxy '*' --connect-timeout 2 --max-time 10 -fsS -X POST -H 'Content-Type: application/json' -d '{"query":"Eiffel Tower","k":1}' "http://$SEARCH_NODE_IP:$SEARCH_PORT/search" >/dev/null 2>&1; then
     SEARCH_OK=1
     break
   fi
@@ -77,6 +80,10 @@ for _ in $(seq 1 "$BC_SEARCH_TIMEOUT_SECONDS"); do
     echo "ERROR: BC-P retriever exited during startup." >&2
     tail -80 "$SEARCH_LOG" || true
     exit 1
+  fi
+  if [ $((SEARCH_ATTEMPT % 3)) -eq 0 ]; then
+    echo "Waiting for BC-P retriever ($((BC_SEARCH_TIMEOUT_SECONDS - (SEARCH_DEADLINE - SECONDS)))s elapsed); latest log:"
+    tail -10 "$SEARCH_LOG" || true
   fi
   sleep 1
 done
