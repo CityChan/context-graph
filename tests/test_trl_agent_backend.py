@@ -195,6 +195,10 @@ def test_contextgraph_bc_qwen3_8b_lora_50step_launcher_is_protocol_labeled():
     assert 'SEARCH_NODES=("${BC_TRL_NODES[@]:0:3}")' in source
     assert "TRAIN_NODE=${BC_TRL_NODES[3]}" in source
     assert "4-node topology" in source
+    assert "Starting one 3-node Slurm retriever step" in source
+    assert "srun --overlap --nodes=3 --ntasks=3 --ntasks-per-node=1" in source
+    assert "SEARCH_STEP_PID=$!" in source
+    assert "SEARCH_PIDS" not in source
     assert "LOCAL_SEARCH_URL=$(IFS=,;" in source
     assert 'bash -lc "source $CONDA_BASE/etc/profile.d/conda.sh; conda activate cxtgraph;' in source
     assert "conda run --no-capture-output" not in source

@@ -43,6 +43,7 @@ if [ "${#BC_TRL_NODES[@]}" -lt 4 ]; then
 fi
 SEARCH_NODES=("${BC_TRL_NODES[@]:0:3}")
 TRAIN_NODE=${BC_TRL_NODES[3]}
+SEARCH_NODELIST=$(IFS=,; echo "${SEARCH_NODES[*]}")
 if [ "${#BC_TRL_NODES[@]}" -gt 4 ]; then
   echo "Using the first 4 nodes; leaving $(( ${#BC_TRL_NODES[@]} - 4 )) extra allocation node(s) idle."
 fi
@@ -52,16 +53,15 @@ export HF_HUB_CACHE=${HF_HUB_CACHE:-$HF_HOME/hub}
 export HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 export NUM_GPUS=1 MAX_BATCH_SIZE=128 PYTHONUNBUFFERED=1
 
-SEARCH_PIDS=()
 SEARCH_URLS=()
 SEARCH_LOGS=()
+SEARCH_ERROR_LOGS=()
+SEARCH_STEP_PID=
 cleanup() {
-  for pid in "${SEARCH_PIDS[@]}"; do
-    kill "$pid" 2>/dev/null || true
-  done
-  for pid in "${SEARCH_PIDS[@]}"; do
-    wait "$pid" 2>/dev/null || true
-  done
+  if [ -n "$SEARCH_STEP_PID" ]; then
+    kill "$SEARCH_STEP_PID" 2>/dev/null || true
+    wait "$SEARCH_STEP_PID" 2>/dev/null || true
+  fi
 }
 trap cleanup EXIT INT TERM
 
@@ -71,12 +71,17 @@ for SEARCH_INDEX in 0 1 2; do
   SEARCH_NODE_IP=$(getent hosts "$SEARCH_NODE" | awk '{print $1; exit}')
   SEARCH_URL=http://$SEARCH_NODE_IP:$SEARCH_PORT
   SEARCH_LOG=$PROJECT_ROOT/logs/bc-search-${SLURM_JOB_ID:-idev}-${SEARCH_NODE}.log
+  SEARCH_ERROR_LOG=$PROJECT_ROOT/logs/bc-search-${SLURM_JOB_ID:-idev}-${SEARCH_NODE}.err
   SEARCH_URLS+=("$SEARCH_URL")
   SEARCH_LOGS+=("$SEARCH_LOG")
-  echo "Starting BC-P retriever $((SEARCH_INDEX + 1))/3 on $SEARCH_NODE"
-  srun --overlap --nodes=1 --ntasks=1 -w "$SEARCH_NODE" bash -lc "source $CONDA_BASE/etc/profile.d/conda.sh; conda activate cxtgraph; cd $PROJECT_ROOT; export PYTHONPATH=$PROJECT_ROOT:\${PYTHONPATH:-}; exec python -u envs/search_server.py --model $EMBED_MODEL --host 0.0.0.0 --port $SEARCH_PORT --corpus Tevatron/browsecomp-plus-corpus --corpus-embedding-dataset miaolu3/browsecomp-plus" >"$SEARCH_LOG" 2>&1 &
-  SEARCH_PIDS+=("$!")
+  SEARCH_ERROR_LOGS+=("$SEARCH_ERROR_LOG")
 done
+SEARCH_LOG_PATTERN=$PROJECT_ROOT/logs/bc-search-${SLURM_JOB_ID:-idev}-%N.log
+SEARCH_ERROR_LOG_PATTERN=$PROJECT_ROOT/logs/bc-search-${SLURM_JOB_ID:-idev}-%N.err
+echo "Starting one 3-node Slurm retriever step on $SEARCH_NODELIST"
+srun --overlap --nodes=3 --ntasks=3 --ntasks-per-node=1 -w "$SEARCH_NODELIST" --output="$SEARCH_LOG_PATTERN" --error="$SEARCH_ERROR_LOG_PATTERN" bash -lc "source $CONDA_BASE/etc/profile.d/conda.sh; conda activate cxtgraph; cd $PROJECT_ROOT; export PYTHONPATH=$PROJECT_ROOT:\${PYTHONPATH:-}; exec python -u envs/search_server.py --model $EMBED_MODEL --host 0.0.0.0 --port $SEARCH_PORT --corpus Tevatron/browsecomp-plus-corpus --corpus-embedding-dataset miaolu3/browsecomp-plus" &
+SEARCH_STEP_PID=$!
+echo "Retriever Slurm step PID: $SEARCH_STEP_PID"
 
 SEARCH_READY=(0 0 0)
 SEARCH_DEADLINE=$((SECONDS + BC_SEARCH_TIMEOUT_SECONDS))
@@ -94,9 +99,12 @@ while [ "$SECONDS" -lt "$SEARCH_DEADLINE" ]; do
       echo "Retriever ready: ${SEARCH_NODES[$SEARCH_INDEX]}"
       continue
     fi
-    if ! kill -0 "${SEARCH_PIDS[$SEARCH_INDEX]}" 2>/dev/null; then
-      echo "ERROR: retriever exited on ${SEARCH_NODES[$SEARCH_INDEX]}." >&2
-      tail -80 "${SEARCH_LOGS[$SEARCH_INDEX]}" || true
+    if ! kill -0 "$SEARCH_STEP_PID" 2>/dev/null; then
+      echo "ERROR: the 3-node retriever Slurm step exited." >&2
+      for LOG_INDEX in 0 1 2; do
+        tail -80 "${SEARCH_LOGS[$LOG_INDEX]}" || true
+        tail -80 "${SEARCH_ERROR_LOGS[$LOG_INDEX]}" || true
+      done
       exit 1
     fi
   done
@@ -108,6 +116,7 @@ while [ "$SECONDS" -lt "$SEARCH_DEADLINE" ]; do
     for SEARCH_INDEX in 0 1 2; do
       echo "--- ${SEARCH_NODES[$SEARCH_INDEX]} latest log ---"
       tail -5 "${SEARCH_LOGS[$SEARCH_INDEX]}" || true
+      tail -5 "${SEARCH_ERROR_LOGS[$SEARCH_INDEX]}" || true
     done
   fi
   sleep 1
