@@ -58,7 +58,8 @@ export LD_LIBRARY_PATH="$CONDA_PREFIX/lib:/home1/apps/nvidia/Linux_aarch64/25.3/
 export LIBRARY_PATH="/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/lib64:${LIBRARY_PATH:-}"
 export CPATH="/home1/apps/nvidia/Linux_aarch64/25.3/math_libs/12.8/targets/sbsa-linux/include:${CPATH:-}"
 export HF_HOME=${HF_HOME:-/work/09281/chc_1996/vista/cache}
-export TRANSFORMERS_CACHE="$HF_HOME"
+export HF_HUB_CACHE=${HF_HUB_CACHE:-$HF_HOME/hub}
+unset TRANSFORMERS_CACHE
 export PYTHONPATH="$PROJECT_ROOT:$QERL_ROOT:${PYTHONPATH:-}"
 export PYTHONNOUSERSITE=1 CC=gcc CXX=g++ MASTER_ADDR="$TRL_MASTER_ADDR" MASTER_PORT
 unset RANK LOCAL_RANK WORLD_SIZE

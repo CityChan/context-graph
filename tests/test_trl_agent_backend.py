@@ -160,6 +160,9 @@ def test_shared_launcher_preflights_the_selected_gpu_and_defaults_to_full_data()
     assert "recipes/accelerate_configs/ddp.yaml" in source
     assert '--machine_rank "$TRL_MACHINE_RANK"' in source
     assert "--vllm-tensor-parallel-size 1" in source
+    assert "export HF_HUB_CACHE=${HF_HUB_CACHE:-$HF_HOME/hub}" in source
+    assert "unset TRANSFORMERS_CACHE" in source
+    assert 'export TRANSFORMERS_CACHE="$HF_HOME"' not in source
     assert 'unset RANK LOCAL_RANK WORLD_SIZE' in source
     assert "'reward/correctness'" in source
     assert "'reward/soft_format_valid'" in source
@@ -194,6 +197,14 @@ def test_contextgraph_bc_qwen3_8b_lora_50step_launcher_is_protocol_labeled():
     assert "export AGENT_KIND=contextgraph" in source
     assert "data/bc_train.parquet" in source
     assert "MODEL_PATH=${MODEL_PATH:-Qwen/Qwen3-8B}" in source
+    assert 'MODEL_CACHE_ROOT=$HF_HUB_CACHE/models--${MODEL_PATH//\\//--}' in source
+    assert "MODEL_REF=$MODEL_CACHE_ROOT/refs/main" in source
+    assert 'MODEL_PATH=$MODEL_CACHE_ROOT/snapshots/$MODEL_REVISION' in source
+    assert 'find "$MODEL_CACHE_ROOT/snapshots"' in source
+    assert 'Resolved offline trainer model: $MODEL_PATH' in source
+    assert 'model snapshot is missing config.json' in source
+    assert "model snapshot has no non-empty weight files" in source
+    assert source.index("Resolved offline trainer model") < source.index("Starting BC-P retriever directly")
     assert "TOTAL_TRAINING_STEPS=${TOTAL_TRAINING_STEPS:-50}" in source
     assert "TRAIN_MAX_SAMPLES=${TRAIN_MAX_SAMPLES:-128}" in source
     assert "trl-contextgraph-bc-qwen3-8b-lora32-" in source
@@ -210,6 +221,7 @@ def test_contextgraph_bc_qwen3_8b_lora_50step_launcher_is_protocol_labeled():
     assert "'[retriever-env] conda='" in source
     assert "'[retriever-python] starting search_server imports'" in source
     assert "BC_SEARCH_LAUNCH_TIMEOUT_SECONDS=${BC_SEARCH_LAUNCH_TIMEOUT_SECONDS:-30}" in source
+    assert "BC_SEARCH_STATUS_INTERVAL_ATTEMPTS=${BC_SEARCH_STATUS_INTERVAL_ATTEMPTS:-30}" in source
     assert "SEARCH_PID=$!" in source
     assert "export LOCAL_SEARCH_URL=$SEARCH_URL" in source
     assert "export TRL_NUM_MACHINES=3 TRL_NUM_PROCESSES=3" in source

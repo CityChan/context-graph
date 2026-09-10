@@ -18,6 +18,7 @@ EMBED_MODEL=${EMBED_MODEL:-Qwen/Qwen3-Embedding-8B}
 SEARCH_PORT=${SEARCH_PORT:-18999}
 BC_SEARCH_TIMEOUT_SECONDS=${BC_SEARCH_TIMEOUT_SECONDS:-600}
 BC_SEARCH_LAUNCH_TIMEOUT_SECONDS=${BC_SEARCH_LAUNCH_TIMEOUT_SECONDS:-30}
+BC_SEARCH_STATUS_INTERVAL_ATTEMPTS=${BC_SEARCH_STATUS_INTERVAL_ATTEMPTS:-30}
 
 if [ -n "${WORK:-}" ] && [ -f "$WORK/.openai_env" ]; then
   source "$WORK/.openai_env"
@@ -61,6 +62,32 @@ export HF_HOME=${HF_HOME:-/work/09281/chc_1996/vista/cache}
 export HF_HUB_CACHE=${HF_HUB_CACHE:-$HF_HOME/hub}
 export HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_HUB_DISABLE_FILE_LOCKING=1
 export NUM_GPUS=1 MAX_BATCH_SIZE=128 PYTHONUNBUFFERED=1
+
+MODEL_PATH=${MODEL_PATH:-Qwen/Qwen3-8B}
+if [ ! -d "$MODEL_PATH" ]; then
+  MODEL_CACHE_ROOT=$HF_HUB_CACHE/models--${MODEL_PATH//\//--}
+  MODEL_REF=$MODEL_CACHE_ROOT/refs/main
+  if [ -s "$MODEL_REF" ]; then
+    MODEL_REVISION=$(tr -d '\r\n' < "$MODEL_REF")
+    MODEL_PATH=$MODEL_CACHE_ROOT/snapshots/$MODEL_REVISION
+  else
+    MODEL_PATH=$(find "$MODEL_CACHE_ROOT/snapshots" -mindepth 1 -maxdepth 1 -type d -print -quit 2>/dev/null || true)
+    if [ -z "$MODEL_PATH" ]; then
+      echo "ERROR: no offline snapshot found under $MODEL_CACHE_ROOT/snapshots" >&2
+      exit 1
+    fi
+  fi
+fi
+if [ ! -s "$MODEL_PATH/config.json" ]; then
+  echo "ERROR: model snapshot is missing config.json: $MODEL_PATH" >&2
+  exit 1
+fi
+if ! find -L "$MODEL_PATH" -maxdepth 1 -type f \( -name '*.safetensors' -o -name 'pytorch_model*.bin' \) -size +0c -print -quit 2>/dev/null | grep -q .; then
+  echo "ERROR: model snapshot has no non-empty weight files: $MODEL_PATH" >&2
+  exit 1
+fi
+export MODEL_PATH
+echo "Resolved offline trainer model: $MODEL_PATH"
 
 SEARCH_URL=http://$SEARCH_NODE_IP:$SEARCH_PORT
 SEARCH_LOG=$PROJECT_ROOT/logs/bc-search-${SLURM_JOB_ID:-idev}-${SEARCH_NODE}.log
@@ -111,7 +138,7 @@ while [ "$SECONDS" -lt "$SEARCH_DEADLINE" ]; do
     tail -80 "$SEARCH_ERROR_LOG" || true
     exit 1
   fi
-  if [ $((SEARCH_ATTEMPT % 2)) -eq 0 ]; then
+  if [ $((SEARCH_ATTEMPT % BC_SEARCH_STATUS_INTERVAL_ATTEMPTS)) -eq 0 ]; then
     echo "Waiting for retriever ($((BC_SEARCH_TIMEOUT_SECONDS - (SEARCH_DEADLINE - SECONDS)))s elapsed)"
     tail -5 "$SEARCH_LOG" || true
     tail -5 "$SEARCH_ERROR_LOG" || true
@@ -129,7 +156,6 @@ export LOCAL_SEARCH_URL=$SEARCH_URL
 export AGENT_KIND=contextgraph
 export AGENT_CONFIG=$PROJECT_ROOT/recipes/trl_agent/contextgraph_browsecomp_plus.yaml
 export DATASET_NAME=browsecomp-plus
-export MODEL_PATH=${MODEL_PATH:-Qwen/Qwen3-8B}
 export TOTAL_TRAINING_STEPS=${TOTAL_TRAINING_STEPS:-50}
 export SAVE_STEPS=${SAVE_STEPS:-10}
 export TRAIN_MAX_SAMPLES=${TRAIN_MAX_SAMPLES:-128}
