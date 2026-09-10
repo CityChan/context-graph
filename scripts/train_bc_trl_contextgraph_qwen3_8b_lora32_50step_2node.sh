@@ -37,12 +37,15 @@ if [ ! -s "$TRAIN_DATA_PATH" ]; then
 fi
 
 mapfile -t BC_TRL_NODES < <(scontrol show hostnames "$SLURM_JOB_NODELIST")
-if [ "${#BC_TRL_NODES[@]}" -ne 2 ]; then
-  echo "ERROR: expected 2 nodes, got ${#BC_TRL_NODES[@]}" >&2
+if [ "${#BC_TRL_NODES[@]}" -lt 2 ]; then
+  echo "ERROR: expected at least 2 nodes, got ${#BC_TRL_NODES[@]}" >&2
   exit 1
 fi
 SEARCH_NODE=${BC_TRL_NODES[0]}
 TRAIN_NODE=${BC_TRL_NODES[1]}
+if [ "${#BC_TRL_NODES[@]}" -gt 2 ]; then
+  echo "Using $SEARCH_NODE and $TRAIN_NODE; leaving $(( ${#BC_TRL_NODES[@]} - 2 )) extra allocation node(s) idle."
+fi
 SEARCH_NODE_IP=$(getent hosts "$SEARCH_NODE" | awk '{print $1; exit}')
 SEARCH_LOG=$PROJECT_ROOT/logs/bc-search-${SLURM_JOB_ID:-idev}.log
 
