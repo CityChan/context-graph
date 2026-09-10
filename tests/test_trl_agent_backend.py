@@ -75,6 +75,18 @@ def test_trainer_keeps_attention_and_policy_masks_separate():
     assert "compute_graphrpo_loss_weights(" in source
     assert "episode_ids" in source
     assert "torch.tensor_split" in source
+    assert "unique_env_stats" in source
+    assert '"reward/correctness"' in source
+    assert '"reward/correctness_reward"' in source
+    assert '"reward/soft_format_valid"' in source
+    assert '"reward/soft_format_reward"' in source
+    assert '"rewards/correctness_reward_func/mean"' not in source
+    assert '"rewards/soft_format_reward_func/mean"' not in source
+    assert '"rollout_per_token_logps"' in source
+    assert "old_per_token_logps = per_token_logps.detach()" not in source
+    assert "if old_per_token_logps is None" in source
+    assert '"foldgrpo_loss_weights"' in source
+    assert "1.0 / len(outputs)" in source
 
 
 def test_training_entrypoint_does_not_import_qerl_reward_stack():
@@ -108,4 +120,34 @@ def test_launch_configs_and_wrappers_are_wired(name, kind, estimator):
     )
     assert f"adv_estimator: {estimator}" in config
     assert f"export AGENT_KIND={kind}" in launcher
+    assert "export TOTAL_TRAINING_STEPS=${TOTAL_TRAINING_STEPS:-10}" in launcher
+    assert "export TRAIN_MAX_SAMPLES=${TRAIN_MAX_SAMPLES:-128}" in launcher
     assert "train_gsm8k_trl_agent_lora32.sh" in launcher
+
+
+@pytest.mark.parametrize("kind", ["foldagent", "contextgraph"])
+def test_formal_launchers_use_full_dataset_and_periodic_checkpoints(kind):
+    launcher = (
+        ROOT / "scripts" / f"train_gsm8k_trl_{kind}_lora32_200step.sh"
+    ).read_text(encoding="utf-8")
+    assert f"export AGENT_KIND={kind}" in launcher
+    assert "export TOTAL_TRAINING_STEPS=${TOTAL_TRAINING_STEPS:-200}" in launcher
+    assert "export SAVE_STEPS=${SAVE_STEPS:-50}" in launcher
+    assert "export TRAIN_MAX_SAMPLES=${TRAIN_MAX_SAMPLES:-0}" in launcher
+    assert "train_gsm8k_trl_agent_lora32.sh" in launcher
+
+
+def test_shared_launcher_preflights_the_selected_gpu_and_defaults_to_full_data():
+    source = (
+        ROOT / "scripts" / "train_gsm8k_trl_agent_lora32.sh"
+    ).read_text(encoding="utf-8")
+    visibility = "export CUDA_VISIBLE_DEVICES=${TRL_AGENT_CUDA_DEVICE:-0}"
+    preflight = 'python -c "import ctypes, omegaconf'
+    assert "TRAIN_MAX_SAMPLES=${TRAIN_MAX_SAMPLES:-0}" in source
+    assert visibility in source
+    assert source.index(visibility) < source.index(preflight)
+    assert "CUDA_VISIBLE_DEVICES=0 accelerate launch" not in source
+    assert "'reward/correctness'" in source
+    assert "'reward/soft_format_valid'" in source
+    assert "'training/old_policy_logps_recomputed'" in source
+    assert "rows[-1]['clip_ratio/region_mean'] == 0.0" in source

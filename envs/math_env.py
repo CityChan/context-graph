@@ -19,8 +19,13 @@ ANSWER_BLOCK_RES = (
     re.compile(r"<answer>\s*(.*?)\s*</answer>", re.IGNORECASE | re.DOTALL),
 )
 ANSWER_MARKER_RE = re.compile(
-    r"(?:your\s+best\s+answer|final\s+answer|answer)\s*(?:>|=|:)\s*"
-    r"[\"']?\s*[$€£]?\s*([-+]?\d[\d,]*(?:\.\d+)?)",
+    r"(?:your\s+best\s+answer|final\s+answer|answer)\s*"
+    r"(?:(?:is\b)|[>=:])\s*[^\d+\-]{0,80}?"
+    r"([-+]?\d[\d,]*(?:\.\d+)?)",
+    re.IGNORECASE,
+)
+CONFIDENCE_MARKER_RE = re.compile(
+    r"(?:<parameter=confidence>|\bconfidence\b|\bconfident\b)",
     re.IGNORECASE,
 )
 
@@ -67,7 +72,15 @@ def extract_numeric_answer(value: str) -> Decimal | None:
         marker_match = ANSWER_MARKER_RE.search(text)
         if marker_match:
             candidate = marker_match.group(1)
-    matches = NUMBER_RE.findall(text) if candidate is None else [candidate]
+    if candidate is None:
+        # Emergency finalization may wrap an otherwise plain-text answer in the
+        # finish tool. Ignore trailing confidence values before applying the
+        # last-number fallback, otherwise "... 800 ... confidence 100%" is
+        # incorrectly scored as 100.
+        fallback_text = CONFIDENCE_MARKER_RE.split(text, maxsplit=1)[0]
+        matches = NUMBER_RE.findall(fallback_text)
+    else:
+        matches = [candidate]
     if not matches:
         return None
     try:
@@ -103,6 +116,7 @@ class MathEnv:
         self.label_answer = ""
         self.predicted_answer = None
         self.final_response = None
+        self.emergency_finish_wrapped = False
         self.is_finish = False
         self.env_fail = False
 
@@ -112,6 +126,7 @@ class MathEnv:
         self.label_answer = str(extra["answer"])
         self.predicted_answer = None
         self.final_response = None
+        self.emergency_finish_wrapped = False
         self.is_finish = False
         self.judge_audit = []
         self.instance_info = extra
@@ -189,7 +204,10 @@ class MathEnv:
 
         correctness_weight = reward_weight("math_correctness_reward_weight", 1.0)
         format_weight = reward_weight("math_format_reward_weight", 0.0)
-        format_valid = has_contextgraph_finish_format(format_source or "")
+        format_valid = (
+            not self.emergency_finish_wrapped
+            and has_contextgraph_finish_format(format_source or "")
+        )
         correctness_reward = correctness_weight * correctness
         format_reward = format_weight * float(format_valid)
         reward = correctness_reward + format_reward

@@ -298,6 +298,12 @@ class AgentGRPOTrainer(GRPOTrainer):
                 config=algo_config,
             )
             graph_loss_weights = None
+            fold_loss_weights = torch.full(
+                (len(outputs),),
+                1.0 / len(outputs),
+                dtype=torch.float32,
+                device=device,
+            )
         else:
             advantages, _ = compute_graphrpo_advantage(
                 token_level_rewards=token_rewards,
@@ -314,6 +320,30 @@ class AgentGRPOTrainer(GRPOTrainer):
                 index=question_ids,
                 gen_uid=episode_ids,
             ) * optimization_mask
+            fold_loss_weights = None
+
+        # Match QeRL/TRL's on-policy semantics. When generation boundaries are
+        # aligned with optimizer boundaries, the old policy is the current
+        # training model and can be represented by detached current log-probs.
+        # vLLM log-probs remain telemetry only because small backend numerical
+        # differences must not create artificial PPO clipping.
+        generate_every = self.args.steps_per_generation * self.num_iterations
+        old_per_token_logps = None
+        old_policy_recomputed = self.args.gradient_accumulation_steps % generate_every != 0
+        if old_policy_recomputed:
+            prompt_completion_ids = torch.cat([prompt_ids, completion_ids], dim=1)
+            attention_mask = torch.cat([prompt_mask, completion_attention_mask], dim=1)
+            with torch.no_grad():
+                old_per_token_logps, _ = self._get_per_token_logps_and_entropies(
+                    self.model,
+                    prompt_completion_ids,
+                    attention_mask,
+                    completion_ids.size(1),
+                    batch_size=self.args.per_device_train_batch_size,
+                )
+        self._metrics[mode]["training/old_policy_logps_recomputed"].append(
+            float(old_policy_recomputed)
+        )
 
         actual_lengths = completion_attention_mask.sum(dim=1).float()
         unique_rewards: dict[Any, float] = {}
@@ -334,7 +364,9 @@ class AgentGRPOTrainer(GRPOTrainer):
         self._metrics[mode]["completions/clipped_ratio"].append(
             sum(bool(output.extra_fields.get("overlong", False)) for output in outputs) / len(outputs)
         )
-        self._metrics[mode]["reward"].append(float(np.mean(list(unique_rewards.values()))))
+        episode_reward_mean = float(np.mean(list(unique_rewards.values())))
+        self._metrics[mode]["reward"].append(episode_reward_mean)
+        self._metrics[mode]["reward/score"].append(episode_reward_mean)
         self._metrics[mode]["reward_std"].append(float(np.mean([np.std(v, ddof=1) if len(v) > 1 else 0.0 for v in grouped_rewards.values()])))
         self._metrics[mode]["frac_reward_zero_std"].append(float(np.mean(zero_std)))
         self._metrics[mode]["agent/trajectories"].append(float(len(outputs)))
@@ -343,16 +375,27 @@ class AgentGRPOTrainer(GRPOTrainer):
         self._metrics[mode]["agent/rollout_seconds"].append(float(rollout_seconds))
         self._metrics[mode]["agent/masked_rollouts"].append(float((optimization_mask == 0).sum().item()))
 
+        # Branch streams repeat their parent episode's environment statistics.
+        # Deduplicate by gen_uid so a branching policy cannot change the
+        # reported task accuracy merely by emitting more trainable streams.
+        unique_env_stats: dict[Any, dict[str, Any]] = {}
+        for episode_id, output in zip(episode_ids, outputs, strict=True):
+            unique_env_stats.setdefault(
+                episode_id,
+                output.extra_fields.get("env_stats", {}) or {},
+            )
         env_stat_keys = {
-            "math_correctness": "rewards/correctness_reward_func/mean",
-            "math_format_valid": "rewards/soft_format_reward_func/mean",
+            "math_correctness": "reward/correctness",
+            "math_correctness_reward": "reward/correctness_reward",
+            "math_format_valid": "reward/soft_format_valid",
+            "math_format_reward": "reward/soft_format_reward",
             "graph_rpo_creditable_edits": "graphrpo/creditable_edits",
             "graph_rpo_credited_edits": "graphrpo/credited_edits",
         }
         for source, metric in env_stat_keys.items():
             values = [
-                float(output.extra_fields.get("env_stats", {}).get(source, 0.0))
-                for output in outputs
+                float(stats.get(source, 0.0))
+                for stats in unique_env_stats.values()
             ]
             self._metrics[mode][metric].append(float(np.mean(values)))
 
@@ -372,10 +415,13 @@ class AgentGRPOTrainer(GRPOTrainer):
             "completion_attention_mask": completion_attention_mask,
             "completion_mask": completion_mask,
             "advantages": advantages,
-            "old_per_token_logps": rollout_logps,
+            "old_per_token_logps": old_per_token_logps,
+            "rollout_per_token_logps": rollout_logps,
         }
         if graph_loss_weights is not None:
             result["graphrpo_loss_weights"] = graph_loss_weights
+        if fold_loss_weights is not None:
+            result["foldgrpo_loss_weights"] = fold_loss_weights
         return result
 
     def _prepare_inputs(self, generation_batch):
@@ -436,7 +482,12 @@ class AgentGRPOTrainer(GRPOTrainer):
             completion_ids.size(1),
             compute_entropy=True,
         )
-        old_per_token_logps = inputs["old_per_token_logps"]
+        old_per_token_logps = inputs.get("old_per_token_logps")
+        old_per_token_logps = (
+            per_token_logps.detach()
+            if old_per_token_logps is None
+            else old_per_token_logps
+        )
         log_ratio = per_token_logps - old_per_token_logps
         if self.importance_sampling_level == "token":
             log_importance_weights = log_ratio
@@ -465,6 +516,14 @@ class AgentGRPOTrainer(GRPOTrainer):
             loss = (
                 per_token_loss * inputs["graphrpo_loss_weights"]
             ).sum() * float(self.args.steps_per_generation)
+        elif "foldgrpo_loss_weights" in inputs:
+            sequence_loss = (
+                (per_token_loss * policy_mask).sum(-1)
+                / policy_mask.sum(-1).clamp(min=1.0)
+            )
+            loss = (
+                sequence_loss * inputs["foldgrpo_loss_weights"]
+            ).sum() * float(self.args.steps_per_generation)
         elif self.loss_type == "grpo":
             loss = (
                 (per_token_loss * policy_mask).sum(-1)
@@ -483,7 +542,10 @@ class AgentGRPOTrainer(GRPOTrainer):
 
         mode = "train" if model.training else "eval"
         token_count = policy_mask.sum().clamp(min=1.0)
-        rollout_prob_diff = (per_token_logps.detach() - old_per_token_logps).abs()
+        rollout_per_token_logps = inputs["rollout_per_token_logps"]
+        rollout_prob_diff = (
+            per_token_logps.detach() - rollout_per_token_logps
+        ).abs()
         self._metrics[mode]["training/rollout_probs_diff_mean"].append(
             ((rollout_prob_diff * policy_mask).sum() / token_count).item()
         )

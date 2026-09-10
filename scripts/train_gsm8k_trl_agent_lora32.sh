@@ -9,7 +9,7 @@ AGENT_KIND=${AGENT_KIND:-foldagent}
 MODEL_PATH=${MODEL_PATH:-Qwen/Qwen2.5-1.5B-Instruct}
 TOTAL_TRAINING_STEPS=${TOTAL_TRAINING_STEPS:-10}
 SAVE_STEPS=${SAVE_STEPS:-$TOTAL_TRAINING_STEPS}
-TRAIN_MAX_SAMPLES=${TRAIN_MAX_SAMPLES:-128}
+TRAIN_MAX_SAMPLES=${TRAIN_MAX_SAMPLES:-0}
 TS=$(date +%Y%m%d_%H%M%S)
 RUN_TAG=${RUN_TAG:-trl-${AGENT_KIND}-gsm8k-qwen25-1p5b-lora32-${TOTAL_TRAINING_STEPS}step}
 RUN_NAME=${RUN_NAME:-${RUN_TAG}-${SLURM_JOB_ID:-local}-$TS}
@@ -40,12 +40,13 @@ export WANDB_PROJECT=${WANDB_PROJECT:-context-graph}
 export WANDB_RUN_GROUP=${WANDB_RUN_GROUP:-trl-agent-framework}
 export WANDB_TAGS=${WANDB_TAGS:-trl,agent,$AGENT_KIND,gsm8k,qwen2.5-1.5b,lora32,g16}
 export WANDB_LOG_MODEL=false
+export CUDA_VISIBLE_DEVICES=${TRL_AGENT_CUDA_DEVICE:-0}
 
 python -c "import ctypes, omegaconf, tensordict, torch, trl, vllm, verl; ctypes.CDLL('libnvrtc.so.12'); assert torch.cuda.is_available() and torch.cuda.device_count() == 1; print('runtime OK:', torch.__version__, trl.__version__, vllm.__version__)"
 echo "TRL agent training: agent=$AGENT_KIND model=$MODEL_PATH steps=$TOTAL_TRAINING_STEPS config=$AGENT_CONFIG"
 echo "checkpoint=$CHECKPOINT_ROOT run=$RUN_NAME"
 
-CUDA_VISIBLE_DEVICES=0 accelerate launch --config_file "$QERL_ROOT/recipes/accelerate_configs/single_gpu.yaml" --num_processes=1 --main_process_port "$MASTER_PORT" -m trl_agent.train \
+accelerate launch --config_file "$QERL_ROOT/recipes/accelerate_configs/single_gpu.yaml" --num_processes=1 --main_process_port "$MASTER_PORT" -m trl_agent.train \
   --agent-kind "$AGENT_KIND" \
   --agent-config "$AGENT_CONFIG" \
   --train-max-samples "$TRAIN_MAX_SAMPLES" \
@@ -89,5 +90,5 @@ CUDA_VISIBLE_DEVICES=0 accelerate launch --config_file "$QERL_ROOT/recipes/accel
 
 FINAL_CHECKPOINT=$CHECKPOINT_ROOT/checkpoint-$TOTAL_TRAINING_STEPS
 test -s "$FINAL_CHECKPOINT/trainer_state.json"
-python -c "import json; from pathlib import Path; p=Path('$FINAL_CHECKPOINT/trainer_state.json'); rows=[x for x in json.loads(p.read_text())['log_history'] if 'reward' in x]; assert rows, 'no reward metrics'; required={'loss','reward','reward_std','frac_reward_zero_std','agent/vllm_generate_calls'}; missing=sorted(required-set(rows[-1])); assert not missing, f'missing metrics: {missing}'; print('final metrics:', {k: rows[-1][k] for k in sorted(required)})"
+python -c "import json, math; from pathlib import Path; p=Path('$FINAL_CHECKPOINT/trainer_state.json'); rows=[x for x in json.loads(p.read_text())['log_history'] if 'reward' in x]; assert rows, 'no reward metrics'; required={'loss','reward','reward/score','reward_std','frac_reward_zero_std','reward/correctness','reward/correctness_reward','reward/soft_format_valid','reward/soft_format_reward','agent/vllm_generate_calls','training/old_policy_logps_recomputed','training/rollout_probs_diff_mean','actor/pg_loss','clip_ratio/region_mean'}; missing=sorted(required-set(rows[-1])); assert not missing, f'missing metrics: {missing}'; assert all(math.isfinite(float(rows[-1][k])) for k in required), 'non-finite final metrics'; assert rows[-1]['training/old_policy_logps_recomputed'] == 0.0, 'unexpected old-policy recomputation for aligned launch'; assert rows[-1]['clip_ratio/region_mean'] == 0.0, 'aligned one-iteration launch should not PPO-clip on vLLM numerical drift'; print('final metrics:', {k: rows[-1][k] for k in sorted(required)})"
 echo "TRL agent training completed: $FINAL_CHECKPOINT"

@@ -194,6 +194,8 @@ async def submit_emergency_final_answer(
         "<function=finish>" in response
         and re.search(r"<parameter=answer>\s*\S.*?</parameter>", response, re.DOTALL)
     )
+    if hasattr(env, "emergency_finish_wrapped"):
+        env.emergency_finish_wrapped = not valid_finish
     candidate = response if valid_finish else _fallback_finish_call(response)
     # Some environments reject the first finish only to clear a one-time guard
     # (must-search / do-not-give-up). Re-submit the identical answer once.

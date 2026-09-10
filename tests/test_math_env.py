@@ -39,6 +39,9 @@ def test_numeric_answer_prefers_explicit_submission_over_trailing_numbers():
         ('<finish> answer="75" explanation="25 + 50 = 75" confidence="9" </finish>', "75"),
         ("YOUR BEST ANSWER: 15 EXPLANATION: 90 - 75 = 15 CONFIDENCE: 100%", "15"),
         ("answer=32850 explanation=the calculation later mentions 13140", "32850"),
+        ("Answer: Mike will have $800 after buying the shirt. Confidence: 100%", "800"),
+        ("The final answer is 99 bananas per monkey. Confidence: 100%", "99"),
+        ("Each monkey receives 1188 / 12 = 99 bananas. My confidence is 100%.", "99"),
     ]
 
     for text, expected in cases:
@@ -105,6 +108,25 @@ def test_math_env_format_reward_does_not_require_correctness():
     ))
 
     assert asyncio.run(env.get_reward(None, [], None))[1] == pytest.approx(0.2)
+
+
+def test_math_env_synthetic_finish_can_be_correct_without_format_reward():
+    config = SimpleNamespace(
+        plugin={
+            "math_correctness_reward_weight": 2.0,
+            "math_format_reward_weight": 0.2,
+        }
+    )
+    env = MathEnv(config, None, "math")
+    asyncio.run(env.init_env(_item(answer="800")))
+    env.emergency_finish_wrapped = True
+    asyncio.run(env.run_action(
+        "<function=finish><parameter=answer>Answer: Mike will have $800. Confidence: 100%</parameter></function>"
+    ))
+
+    assert asyncio.run(env.get_reward(None, [], None))[1] == pytest.approx(2.0)
+    assert env.stats["math_correctness"] == 1
+    assert env.stats["math_format_valid"] == 0
 
 
 def test_math_graph_prompt_exposes_contextgraph_protocol():

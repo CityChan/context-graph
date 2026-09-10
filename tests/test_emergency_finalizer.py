@@ -42,6 +42,7 @@ class FakeAgent:
 class FakeEnv:
     def __init__(self):
         self.is_finish = False
+        self.emergency_finish_wrapped = False
         self.calls = []
 
     async def run_action(self, response):
@@ -206,6 +207,18 @@ def test_finalizer_wraps_plain_text_as_finish_answer():
 
     assert finished is True
     assert "<parameter=answer>Paris</parameter>" in env.calls[0]
+    assert env.emergency_finish_wrapped is True
+
+
+def test_finalizer_preserves_native_finish_format_status():
+    response = "<function=finish><parameter=answer>Paris</parameter></function>"
+    agent = FakeAgent(context_len=40, response=response)
+    env = FakeEnv()
+
+    assert asyncio.run(
+        submit_emergency_final_answer(agent, env, reserve_tokens=80, action_runner=fake_action_runner)
+    )
+    assert env.emergency_finish_wrapped is False
 
 
 def test_finalizer_repairs_finish_call_with_missing_answer():
