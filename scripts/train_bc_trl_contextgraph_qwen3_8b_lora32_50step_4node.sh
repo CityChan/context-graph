@@ -48,6 +48,11 @@ TRAIN_NODES=("${BC_TRL_NODES[@]:1:3}")
 TRAIN_NODELIST=$(IFS=,; echo "${TRAIN_NODES[*]}")
 SEARCH_NODE_IP=$(getent hosts "$SEARCH_NODE" | awk '{print $1; exit}')
 TRAIN_MASTER_ADDR=$(getent hosts "${TRAIN_NODES[0]}" | awk '{print $1; exit}')
+CURRENT_NODE=$(hostname -s)
+if [ "$CURRENT_NODE" != "$SEARCH_NODE" ]; then
+  echo "ERROR: run this launcher on allocation node 0 ($SEARCH_NODE); current node is $CURRENT_NODE" >&2
+  exit 1
+fi
 if [ "${#BC_TRL_NODES[@]}" -gt 4 ]; then
   echo "Using the first 4 nodes; leaving $(( ${#BC_TRL_NODES[@]} - 4 )) extra allocation node(s) idle."
 fi
@@ -70,10 +75,10 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 echo "4-node topology: retriever=$SEARCH_NODE; TRL trainer ranks=${TRAIN_NODES[*]}"
-echo "Starting BC-P retriever on $SEARCH_NODE"
-srun --overlap --nodes=1 --ntasks=1 --ntasks-per-node=1 -w "$SEARCH_NODE" --input=none bash -lc "echo '[retriever-launch] host='\$(hostname)' time='\$(date -Is); source $CONDA_BASE/etc/profile.d/conda.sh; conda activate cxtgraph; cd $PROJECT_ROOT; export PYTHONPATH=$PROJECT_ROOT:\${PYTHONPATH:-}; exec python -u envs/search_server.py --model $EMBED_MODEL --host 0.0.0.0 --port $SEARCH_PORT --corpus Tevatron/browsecomp-plus-corpus --corpus-embedding-dataset miaolu3/browsecomp-plus" >"$SEARCH_LOG" 2>"$SEARCH_ERROR_LOG" &
+echo "Starting BC-P retriever directly on allocation node 0 ($SEARCH_NODE)"
+bash -lc "echo '[retriever-launch] host='\$(hostname)' time='\$(date -Is); source $CONDA_BASE/etc/profile.d/conda.sh; conda activate cxtgraph; echo '[retriever-env] conda='\$CONDA_DEFAULT_ENV' python='\$(command -v python); cd $PROJECT_ROOT; export PYTHONPATH=$PROJECT_ROOT:\${PYTHONPATH:-}; exec python -u -c \"import runpy; print('[retriever-python] starting search_server imports', flush=True); runpy.run_path('envs/search_server.py', run_name='__main__')\" --model $EMBED_MODEL --host 0.0.0.0 --port $SEARCH_PORT --corpus Tevatron/browsecomp-plus-corpus --corpus-embedding-dataset miaolu3/browsecomp-plus" >"$SEARCH_LOG" 2>"$SEARCH_ERROR_LOG" &
 SEARCH_PID=$!
-echo "Retriever Slurm step PID: $SEARCH_PID"
+echo "Retriever process PID: $SEARCH_PID"
 
 SEARCH_LAUNCH_DEADLINE=$((SECONDS + BC_SEARCH_LAUNCH_TIMEOUT_SECONDS))
 while [ "$SECONDS" -lt "$SEARCH_LAUNCH_DEADLINE" ] && [ ! -s "$SEARCH_LOG" ] && [ ! -s "$SEARCH_ERROR_LOG" ]; do
@@ -83,9 +88,8 @@ while [ "$SECONDS" -lt "$SEARCH_LAUNCH_DEADLINE" ] && [ ! -s "$SEARCH_LOG" ] && 
   sleep 1
 done
 if [ ! -s "$SEARCH_LOG" ] && [ ! -s "$SEARCH_ERROR_LOG" ]; then
-  echo "ERROR: retriever Slurm task did not reach its launch sentinel within ${BC_SEARCH_LAUNCH_TIMEOUT_SECONDS}s." >&2
+  echo "ERROR: retriever process did not reach its launch sentinel within ${BC_SEARCH_LAUNCH_TIMEOUT_SECONDS}s." >&2
   ps -o pid,ppid,stat,wchan:32,etime,args -p "$SEARCH_PID" >&2 || true
-  squeue --steps -j "${SLURM_JOB_ID:-}" -o '%.22i %.10T %.12M %.40R %.50j' >&2 || true
   exit 1
 fi
 tail -5 "$SEARCH_LOG" || true

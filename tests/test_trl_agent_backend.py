@@ -204,8 +204,11 @@ def test_contextgraph_bc_qwen3_8b_lora_50step_launcher_is_protocol_labeled():
     assert "SEARCH_NODE=${BC_TRL_NODES[0]}" in source
     assert 'TRAIN_NODES=("${BC_TRL_NODES[@]:1:3}")' in source
     assert "4-node topology" in source
-    assert "Starting BC-P retriever on" in source
+    assert "Starting BC-P retriever directly on allocation node 0" in source
+    assert 'CURRENT_NODE=$(hostname -s)' in source
     assert "'[retriever-launch] host='" in source
+    assert "'[retriever-env] conda='" in source
+    assert "'[retriever-python] starting search_server imports'" in source
     assert "BC_SEARCH_LAUNCH_TIMEOUT_SECONDS=${BC_SEARCH_LAUNCH_TIMEOUT_SECONDS:-30}" in source
     assert "SEARCH_PID=$!" in source
     assert "export LOCAL_SEARCH_URL=$SEARCH_URL" in source
