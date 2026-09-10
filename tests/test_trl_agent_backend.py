@@ -196,6 +196,8 @@ def test_contextgraph_bc_qwen3_8b_lora_50step_launcher_is_protocol_labeled():
     assert "TRAIN_NODE=${BC_TRL_NODES[3]}" in source
     assert "4-node topology" in source
     assert "LOCAL_SEARCH_URL=$(IFS=,;" in source
+    assert 'bash -lc "source $CONDA_BASE/etc/profile.d/conda.sh; conda activate cxtgraph;' in source
+    assert "conda run --no-capture-output" not in source
     assert "SEARCH_DEADLINE=$((SECONDS + BC_SEARCH_TIMEOUT_SECONDS))" in source
     assert "--connect-timeout 2 --max-time 5" in source
     assert "Waiting for retrievers" in source

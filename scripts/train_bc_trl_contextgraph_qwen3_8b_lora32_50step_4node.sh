@@ -74,7 +74,7 @@ for SEARCH_INDEX in 0 1 2; do
   SEARCH_URLS+=("$SEARCH_URL")
   SEARCH_LOGS+=("$SEARCH_LOG")
   echo "Starting BC-P retriever $((SEARCH_INDEX + 1))/3 on $SEARCH_NODE"
-  srun --overlap --nodes=1 --ntasks=1 -w "$SEARCH_NODE" "$CONDA_BASE/bin/conda" run --no-capture-output -n cxtgraph python -u envs/search_server.py --model "$EMBED_MODEL" --host 0.0.0.0 --port "$SEARCH_PORT" --corpus Tevatron/browsecomp-plus-corpus --corpus-embedding-dataset miaolu3/browsecomp-plus >"$SEARCH_LOG" 2>&1 &
+  srun --overlap --nodes=1 --ntasks=1 -w "$SEARCH_NODE" bash -lc "source $CONDA_BASE/etc/profile.d/conda.sh; conda activate cxtgraph; cd $PROJECT_ROOT; export PYTHONPATH=$PROJECT_ROOT:\${PYTHONPATH:-}; exec python -u envs/search_server.py --model $EMBED_MODEL --host 0.0.0.0 --port $SEARCH_PORT --corpus Tevatron/browsecomp-plus-corpus --corpus-embedding-dataset miaolu3/browsecomp-plus" >"$SEARCH_LOG" 2>&1 &
   SEARCH_PIDS+=("$!")
 done
 
