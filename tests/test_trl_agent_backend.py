@@ -167,3 +167,16 @@ def test_contextgraph_recipe_uses_deterministic_credited_controller_probes():
     assert "graph_controller_temperature: 0.0" in source
     assert "graph_rpo_counterfactual_temperature: 0.0" in source
     assert "graph_rpo_operation_costs:" in source
+
+
+def test_foldagent_qwen3_8b_50step_launcher_is_protocol_labeled():
+    source = (
+        ROOT
+        / "scripts"
+        / "train_gsm8k_trl_foldagent_qwen3_8b_lora32_50step.sh"
+    ).read_text(encoding="utf-8")
+    assert "MODEL_PATH=${MODEL_PATH:-Qwen/Qwen3-8B}" in source
+    assert "TOTAL_TRAINING_STEPS=${TOTAL_TRAINING_STEPS:-50}" in source
+    assert "TRAIN_MAX_SAMPLES=${TRAIN_MAX_SAMPLES:-128}" in source
+    assert "foldagent-gsm8k-qwen3-8b-lora32-50step" in source
+    assert 'exec bash "$SCRIPT_DIR/train_gsm8k_trl_agent_lora32.sh"' in source
