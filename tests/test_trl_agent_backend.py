@@ -211,7 +211,8 @@ def test_contextgraph_bc_qwen3_8b_lora_50step_launcher_is_protocol_labeled():
     assert "export LOCAL_SEARCH_URL=$SEARCH_URL" in source
     assert "export TRL_NUM_MACHINES=3 TRL_NUM_PROCESSES=3" in source
     assert "Launching distributed TRL ContextGraph BC-P" in source
-    assert 'srun --overlap --nodes=3 --ntasks=3 --ntasks-per-node=1 --gpus-per-node=1' in source
+    assert 'srun --overlap --nodes=3 --ntasks=3 --ntasks-per-node=1' in source
+    assert "--gpus-per-node" not in source
     assert 'bash -lc "echo' in source
     assert "conda activate cxtgraph" in source
     assert "conda run --no-capture-output" not in source

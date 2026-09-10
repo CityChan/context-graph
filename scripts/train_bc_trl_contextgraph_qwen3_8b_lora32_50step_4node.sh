@@ -71,7 +71,7 @@ trap cleanup EXIT INT TERM
 
 echo "4-node topology: retriever=$SEARCH_NODE; TRL trainer ranks=${TRAIN_NODES[*]}"
 echo "Starting BC-P retriever on $SEARCH_NODE"
-srun --overlap --nodes=1 --ntasks=1 --ntasks-per-node=1 --gpus-per-node=1 -w "$SEARCH_NODE" --input=none bash -lc "echo '[retriever-launch] host='\$(hostname)' time='\$(date -Is); source $CONDA_BASE/etc/profile.d/conda.sh; conda activate cxtgraph; cd $PROJECT_ROOT; export PYTHONPATH=$PROJECT_ROOT:\${PYTHONPATH:-}; exec python -u envs/search_server.py --model $EMBED_MODEL --host 0.0.0.0 --port $SEARCH_PORT --corpus Tevatron/browsecomp-plus-corpus --corpus-embedding-dataset miaolu3/browsecomp-plus" >"$SEARCH_LOG" 2>"$SEARCH_ERROR_LOG" &
+srun --overlap --nodes=1 --ntasks=1 --ntasks-per-node=1 -w "$SEARCH_NODE" --input=none bash -lc "echo '[retriever-launch] host='\$(hostname)' time='\$(date -Is); source $CONDA_BASE/etc/profile.d/conda.sh; conda activate cxtgraph; cd $PROJECT_ROOT; export PYTHONPATH=$PROJECT_ROOT:\${PYTHONPATH:-}; exec python -u envs/search_server.py --model $EMBED_MODEL --host 0.0.0.0 --port $SEARCH_PORT --corpus Tevatron/browsecomp-plus-corpus --corpus-embedding-dataset miaolu3/browsecomp-plus" >"$SEARCH_LOG" 2>"$SEARCH_ERROR_LOG" &
 SEARCH_PID=$!
 echo "Retriever Slurm step PID: $SEARCH_PID"
 
@@ -144,4 +144,4 @@ export WANDB_TAGS=${WANDB_TAGS:-trl,contextgraph,browsecomp-plus,qwen3-8b,lora32
 export TRL_NUM_MACHINES=3 TRL_NUM_PROCESSES=3 TRL_MASTER_ADDR=$TRAIN_MASTER_ADDR
 
 echo "Launching distributed TRL ContextGraph BC-P: retriever=$LOCAL_SEARCH_URL trainers=$TRAIN_NODELIST model=$MODEL_PATH LoRA=32 steps=$TOTAL_TRAINING_STEPS"
-srun --overlap --nodes=3 --ntasks=3 --ntasks-per-node=1 --gpus-per-node=1 -w "$TRAIN_NODELIST" --input=none bash "$PROJECT_ROOT/scripts/train_gsm8k_trl_agent_lora32.sh"
+srun --overlap --nodes=3 --ntasks=3 --ntasks-per-node=1 -w "$TRAIN_NODELIST" --input=none bash "$PROJECT_ROOT/scripts/train_gsm8k_trl_agent_lora32.sh"
