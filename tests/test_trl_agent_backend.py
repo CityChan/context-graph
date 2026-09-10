@@ -177,7 +177,7 @@ def test_contextgraph_bc_qwen3_8b_lora_50step_launcher_is_protocol_labeled():
     source = (
         ROOT
         / "scripts"
-        / "train_bc_trl_contextgraph_qwen3_8b_lora32_50step_2node.sh"
+        / "train_bc_trl_contextgraph_qwen3_8b_lora32_50step_4node.sh"
     ).read_text(encoding="utf-8")
     recipe = (
         ROOT / "recipes" / "trl_agent" / "contextgraph_browsecomp_plus.yaml"
@@ -190,11 +190,15 @@ def test_contextgraph_bc_qwen3_8b_lora_50step_launcher_is_protocol_labeled():
     assert "contextgraph-bc-qwen3-8b-lora32-50step" in source
     assert "contextgraph_browsecomp_plus.yaml" in source
     assert "envs/search_server.py" in source
-    assert 'if [ "${#BC_TRL_NODES[@]}" -lt 2 ]; then' in source
-    assert "extra allocation node(s) idle" in source
+    assert "#SBATCH -N 4" in source
+    assert 'if [ "${#BC_TRL_NODES[@]}" -lt 4 ]; then' in source
+    assert 'SEARCH_NODES=("${BC_TRL_NODES[@]:0:3}")' in source
+    assert "TRAIN_NODE=${BC_TRL_NODES[3]}" in source
+    assert "4-node topology" in source
+    assert "LOCAL_SEARCH_URL=$(IFS=,;" in source
     assert "SEARCH_DEADLINE=$((SECONDS + BC_SEARCH_TIMEOUT_SECONDS))" in source
-    assert "--connect-timeout 2 --max-time 10" in source
-    assert "Waiting for BC-P retriever" in source
+    assert "--connect-timeout 2 --max-time 5" in source
+    assert "Waiting for retrievers" in source
     assert "workflow: search_graph" in recipe
     assert "must_search: true" in recipe
     assert "graph_rpo_credit_backend: old_policy_counterfactual_qa" in recipe

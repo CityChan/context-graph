@@ -318,20 +318,30 @@ def keep_first_n_words(text: str, n: int = 1000, max_chars: int | None = None) -
 
 class AsyncSearchClient:
     def __init__(self, base_url: str, timeout: float = 300.0, retries: int = 3, backoff: float = 0.5):
-        self.base_url = base_url.rstrip("/")
+        self.base_urls = [url.strip().rstrip("/") for url in base_url.split(",") if url.strip()]
+        if not self.base_urls:
+            raise ValueError("at least one local search base URL is required")
+        self.base_url = self.base_urls[0]
         self.timeout = timeout
         self.retries = retries
         self.backoff = backoff
-        self._client = httpx.AsyncClient(base_url=self.base_url)
+        self._clients = [httpx.AsyncClient(base_url=url) for url in self.base_urls]
+        self._next_client = 0
 
     async def close(self):
-        await self._client.aclose()
+        await asyncio.gather(*(client.aclose() for client in self._clients))
+
+    def _round_robin_client(self):
+        client = self._clients[self._next_client]
+        self._next_client = (self._next_client + 1) % len(self._clients)
+        return client
 
     async def _post(self, path: str, payload: dict):
         last_exc = None
         for attempt in range(1, self.retries + 1):
             try:
-                r = await self._client.post(path, json=payload, timeout=self.timeout)
+                client = self._round_robin_client()
+                r = await client.post(path, json=payload, timeout=self.timeout)
                 r.raise_for_status()
                 data = r.json()
                 return data.get("results", data)  # convenience: unwrap "results" if present
