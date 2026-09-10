@@ -280,6 +280,40 @@ class GraphActionController:
         action_help = "; ".join(
             action_descriptions[action] for action in allowed_actions
         )
+        first_index = snapshot.candidates[0].index
+        second_index = (
+            snapshot.candidates[1].index
+            if len(snapshot.candidates) >= 2
+            else first_index
+        )
+        json_shapes = []
+        if "merge" in allowed_actions:
+            json_shapes.append(
+                '{"action":"merge","candidate_indices":['
+                f'{first_index},{second_index}],"summary":"joint evidence",'
+                '"relation":"semantic"}'
+            )
+        if "prune" in allowed_actions:
+            json_shapes.append(
+                '{"action":"prune","candidate_indices":['
+                f'{first_index}],"summary":"","relation":"semantic"}}'
+            )
+        if "add_edge" in allowed_actions:
+            json_shapes.append(
+                '{"action":"add_edge","candidate_indices":['
+                f'{first_index},{second_index}],"summary":"",'
+                '"relation":"semantic"}'
+            )
+        if "select" in allowed_actions:
+            json_shapes.append(
+                '{"action":"select","candidate_indices":['
+                f'{first_index}],"summary":"","relation":"semantic"}}'
+            )
+        if "pass" in allowed_actions:
+            json_shapes.append(
+                '{"action":"pass","candidate_indices":[],"summary":"",'
+                '"relation":"semantic"}'
+            )
         return (
             f"[GRAPH ACTION MODE turn={int(turn_id)}]\n"
             "The controller has frozen the legal evidence candidates below. "
@@ -287,7 +321,9 @@ class GraphActionController:
             "evidence; do not merge or connect unrelated evidence. "
             f"{structural_rule} Available actions: {action_help}. "
             f"{pass_rule} For fields unused by an action, emit an empty summary "
-            "and relation=semantic. Return only the JSON object required by the "
+            "and relation=semantic. The candidate_indices field must always be "
+            "a JSON array, including for one or zero indices. Valid shapes: "
+            f"{' | '.join(json_shapes)}. Return only the JSON object required by the "
             "response schema. Do not emit XML or an environment action.\n"
             f"Candidates:\n{candidate_lines}"
         )

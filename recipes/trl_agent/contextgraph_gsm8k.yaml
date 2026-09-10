@@ -18,6 +18,8 @@ actor_rollout_ref:
       must_branch: true
       structured_graph_controller: true
       controller_action_policy: structural
+      graph_controller_temperature: 0.0
+      graph_controller_top_p: 1.0
       initial_consolidation_turn: 1
       consolidation_interval: 1
       graph_controller_min_completion_tokens: 128
@@ -26,6 +28,12 @@ actor_rollout_ref:
       graph_rpo_delta_max: 0.25
       graph_rpo_counterfactual_samples: 1
       graph_rpo_counterfactual_max_new_tokens: 128
+      graph_rpo_counterfactual_temperature: 0.0
+      graph_rpo_operation_costs:
+        merge: 0.01
+        prune: 0.01
+        add_edge: 0.01
+        select: 0.01
       process_reward:
         - graphrpo
       math_correctness_reward_weight: 1.0

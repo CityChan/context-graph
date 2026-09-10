@@ -1066,7 +1066,19 @@ async def process_item(
                             candidate_snapshot,
                             allow_pass=allow_pass,
                             action_policy=controller_action_policy,
-                        )
+                        ),
+                        "sampling_params": {
+                            "temperature": float(getattr(
+                                config.plugin,
+                                "graph_controller_temperature",
+                                0.0,
+                            )),
+                            "top_p": float(getattr(
+                                config.plugin,
+                                "graph_controller_top_p",
+                                1.0,
+                            )),
+                        },
                     },
                 )
                 if controller_response is None:

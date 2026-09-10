@@ -389,8 +389,20 @@ class AgentGRPOTrainer(GRPOTrainer):
             "math_correctness_reward": "reward/correctness_reward",
             "math_format_valid": "reward/soft_format_valid",
             "math_format_reward": "reward/soft_format_reward",
+            "consol_attempts": "graphrpo/controller_attempts",
+            "consol_ops": "graphrpo/controller_valid_edits",
+            "consol_controller_errors": "graphrpo/controller_errors",
+            "graph_rpo_valid_edits": "graphrpo/valid_edits",
             "graph_rpo_creditable_edits": "graphrpo/creditable_edits",
             "graph_rpo_credited_edits": "graphrpo/credited_edits",
+            "graph_rpo_scored_states": "graphrpo/scored_states",
+            "graph_rpo_delta_abs_sum": "graphrpo/delta_abs_sum",
+            "graph_rpo_counterfactual_probe_rollouts": (
+                "graphrpo/counterfactual_probe_rollouts"
+            ),
+            "graph_rpo_counterfactual_tag_rate": (
+                "graphrpo/counterfactual_tag_rate"
+            ),
         }
         for source, metric in env_stat_keys.items():
             values = [

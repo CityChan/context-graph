@@ -174,6 +174,7 @@ async def assign_counterfactual_graph_edit_credits(
     metrics: dict[str, float | int] = {
         "graph_rpo_valid_edits": len(events),
         "graph_rpo_creditable_edits": 0,
+        "graph_rpo_credited_edits": 0,
         "graph_rpo_scored_states": 0,
         "graph_rpo_delta_sum": 0.0,
         "graph_rpo_delta_abs_sum": 0.0,
@@ -330,6 +331,9 @@ async def assign_counterfactual_graph_edit_credits(
             float(metrics["graph_rpo_counterfactual_delta_abs_sum"]) + abs(delta)
         )
         if abs(delta) > 1e-12:
+            metrics["graph_rpo_credited_edits"] = (
+                int(metrics["graph_rpo_credited_edits"]) + 1
+            )
             metrics["graph_rpo_counterfactual_nonzero_edits"] = (
                 int(metrics["graph_rpo_counterfactual_nonzero_edits"]) + 1
             )
@@ -361,6 +365,7 @@ def prepare_reference_graph_edit_requests(
     metrics: dict[str, float | int] = {
         "graph_rpo_valid_edits": len(events),
         "graph_rpo_creditable_edits": 0,
+        "graph_rpo_credited_edits": 0,
     }
     if not events:
         return [], metrics
@@ -511,6 +516,8 @@ async def assign_graph_edit_credits(
     events = valid_graph_edit_events(graph_trace)
     metrics: dict[str, float | int] = {
         "graph_rpo_valid_edits": len(events),
+        "graph_rpo_creditable_edits": 0,
+        "graph_rpo_credited_edits": 0,
         "graph_rpo_scored_states": 0,
         "graph_rpo_delta_sum": 0.0,
         "graph_rpo_delta_abs_sum": 0.0,
@@ -575,6 +582,7 @@ async def assign_graph_edit_credits(
         for probability, token_count in zip(probabilities, token_counts, strict=True)
     ]
     metrics["graph_rpo_scored_states"] = len(unique_views)
+    metrics["graph_rpo_creditable_edits"] = len(events)
 
     for event in events:
         before_index = view_to_index[event["rendered_before"]]
@@ -603,4 +611,8 @@ async def assign_graph_edit_credits(
         )
         metrics["graph_rpo_delta_sum"] = float(metrics["graph_rpo_delta_sum"]) + delta
         metrics["graph_rpo_delta_abs_sum"] = float(metrics["graph_rpo_delta_abs_sum"]) + abs(delta)
+        if abs(delta) > 1e-12:
+            metrics["graph_rpo_credited_edits"] = (
+                int(metrics["graph_rpo_credited_edits"]) + 1
+            )
     return metrics

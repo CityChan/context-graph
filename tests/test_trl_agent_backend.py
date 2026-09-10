@@ -80,6 +80,8 @@ def test_trainer_keeps_attention_and_policy_masks_separate():
     assert '"reward/correctness_reward"' in source
     assert '"reward/soft_format_valid"' in source
     assert '"reward/soft_format_reward"' in source
+    assert '"graphrpo/controller_valid_edits"' in source
+    assert '"graphrpo/credited_edits"' in source
     assert '"rewards/correctness_reward_func/mean"' not in source
     assert '"rewards/soft_format_reward_func/mean"' not in source
     assert '"rollout_per_token_logps"' in source
@@ -151,3 +153,17 @@ def test_shared_launcher_preflights_the_selected_gpu_and_defaults_to_full_data()
     assert "'reward/soft_format_valid'" in source
     assert "'training/old_policy_logps_recomputed'" in source
     assert "rows[-1]['clip_ratio/region_mean'] == 0.0" in source
+    assert "GraphRPO credit audit: OK" in source
+    assert "no valid controller edit reached the graph trace" in source
+    assert "no counterfactual QA probe was generated" in source
+    assert "all counterfactual QA probes violated the answer contract" in source
+    assert "no nonzero GraphRPO edit credit was assigned" in source
+
+
+def test_contextgraph_recipe_uses_deterministic_credited_controller_probes():
+    source = (
+        ROOT / "recipes" / "trl_agent" / "contextgraph_gsm8k.yaml"
+    ).read_text(encoding="utf-8")
+    assert "graph_controller_temperature: 0.0" in source
+    assert "graph_rpo_counterfactual_temperature: 0.0" in source
+    assert "graph_rpo_operation_costs:" in source

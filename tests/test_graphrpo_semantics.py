@@ -292,6 +292,8 @@ def test_graph_edit_credit_only_uses_valid_state_changing_edits(monkeypatch):
     assert trace["events"][0]["graph_rpo_delta"] == pytest.approx(1.0)
     assert "graph_rpo_delta" not in trace["events"][1]
     assert metrics["graph_rpo_valid_edits"] == 1
+    assert metrics["graph_rpo_creditable_edits"] == 1
+    assert metrics["graph_rpo_credited_edits"] == 1
 
 
 def test_failed_episode_outcome_gates_graph_credit_without_evaluator(monkeypatch):
@@ -452,6 +454,7 @@ def test_counterfactual_qa_credits_paired_task_outcomes_without_success_gate():
     assert event["graph_rpo_counterfactual_before_rewards"] == [0.0, 0.0]
     assert event["graph_rpo_counterfactual_after_rewards"] == [1.0, 1.0]
     assert metrics["graph_rpo_creditable_edits"] == 1
+    assert metrics["graph_rpo_credited_edits"] == 1
     assert metrics["graph_rpo_scored_states"] == 2
     assert metrics["graph_rpo_delta_abs_sum"] == pytest.approx(0.9)
     assert metrics["graph_rpo_counterfactual_scored_states"] == 2
@@ -522,6 +525,7 @@ def test_counterfactual_qa_does_not_judge_malformed_probe_output():
 
     assert score_calls == []
     assert agent.credit == 0.0
+    assert metrics["graph_rpo_credited_edits"] == 0
     assert metrics["graph_rpo_counterfactual_tag_rate"] == 0.0
     assert metrics["graph_rpo_counterfactual_positive_rewards"] == 0
     assert event["graph_rpo_counterfactual_before_judge_audits"][0][0][

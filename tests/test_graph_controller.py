@@ -156,6 +156,16 @@ def test_controller_action_prompt_discloses_legality_and_all_actions():
         "merge", "prune", "add_edge", "select", "pass",
     ))
     assert "pass is currently illegal" in prompt
+    assert "candidate_indices field must always be a JSON array" in prompt
+    assert '"candidate_indices":[0,1]' in prompt
+    shape_text = prompt.split("Valid shapes: ", 1)[1].split(
+        ". Return only the JSON object", 1,
+    )[0]
+    shapes = [json.loads(shape) for shape in shape_text.split(" | ")]
+    assert [shape["action"] for shape in shapes] == [
+        "merge", "prune", "add_edge", "select",
+    ]
+    assert all(isinstance(shape["candidate_indices"], list) for shape in shapes)
 
 
 def test_structural_policy_removes_multi_candidate_select_escape_hatch():
