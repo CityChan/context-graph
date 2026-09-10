@@ -77,6 +77,7 @@ def test_trainer_keeps_attention_and_policy_masks_separate():
     assert "torch.tensor_split" in source
     assert "unique_env_stats" in source
     assert '"reward/correctness"' in source
+    assert '"reward/task"' in source
     assert '"reward/correctness_reward"' in source
     assert '"reward/soft_format_valid"' in source
     assert '"reward/soft_format_reward"' in source
@@ -146,6 +147,8 @@ def test_shared_launcher_preflights_the_selected_gpu_and_defaults_to_full_data()
     visibility = "export CUDA_VISIBLE_DEVICES=${TRL_AGENT_CUDA_DEVICE:-0}"
     preflight = 'python -c "import ctypes, omegaconf'
     assert "TRAIN_MAX_SAMPLES=${TRAIN_MAX_SAMPLES:-0}" in source
+    assert "TRAIN_DATA_PATH=${TRAIN_DATA_PATH:-}" in source
+    assert 'TRAIN_DATA_ARGS+=(--train-data-path "$TRAIN_DATA_PATH")' in source
     assert visibility in source
     assert source.index(visibility) < source.index(preflight)
     assert "CUDA_VISIBLE_DEVICES=0 accelerate launch" not in source
@@ -153,11 +156,12 @@ def test_shared_launcher_preflights_the_selected_gpu_and_defaults_to_full_data()
     assert "'reward/soft_format_valid'" in source
     assert "'training/old_policy_logps_recomputed'" in source
     assert "rows[-1]['clip_ratio/region_mean'] == 0.0" in source
-    assert "GraphRPO credit audit: OK" in source
+    assert "GraphRPO plumbing audit: OK" in source
     assert "no valid controller edit reached the graph trace" in source
     assert "no counterfactual QA probe was generated" in source
     assert "all counterfactual QA probes violated the answer contract" in source
-    assert "no nonzero GraphRPO edit credit was assigned" in source
+    assert "inspect graphrpo/delta_abs_sum for utility signal" in source
+    assert "no nonzero GraphRPO edit credit was assigned" not in source
 
 
 def test_contextgraph_recipe_uses_deterministic_credited_controller_probes():
@@ -169,14 +173,24 @@ def test_contextgraph_recipe_uses_deterministic_credited_controller_probes():
     assert "graph_rpo_operation_costs:" in source
 
 
-def test_foldagent_qwen3_8b_50step_launcher_is_protocol_labeled():
+def test_contextgraph_bc_qwen3_8b_lora_50step_launcher_is_protocol_labeled():
     source = (
         ROOT
         / "scripts"
-        / "train_gsm8k_trl_foldagent_qwen3_8b_lora32_50step.sh"
+        / "train_bc_trl_contextgraph_qwen3_8b_lora32_50step_2node.sh"
     ).read_text(encoding="utf-8")
+    recipe = (
+        ROOT / "recipes" / "trl_agent" / "contextgraph_browsecomp_plus.yaml"
+    ).read_text(encoding="utf-8")
+    assert "export AGENT_KIND=contextgraph" in source
+    assert "data/bc_train.parquet" in source
     assert "MODEL_PATH=${MODEL_PATH:-Qwen/Qwen3-8B}" in source
     assert "TOTAL_TRAINING_STEPS=${TOTAL_TRAINING_STEPS:-50}" in source
     assert "TRAIN_MAX_SAMPLES=${TRAIN_MAX_SAMPLES:-128}" in source
-    assert "foldagent-gsm8k-qwen3-8b-lora32-50step" in source
-    assert 'exec bash "$SCRIPT_DIR/train_gsm8k_trl_agent_lora32.sh"' in source
+    assert "contextgraph-bc-qwen3-8b-lora32-50step" in source
+    assert "contextgraph_browsecomp_plus.yaml" in source
+    assert "envs/search_server.py" in source
+    assert "workflow: search_graph" in recipe
+    assert "must_search: true" in recipe
+    assert "graph_rpo_credit_backend: old_policy_counterfactual_qa" in recipe
+    assert "merge: 0.0" in recipe

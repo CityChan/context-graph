@@ -367,6 +367,23 @@ class AgentGRPOTrainer(GRPOTrainer):
         episode_reward_mean = float(np.mean(list(unique_rewards.values())))
         self._metrics[mode]["reward"].append(episode_reward_mean)
         self._metrics[mode]["reward/score"].append(episode_reward_mean)
+        self._metrics[mode]["reward/task"].append(
+            float(
+                np.mean(
+                    [
+                        float(
+                            unique_env_stats.get(episode_id, {}).get(
+                                "task_reward",
+                                unique_env_stats.get(episode_id, {}).get(
+                                    "get_final_score", reward
+                                ),
+                            )
+                        )
+                        for episode_id, reward in unique_rewards.items()
+                    ]
+                )
+            )
+        )
         self._metrics[mode]["reward_std"].append(float(np.mean([np.std(v, ddof=1) if len(v) > 1 else 0.0 for v in grouped_rewards.values()])))
         self._metrics[mode]["frac_reward_zero_std"].append(float(np.mean(zero_std)))
         self._metrics[mode]["agent/trajectories"].append(float(len(outputs)))
@@ -403,6 +420,15 @@ class AgentGRPOTrainer(GRPOTrainer):
             "graph_rpo_counterfactual_tag_rate": (
                 "graphrpo/counterfactual_tag_rate"
             ),
+            "search": "agent/search_calls",
+            "open_page": "agent/open_page_calls",
+            "is_finish": "agent/finish_rate",
+            "judge_calls": "reward/judge_calls",
+            "judge_positive": "reward/judge_positive",
+            "graph_reward": "graph/reward",
+            "graph_shaping": "graph/shaping",
+            "graph_operation_cost": "graph/operation_cost",
+            "graph_invalid_op_rate": "graph/invalid_op_rate",
         }
         for source, metric in env_stat_keys.items():
             values = [
