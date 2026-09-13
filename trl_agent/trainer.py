@@ -371,6 +371,14 @@ class AgentGRPOTrainer(GRPOTrainer):
             if episode_id not in unique_rewards:
                 unique_rewards[episode_id] = reward
                 grouped_rewards[question_id].append(reward)
+        # Branch streams repeat their parent episode's environment statistics.
+        # Build the deduplicated mapping before any episode-level metrics use it.
+        unique_env_stats: dict[Any, dict[str, Any]] = {}
+        for episode_id, output in zip(episode_ids, outputs, strict=True):
+            unique_env_stats.setdefault(
+                episode_id,
+                output.extra_fields.get("env_stats", {}) or {},
+            )
         zero_std = [
             float(len(values) < 2 or np.std(values, ddof=1) == 0.0)
             for values in grouped_rewards.values()
@@ -411,15 +419,6 @@ class AgentGRPOTrainer(GRPOTrainer):
         self._metrics[mode]["agent/rollout_seconds"].append(float(rollout_seconds))
         self._metrics[mode]["agent/masked_rollouts"].append(float((optimization_mask == 0).sum().item()))
 
-        # Branch streams repeat their parent episode's environment statistics.
-        # Deduplicate by gen_uid so a branching policy cannot change the
-        # reported task accuracy merely by emitting more trainable streams.
-        unique_env_stats: dict[Any, dict[str, Any]] = {}
-        for episode_id, output in zip(episode_ids, outputs, strict=True):
-            unique_env_stats.setdefault(
-                episode_id,
-                output.extra_fields.get("env_stats", {}) or {},
-            )
         env_stat_keys = {
             "math_correctness": "reward/correctness",
             "math_correctness_reward": "reward/correctness_reward",

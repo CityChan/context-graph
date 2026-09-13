@@ -78,6 +78,9 @@ def test_trainer_keeps_attention_and_policy_masks_separate():
     assert "unique_env_stats" in source
     assert '"reward/correctness"' in source
     assert '"reward/task"' in source
+    assert source.index("unique_env_stats: dict") < source.index(
+        'self._metrics[mode]["reward/task"]'
+    )
     assert '"reward/correctness_reward"' in source
     assert '"reward/soft_format_valid"' in source
     assert '"reward/soft_format_reward"' in source
