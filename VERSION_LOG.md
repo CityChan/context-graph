@@ -13,7 +13,7 @@ Stack: torch 2.7.1+cu128, vllm 0.10.1 (源码编译), transformers 4.57.6, verl 
 | v6 | vllm fp8 符号重命名: `_swap_w13_to_w31` → `swap_w13_to_w31` 在 `verl/utils/vllm/vllm_fp8_utils.py` | fp8 import fix |
 | v7 | vllm fp8 符号重命名: `is_blackwell_deep_gemm_used` → `is_blackwell_deep_gemm_e8m0_used` | fp8 import fix |
 | v8 | 补齐缺失的 `verl/trainer/config/data/legacy_data.yaml` (从 `_generated_ppo_trainer.yaml` 重建) | Hydra config loads |
-| v9 | 加 `actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=1` 避免 trl 0.21 ValueError | ref 配置通过 |
+| v9 | 加 `actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=1` 避免 ref 配置 ValueError | ref 配置通过 |
 | v10-v12 | Ray CPU OOM: 加 `--object-store-memory 5000000000` 到 ray start, 加 `RAY_memory_usage_threshold=0.99`, `RAY_memory_monitor_refresh_ms=0` | Ray daemon 不再 OOM |
 | v13 | NFS flock errors: 设 `TRITON_CACHE_DIR=/tmp/triton_cache_$$` + `VLLM_CACHE_ROOT=/tmp/vllm_cache_$$` 避 NFS 锁竞争 | triton 加载通过 |
 | v14 | `HF_HUB_DISABLE_FILE_LOCKING=1` | HF cache 锁竞争缓解 |

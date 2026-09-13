@@ -1,6 +1,6 @@
 #!/bin/bash
 # Full 200-step ContextGraph agent-pipeline diagnostic. This deliberately uses
-# the multi-turn graph controller and is not a pure TRL-vs-verl framework
+# the multi-turn graph controller and is not a pure single-turn VERL framework
 # control; use train_gsm8k_verl_grpo_qerlmatched_lora32_200step.sh for that.
 set -euo pipefail
 

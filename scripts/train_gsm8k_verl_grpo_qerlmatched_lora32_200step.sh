@@ -1,5 +1,5 @@
 #!/bin/bash
-# Pure single-turn verl-vs-TRL control. No ContextGraph agent loop, graph
+# Pure single-turn VERL GRPO control. No ContextGraph agent loop, graph
 # controller, graph credit, tool calls, or frozen reference policy is created.
 set -euo pipefail
 
