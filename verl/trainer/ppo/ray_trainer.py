@@ -19,6 +19,7 @@ This trainer supports model-agonistic model initialization with huggingface
 """
 
 import json
+import math
 import os
 import uuid
 from collections import defaultdict
@@ -112,6 +113,22 @@ def _global_actor_mini_batch_size(config) -> int:
             f"global minibatch size, got {prompt_mini_batch_size} * {rollout_n}"
         )
     return global_mini_batch_size
+
+
+def _actor_padding_divisor(config, world_size: int, loss_mode: str) -> int:
+    """Return a padding divisor safe for both optimization and DP dispatch.
+
+    Agent loops can emit a variable number of trajectories after branching.
+    Vanilla PPO batches therefore need to be divisible by both the expanded
+    actor minibatch and the actual data-parallel worker count before sequence
+    balancing. GraphRPO handles minibatching separately but still requires an
+    even DP split.
+    """
+    if world_size <= 0:
+        raise ValueError(f"actor world_size must be positive, got {world_size}")
+    if loss_mode == "graphrpo":
+        return world_size
+    return math.lcm(_global_actor_mini_batch_size(config), world_size)
 
 
 def _configured_rollout_workflow(config) -> str | None:
@@ -1439,10 +1456,10 @@ class RayPPOTrainer:
                     loss_mode = self.config.actor_rollout_ref.actor.policy_loss.get(
                         "loss_mode", "vanilla"
                     )
-                    padding_divisor = (
-                        self.actor_rollout_wg.world_size
-                        if loss_mode == "graphrpo"
-                        else _global_actor_mini_batch_size(self.config)
+                    padding_divisor = _actor_padding_divisor(
+                        self.config,
+                        world_size=self.actor_rollout_wg.world_size,
+                        loss_mode=loss_mode,
                     )
                     if len(batch) % padding_divisor != 0:
                         batch, gen_uid_dummy = self._pad_dummy_sample(

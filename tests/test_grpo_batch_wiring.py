@@ -1,4 +1,5 @@
 import ast
+import math
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -6,7 +7,7 @@ from types import SimpleNamespace
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def _load_function(path: Path, function_name: str):
+def _load_function(path: Path, function_name: str, namespace=None):
     source = path.read_text(encoding="utf-8")
     tree = ast.parse(source)
     function = next(
@@ -15,7 +16,7 @@ def _load_function(path: Path, function_name: str):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == function_name
     )
     module = ast.Module(body=[function], type_ignores=[])
-    namespace = {}
+    namespace = {} if namespace is None else dict(namespace)
     exec(compile(module, str(path), "exec"), namespace)
     return namespace[function_name]
 
@@ -35,6 +36,29 @@ def test_controller_minibatch_matches_worker_rollout_expansion():
 
     assert helper(config) == 96
     assert 96 % helper(config) == 0
+
+
+def test_actor_padding_divisor_covers_minibatch_and_three_way_dp():
+    path = ROOT / "verl" / "trainer" / "ppo" / "ray_trainer.py"
+    minibatch_helper = _load_function(path, "_global_actor_mini_batch_size")
+    padding_helper = _load_function(
+        path,
+        "_actor_padding_divisor",
+        namespace={
+            "math": math,
+            "_global_actor_mini_batch_size": minibatch_helper,
+        },
+    )
+    config = SimpleNamespace(
+        actor_rollout_ref=SimpleNamespace(
+            actor=SimpleNamespace(ppo_mini_batch_size=2),
+            rollout=SimpleNamespace(n=2),
+        )
+    )
+
+    assert padding_helper(config, world_size=3, loss_mode="vanilla") == 12
+    assert padding_helper(config, world_size=3, loss_mode="graphrpo") == 3
+    assert (-13) % padding_helper(config, world_size=3, loss_mode="vanilla") == 11
 
 
 def test_standard_grpo_does_not_require_project_workflow_plugin():
@@ -66,7 +90,8 @@ def test_workflow_is_attached_conditionally_in_train_and_validation():
 def test_dummy_padding_is_loss_inert_and_not_node_count_based():
     source = (ROOT / "verl" / "trainer" / "ppo" / "ray_trainer.py").read_text(encoding="utf-8")
 
-    assert "else _global_actor_mini_batch_size(self.config)" in source
+    assert "padding_divisor = _actor_padding_divisor(" in source
+    assert "return math.lcm(_global_actor_mini_batch_size(config), world_size)" in source
     assert "self.actor_rollout_wg.world_size" in source
     assert "ppo_mini_batch_size * self.config.trainer.nnodes" not in source
     assert 'dummy_sample.batch["response_mask"] = torch.zeros_like' in source
