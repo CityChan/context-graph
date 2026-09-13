@@ -195,7 +195,7 @@ def test_contextgraph_bc_qwen3_8b_lora_50step_launcher_is_protocol_labeled():
         ROOT / "recipes" / "trl_agent" / "contextgraph_browsecomp_plus.yaml"
     ).read_text(encoding="utf-8")
     assert "export AGENT_KIND=contextgraph" in source
-    assert "data/bc_train.parquet" in source
+    assert "export TRAIN_DATA_PATH=${TRAIN_DATA_PATH:-$PROJECT_ROOT/data/bc_train.parquet}" in source
     assert "MODEL_PATH=${MODEL_PATH:-Qwen/Qwen3-8B}" in source
     assert 'MODEL_CACHE_ROOT=$HF_HUB_CACHE/models--${MODEL_PATH//\\//--}' in source
     assert "MODEL_REF=$MODEL_CACHE_ROOT/refs/main" in source

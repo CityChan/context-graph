@@ -33,7 +33,7 @@ fi
 
 cd "$PROJECT_ROOT"
 mkdir -p logs
-TRAIN_DATA_PATH=${TRAIN_DATA_PATH:-$PROJECT_ROOT/data/bc_train.parquet}
+export TRAIN_DATA_PATH=${TRAIN_DATA_PATH:-$PROJECT_ROOT/data/bc_train.parquet}
 if [ ! -s "$TRAIN_DATA_PATH" ]; then
   echo "ERROR: BC-P training parquet missing or empty: $TRAIN_DATA_PATH" >&2
   exit 1
