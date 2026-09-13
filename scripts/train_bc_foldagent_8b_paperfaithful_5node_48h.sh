@@ -62,7 +62,19 @@ if [ -n "${WORK:-}" ] && [ -f "$WORK/.wandb_env" ]; then
   # shellcheck disable=SC1090
   source "$WORK/.wandb_env"
 fi
-export WANDB_API_KEY=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
+if [ "${BC_REQUIRE_WANDB:-0}" = "1" ]; then
+  if [ "${BC_DISABLE_WANDB:-0}" = "1" ]; then
+    echo "ERROR: BC_REQUIRE_WANDB=1 conflicts with BC_DISABLE_WANDB=1"
+    exit 1
+  fi
+  if [ -z "${WANDB_API_KEY:-}" ]; then
+    echo "ERROR: BC_REQUIRE_WANDB=1 but WANDB_API_KEY is not set"
+    echo "       Put 'export WANDB_API_KEY=...' in \$WORK/.wandb_env"
+    exit 1
+  fi
+  unset WANDB_DISABLED
+  export WANDB_MODE=online
+fi
 
 # ── OpenAI judge (REQUIRED for BrowseComp — no LLM judge = no reward signal) ──
 if [ -n "${WORK:-}" ] && [ -f "$WORK/.openai_env" ]; then
@@ -84,7 +96,16 @@ export PATH="${CONDA_PREFIX}/bin:${PATH}"
 hash -r
 
 export PATH=/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/bin:${PATH}
-export LD_LIBRARY_PATH=${CONDA_PREFIX}/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/targets/sbsa-linux/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/lib64:${LD_LIBRARY_PATH:-}
+IFS=: read -ra LD_LIBRARY_ENTRIES <<< "${LD_LIBRARY_PATH:-}"
+CLEAN_LD_LIBRARY_PATH=
+for LD_LIBRARY_ENTRY in "${LD_LIBRARY_ENTRIES[@]}"; do
+  if [ -z "$LD_LIBRARY_ENTRY" ] || [[ "$LD_LIBRARY_ENTRY" == *"/envs/graphtrl/lib"* ]]; then
+    continue
+  fi
+  CLEAN_LD_LIBRARY_PATH="${CLEAN_LD_LIBRARY_PATH:+$CLEAN_LD_LIBRARY_PATH:}$LD_LIBRARY_ENTRY"
+done
+export LD_LIBRARY_PATH=${CONDA_PREFIX}/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/targets/sbsa-linux/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/lib64${CLEAN_LD_LIBRARY_PATH:+:$CLEAN_LD_LIBRARY_PATH}
+unset LD_LIBRARY_ENTRIES LD_LIBRARY_ENTRY CLEAN_LD_LIBRARY_PATH
 export LIBRARY_PATH=/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/targets/sbsa-linux/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/lib64:${LIBRARY_PATH:-}
 export CPATH=/home1/apps/nvidia/Linux_aarch64/25.3/math_libs/12.8/targets/sbsa-linux/include:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/include:${CPATH:-}
 
@@ -120,7 +141,11 @@ if [ "$NUM_NODES" -ne "$EXPECTED_NUM_NODES" ]; then
   exit 1
 fi
 
-if [ -n "${WANDB_API_KEY:-}" ]; then
+if [ "${BC_DISABLE_WANDB:-0}" = "1" ]; then
+  unset WANDB_API_KEY
+  TRAINER_LOGGER='["console"]'
+  probe_msg="wandb disabled by BC_DISABLE_WANDB=1"
+elif [ -n "${WANDB_API_KEY:-}" ]; then
   TRAINER_LOGGER='["console","wandb"]'
   probe_msg="wandb enabled (key length=${#WANDB_API_KEY})"
 else
@@ -135,6 +160,7 @@ TRAIN_DATA_FILE=${TRAIN_DATA_FILE:-data/bc_train.parquet}
 VAL_DATA_FILE=${VAL_DATA_FILE:-data/bc_test.parquet}
 TRAIN_MAX_SAMPLES=${TRAIN_MAX_SAMPLES:--1}
 VAL_MAX_SAMPLES=${VAL_MAX_SAMPLES:--1}
+DATALOADER_NUM_WORKERS=${DATALOADER_NUM_WORKERS:-8}
 TRAINER_VAL_ONLY=${TRAINER_VAL_ONLY:-False}
 PROMPT_LENGTH=${PROMPT_LENGTH:-8192}
 RESPONSE_LENGTH=${RESPONSE_LENGTH:-32768}
@@ -162,6 +188,11 @@ ALGORITHM_KL_COEF=${ALGORITHM_KL_COEF:-0.005}
 CLIP_RATIO_LOW=${CLIP_RATIO_LOW:-0.2}
 CLIP_RATIO_HIGH=${CLIP_RATIO_HIGH:-0.2}
 CHECKPOINT_ROOT=${CHECKPOINT_ROOT:-${SCRATCH:-/scratch/09281/chc_1996}/context-graph-ckpts/$EXPERIMENT_NAME}
+if [ "$LORA_RANK" -gt 0 ]; then
+  MODEL_UPDATE_LABEL="LoRA(r=$LORA_RANK,alpha=$LORA_ALPHA,target=$LORA_TARGET_MODULES)"
+else
+  MODEL_UPDATE_LABEL="full-parameter"
+fi
 
 # Qwen3-8B advertises 40,960 positions. Longer runs must override both the
 # actor/reference HF config and vLLM's independently loaded HF config.
@@ -179,12 +210,12 @@ fi
 probe() { printf '+++ [%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 
 echo "=============================================================="
-echo "  TRAIN: FoldAgent on BrowseComp-Plus (Qwen3-8B dense, $NUM_NODES nodes [1 search + $((NUM_NODES - 1)) trainer], $TOTAL_TRAINING_STEPS steps)"
+echo "  TRAIN: FoldAgent on BrowseComp-Plus ($MODEL_PATH, $NUM_NODES nodes [1 search + $((NUM_NODES - 1)) trainer], $TOTAL_TRAINING_STEPS steps)"
 echo "  Token budget: prompt=$PROMPT_LENGTH response=$RESPONSE_LENGTH active_context=$CONTEXT_LENGTH"
 echo "  Job: ${SLURM_JOB_ID:-<idev>}   Head: $NODE0 ($NODE0_IP)"
 echo "  Worker(s): ${NODELIST[@]:1}"
 echo "  Trainer model:  $MODEL_PATH"
-echo "  Model update: lora_rank=$LORA_RANK lora_alpha=$LORA_ALPHA target_modules=$LORA_TARGET_MODULES"
+echo "  Model update: $MODEL_UPDATE_LABEL"
 echo "  Embedder model: $EMBED_MODEL"
 echo "  Experiment: $EXPERIMENT_NAME"
 echo "  Logger: ${probe_msg}"
@@ -367,6 +398,8 @@ probe "sanity imports done"
 
 # ── Ray head on TRAINER_HEAD_NODE (NODELIST[1]); search node is excluded from Ray ──
 probe "starting Ray head on $TRAINER_HEAD_NODE (NODELIST[1])"
+RAY_HEAD_LOG="$PROJECT_ROOT/logs/ray-head-${SLURM_JOB_ID:-idev}-${RUN_TAG}-foldagent.log"
+probe "Ray head log: $RAY_HEAD_LOG"
 srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" bash -c '
   source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
   conda activate cxtgraph
@@ -381,9 +414,9 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" bash -c '
   export HF_HUB_OFFLINE=1
   export TRANSFORMERS_OFFLINE=1
   export LOCAL_SEARCH_URL='"$LOCAL_SEARCH_URL"'
-  ray start --head --node-ip-address='"$TRAINER_HEAD_IP"' --port=6379 \
+  exec ray start --head --node-ip-address='"$TRAINER_HEAD_IP"' --port=6379 \
     --num-cpus=70 --num-gpus=1 --dashboard-host=0.0.0.0 --block
-' &
+' >"$RAY_HEAD_LOG" 2>&1 &
 RAY_HEAD_PID=$!
 sleep 20
 probe "Ray head sleep done; launching $((NUM_NODES - 2)) trainer workers (skip search node)"
@@ -392,6 +425,8 @@ probe "Ray head sleep done; launching $((NUM_NODES - 2)) trainer workers (skip s
 WORKER_PIDS=()
 for i in $(seq 2 $((NUM_NODES - 1))); do  # skip NODELIST[0]=search, [1]=head
   WORKER_NODE=${NODELIST[$i]}
+  RAY_WORKER_LOG="$PROJECT_ROOT/logs/ray-worker-${SLURM_JOB_ID:-idev}-${RUN_TAG}-foldagent-${i}.log"
+  probe "Ray worker log ($WORKER_NODE): $RAY_WORKER_LOG"
   srun --overlap --nodes=1 --ntasks=1 -w "$WORKER_NODE" bash -c '
     source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
     conda activate cxtgraph
@@ -406,8 +441,8 @@ for i in $(seq 2 $((NUM_NODES - 1))); do  # skip NODELIST[0]=search, [1]=head
     export HF_HUB_OFFLINE=1
     export TRANSFORMERS_OFFLINE=1
     export LOCAL_SEARCH_URL='"$LOCAL_SEARCH_URL"'
-    ray start --address='"${TRAINER_HEAD_IP}:6379"' --num-cpus=70 --num-gpus=1 --block
-  ' &
+    exec ray start --address='"${TRAINER_HEAD_IP}:6379"' --num-cpus=70 --num-gpus=1 --block
+  ' >"$RAY_WORKER_LOG" 2>&1 &
   WORKER_PIDS+=("$!")
   sleep 5
 done
@@ -428,7 +463,7 @@ probe "querying ray status"
 ray status || echo "WARN: ray status check failed"
 
 echo "=============================================================="
-echo "  Launching FoldAgent FoldGRPO (Qwen3-8B dense, 5 nodes [1 search + 4 trainer], $TOTAL_TRAINING_STEPS steps, BS=$TRAIN_BATCH_SIZE, rollout_n=$ROLLOUT_N, ppo_mini/rank=$PPO_MINI_BATCH_SIZE, context=$CONTEXT_LENGTH [48h], BrowseComp-Plus)"
+echo "  Launching FoldAgent FoldGRPO ($MODEL_PATH, update=$MODEL_UPDATE_LABEL, $NUM_NODES nodes [1 search + $((NUM_NODES - 1)) trainer], $TOTAL_TRAINING_STEPS steps, BS=$TRAIN_BATCH_SIZE, rollout_n=$ROLLOUT_N, ppo_mini=$PPO_MINI_BATCH_SIZE, context=$CONTEXT_LENGTH, BrowseComp-Plus)"
 echo "  Optimization: lr=$TRAIN_LR use_kl_loss=$USE_KL_LOSS clip=[$CLIP_RATIO_LOW,$CLIP_RATIO_HIGH]"
 echo "  process_reward=[flat,scope], NO lambda_compact/lambda_cost, NO DAPO knobs"
 echo "  FoldAgent signed process rewards: binary terminal R; Q=-1 no-finish/overlong/tool error, Q=-0.2 out-of-scope"
@@ -480,6 +515,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   data.val_files="$VAL_DATA_FILE" \
   data.train_max_samples="$TRAIN_MAX_SAMPLES" \
   data.val_max_samples="$VAL_MAX_SAMPLES" \
+  data.dataloader_num_workers="$DATALOADER_NUM_WORKERS" \
   data.train_batch_size="$TRAIN_BATCH_SIZE" \
   data.max_prompt_length="$PROMPT_LENGTH" \
   data.max_response_length="$RESPONSE_LENGTH" \

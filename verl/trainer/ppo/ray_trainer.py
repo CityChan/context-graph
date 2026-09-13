@@ -131,6 +131,20 @@ def _actor_padding_divisor(config, world_size: int, loss_mode: str) -> int:
     return math.lcm(_global_actor_mini_batch_size(config), world_size)
 
 
+def _without_dummy_trajectories(batch):
+    """Return the real trajectories used for user-facing batch metrics."""
+    dummy_gen_uid = batch.meta_info.get("gen_uid_dummy")
+    gen_uids = batch.non_tensor_batch.get("gen_uid")
+    if dummy_gen_uid is None or gen_uids is None:
+        return batch
+    keep_indices = [
+        index
+        for index, gen_uid in enumerate(gen_uids)
+        if gen_uid != dummy_gen_uid and str(gen_uid) != str(dummy_gen_uid)
+    ]
+    return batch[keep_indices]
+
+
 def _configured_rollout_workflow(config) -> str | None:
     """Return the optional project workflow without requiring plugin config.
 
@@ -1490,7 +1504,8 @@ class RayPPOTrainer:
                             # TODO@Miao: implement the reward_fn
                             # - pay attention to the multiple trajectories of a rollout when calculating metrics
                             reward_tensor, reward_extra_infos_dict = compute_reward(batch, self.reward_fn)
-                            print(reward_tensor)
+                            if os.environ.get("VERL_VERBOSE_DIAGNOSTICS") == "1":
+                                print(reward_tensor)
 
                     # Operating Mode Selection:
                     # - Bypass mode: Sets old_log_probs = rollout_log_probs (2 policies: π_rollout, π_θ)
@@ -1698,7 +1713,8 @@ class RayPPOTrainer:
                             metrics[f"reward/{key}"] = scalar_val
                             
                 # collect metrics
-                metrics.update(compute_data_metrics(batch=batch, use_critic=self.use_critic))
+                metrics_batch = _without_dummy_trajectories(batch)
+                metrics.update(compute_data_metrics(batch=metrics_batch, use_critic=self.use_critic))
                 metrics.update(compute_timing_metrics(batch=batch, timing_raw=timing_raw))
                 # TODO: implement actual tflpo and theoretical tflpo
                 n_gpus = self.resource_pool_manager.get_n_gpus()

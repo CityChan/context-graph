@@ -98,6 +98,22 @@ def test_dummy_padding_is_loss_inert_and_not_node_count_based():
     assert 'if "overlong_mask" in dummy_sample.batch:' in source
 
 
+def test_dummy_padding_is_excluded_from_user_facing_metrics():
+    helper = _load_function(
+        ROOT / "verl" / "trainer" / "ppo" / "ray_trainer.py",
+        "_without_dummy_trajectories",
+    )
+
+    class FakeBatch:
+        meta_info = {"gen_uid_dummy": "dummy"}
+        non_tensor_batch = {"gen_uid": ["real-a", "dummy", "real-b"]}
+
+        def __getitem__(self, indices):
+            return indices
+
+    assert helper(FakeBatch()) == [0, 2]
+
+
 def test_standard_grpo_does_not_require_contextgraph_rollout_mask():
     source = (ROOT / "verl" / "trainer" / "ppo" / "ray_trainer.py").read_text(encoding="utf-8")
 

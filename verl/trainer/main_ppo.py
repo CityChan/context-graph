@@ -90,7 +90,8 @@ def run_ppo(config, task_runner_class=None) -> None:
             runtime_env_vars["TRANSFER_QUEUE_ENABLE"] = "1"
         runtime_env = OmegaConf.merge(default_runtime_env, runtime_env_kwargs)
         ray_init_kwargs = OmegaConf.create({**ray_init_kwargs, "runtime_env": runtime_env})
-        print(f"ray init kwargs: {_redact_ray_init_kwargs(ray_init_kwargs)}")
+        if os.environ.get("VERL_VERBOSE_DIAGNOSTICS") == "1":
+            print(f"ray init kwargs: {_redact_ray_init_kwargs(ray_init_kwargs)}")
         ray.init(**OmegaConf.to_container(ray_init_kwargs))
 
     if task_runner_class is None:
@@ -297,7 +298,8 @@ class TaskRunner:
         from verl.utils.fs import copy_to_local
 
         print(f"TaskRunner hostname: {socket.gethostname()}, PID: {os.getpid()}")
-        pprint(OmegaConf.to_container(config, resolve=True))
+        if os.environ.get("VERL_VERBOSE_DIAGNOSTICS") == "1":
+            pprint(OmegaConf.to_container(config, resolve=True))
         OmegaConf.resolve(config)
 
         actor_rollout_cls, ray_worker_group_cls = self.add_actor_rollout_worker(config)

@@ -409,7 +409,8 @@ def truncate_prompt(
     ) + 8 - prompt_length
     _cut_idx = 0
     while exceed_len > 0:  # truncate long user prompt
-        print('[PROMPT] now exceed', exceed_len, 'work on cut turn', _cut_idx)
+        if os.environ.get("VERL_VERBOSE_DIAGNOSTICS") == "1":
+            print('[PROMPT] now exceed', exceed_len, 'work on cut turn', _cut_idx)
         chat[_cut_idx]['content'] = tokenizer.decode(
             tokenizer.encode(chat[_cut_idx]['content'], add_special_tokens=False)[
                 exceed_len + 4:], add_special_tokens=False)

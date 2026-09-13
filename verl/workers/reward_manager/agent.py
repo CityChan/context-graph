@@ -2,6 +2,7 @@
 # Licensed under the Apache License, Version 2.0
 from __future__ import annotations
 
+import os
 from collections import defaultdict
 from typing import Any
 
@@ -42,14 +43,12 @@ class AgentLoopRewardManager(AbstractRewardManager):
                 for i in range(len(data)):
                     valid_resp_len = int(attention_mask[i, prompt_len:].sum().item())
                     per_sample_scores.append(float(reward_tensor[i, valid_resp_len - 1].item()))
-                # Debug: print nonzero scores
-                nonzero = [(i, s) for i, s in enumerate(per_sample_scores) if s != 0.0]
-                if nonzero:
-                    print(f"[REWARD DEBUG] rm_scores path: {len(per_sample_scores)} samples, nonzero={nonzero[:10]}")
-                else:
-                    # Check if rm_scores has any nonzero values at all
-                    rm_sum = reward_tensor.abs().sum().item()
-                    print(f"[REWARD DEBUG] rm_scores path: ALL ZERO. rm_tensor abs sum={rm_sum}, batch_size={len(data)}")
+                if os.environ.get("VERL_VERBOSE_DIAGNOSTICS") == "1":
+                    nonzero = [(i, s) for i, s in enumerate(per_sample_scores) if s != 0.0]
+                    print(
+                        f"[REWARD DEBUG] samples={len(per_sample_scores)}, "
+                        f"nonzero={nonzero[:10]}, abs_sum={reward_tensor.abs().sum().item()}"
+                    )
                 # Batch metrics with de-dup by gen_uid
                 reward_extra_info = self._compute_batch_metrics(data, per_sample_scores)
                 # Also attach per-sample scores
@@ -142,7 +141,8 @@ class AgentLoopRewardManager(AbstractRewardManager):
             ]
             gen_uid_list = [gen_uid_list[i] for i in keep_indices]
             per_sample_scores = [per_sample_scores[i] for i in keep_indices]
-            print("exclude dummy gen_uid", gen_uid_dummy, "num of kept trajectories", len(keep_indices))
+            if os.environ.get("VERL_VERBOSE_DIAGNOSTICS") == "1":
+                print("exclude dummy gen_uid", gen_uid_dummy, "num of kept trajectories", len(keep_indices))
 
         def _kept_values(key: str) -> list[Any] | None:
             raw = data.non_tensor_batch.get(key, None)

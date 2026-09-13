@@ -178,6 +178,10 @@ class Tracking:
                 continue
             try:
                 finish_backend(logger[backend])
+                if backend == "wandb":
+                    teardown = getattr(logger[backend], "teardown", None)
+                    if callable(teardown):
+                        teardown(exit_code=exit_code)
             except Exception as exc:
                 warnings.warn(f"Failed to finish {backend} logger cleanly: {exc}", stacklevel=2)
 

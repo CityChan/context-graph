@@ -18,9 +18,13 @@ def test_tracking_finish_is_idempotent():
     class FakeWandb:
         def __init__(self):
             self.exit_codes = []
+            self.teardown_exit_codes = []
 
         def finish(self, exit_code):
             self.exit_codes.append(exit_code)
+
+        def teardown(self, exit_code):
+            self.teardown_exit_codes.append(exit_code)
 
     fake_wandb = FakeWandb()
     tracking = tracking_module.Tracking.__new__(tracking_module.Tracking)
@@ -31,6 +35,7 @@ def test_tracking_finish_is_idempotent():
     tracking.finish(exit_code=1)
 
     assert fake_wandb.exit_codes == [0]
+    assert fake_wandb.teardown_exit_codes == [0]
 
 
 def test_ppo_trainer_explicitly_finishes_tracking_before_return():

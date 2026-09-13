@@ -330,6 +330,53 @@ def test_four_node_smokes_support_lora_and_save_both_adapters():
     assert "export LORA_ALPHA=${LORA_ALPHA:-16}" in pair
 
 
+def test_training_log_noise_is_opt_in_and_padding_metrics_are_real_only():
+    trainer = _read("verl/trainer/ppo/ray_trainer.py")
+    main_ppo = _read("verl/trainer/main_ppo.py")
+    reward_manager = _read("verl/workers/reward_manager/agent.py")
+    agent_loop = _read("verl/experimental/agent_loop/agent_loop.py")
+    fsdp_workers = _read("verl/workers/fsdp_workers.py")
+
+    assert "metrics_batch = _without_dummy_trajectories(batch)" in trainer
+    for source in (trainer, main_ppo, reward_manager, agent_loop, fsdp_workers):
+        assert 'os.environ.get("VERL_VERBOSE_DIAGNOSTICS") == "1"' in source
+    assert 'print(f"ray init kwargs:' in main_ppo
+    assert 'print(f"Model config after override:' in fsdp_workers
+
+
+def test_bc_launchers_isolate_runtime_noise_and_stale_trl_libraries():
+    bases = (
+        "scripts/train_bc_foldagent_8b_paperfaithful_5node_48h.sh",
+        "scripts/train_bc_ctxgraph_8b_paperfaithful_5node_48h.sh",
+    )
+    for base in bases:
+        source = _read(base)
+        assert '[[ "$LD_LIBRARY_ENTRY" == *"/envs/graphtrl/lib"* ]]' in source
+        assert "DATALOADER_NUM_WORKERS=${DATALOADER_NUM_WORKERS:-8}" in source
+        assert 'data.dataloader_num_workers="$DATALOADER_NUM_WORKERS"' in source
+        assert 'RAY_HEAD_LOG="$PROJECT_ROOT/logs/ray-head-' in source
+        assert 'RAY_WORKER_LOG="$PROJECT_ROOT/logs/ray-worker-' in source
+        assert '>"$RAY_HEAD_LOG" 2>&1 &' in source
+        assert '>"$RAY_WORKER_LOG" 2>&1 &' in source
+        assert "ppo_mini/rank=" not in source
+
+    for wrapper in (
+        "scripts/smoke_train_bc_foldagent_8b_4node_1step_32k_active.sh",
+        "scripts/smoke_train_bc_ctxgraph_8b_4node_1step_32k_active.sh",
+    ):
+        source = _read(wrapper)
+        assert "export DATALOADER_NUM_WORKERS=${DATALOADER_NUM_WORKERS:-0}" in source
+
+
+def test_shell_scripts_do_not_embed_wandb_credentials():
+    leaked = [
+        str(path.relative_to(ROOT))
+        for path in (ROOT / "scripts").rglob("*.sh")
+        if "WANDB_API_KEY=wandb_" in path.read_text(encoding="utf-8", errors="replace")
+    ]
+    assert leaked == []
+
+
 def test_training_waits_until_search_is_actually_ready():
     for script in (
         "scripts/train_bc_foldagent_8b_paperfaithful_5node_48h.sh",

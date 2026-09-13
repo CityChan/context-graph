@@ -170,10 +170,11 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
         assert torch.distributed.get_world_size() == int(_os_ycheck.environ.get("WORLD_SIZE", "-1")), (
             "torch.distributed world_size={} != env WORLD_SIZE={}".format(torch.distributed.get_world_size(), _os_ycheck.environ.get('WORLD_SIZE'))
         )
-        logger.warning(
-            "FSDP DIAGNOSTIC rank=%s world_size=%s env_WORLD_SIZE=%s mesh=%s",
-            self.rank, world_size, _os_ycheck.environ.get("WORLD_SIZE"), self.device_mesh,
-        )
+        if os.environ.get("VERL_VERBOSE_DIAGNOSTICS") == "1":
+            logger.warning(
+                "FSDP DIAGNOSTIC rank=%s world_size=%s env_WORLD_SIZE=%s mesh=%s",
+                self.rank, world_size, _os_ycheck.environ.get("WORLD_SIZE"), self.device_mesh,
+            )
 
         # build device mesh for Ulysses Sequence Parallel
         self.ulysses_device_mesh = None
@@ -362,7 +363,7 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
         }
         override_config_kwargs.update(override_model_config)
         update_model_config(actor_model_config, override_config_kwargs=override_config_kwargs)
-        if self.rank == 0:
+        if self.rank == 0 and os.environ.get("VERL_VERBOSE_DIAGNOSTICS") == "1":
             print(f"Model config after override: {actor_model_config}")
 
         # NOTE(fix me): tie_word_embedding causes meta_tensor init to hang
@@ -505,7 +506,7 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
         #     Current, auto_wrap_policy causes HFRollout to hang in Gemma
         #     auto_wrap_policy = None
 
-        if self.rank == 0:
+        if self.rank == 0 and os.environ.get("VERL_VERBOSE_DIAGNOSTICS") == "1":
             print(f"wrap_policy: {auto_wrap_policy}")
 
         fsdp_mesh = self.device_mesh
@@ -840,7 +841,8 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
             torch.cuda.synchronize()
             _gc_ycheck.collect()
             torch.cuda.empty_cache()
-            logger.warning(f'PRE-VLLM MEM: rank={self.rank} free={torch.cuda.mem_get_info()[0]/2**30:.1f}GiB used={torch.cuda.memory_allocated()/2**30:.1f}GiB')
+            if os.environ.get("VERL_VERBOSE_DIAGNOSTICS") == "1":
+                logger.warning(f'PRE-VLLM MEM: rank={self.rank} free={torch.cuda.mem_get_info()[0]/2**30:.1f}GiB used={torch.cuda.memory_allocated()/2**30:.1f}GiB')
             self._build_rollout(trust_remote_code=self.config.model.get("trust_remote_code", False))
 
         if self._is_ref:

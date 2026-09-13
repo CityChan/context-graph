@@ -724,9 +724,10 @@ class AgentLoopWorkerBase:
         # don't prevent rm_scores from being created for the entire batch.
         n_none = sum(1 for s in scores if s is None)
         scores = [s if s is not None else 0.0 for s in scores]
-        nonzero_scores = [(i, s) for i, s in enumerate(scores) if s != 0.0]
-        print(f"[RM_SCORES DEBUG] total={len(scores)}, none_replaced={n_none}, nonzero={nonzero_scores[:10]}")
-        print(f"[RM_SCORES DEBUG] all scores: {scores[:10]}... (showing first 10)")
+        if os.environ.get("VERL_VERBOSE_DIAGNOSTICS") == "1":
+            nonzero_scores = [(i, s) for i, s in enumerate(scores) if s != 0.0]
+            print(f"[RM_SCORES DEBUG] total={len(scores)}, none_replaced={n_none}, nonzero={nonzero_scores[:10]}")
+            print(f"[RM_SCORES DEBUG] all scores: {scores[:10]}... (showing first 10)")
         prompt_length = prompt_ids.size(1)
         response_length = attention_mask[:, prompt_length:].sum(dim=1) - 1
         rm_scores = torch.zeros_like(response_mask, dtype=torch.float32)
