@@ -75,7 +75,6 @@ export HF_HUB_CACHE=${HF_HUB_CACHE:-$HF_HOME/hub}
 export ALFWORLD_DATA=${ALFWORLD_DATA:-$HOME/.cache/alfworld}
 export PYTHONPATH="$PROJECT_ROOT:$PYTHONPATH"
 export NCCL_P2P_LEVEL=NVL
-export WANDB_API_KEY=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
 
 # ── Node info ──
 NODELIST=($(scontrol show hostnames $SLURM_JOB_NODELIST))

@@ -71,7 +71,6 @@ for env_file in "${WORK:-}/.wandb_env" "${DEFAULT_WORK_BASE}/.wandb_env" "${HOME
     break
   fi
 done
-export WANDB_API_KEY=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
 export WANDB_ENTITY=${WANDB_ENTITY:-huancheng}
 
 source "${CONDA_ROOT}/etc/profile.d/conda.sh"
