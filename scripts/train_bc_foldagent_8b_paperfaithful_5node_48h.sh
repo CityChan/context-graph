@@ -100,6 +100,9 @@ export NCCL_P2P_LEVEL=NVL
 PROJECT_ROOT=/work/09281/chc_1996/vista/context-graph
 MODEL_PATH=${MODEL_PATH:-Qwen/Qwen3-8B}
 EMBED_MODEL=${EMBED_MODEL:-Qwen/Qwen3-Embedding-8B}
+LORA_RANK=${LORA_RANK:-0}
+LORA_ALPHA=${LORA_ALPHA:-16}
+LORA_TARGET_MODULES=${LORA_TARGET_MODULES:-all-linear}
 export HF_HOME=${HF_HOME:-/work/09281/chc_1996/vista/cache}
 export HF_HUB_CACHE=${HF_HUB_CACHE:-$HF_HOME/hub}
 cd "$PROJECT_ROOT"
@@ -181,6 +184,7 @@ echo "  Token budget: prompt=$PROMPT_LENGTH response=$RESPONSE_LENGTH active_con
 echo "  Job: ${SLURM_JOB_ID:-<idev>}   Head: $NODE0 ($NODE0_IP)"
 echo "  Worker(s): ${NODELIST[@]:1}"
 echo "  Trainer model:  $MODEL_PATH"
+echo "  Model update: lora_rank=$LORA_RANK lora_alpha=$LORA_ALPHA target_modules=$LORA_TARGET_MODULES"
 echo "  Embedder model: $EMBED_MODEL"
 echo "  Experiment: $EXPERIMENT_NAME"
 echo "  Logger: ${probe_msg}"
@@ -446,6 +450,9 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   actor_rollout_ref.rollout.calculate_log_probs=True \
   actor_rollout_ref.rollout.gpu_memory_utilization=0.6 \
   actor_rollout_ref.model.path="$MODEL_PATH" \
+  actor_rollout_ref.model.lora_rank="$LORA_RANK" \
+  actor_rollout_ref.model.lora_alpha="$LORA_ALPHA" \
+  actor_rollout_ref.model.target_modules="$LORA_TARGET_MODULES" \
   "${LONG_CONTEXT_ARGS[@]}" \
   actor_rollout_ref.rollout.prompt_length="$PROMPT_LENGTH" \
   actor_rollout_ref.rollout.response_length="$RESPONSE_LENGTH" \

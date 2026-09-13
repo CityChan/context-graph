@@ -20,12 +20,16 @@ if [ "${#IDEV_NODES[@]}" -ne 4 ]; then
 fi
 
 export RUN_TAG=${RUN_TAG:-idev_4n_smoke_$(date +%Y%m%d_%H%M%S)}
+export LORA_RANK=${LORA_RANK:-0}
+export LORA_ALPHA=${LORA_ALPHA:-16}
+export LORA_TARGET_MODULES=${LORA_TARGET_MODULES:-all-linear}
 mkdir -p logs
 FOLD_LOG="logs/idev-foldagent-${RUN_TAG}.log"
 CTXGRAPH_LOG="logs/idev-contextgraph-${RUN_TAG}.log"
 
 echo "RUN_TAG=$RUN_TAG"
 echo "nodes=${IDEV_NODES[*]}"
+echo "model_update=lora_rank=$LORA_RANK lora_alpha=$LORA_ALPHA target_modules=$LORA_TARGET_MODULES"
 echo "FoldAgent log=$FOLD_LOG"
 echo "ContextGraph log=$CTXGRAPH_LOG"
 

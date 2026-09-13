@@ -284,12 +284,12 @@ def test_four_node_idev_smokes_use_three_trainer_ranks():
         ),
     ):
         source = _read(script)
-        assert "export EXPECTED_NUM_NODES=4" in source
-        assert "export TOTAL_TRAINING_STEPS=1" in source
-        assert "export TRAIN_BATCH_SIZE=3" in source
-        assert "export ROLLOUT_N=2" in source
-        assert "export PPO_MINI_BATCH_SIZE=2" in source
-        assert f"exec bash {base}" in source
+        assert "export EXPECTED_NUM_NODES=${EXPECTED_NUM_NODES:-4}" in source
+        assert "export TOTAL_TRAINING_STEPS=${TOTAL_TRAINING_STEPS:-1}" in source
+        assert "export TRAIN_BATCH_SIZE=${TRAIN_BATCH_SIZE:-3}" in source
+        assert "export ROLLOUT_N=${ROLLOUT_N:-2}" in source
+        assert "export PPO_MINI_BATCH_SIZE=${PPO_MINI_BATCH_SIZE:-2}" in source
+        assert f"bash {base}" in source
 
         base_source = _read(base)
         assert "EXPECTED_NUM_NODES=${EXPECTED_NUM_NODES:-5}" in base_source
@@ -301,6 +301,33 @@ def test_four_node_idev_smokes_use_three_trainer_ranks():
     assert "smoke_train_bc_ctxgraph_8b_4node_1step_32k_active.sh" in pair_source
     assert "FOLD_RC=${PIPESTATUS[0]}" in pair_source
     assert "CTXGRAPH_RC=${PIPESTATUS[0]}" in pair_source
+
+
+def test_four_node_smokes_support_lora_and_save_both_adapters():
+    bases = (
+        "scripts/train_bc_foldagent_8b_paperfaithful_5node_48h.sh",
+        "scripts/train_bc_ctxgraph_8b_paperfaithful_5node_48h.sh",
+    )
+    for base in bases:
+        source = _read(base)
+        assert "LORA_RANK=${LORA_RANK:-0}" in source
+        assert 'actor_rollout_ref.model.lora_rank="$LORA_RANK"' in source
+        assert 'actor_rollout_ref.model.lora_alpha="$LORA_ALPHA"' in source
+        assert 'actor_rollout_ref.model.target_modules="$LORA_TARGET_MODULES"' in source
+
+    wrappers = (
+        "scripts/smoke_train_bc_foldagent_8b_4node_1step_32k_active.sh",
+        "scripts/smoke_train_bc_ctxgraph_8b_4node_1step_32k_active.sh",
+    )
+    for wrapper in wrappers:
+        source = _read(wrapper)
+        assert "export LORA_RANK=${LORA_RANK:-0}" in source
+        assert "export LORA_ALPHA=${LORA_ALPHA:-16}" in source
+        assert 'global_step_$TOTAL_TRAINING_STEPS/actor/lora_adapter' in source
+
+    pair = _read("scripts/smoke_train_bc_pair_8b_4node_1step_32k_active.sh")
+    assert "export LORA_RANK=${LORA_RANK:-0}" in pair
+    assert "export LORA_ALPHA=${LORA_ALPHA:-16}" in pair
 
 
 def test_training_waits_until_search_is_actually_ready():
