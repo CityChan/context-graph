@@ -935,6 +935,9 @@ def test_graphrpo_training_wiring_is_explicit():
     audit_smoke_launcher = (
         root / "scripts/smoke_train_bc_ctxgraph_8b_graphrpo_qwen3_8b_4node_judge_audit.sh"
     ).read_text(encoding="utf-8")
+    zeroshot_pilot_launcher = (
+        root / "scripts/pilot_train_bc_ctxgraph_8b_graphrpo_ref_zeroshot_4node_20step_val.sh"
+    ).read_text(encoding="utf-8")
     old_policy_smoke_launcher = (
         root / "scripts/smoke_train_bc_ctxgraph_8b_graphrpo_old_policy_4node_2step.sh"
     ).read_text(encoding="utf-8")
@@ -998,6 +1001,8 @@ def test_graphrpo_training_wiring_is_explicit():
         assert f'self.stats["{metric}"]' in local_search
     assert "export ADV_ESTIMATOR=graphrpo" in launcher
     assert "export POLICY_LOSS_MODE=graphrpo" in launcher
+    assert 'TRAINER_RESUME_MODE=${TRAINER_RESUME_MODE:-auto}' in paperfaithful_launcher
+    assert 'RESUME_ARGS=(trainer.resume_mode="$TRAINER_RESUME_MODE")' in paperfaithful_launcher
     assert "old_policy_counterfactual_qa" in launcher
     assert "old_policy_answer_likelihood" in paperfaithful_launcher
     assert "GRAPH_RPO_EVALUATOR_URL:?" not in launcher
@@ -1027,6 +1032,17 @@ def test_graphrpo_training_wiring_is_explicit():
     assert "reference_delta_abs_sum:" in audit_smoke_launcher
     assert "audit_bc_judge_results.py" in audit_smoke_launcher
     assert "SMOKE + JUDGE AUDIT COMPLETED" in audit_smoke_launcher
+    assert 'export EXPERIMENT_NAME="train_ctxgraph_bc_8b_${RUN_TAG}_${RUN_TS}"' in zeroshot_pilot_launcher
+    assert 'export CHECKPOINT_ROOT="$SCRATCH_ROOT/context-graph-ckpts/$EXPERIMENT_NAME"' in zeroshot_pilot_launcher
+    assert "export TRAIN_BATCH_SIZE=6" in zeroshot_pilot_launcher
+    assert "export ROLLOUT_N=8" in zeroshot_pilot_launcher
+    assert "export PPO_MINI_BATCH_SIZE=3" in zeroshot_pilot_launcher
+    assert "export LORA_RANK=32" in zeroshot_pilot_launcher
+    assert "export CONTEXT_LENGTH=32768" in zeroshot_pilot_launcher
+    assert "export TRAINER_RESUME_MODE=disable" in zeroshot_pilot_launcher
+    assert "isolated GraphRPO output path already exists" in zeroshot_pilot_launcher
+    assert "isolated zero-shot GraphRPO run unexpectedly resumed a checkpoint" in zeroshot_pilot_launcher
+    assert "adapter_model.safetensors" in zeroshot_pilot_launcher
     assert "old_policy_answer_likelihood" in old_policy_smoke_launcher
     assert "TOTAL_TRAINING_STEPS=2" in old_policy_smoke_launcher
     assert "GRAPH_RPO_ALPHA=0.1" in old_policy_smoke_launcher

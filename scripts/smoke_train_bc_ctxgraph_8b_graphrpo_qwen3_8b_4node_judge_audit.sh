@@ -47,6 +47,7 @@ export MAX_SESSION=3
 export VAL_MAX_SESSION=3
 export MAX_TURN=40
 export BC_REQUIRE_WANDB=1
+export TRAINER_RESUME_MODE=disable
 
 # A smoke must start from the immutable base snapshot, even if the caller's
 # shell still contains resume variables from a previous run.

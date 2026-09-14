@@ -245,6 +245,14 @@ ALGORITHM_KL_COEF=${ALGORITHM_KL_COEF:-0.005}
 CLIP_RATIO_LOW=${CLIP_RATIO_LOW:-0.2}
 CLIP_RATIO_HIGH=${CLIP_RATIO_HIGH:-0.2}
 CHECKPOINT_ROOT=${CHECKPOINT_ROOT:-${SCRATCH:-/scratch/09281/chc_1996}/context-graph-ckpts/$EXPERIMENT_NAME}
+TRAINER_RESUME_MODE=${TRAINER_RESUME_MODE:-auto}
+case "$TRAINER_RESUME_MODE" in
+  auto|disable) ;;
+  *)
+    echo "ERROR: TRAINER_RESUME_MODE must be auto or disable; got $TRAINER_RESUME_MODE"
+    exit 1
+    ;;
+esac
 if [ "$LORA_RANK" -gt 0 ]; then
   MODEL_UPDATE_LABEL="LoRA(r=$LORA_RANK,alpha=$LORA_ALPHA,target=$LORA_TARGET_MODULES)"
 else
@@ -376,7 +384,7 @@ for f in "$TRAIN_PARQUET" "$VAL_PARQUET"; do
 done
 probe "data parquets ok: train=$TRAIN_DATA_FILE val=$VAL_DATA_FILE"
 
-RESUME_ARGS=()
+RESUME_ARGS=(trainer.resume_mode="$TRAINER_RESUME_MODE")
 if [ -n "${RESUME_CHECKPOINT_PATH:-}" ]; then
   RESUME_PATH=$RESUME_CHECKPOINT_PATH
   if [ ! -d "$RESUME_PATH" ]; then
