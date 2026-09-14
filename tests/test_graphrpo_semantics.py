@@ -1014,8 +1014,17 @@ def test_graphrpo_training_wiring_is_explicit():
     assert "SAVE_ROLLOUT_DATA:-1" in smoke_launcher
     assert "b968826d9c46dd6066d109eabc6255188de91218" in audit_smoke_launcher
     assert "export EXPECTED_NUM_NODES=4" in audit_smoke_launcher
-    assert "export TRAIN_BATCH_SIZE=3" in audit_smoke_launcher
+    assert "export TRAIN_BATCH_SIZE=6" in audit_smoke_launcher
     assert "export ROLLOUT_N=8" in audit_smoke_launcher
+    assert "export PPO_MINI_BATCH_SIZE=3" in audit_smoke_launcher
+    assert "export LORA_RANK=32" in audit_smoke_launcher
+    assert "export LORA_ALPHA=32" in audit_smoke_launcher
+    assert "export GRAPH_RPO_CREDIT_BACKEND=reference_answer_likelihood" in audit_smoke_launcher
+    assert "unset RESUME_CHECKPOINT_PATH RESUME_CHECKPOINT_ROOT" in audit_smoke_launcher
+    assert "adapter_model.safetensors" in audit_smoke_launcher
+    assert "reference_creditable_edits:[1-9]" in audit_smoke_launcher
+    assert "reference_scored_states:[1-9]" in audit_smoke_launcher
+    assert "reference_delta_abs_sum:" in audit_smoke_launcher
     assert "audit_bc_judge_results.py" in audit_smoke_launcher
     assert "SMOKE + JUDGE AUDIT COMPLETED" in audit_smoke_launcher
     assert "old_policy_answer_likelihood" in old_policy_smoke_launcher

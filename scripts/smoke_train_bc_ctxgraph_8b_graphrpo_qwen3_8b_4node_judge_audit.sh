@@ -1,5 +1,6 @@
 #!/bin/bash
 # One-command four-node GraphRPO smoke from the original Qwen3-8B snapshot.
+# Configuration: 1 search + 3 trainer nodes, batch 6, rollout n=8, LoRA-32.
 # This uses the frozen original Qwen3-8B as the answer-likelihood reference.
 set -euo pipefail
 
@@ -12,15 +13,23 @@ cd "$PROJECT_ROOT"
 
 export MODEL_PATH="$MODEL_SNAPSHOT"
 export EXPECTED_NUM_NODES=4
-export RUN_TAG=graphrpo_qwen3_8b_zeroshot_4n_bs3_n8_judge_audit
+export RUN_TAG=graphrpo_qwen3_8b_zeroshot_4n_bs6_n8_lora32_judge_audit
 export EXPERIMENT_NAME="train_ctxgraph_bc_8b_${RUN_TAG}_${RUN_TS}"
 export CHECKPOINT_ROOT="$SCRATCH_ROOT/context-graph-ckpts/$EXPERIMENT_NAME"
 export ROLLOUT_DATA_DIR="$SCRATCH_ROOT/context-graph-rollouts/$EXPERIMENT_NAME"
-export TRAIN_BATCH_SIZE=3
+export TRAIN_BATCH_SIZE=6
 export ROLLOUT_N=8
-export PPO_MINI_BATCH_SIZE=2
-export TRAIN_MAX_SAMPLES=3
-export VAL_MAX_SAMPLES=3
+export PPO_MINI_BATCH_SIZE=3
+export TRAIN_MAX_SAMPLES=6
+export VAL_MAX_SAMPLES=6
+export LORA_RANK=32
+export LORA_ALPHA=32
+export LORA_TARGET_MODULES=all-linear
+export TRAIN_LR=1e-5
+export PROMPT_LENGTH=8192
+export RESPONSE_LENGTH=24576
+export CONTEXT_LENGTH=32768
+export DATALOADER_NUM_WORKERS=0
 export TOTAL_TRAINING_STEPS=1
 export VAL_BEFORE_TRAIN=False
 export TEST_FREQ=0
@@ -28,6 +37,20 @@ export SAVE_FREQ=1
 export SAVE_ROLLOUT_DATA=1
 export JUDGE_MODEL=gpt-5-nano
 export GRAPH_RPO_CREDIT_BACKEND=reference_answer_likelihood
+export GRAPH_RPO_ALPHA=0.1
+export GRAPH_RPO_BETA=1.0
+export GRAPH_RPO_DELTA_MAX=0.25
+export USE_KL_LOSS=True
+export ACTOR_KL_LOSS_COEF=0.0005
+export ALGORITHM_KL_COEF=0.005
+export MAX_SESSION=3
+export VAL_MAX_SESSION=3
+export MAX_TURN=40
+export BC_REQUIRE_WANDB=1
+
+# A smoke must start from the immutable base snapshot, even if the caller's
+# shell still contains resume variables from a previous run.
+unset RESUME_CHECKPOINT_PATH RESUME_CHECKPOINT_ROOT
 
 if [ ! -s "$MODEL_PATH/config.json" ] || ! find -L "$MODEL_PATH" -maxdepth 1 -type f \( -name '*.safetensors' -o -name 'pytorch_model*.bin' \) -size +0c -print -quit 2>/dev/null | grep -q .; then
   echo "ERROR: original Qwen3-8B snapshot is incomplete: $MODEL_PATH"
@@ -36,11 +59,14 @@ fi
 
 mkdir -p "$PROJECT_ROOT/logs"
 SMOKE_LOG="$PROJECT_ROOT/logs/${EXPERIMENT_NAME}.log"
+FINAL_CHECKPOINT="$CHECKPOINT_ROOT/global_step_$TOTAL_TRAINING_STEPS"
+ADAPTER_DIR="$FINAL_CHECKPOINT/actor/lora_adapter"
 
 echo "=============================================================="
 echo "  ONE-COMMAND GRAPHRPO JUDGE-AUDIT SMOKE"
 echo "  Experiment:   $EXPERIMENT_NAME"
 echo "  Model:        $MODEL_PATH"
+echo "  Optimization: GraphRPO + frozen-reference credit, LoRA-32, BS=6, n=8"
 echo "  Rollout data: $ROLLOUT_DATA_DIR"
 echo "  Main log:     $SMOKE_LOG"
 echo "=============================================================="
@@ -66,12 +92,38 @@ echo "Rollout JSONL files:"
 wc -l "${ROLLOUT_FILES[@]}"
 python scripts/audit_bc_judge_results.py "${ROLLOUT_FILES[@]}" --fail-on-integrity-error
 
+if [ ! -s "$ADAPTER_DIR/adapter_config.json" ] || [ ! -s "$ADAPTER_DIR/adapter_model.safetensors" ]; then
+  echo "ERROR: LoRA checkpoint is incomplete under $ADAPTER_DIR"
+  exit 1
+fi
+if ! grep -q 'Launching ContextGraph graphrpo' "$SMOKE_LOG"; then
+  echo "ERROR: trainer log does not confirm the GraphRPO estimator"
+  exit 1
+fi
+if ! grep -q 'GraphRPO credit: reference_answer_likelihood' "$SMOKE_LOG"; then
+  echo "ERROR: trainer log does not confirm frozen-reference GraphRPO credit"
+  exit 1
+fi
+if ! grep -Eq 'reference_creditable_edits:[1-9]' "$SMOKE_LOG"; then
+  echo "ERROR: no creditable frozen-reference graph edit was produced"
+  exit 1
+fi
+if ! grep -Eq 'reference_scored_states:[1-9]' "$SMOKE_LOG"; then
+  echo "ERROR: no frozen-reference graph states were scored"
+  exit 1
+fi
+if ! grep -Eq 'reference_delta_abs_sum:(0\.[0-9]*[1-9]|[1-9])' "$SMOKE_LOG"; then
+  echo "ERROR: all frozen-reference graph-edit deltas were zero"
+  exit 1
+fi
+
 echo "Key GraphRPO evidence:"
-grep -E 'TRAIN RUN COMPLETED|TRAIN RUN FAILED|graph_rpo_valid_edits|reference_creditable_edits|reference_scored_states|reference_delta_abs_sum|actor/pg_loss|actor/grad_norm|actor/kl_loss' "$SMOKE_LOG" | tail -20 || true
+grep -E 'TRAIN RUN COMPLETED|TRAIN RUN FAILED|graph_rpo_valid_edits|reference_creditable_edits|reference_scored_states|reference_delta_abs_sum|actor/skipped_nonfinite_micro_batch|actor/pg_loss|actor/grad_norm|actor/kl_loss' "$SMOKE_LOG" | tail -20 || true
 
 echo "=============================================================="
 echo "  SMOKE + JUDGE AUDIT COMPLETED"
-echo "  Checkpoint:   $CHECKPOINT_ROOT/global_step_1"
+echo "  Checkpoint:   $FINAL_CHECKPOINT"
+echo "  LoRA adapter: $ADAPTER_DIR"
 echo "  Rollout data: $ROLLOUT_DATA_DIR"
 echo "  Main log:     $SMOKE_LOG"
 echo "=============================================================="
