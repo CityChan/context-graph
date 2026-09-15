@@ -163,10 +163,33 @@ ALFWORLD_MAX_TURN=${ALFWORLD_MAX_TURN:-20}
 ALFWORLD_VAL_MAX_TURN=${ALFWORLD_VAL_MAX_TURN:-$ALFWORLD_MAX_TURN}
 ALFWORLD_TURN_MAX_NEW_TOKENS=${ALFWORLD_TURN_MAX_NEW_TOKENS:-512}
 ALFWORLD_BRANCH_LEN=${ALFWORLD_BRANCH_LEN:-2048}
+ALFWORLD_STRUCTURED_GRAPH_CONTROLLER=${ALFWORLD_STRUCTURED_GRAPH_CONTROLLER:-False}
+ALFWORLD_CONTROLLER_OWNED_TOOL_FORMATTING=${ALFWORLD_CONTROLLER_OWNED_TOOL_FORMATTING:-$ALFWORLD_STRUCTURED_GRAPH_CONTROLLER}
+ALFWORLD_CONTROLLER_ACTION_POLICY=${ALFWORLD_CONTROLLER_ACTION_POLICY:-balanced}
+ALFWORLD_CONSOLIDATION_INTERVAL=${ALFWORLD_CONSOLIDATION_INTERVAL:-0}
+ALFWORLD_MAX_SESSION=${ALFWORLD_MAX_SESSION:-3}
+ALFWORLD_VAL_MAX_SESSION=${ALFWORLD_VAL_MAX_SESSION:-$ALFWORLD_MAX_SESSION}
+ALFWORLD_SESSION_TIMEOUT=${ALFWORLD_SESSION_TIMEOUT:-300}
+ALFWORLD_TRAINER_RESUME_MODE=${ALFWORLD_TRAINER_RESUME_MODE:-auto}
 ALFWORLD_TRAIN_MAX_SAMPLES=${ALFWORLD_TRAIN_MAX_SAMPLES:-}
 ALFWORLD_VAL_MAX_SAMPLES=${ALFWORLD_VAL_MAX_SAMPLES:-}
 ALFWORLD_TEST_FREQ=${ALFWORLD_TEST_FREQ:-999}
 ALFWORLD_SAVE_FREQ=${ALFWORLD_SAVE_FREQ:-15}
+
+case "$ALFWORLD_CONTROLLER_ACTION_POLICY" in
+  balanced|structural) ;;
+  *)
+    echo "ERROR: ALFWORLD_CONTROLLER_ACTION_POLICY must be balanced or structural; got $ALFWORLD_CONTROLLER_ACTION_POLICY"
+    exit 1
+    ;;
+esac
+case "$ALFWORLD_TRAINER_RESUME_MODE" in
+  auto|disable) ;;
+  *)
+    echo "ERROR: ALFWORLD_TRAINER_RESUME_MODE must be auto or disable; got $ALFWORLD_TRAINER_RESUME_MODE"
+    exit 1
+    ;;
+esac
 
 EXTRA_DATA_ARGS=()
 if [ -n "$ALFWORLD_TRAIN_MAX_SAMPLES" ]; then
@@ -178,10 +201,12 @@ fi
 
 TS=$(date +%Y%m%d_%H%M%S)
 RUN_SUFFIX="step${ALFWORLD_TOTAL_STEPS}"
+RUN_KIND="FoldGRPO training"
 if [ "$ALFWORLD_VAL_ONLY" = "True" ] || [ "$ALFWORLD_VAL_ONLY" = "true" ]; then
   RUN_SUFFIX="valonly"
+  RUN_KIND="validation-only evaluation"
 fi
-EXPERIMENT_NAME="${ALFWORLD_AGENT_LOOP}_${ALFWORLD_WORKFLOW}_${ALFWORLD_MODE}_8b_4n_p${ALFWORLD_PROMPT_LENGTH}_r${ALFWORLD_RESPONSE_LENGTH}_${RUN_SUFFIX}_${TS}"
+EXPERIMENT_NAME=${ALFWORLD_EXPERIMENT_NAME:-"${ALFWORLD_AGENT_LOOP}_${ALFWORLD_WORKFLOW}_${ALFWORLD_MODE}_8b_4n_p${ALFWORLD_PROMPT_LENGTH}_r${ALFWORLD_RESPONSE_LENGTH}_${RUN_SUFFIX}_${TS}"}
 
 probe() { printf '+++ [%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 
@@ -357,7 +382,9 @@ if ! wait_for_ray_cluster "$NUM_NODES"; then
 fi
 
 echo "=============================================================="
-echo "  Launching ${ALFWORLD_METHOD_LABEL} FoldGRPO run on ALFWorld"
+echo "  Launching ${ALFWORLD_METHOD_LABEL} ${RUN_KIND} on ALFWorld"
+echo "  controller: structured=${ALFWORLD_STRUCTURED_GRAPH_CONTROLLER} policy=${ALFWORLD_CONTROLLER_ACTION_POLICY} interval=${ALFWORLD_CONSOLIDATION_INTERVAL}"
+echo "  resume_mode: ${ALFWORLD_TRAINER_RESUME_MODE}"
 echo "  vLLM gpu_memory_utilization=0.55 (no embedder co-located, all GPU mem available)"
 echo "=============================================================="
 probe "launching trainer (model load + vLLM init typically ~3-5 min before first wandb log)"
@@ -404,17 +431,21 @@ srun --overlap --nodes=1 --ntasks=1 -w "$NODE0" --chdir="$PROJECT_ROOT" \
   actor_rollout_ref.actor.ppo_infer_max_token_len_per_gpu=${ALFWORLD_MAX_TOKEN_LEN_PER_GPU} \
   actor_rollout_ref.model.enable_gradient_checkpointing=True \
   +actor_rollout_ref.rollout.plugin.workflow=${ALFWORLD_WORKFLOW} \
+  +actor_rollout_ref.rollout.plugin.structured_graph_controller=${ALFWORLD_STRUCTURED_GRAPH_CONTROLLER} \
+  +actor_rollout_ref.rollout.plugin.controller_owned_tool_formatting=${ALFWORLD_CONTROLLER_OWNED_TOOL_FORMATTING} \
+  +actor_rollout_ref.rollout.plugin.controller_action_policy=${ALFWORLD_CONTROLLER_ACTION_POLICY} \
   +actor_rollout_ref.rollout.plugin.max_turn=${ALFWORLD_MAX_TURN} \
   +actor_rollout_ref.rollout.plugin.retry_cjk=10 \
   +actor_rollout_ref.rollout.plugin.turn_max_new_tokens=${ALFWORLD_TURN_MAX_NEW_TOKENS} \
-  +actor_rollout_ref.rollout.plugin.max_session=3 \
-  +actor_rollout_ref.rollout.plugin.val_max_session=3 \
-  +actor_rollout_ref.rollout.plugin.session_timeout=300 \
+  +actor_rollout_ref.rollout.plugin.max_session=${ALFWORLD_MAX_SESSION} \
+  +actor_rollout_ref.rollout.plugin.val_max_session=${ALFWORLD_VAL_MAX_SESSION} \
+  +actor_rollout_ref.rollout.plugin.session_timeout=${ALFWORLD_SESSION_TIMEOUT} \
   +actor_rollout_ref.rollout.plugin.enable_summary=False \
   +actor_rollout_ref.rollout.plugin.branch_len=${ALFWORLD_BRANCH_LEN} \
   +actor_rollout_ref.rollout.plugin.process_reward="$ALFWORLD_PROCESS_REWARD" \
   +actor_rollout_ref.rollout.plugin.lambda_compact=0.1 \
   +actor_rollout_ref.rollout.plugin.lambda_cost=0.005 \
+  +actor_rollout_ref.rollout.plugin.consolidation_interval=${ALFWORLD_CONSOLIDATION_INTERVAL} \
   +actor_rollout_ref.rollout.plugin.max_traj=4 \
   +actor_rollout_ref.rollout.plugin.must_finish=False \
   +actor_rollout_ref.rollout.plugin.double_check=False \
@@ -426,6 +457,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$NODE0" --chdir="$PROJECT_ROOT" \
   trainer.n_gpus_per_node=1 \
   trainer.nnodes=${NUM_NODES} \
   trainer.total_training_steps=${ALFWORLD_TOTAL_STEPS} \
+  trainer.resume_mode=${ALFWORLD_TRAINER_RESUME_MODE} \
   trainer.test_freq=${ALFWORLD_TEST_FREQ} \
   trainer.save_freq=${ALFWORLD_SAVE_FREQ} \
   trainer.default_local_dir=${SCRATCH:-/scratch/09281/chc_1996}/context-graph-ckpts/$EXPERIMENT_NAME \
