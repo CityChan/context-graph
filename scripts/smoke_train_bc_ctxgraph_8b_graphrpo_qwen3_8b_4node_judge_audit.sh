@@ -1,4 +1,14 @@
 #!/bin/bash
+#SBATCH -J graphrpo-scale-smoke
+#SBATCH -o logs/graphrpo-scale-smoke.%j.out
+#SBATCH -e logs/graphrpo-scale-smoke.%j.err
+#SBATCH -p gh
+#SBATCH -N 4
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=72
+#SBATCH -t 02:00:00
+#SBATCH -A AST24021
+
 # One-command four-node GraphRPO smoke from the original Qwen3-8B snapshot.
 # Configuration: 1 search + 3 trainer nodes, batch 6, rollout n=8, LoRA-32.
 # This uses the frozen original Qwen3-8B as the answer-likelihood reference.
@@ -13,7 +23,7 @@ cd "$PROJECT_ROOT"
 
 export MODEL_PATH="$MODEL_SNAPSHOT"
 export EXPECTED_NUM_NODES=4
-export RUN_TAG=graphrpo_qwen3_8b_zeroshot_4n_bs6_n8_lora32_judge_audit
+export RUN_TAG=${RUN_TAG:-graphrpo_qwen3_8b_zeroshot_4n_bs6_n8_lora32_judge_audit}
 export EXPERIMENT_NAME="train_ctxgraph_bc_8b_${RUN_TAG}_${RUN_TS}"
 export CHECKPOINT_ROOT="$SCRATCH_ROOT/context-graph-ckpts/$EXPERIMENT_NAME"
 export ROLLOUT_DATA_DIR="$SCRATCH_ROOT/context-graph-rollouts/$EXPERIMENT_NAME"
@@ -39,7 +49,9 @@ export JUDGE_MODEL=gpt-5-nano
 export GRAPH_RPO_CREDIT_BACKEND=reference_answer_likelihood
 export GRAPH_RPO_ALPHA=0.1
 export GRAPH_RPO_BETA=1.0
-export GRAPH_RPO_DELTA_MAX=0.25
+export GRAPH_RPO_DELTA_SCALE=${GRAPH_RPO_DELTA_SCALE:-1.0}
+export GRAPH_RPO_DELTA_MAX=${GRAPH_RPO_DELTA_MAX:-0.25}
+export GRAPH_RPO_AUDIT_MAX_CLIP_RATE=${GRAPH_RPO_AUDIT_MAX_CLIP_RATE:-1.0}
 export USE_KL_LOSS=True
 export ACTOR_KL_LOSS_COEF=0.0005
 export ALGORITHM_KL_COEF=0.005
@@ -62,12 +74,14 @@ mkdir -p "$PROJECT_ROOT/logs"
 SMOKE_LOG="$PROJECT_ROOT/logs/${EXPERIMENT_NAME}.log"
 FINAL_CHECKPOINT="$CHECKPOINT_ROOT/global_step_$TOTAL_TRAINING_STEPS"
 ADAPTER_DIR="$FINAL_CHECKPOINT/actor/lora_adapter"
+GRAPH_AUDIT_OUTPUT="$PROJECT_ROOT/logs/${EXPERIMENT_NAME}.graph_credit_audit.json"
 
 echo "=============================================================="
 echo "  ONE-COMMAND GRAPHRPO JUDGE-AUDIT SMOKE"
 echo "  Experiment:   $EXPERIMENT_NAME"
 echo "  Model:        $MODEL_PATH"
 echo "  Optimization: GraphRPO + frozen-reference credit, LoRA-32, BS=6, n=8"
+echo "  Credit scale: delta_scale=$GRAPH_RPO_DELTA_SCALE, delta_max=$GRAPH_RPO_DELTA_MAX"
 echo "  Rollout data: $ROLLOUT_DATA_DIR"
 echo "  Main log:     $SMOKE_LOG"
 echo "=============================================================="
@@ -92,6 +106,7 @@ fi
 echo "Rollout JSONL files:"
 wc -l "${ROLLOUT_FILES[@]}"
 python scripts/audit_bc_judge_results.py "${ROLLOUT_FILES[@]}" --fail-on-integrity-error
+python scripts/audit_counterfactual_graph_credit.py "${ROLLOUT_FILES[@]}" --backend reference_answer_likelihood --output "$GRAPH_AUDIT_OUTPUT" --fail-on-integrity-error --fail-on-semantic-noop --require-nonzero-delta --expected-delta-scale "$GRAPH_RPO_DELTA_SCALE" --max-clip-rate "$GRAPH_RPO_AUDIT_MAX_CLIP_RATE"
 
 if [ ! -s "$ADAPTER_DIR/adapter_config.json" ] || [ ! -s "$ADAPTER_DIR/adapter_model.safetensors" ]; then
   echo "ERROR: LoRA checkpoint is incomplete under $ADAPTER_DIR"
@@ -126,5 +141,6 @@ echo "  SMOKE + JUDGE AUDIT COMPLETED"
 echo "  Checkpoint:   $FINAL_CHECKPOINT"
 echo "  LoRA adapter: $ADAPTER_DIR"
 echo "  Rollout data: $ROLLOUT_DATA_DIR"
+echo "  Graph audit:  $GRAPH_AUDIT_OUTPUT"
 echo "  Main log:     $SMOKE_LOG"
 echo "=============================================================="

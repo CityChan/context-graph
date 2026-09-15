@@ -157,6 +157,7 @@ def audit_results(
     zero_edit_count = 0
     zero_scored_edit_count = 0
     clipped_edit_count = 0
+    delta_scales: list[float] = []
     delta_sum = 0.0
     delta_abs_sum = 0.0
     edits_by_op: Counter[str] = Counter()
@@ -291,6 +292,12 @@ def audit_results(
                         for before, after in zip(before_rewards, after_rewards)
                     )
                 delta = float(event.get("graph_rpo_delta", 0.0))
+                try:
+                    numeric_delta_scale = float(event.get("graph_rpo_delta_scale"))
+                except (TypeError, ValueError):
+                    numeric_delta_scale = float("nan")
+                if math.isfinite(numeric_delta_scale) and numeric_delta_scale > 0.0:
+                    delta_scales.append(numeric_delta_scale)
                 raw_delta = event.get("graph_rpo_delta_unclipped")
                 scaled_delta = event.get(
                     "graph_rpo_delta_scaled_unclipped", raw_delta
@@ -366,6 +373,7 @@ def audit_results(
         "clip_rate": (
             clipped_edit_count / scored_edit_count if scored_edit_count else 0.0
         ),
+        "delta_scale_distribution": distribution(delta_scales),
         "delta_sum": delta_sum,
         "delta_abs_sum": delta_abs_sum,
         "raw_delta_distribution": distribution(raw_deltas),
@@ -402,6 +410,7 @@ def main() -> None:
     parser.add_argument("--min-tag-rate", type=float)
     parser.add_argument("--min-nonzero-rate", type=float)
     parser.add_argument("--max-clip-rate", type=float)
+    parser.add_argument("--expected-delta-scale", type=float)
     parser.add_argument("--require-nonzero-delta", action="store_true")
     parser.add_argument("--fail-on-integrity-error", action="store_true")
     parser.add_argument("--fail-on-semantic-noop", action="store_true")
@@ -429,6 +438,21 @@ def main() -> None:
         failed = True
     if args.max_clip_rate is not None and summary["clip_rate"] > args.max_clip_rate:
         failed = True
+    if args.expected_delta_scale is not None:
+        expected = args.expected_delta_scale
+        if not math.isfinite(expected) or expected <= 0.0:
+            parser.error("--expected-delta-scale must be a positive finite number")
+        observed = summary["delta_scale_distribution"]
+        if (
+            observed.get("count", 0) == 0
+            or not math.isclose(
+                float(observed["min"]), expected, rel_tol=1e-9, abs_tol=1e-12
+            )
+            or not math.isclose(
+                float(observed["max"]), expected, rel_tol=1e-9, abs_tol=1e-12
+            )
+        ):
+            failed = True
     if args.require_nonzero_delta and summary["nonzero_edit_deltas"] == 0:
         failed = True
     if args.fail_on_semantic_noop and summary["semantic_noop_edits"]:

@@ -987,6 +987,9 @@ def test_graphrpo_training_wiring_is_explicit():
     matched_scale_submitter = (
         root / "scripts/submit_matched_graphrpo_delta_scale_20step.sh"
     ).read_text(encoding="utf-8")
+    scale_smoke_submitter = (
+        root / "scripts/submit_graphrpo_delta_scale_smoke.sh"
+    ).read_text(encoding="utf-8")
     old_policy_smoke_launcher = (
         root / "scripts/smoke_train_bc_ctxgraph_8b_graphrpo_old_policy_4node_2step.sh"
     ).read_text(encoding="utf-8")
@@ -1067,6 +1070,7 @@ def test_graphrpo_training_wiring_is_explicit():
     assert "VAL_BEFORE_TRAIN:-False" in smoke_launcher
     assert "SAVE_ROLLOUT_DATA:-1" in smoke_launcher
     assert "b968826d9c46dd6066d109eabc6255188de91218" in audit_smoke_launcher
+    assert "#SBATCH -N 4" in audit_smoke_launcher
     assert "export EXPECTED_NUM_NODES=4" in audit_smoke_launcher
     assert "export TRAIN_BATCH_SIZE=6" in audit_smoke_launcher
     assert "export ROLLOUT_N=8" in audit_smoke_launcher
@@ -1080,6 +1084,10 @@ def test_graphrpo_training_wiring_is_explicit():
     assert "reference_scored_states:[1-9]" in audit_smoke_launcher
     assert "reference_delta_abs_sum:" in audit_smoke_launcher
     assert "audit_bc_judge_results.py" in audit_smoke_launcher
+    assert "GRAPH_RPO_DELTA_SCALE=${GRAPH_RPO_DELTA_SCALE:-1.0}" in audit_smoke_launcher
+    assert "audit_counterfactual_graph_credit.py" in audit_smoke_launcher
+    assert '--expected-delta-scale "$GRAPH_RPO_DELTA_SCALE"' in audit_smoke_launcher
+    assert "--fail-on-semantic-noop" in audit_smoke_launcher
     assert "SMOKE + JUDGE AUDIT COMPLETED" in audit_smoke_launcher
     assert 'export EXPERIMENT_NAME="train_ctxgraph_bc_8b_${RUN_TAG}_${RUN_TS}"' in zeroshot_pilot_launcher
     assert 'export CHECKPOINT_ROOT="$SCRATCH_ROOT/context-graph-ckpts/$EXPERIMENT_NAME"' in zeroshot_pilot_launcher
@@ -1128,3 +1136,6 @@ def test_graphrpo_training_wiring_is_explicit():
     assert "GRAPH_RPO_ALPHA=0.0" in matched_scale_submitter
     assert "GRAPH_RPO_ALPHA=0.1" in matched_scale_submitter
     assert matched_scale_submitter.count("sbatch --parsable") == 2
+    assert "raw_abs_delta_distribution" in scale_smoke_submitter
+    assert "GRAPH_RPO_DELTA_SCALE=$GRAPH_RPO_DELTA_SCALE" in scale_smoke_submitter
+    assert scale_smoke_submitter.count("sbatch --parsable") == 1
