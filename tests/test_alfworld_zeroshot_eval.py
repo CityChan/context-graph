@@ -39,3 +39,12 @@ def test_shared_alfworld_launcher_wires_controller_and_resume_mode():
     assert "plugin.controller_action_policy=${ALFWORLD_CONTROLLER_ACTION_POLICY}" in launcher
     assert "plugin.consolidation_interval=${ALFWORLD_CONSOLIDATION_INTERVAL}" in launcher
     assert "trainer.resume_mode=${ALFWORLD_TRAINER_RESUME_MODE}" in launcher
+
+
+def test_sbatch_launcher_requests_four_gh_nodes_and_delegates_to_eval():
+    launcher = (ROOT / "scripts/sbatch_alfworld_ctxgraph_8b_4node_zeroshot.sh").read_text(encoding="utf-8")
+    assert "#SBATCH -p gh" in launcher
+    assert "#SBATCH -N 4" in launcher
+    assert "#SBATCH -t 04:00:00" in launcher
+    assert "#SBATCH -A AST24021" in launcher
+    assert "exec bash scripts/eval_alfworld_ctxgraph_8b_4node_zeroshot_idev.sh" in launcher
