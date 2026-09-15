@@ -1138,4 +1138,7 @@ def test_graphrpo_training_wiring_is_explicit():
     assert matched_scale_submitter.count("sbatch --parsable") == 2
     assert "raw_abs_delta_distribution" in scale_smoke_submitter
     assert "GRAPH_RPO_DELTA_SCALE=$GRAPH_RPO_DELTA_SCALE" in scale_smoke_submitter
+    assert '${SLURM_JOB_ID:-}' in scale_smoke_submitter
+    assert 'bash "$SMOKE_SCRIPT"' in scale_smoke_submitter
+    assert "direct GraphRPO smoke requires a four-node allocation" in scale_smoke_submitter
     assert scale_smoke_submitter.count("sbatch --parsable") == 1

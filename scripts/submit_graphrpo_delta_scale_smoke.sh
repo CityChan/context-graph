@@ -30,7 +30,21 @@ SCALE_TAG=${GRAPH_RPO_DELTA_SCALE//./p}
 RUN_TAG="graphrpo_ref_scaled_smoke_scale${SCALE_TAG}_seed${DATA_SEED}"
 
 echo "Calibrated GraphRPO delta scale: $GRAPH_RPO_DELTA_SCALE"
-echo "Submitting one-step smoke with delta_max=$GRAPH_RPO_DELTA_MAX"
+if [ -n "${SLURM_JOB_ID:-}" ]; then
+  ALLOCATED_NODES=$(scontrol show hostnames "${SLURM_JOB_NODELIST:?}" | wc -l)
+  if [ "$ALLOCATED_NODES" -ne 4 ]; then
+    echo "ERROR: direct GraphRPO smoke requires a four-node allocation; got $ALLOCATED_NODES"
+    exit 1
+  fi
+  echo "Running one-step smoke directly inside Slurm allocation $SLURM_JOB_ID"
+  export RUN_TAG GRAPH_RPO_DELTA_SCALE GRAPH_RPO_DELTA_MAX DATA_SEED
+  export GRAPH_RPO_ALPHA=0.1
+  export GRAPH_RPO_AUDIT_MAX_CLIP_RATE=1.0
+  bash "$SMOKE_SCRIPT"
+  exit 0
+fi
+
+echo "No active Slurm allocation detected; submitting one-step smoke"
 SUBMISSION=$(sbatch --parsable --export="ALL,RUN_TAG=$RUN_TAG,GRAPH_RPO_ALPHA=0.1,GRAPH_RPO_DELTA_SCALE=$GRAPH_RPO_DELTA_SCALE,GRAPH_RPO_DELTA_MAX=$GRAPH_RPO_DELTA_MAX,GRAPH_RPO_AUDIT_MAX_CLIP_RATE=1.0,DATA_SEED=$DATA_SEED" "$SMOKE_SCRIPT")
 JOB_ID=${SUBMISSION%%;*}
 if ! [[ "$JOB_ID" =~ ^[0-9]+$ ]]; then
