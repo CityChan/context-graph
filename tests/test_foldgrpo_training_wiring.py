@@ -210,6 +210,34 @@ def test_production_wrappers_use_global_128_minibatch_arithmetic():
         assert "32 per rank x 4 trainer ranks = paper-scale global 128" in source
 
 
+def test_contextgraph_foldgrpo_200step_launcher_is_isolated_and_audited():
+    source = _read(
+        "scripts/train_bc_ctxgraph_8b_foldgrpo_controller_4node_200step_val.sh"
+    )
+
+    assert "#SBATCH -N 4" in source
+    assert "export ADV_ESTIMATOR=foldgrpo" in source
+    assert "export POLICY_LOSS_MODE=vanilla" in source
+    assert "export BC_CTXGRAPH_PROTOCOL=controller" in source
+    assert "export BC_CONTROLLER_ACTION_POLICY=structural" in source
+    assert "export PROCESS_REWARD_SPEC='[flat,scope,graph]'" in source
+    assert "export TOTAL_TRAINING_STEPS=200" in source
+    assert "export TRAIN_BATCH_SIZE=6" in source
+    assert "export ROLLOUT_N=8" in source
+    assert "export PPO_MINI_BATCH_SIZE=3" in source
+    assert "export LORA_RANK=32" in source
+    assert "export CONTEXT_LENGTH=32768" in source
+    assert "export TEST_FREQ=20" in source
+    assert "export SAVE_FREQ=20" in source
+    assert "export TRAINER_RESUME_MODE=disable" in source
+    assert "unset RESUME_CHECKPOINT_PATH RESUME_CHECKPOINT_ROOT" in source
+    assert "isolated FoldGRPO run unexpectedly resumed a checkpoint" in source
+    assert "audit_bc_judge_results.py" in source
+    assert "adapter_model.safetensors" in source
+    assert "Initial validation metrics:" in source
+    assert "Final validation metrics:" in source
+
+
 def test_64k_training_wrappers_and_long_context_overrides_are_wired():
     wrappers = (
         "scripts/train_bc_foldagent_8b_5node_50step_64k_active.sh",
