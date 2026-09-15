@@ -71,10 +71,24 @@ def test_audit_graph_credit_reports_semantic_noops_clipping_and_ops(tmp_path):
         "after_state": {**before, "counters": {"operation_count": 2}},
         "graph_rpo_delta_unclipped": 0.5,
         "graph_rpo_delta": 0.25,
+        "graph_rpo_outcome_gated": False,
+    }
+    gated_event = {
+        **event,
+        "seq": 7,
+        "op": "merge",
+        "graph_rpo_delta_unclipped": None,
+        "graph_rpo_delta": 0.0,
+        "graph_rpo_outcome_gated": True,
     }
     path = tmp_path / "reference.jsonl"
     path.write_text(
-        json.dumps({"gen_uid": "episode", "graph_trace": {"events": [event]}}),
+        json.dumps(
+            {
+                "gen_uid": "episode",
+                "graph_trace": {"events": [event, gated_event]},
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -83,12 +97,21 @@ def test_audit_graph_credit_reports_semantic_noops_clipping_and_ops(tmp_path):
     )
     summary = report["summary"]
 
-    assert summary["selected_credit_edits"] == 1
-    assert summary["semantic_noop_edits"] == 1
+    assert summary["selected_credit_edits"] == 2
+    assert summary["scored_credit_edits"] == 1
+    assert summary["outcome_gated_edits"] == 1
+    assert summary["semantic_noop_edits"] == 2
     assert summary["semantic_state_change_edits"] == 0
     assert summary["positive_edit_deltas"] == 1
+    assert summary["zero_edit_deltas"] == 1
+    assert summary["zero_scored_edit_deltas"] == 0
     assert summary["clipped_edit_deltas"] == 1
     assert summary["clip_rate"] == 1.0
-    assert summary["edits_by_op"] == {"select": 1}
-    assert summary["delta_sum_by_op"] == {"select": 0.25}
+    assert summary["clip_rate_all"] == 0.5
+    assert summary["nonzero_edit_rate"] == 1.0
+    assert summary["nonzero_edit_rate_all"] == 0.5
+    assert summary["edits_by_op"] == {"merge": 1, "select": 1}
+    assert summary["scored_edits_by_op"] == {"select": 1}
+    assert summary["outcome_gated_edits_by_op"] == {"merge": 1}
+    assert summary["delta_sum_by_op"] == {"merge": 0.0, "select": 0.25}
     assert report["semantic_noop_samples"][0]["seq"] == 6

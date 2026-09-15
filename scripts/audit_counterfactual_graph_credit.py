@@ -82,6 +82,19 @@ def semantic_change(event: dict[str, Any]) -> bool | None:
     return None
 
 
+def credit_evaluation_status(event: dict[str, Any]) -> str:
+    """Classify a selected event as scored, outcome-gated, or legacy-unknown."""
+    if event.get("graph_rpo_outcome_gated") is True:
+        return "outcome_gated"
+    if event.get("graph_rpo_outcome_gated") is False:
+        return "scored"
+    if event.get("graph_rpo_delta_unclipped") is not None:
+        return "scored"
+    if event.get("graph_rpo_counterfactual_before_rewards") is not None:
+        return "scored"
+    return "unknown"
+
+
 def audit_results(
     paths: Iterable[Path],
     max_samples: int = 20,
@@ -97,6 +110,9 @@ def audit_results(
     episodes_with_trace = 0
     episodes_with_credit = 0
     edit_count = 0
+    scored_edit_count = 0
+    outcome_gated_edit_count = 0
+    evaluation_unknown_edit_count = 0
     semantic_change_count = 0
     semantic_noop_count = 0
     semantic_unknown_count = 0
@@ -108,10 +124,13 @@ def audit_results(
     positive_edit_count = 0
     negative_edit_count = 0
     zero_edit_count = 0
+    zero_scored_edit_count = 0
     clipped_edit_count = 0
     delta_sum = 0.0
     delta_abs_sum = 0.0
     edits_by_op: Counter[str] = Counter()
+    scored_edits_by_op: Counter[str] = Counter()
+    outcome_gated_edits_by_op: Counter[str] = Counter()
     nonzero_edits_by_op: Counter[str] = Counter()
     delta_sum_by_op: defaultdict[str, float] = defaultdict(float)
     delta_abs_sum_by_op: defaultdict[str, float] = defaultdict(float)
@@ -142,6 +161,15 @@ def audit_results(
                 seq = event.get("seq")
                 op = str(event.get("op") or "unknown").lower()
                 edits_by_op[op] += 1
+                evaluation_status = credit_evaluation_status(event)
+                if evaluation_status == "scored":
+                    scored_edit_count += 1
+                    scored_edits_by_op[op] += 1
+                elif evaluation_status == "outcome_gated":
+                    outcome_gated_edit_count += 1
+                    outcome_gated_edits_by_op[op] += 1
+                else:
+                    evaluation_unknown_edit_count += 1
                 changed = semantic_change(event)
                 if changed is True:
                     semantic_change_count += 1
@@ -235,6 +263,9 @@ def audit_results(
                 positive_edit_count += int(delta > 1e-12)
                 negative_edit_count += int(delta < -1e-12)
                 zero_edit_count += int(abs(delta) <= 1e-12)
+                zero_scored_edit_count += int(
+                    evaluation_status == "scored" and abs(delta) <= 1e-12
+                )
                 edits_by_op[op] += 0
                 nonzero_edits_by_op[op] += int(abs(delta) > 1e-12)
                 delta_sum_by_op[op] += delta
@@ -258,6 +289,9 @@ def audit_results(
         "episodes_with_selected_credit": episodes_with_credit,
         "counterfactual_edits": edit_count if backend == BACKEND else 0,
         "selected_credit_edits": edit_count,
+        "scored_credit_edits": scored_edit_count,
+        "outcome_gated_edits": outcome_gated_edit_count,
+        "credit_evaluation_unknown_edits": evaluation_unknown_edit_count,
         "semantic_state_change_edits": semantic_change_count,
         "semantic_noop_edits": semantic_noop_count,
         "semantic_unknown_edits": semantic_unknown_count,
@@ -268,15 +302,28 @@ def audit_results(
         "positive_probe_rate": positive_count / probe_count if probe_count else 0.0,
         "paired_sample_reward_differences": paired_reward_differences,
         "nonzero_edit_deltas": nonzero_edit_count,
-        "nonzero_edit_rate": nonzero_edit_count / edit_count if edit_count else 0.0,
+        "nonzero_edit_rate_all": (
+            nonzero_edit_count / edit_count if edit_count else 0.0
+        ),
+        "nonzero_edit_rate": (
+            nonzero_edit_count / scored_edit_count if scored_edit_count else 0.0
+        ),
         "positive_edit_deltas": positive_edit_count,
         "negative_edit_deltas": negative_edit_count,
         "zero_edit_deltas": zero_edit_count,
+        "zero_scored_edit_deltas": zero_scored_edit_count,
         "clipped_edit_deltas": clipped_edit_count,
-        "clip_rate": clipped_edit_count / edit_count if edit_count else 0.0,
+        "clip_rate_all": clipped_edit_count / edit_count if edit_count else 0.0,
+        "clip_rate": (
+            clipped_edit_count / scored_edit_count if scored_edit_count else 0.0
+        ),
         "delta_sum": delta_sum,
         "delta_abs_sum": delta_abs_sum,
         "edits_by_op": dict(sorted(edits_by_op.items())),
+        "scored_edits_by_op": dict(sorted(scored_edits_by_op.items())),
+        "outcome_gated_edits_by_op": dict(
+            sorted(outcome_gated_edits_by_op.items())
+        ),
         "nonzero_edit_deltas_by_op": dict(sorted(nonzero_edits_by_op.items())),
         "delta_sum_by_op": dict(sorted(delta_sum_by_op.items())),
         "delta_abs_sum_by_op": dict(sorted(delta_abs_sum_by_op.items())),
