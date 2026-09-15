@@ -53,3 +53,42 @@ def test_audit_counterfactual_graph_credit_reports_truncated_probe(tmp_path):
     assert report["summary"]["answer_tag_rate"] == 0.5
     assert report["summary"]["nonzero_edit_deltas"] == 0
     assert report["malformed_response_samples"][0]["response_tail"] == "Wait, maybe"
+
+
+def test_audit_graph_credit_reports_semantic_noops_clipping_and_ops(tmp_path):
+    before = {
+        "nodes": [{"id": "n0", "status": "active"}],
+        "edges": [],
+        "root_id": "n0",
+        "active_node_id": "n0",
+        "counters": {"operation_count": 1},
+    }
+    event = {
+        "seq": 6,
+        "op": "select",
+        "graph_rpo_credit_backend": "reference_answer_likelihood",
+        "before_state": before,
+        "after_state": {**before, "counters": {"operation_count": 2}},
+        "graph_rpo_delta_unclipped": 0.5,
+        "graph_rpo_delta": 0.25,
+    }
+    path = tmp_path / "reference.jsonl"
+    path.write_text(
+        json.dumps({"gen_uid": "episode", "graph_trace": {"events": [event]}}),
+        encoding="utf-8",
+    )
+
+    report = audit_results(
+        [path], backend="reference_answer_likelihood"
+    )
+    summary = report["summary"]
+
+    assert summary["selected_credit_edits"] == 1
+    assert summary["semantic_noop_edits"] == 1
+    assert summary["semantic_state_change_edits"] == 0
+    assert summary["positive_edit_deltas"] == 1
+    assert summary["clipped_edit_deltas"] == 1
+    assert summary["clip_rate"] == 1.0
+    assert summary["edits_by_op"] == {"select": 1}
+    assert summary["delta_sum_by_op"] == {"select": 0.25}
+    assert report["semantic_noop_samples"][0]["seq"] == 6

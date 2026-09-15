@@ -68,6 +68,19 @@ def test_graph_mutations_require_active_nodes_and_unique_edges():
     assert not graph.prune(observations[0])
 
 
+def test_select_rejects_current_focus_without_mutating_counters():
+    graph, root, observations = _graph_with_observations()
+    initial_operations = graph.operation_count
+
+    assert not graph.select(root)
+    assert graph.active_node_id == root
+    assert graph.operation_count == initial_operations
+
+    assert graph.select(observations[0])
+    assert graph.active_node_id == observations[0]
+    assert graph.operation_count == initial_operations + 1
+
+
 def test_state_text_only_advertises_active_tool_ids():
     graph, _, observations = _graph_with_observations()
     summary = graph.merge(observations, "summary")

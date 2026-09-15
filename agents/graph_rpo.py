@@ -30,6 +30,8 @@ from typing import Any
 
 import aiohttp
 
+from .graph_trace import semantic_snapshot_hash
+
 
 GRAPH_EVALUATOR_SCHEMA_VERSION = "contextgraph.graph_evaluator.v1"
 STATE_CHANGING_GRAPH_OPS = frozenset({"merge", "prune", "add_edge", "select"})
@@ -98,8 +100,24 @@ def valid_graph_edit_events(graph_trace: dict[str, Any]) -> list[dict[str, Any]]
         if event.get("source") == "model"
         and event.get("success") is True
         and str(event.get("op", "")).lower() in STATE_CHANGING_GRAPH_OPS
-        and event.get("before_hash") != event.get("after_hash")
+        and _event_has_semantic_state_change(event)
     ]
+
+
+def _event_has_semantic_state_change(event: Mapping[str, Any]) -> bool:
+    """Prefer counter-free graph hashes while accepting legacy minimal traces."""
+    before_semantic = event.get("semantic_before_hash")
+    after_semantic = event.get("semantic_after_hash")
+    if isinstance(before_semantic, str) and isinstance(after_semantic, str):
+        return before_semantic != after_semantic
+
+    before_state = event.get("before_state")
+    after_state = event.get("after_state")
+    if isinstance(before_state, dict) and isinstance(after_state, dict):
+        return semantic_snapshot_hash(before_state) != semantic_snapshot_hash(after_state)
+
+    # Compatibility for old unit fixtures or compact traces without snapshots.
+    return event.get("before_hash") != event.get("after_hash")
 
 
 def format_counterfactual_qa_messages(

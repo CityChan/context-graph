@@ -296,6 +296,33 @@ def test_graph_edit_credit_only_uses_valid_state_changing_edits(monkeypatch):
     assert metrics["graph_rpo_credited_edits"] == 1
 
 
+def test_graph_edit_credit_ignores_counter_only_legacy_state_changes():
+    from agents.graph_rpo import valid_graph_edit_events
+
+    before = {
+        "nodes": [{"id": "n0", "status": "active"}],
+        "edges": [],
+        "root_id": "n0",
+        "active_node_id": "n0",
+        "counters": {"operation_count": 1},
+    }
+    after = {
+        **before,
+        "counters": {"operation_count": 2},
+    }
+    event = {
+        "source": "model",
+        "success": True,
+        "op": "select",
+        "before_hash": "full-before",
+        "after_hash": "full-after",
+        "before_state": before,
+        "after_state": after,
+    }
+
+    assert valid_graph_edit_events({"events": [event]}) == []
+
+
 def test_failed_episode_outcome_gates_graph_credit_without_evaluator(monkeypatch):
     import agents.graph_rpo as graph_rpo
 

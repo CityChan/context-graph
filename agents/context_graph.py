@@ -588,6 +588,8 @@ class ContextGraph:
             return False
         if not self.nodes[node_id].is_active():
             return False
+        if self.active_node_id == node_id:
+            return False
         self.active_node_id = node_id
         self.operation_count += 1
         return True

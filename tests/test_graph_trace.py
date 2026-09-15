@@ -1,5 +1,10 @@
 from agents.context_graph import ContextGraph, EdgeRelation, NodeType
-from agents.graph_trace import GraphTraceRecorder, snapshot_hash, validate_graph_trace
+from agents.graph_trace import (
+    GraphTraceRecorder,
+    semantic_snapshot_hash,
+    snapshot_hash,
+    validate_graph_trace,
+)
 
 
 def _record_observation(graph, recorder, parent, content, turn):
@@ -56,23 +61,35 @@ def test_graph_trace_flags_redundant_select_and_render_tampering():
     root = graph.add_node("question", NodeType.QUERY)
     recorder = GraphTraceRecorder(graph)
     before = recorder.capture(graph)
-    assert graph.select(root)
-    graph.record_graph_op(True)
+    assert not graph.select(root)
+    graph.record_graph_op(False)
     recorder.record(
         graph, before, turn_id=1, source="model", op="select",
-        args={"node_id": root}, success=True,
+        args={"node_id": root}, success=False,
     )
     trace = recorder.finalize(graph)
 
     valid, errors, metrics = validate_graph_trace(trace)
     assert valid, errors
-    assert metrics["redundant_model_ops"] == 1
+    assert metrics["valid_model_ops"] == 0
+    assert metrics["redundant_model_ops"] == 0
     assert metrics["quality_score"] == 0.0
 
     trace["events"][0]["rendered_before"] += " tampered"
     valid, errors, _ = validate_graph_trace(trace)
     assert not valid
     assert any("rendered before hash mismatch" in error for error in errors)
+
+
+def test_semantic_snapshot_hash_ignores_runtime_counters():
+    graph = ContextGraph()
+    graph.add_node("question", NodeType.QUERY)
+    before = graph.to_dict(include_archives=False)
+    graph.record_graph_op(False)
+    after = graph.to_dict(include_archives=False)
+
+    assert snapshot_hash(before) != snapshot_hash(after)
+    assert semantic_snapshot_hash(before) == semantic_snapshot_hash(after)
 
 
 def test_graph_trace_audits_controller_index_to_node_mapping():

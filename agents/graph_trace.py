@@ -21,6 +21,20 @@ def snapshot_hash(snapshot: dict[str, Any]) -> str:
     return hashlib.sha256(canonical_json(snapshot).encode("utf-8")).hexdigest()
 
 
+def semantic_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Return graph state without bookkeeping-only runtime counters."""
+    return {
+        key: deepcopy(value)
+        for key, value in snapshot.items()
+        if key != "counters"
+    }
+
+
+def semantic_snapshot_hash(snapshot: dict[str, Any]) -> str:
+    """Hash only state that can change the graph memory seen by the policy."""
+    return snapshot_hash(semantic_snapshot(snapshot))
+
+
 def validate_graph_snapshot(snapshot: Any) -> list[str]:
     errors: list[str] = []
     if not isinstance(snapshot, dict):
@@ -106,6 +120,8 @@ class GraphTraceRecorder:
             "decision_context": ContextGraph._json_safe(decision_context or {}),
             "before_hash": snapshot_hash(before),
             "after_hash": snapshot_hash(after),
+            "semantic_before_hash": semantic_snapshot_hash(before),
+            "semantic_after_hash": semantic_snapshot_hash(after),
             "before_state": deepcopy(before),
             "after_state": after,
             "rendered_before": self._rendered_by_hash.get(
@@ -144,9 +160,11 @@ class GraphTraceRecorder:
             "schema_version": TRACE_SCHEMA_VERSION,
             "initial_graph": deepcopy(self.initial_graph),
             "initial_hash": self.initial_hash,
+            "initial_semantic_hash": semantic_snapshot_hash(self.initial_graph),
             "events": deepcopy(self.events),
             "final_graph": final_graph,
             "final_hash": snapshot_hash(final_graph),
+            "final_semantic_hash": semantic_snapshot_hash(final_graph),
             # Archives may contain long raw branch evidence. Store them once,
             # not in every event snapshot.
             "archives": archive_snapshot,
@@ -190,6 +208,12 @@ def validate_graph_trace(trace: Any) -> tuple[bool, list[str], dict[str, Any]]:
         errors.append("initial graph hash mismatch")
     if isinstance(final, dict) and trace.get("final_hash") != snapshot_hash(final):
         errors.append("final graph hash mismatch")
+    if isinstance(initial, dict) and "initial_semantic_hash" in trace:
+        if trace.get("initial_semantic_hash") != semantic_snapshot_hash(initial):
+            errors.append("initial graph semantic hash mismatch")
+    if isinstance(final, dict) and "final_semantic_hash" in trace:
+        if trace.get("final_semantic_hash") != semantic_snapshot_hash(final):
+            errors.append("final graph semantic hash mismatch")
     if not isinstance(events, list):
         return False, errors + ["events is not a list"], metrics
 
@@ -208,6 +232,12 @@ def validate_graph_trace(trace: Any) -> tuple[bool, list[str], dict[str, Any]]:
             errors.append(f"event {index} before hash mismatch")
         if isinstance(after, dict) and event.get("after_hash") != snapshot_hash(after):
             errors.append(f"event {index} after hash mismatch")
+        if isinstance(before, dict) and "semantic_before_hash" in event:
+            if event.get("semantic_before_hash") != semantic_snapshot_hash(before):
+                errors.append(f"event {index} before semantic hash mismatch")
+        if isinstance(after, dict) and "semantic_after_hash" in event:
+            if event.get("semantic_after_hash") != semantic_snapshot_hash(after):
+                errors.append(f"event {index} after semantic hash mismatch")
         if event.get("before_hash") != expected_hash:
             errors.append(f"event {index} is not continuous with the previous state")
         for side in ("before", "after"):
