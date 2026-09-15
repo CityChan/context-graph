@@ -269,6 +269,7 @@ if [ "$ADV_ESTIMATOR" = "graphrpo" ]; then
   GRAPH_RPO_ALPHA=${GRAPH_RPO_ALPHA:-1.0}
   GRAPH_RPO_BETA=${GRAPH_RPO_BETA:-1.0}
   GRAPH_RPO_EPSILON=${GRAPH_RPO_EPSILON:-1e-6}
+  GRAPH_RPO_DELTA_SCALE=${GRAPH_RPO_DELTA_SCALE:-1.0}
   GRAPH_RPO_DELTA_MAX=${GRAPH_RPO_DELTA_MAX:-1.0}
   GRAPH_RPO_OPERATION_COSTS=${GRAPH_RPO_OPERATION_COSTS:-'{merge:0.0,prune:0.0,add_edge:0.0,select:0.0}'}
   GRAPH_RPO_ARGS+=(
@@ -276,6 +277,7 @@ if [ "$ADV_ESTIMATOR" = "graphrpo" ]; then
     "algorithm.graphrpo_beta=$GRAPH_RPO_BETA"
     "algorithm.graphrpo_epsilon=$GRAPH_RPO_EPSILON"
     "+actor_rollout_ref.rollout.plugin.graph_rpo_credit_backend=$GRAPH_RPO_CREDIT_BACKEND"
+    "+actor_rollout_ref.rollout.plugin.graph_rpo_delta_scale=$GRAPH_RPO_DELTA_SCALE"
     "+actor_rollout_ref.rollout.plugin.graph_rpo_delta_max=$GRAPH_RPO_DELTA_MAX"
     "+actor_rollout_ref.rollout.plugin.graph_rpo_operation_costs=$GRAPH_RPO_OPERATION_COSTS"
   )

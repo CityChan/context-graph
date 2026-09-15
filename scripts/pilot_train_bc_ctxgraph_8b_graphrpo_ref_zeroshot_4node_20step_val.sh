@@ -56,9 +56,11 @@ export BC_DISABLE_WANDB=0
 export BC_REQUIRE_WANDB=1
 export JUDGE_MODEL=${JUDGE_MODEL:-gpt-5-nano}
 export GRAPH_RPO_CREDIT_BACKEND=reference_answer_likelihood
-export GRAPH_RPO_ALPHA=0.1
-export GRAPH_RPO_BETA=1.0
-export GRAPH_RPO_DELTA_MAX=0.25
+export GRAPH_RPO_ALPHA=${GRAPH_RPO_ALPHA:-0.1}
+export GRAPH_RPO_BETA=${GRAPH_RPO_BETA:-1.0}
+export GRAPH_RPO_DELTA_SCALE=${GRAPH_RPO_DELTA_SCALE:-1.0}
+export GRAPH_RPO_DELTA_MAX=${GRAPH_RPO_DELTA_MAX:-0.25}
+export GRAPH_RPO_AUDIT_MAX_CLIP_RATE=${GRAPH_RPO_AUDIT_MAX_CLIP_RATE:-1.0}
 export TRAINER_RESUME_MODE=disable
 export MAX_SESSION=${MAX_SESSION:-3}
 export VAL_MAX_SESSION=${VAL_MAX_SESSION:-3}
@@ -85,6 +87,7 @@ echo "  Training:         BS=$TRAIN_BATCH_SIZE, n=$ROLLOUT_N, LoRA=$LORA_RANK, c
 echo "  Validation rows:  $VAL_MAX_SAMPLES (-1 means all)"
 echo "  Validation:       step 0 and step 20, greedy n=1"
 echo "  Data seed:        $DATA_SEED"
+echo "  GraphRPO:         alpha=$GRAPH_RPO_ALPHA, scale=$GRAPH_RPO_DELTA_SCALE, max=$GRAPH_RPO_DELTA_MAX"
 echo "  Checkpoints:      $CHECKPOINT_ROOT"
 echo "  Rollout data:     $ROLLOUT_DATA_DIR"
 echo "  Validation data:  $VALIDATION_DATA_DIR"
@@ -124,6 +127,7 @@ fi
 echo "Training rollout JSONL files:"
 wc -l "${ROLLOUT_FILES[@]}"
 python scripts/audit_bc_judge_results.py "${ROLLOUT_FILES[@]}" --fail-on-integrity-error
+python scripts/audit_counterfactual_graph_credit.py "$ROLLOUT_DATA_DIR" --backend reference_answer_likelihood --fail-on-integrity-error --fail-on-semantic-noop --require-nonzero-delta --max-clip-rate "$GRAPH_RPO_AUDIT_MAX_CLIP_RATE"
 
 ADAPTER_DIR="$CHECKPOINT_ROOT/global_step_$TOTAL_TRAINING_STEPS/actor/lora_adapter"
 if [ ! -s "$ADAPTER_DIR/adapter_config.json" ] || [ ! -s "$ADAPTER_DIR/adapter_model.safetensors" ]; then

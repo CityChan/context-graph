@@ -277,12 +277,15 @@ def apply_reference_edit_credits(
     likelihoods: dict[ReferenceViewKey, float],
     *,
     delta_max: float,
+    delta_scale: float = 1.0,
     operation_costs: dict[str, float] | None = None,
     credit_backend: str = "reference_answer_likelihood",
     metric_namespace: str = "reference",
 ) -> dict[str, float | int]:
     """Write answer-likelihood deltas to edit-token advantages and trace audit data."""
-    if delta_max <= 0.0:
+    if not math.isfinite(delta_scale) or delta_scale <= 0.0:
+        raise ValueError("graph_rpo_delta_scale must be positive")
+    if not math.isfinite(delta_max) or delta_max <= 0.0:
         raise ValueError("graph_rpo_delta_max must be positive")
     costs = {str(key).lower(): float(value) for key, value in (operation_costs or {}).items()}
     if any(value < 0.0 for value in costs.values()):
@@ -299,7 +302,8 @@ def apply_reference_edit_credits(
         op = str(plan.event.get("op", "")).lower()
         operation_cost = costs.get(op, 0.0)
         raw_delta = after - before - operation_cost
-        delta = min(max(raw_delta, -delta_max), delta_max)
+        scaled_delta = raw_delta / delta_scale
+        delta = min(max(scaled_delta, -delta_max), delta_max)
         credit_mask[plan.row_index, plan.response_token_indices] += delta
         plan.event.update(
             {
@@ -308,6 +312,8 @@ def apply_reference_edit_credits(
                 "graph_rpo_answer_log_likelihood_after": after,
                 "graph_rpo_operation_cost": operation_cost,
                 "graph_rpo_delta_unclipped": raw_delta,
+                "graph_rpo_delta_scale": delta_scale,
+                "graph_rpo_delta_scaled_unclipped": scaled_delta,
                 "graph_rpo_delta": delta,
                 "graph_rpo_outcome_gated": False,
             }

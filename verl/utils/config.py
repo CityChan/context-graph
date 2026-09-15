@@ -246,6 +246,7 @@ def validate_config(
                 "graph_rpo_counterfactual_enable_thinking", False
             )
             assert isinstance(counterfactual_enable_thinking, (bool, str))
+        assert float(plugin.get("graph_rpo_delta_scale", 1.0)) > 0.0
         assert float(plugin.get("graph_rpo_delta_max", 1.0)) > 0.0
 
     # critic

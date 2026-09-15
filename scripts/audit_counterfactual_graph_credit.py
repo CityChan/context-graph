@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import re
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -95,6 +96,36 @@ def credit_evaluation_status(event: dict[str, Any]) -> str:
     return "unknown"
 
 
+def quantile(values: list[float], probability: float) -> float:
+    """Return a linearly interpolated quantile for a non-empty sample."""
+    ordered = sorted(values)
+    position = (len(ordered) - 1) * probability
+    lower = math.floor(position)
+    upper = math.ceil(position)
+    if lower == upper:
+        return ordered[lower]
+    weight = position - lower
+    return ordered[lower] * (1.0 - weight) + ordered[upper] * weight
+
+
+def distribution(values: list[float]) -> dict[str, float | int]:
+    """Summarize the raw credit scale without requiring NumPy."""
+    if not values:
+        return {"count": 0}
+    return {
+        "count": len(values),
+        "min": min(values),
+        "max": max(values),
+        "mean": sum(values) / len(values),
+        "p50": quantile(values, 0.50),
+        "p75": quantile(values, 0.75),
+        "p80": quantile(values, 0.80),
+        "p90": quantile(values, 0.90),
+        "p95": quantile(values, 0.95),
+        "p99": quantile(values, 0.99),
+    }
+
+
 def audit_results(
     paths: Iterable[Path],
     max_samples: int = 20,
@@ -134,6 +165,10 @@ def audit_results(
     nonzero_edits_by_op: Counter[str] = Counter()
     delta_sum_by_op: defaultdict[str, float] = defaultdict(float)
     delta_abs_sum_by_op: defaultdict[str, float] = defaultdict(float)
+    raw_deltas: list[float] = []
+    raw_abs_deltas: list[float] = []
+    raw_abs_deltas_by_op: defaultdict[str, list[float]] = defaultdict(list)
+    clipped_edits_by_op: Counter[str] = Counter()
     semantic_noop_samples: list[dict[str, Any]] = []
 
     for path in files:
@@ -257,6 +292,9 @@ def audit_results(
                     )
                 delta = float(event.get("graph_rpo_delta", 0.0))
                 raw_delta = event.get("graph_rpo_delta_unclipped")
+                scaled_delta = event.get(
+                    "graph_rpo_delta_scaled_unclipped", raw_delta
+                )
                 delta_sum += delta
                 delta_abs_sum += abs(delta)
                 nonzero_edit_count += int(abs(delta) > 1e-12)
@@ -271,11 +309,22 @@ def audit_results(
                 delta_sum_by_op[op] += delta
                 delta_abs_sum_by_op[op] += abs(delta)
                 try:
-                    clipped_edit_count += int(
-                        abs(float(raw_delta) - delta) > 1e-12
-                    )
+                    numeric_raw_delta = float(raw_delta)
+                    numeric_scaled_delta = float(scaled_delta)
                 except (TypeError, ValueError):
-                    pass
+                    continue
+                if not (
+                    math.isfinite(numeric_raw_delta)
+                    and math.isfinite(numeric_scaled_delta)
+                ):
+                    continue
+                if evaluation_status == "scored":
+                    raw_deltas.append(numeric_raw_delta)
+                    raw_abs_deltas.append(abs(numeric_raw_delta))
+                    raw_abs_deltas_by_op[op].append(abs(numeric_raw_delta))
+                was_clipped = abs(numeric_scaled_delta - delta) > 1e-12
+                clipped_edit_count += int(was_clipped)
+                clipped_edits_by_op[op] += int(was_clipped)
 
     summary = {
         "selected_backend": backend,
@@ -319,12 +368,19 @@ def audit_results(
         ),
         "delta_sum": delta_sum,
         "delta_abs_sum": delta_abs_sum,
+        "raw_delta_distribution": distribution(raw_deltas),
+        "raw_abs_delta_distribution": distribution(raw_abs_deltas),
+        "raw_abs_delta_distribution_by_op": {
+            op: distribution(values)
+            for op, values in sorted(raw_abs_deltas_by_op.items())
+        },
         "edits_by_op": dict(sorted(edits_by_op.items())),
         "scored_edits_by_op": dict(sorted(scored_edits_by_op.items())),
         "outcome_gated_edits_by_op": dict(
             sorted(outcome_gated_edits_by_op.items())
         ),
         "nonzero_edit_deltas_by_op": dict(sorted(nonzero_edits_by_op.items())),
+        "clipped_edit_deltas_by_op": dict(sorted(clipped_edits_by_op.items())),
         "delta_sum_by_op": dict(sorted(delta_sum_by_op.items())),
         "delta_abs_sum_by_op": dict(sorted(delta_abs_sum_by_op.items())),
         "integrity_errors": len(integrity_errors),

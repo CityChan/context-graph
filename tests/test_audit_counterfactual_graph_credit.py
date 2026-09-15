@@ -106,6 +106,7 @@ def test_audit_graph_credit_reports_semantic_noops_clipping_and_ops(tmp_path):
     assert summary["zero_edit_deltas"] == 1
     assert summary["zero_scored_edit_deltas"] == 0
     assert summary["clipped_edit_deltas"] == 1
+    assert summary["clipped_edit_deltas_by_op"] == {"select": 1}
     assert summary["clip_rate"] == 1.0
     assert summary["clip_rate_all"] == 0.5
     assert summary["nonzero_edit_rate"] == 1.0
@@ -114,4 +115,46 @@ def test_audit_graph_credit_reports_semantic_noops_clipping_and_ops(tmp_path):
     assert summary["scored_edits_by_op"] == {"select": 1}
     assert summary["outcome_gated_edits_by_op"] == {"merge": 1}
     assert summary["delta_sum_by_op"] == {"merge": 0.0, "select": 0.25}
+    assert summary["raw_delta_distribution"] == {
+        "count": 1,
+        "min": 0.5,
+        "max": 0.5,
+        "mean": 0.5,
+        "p50": 0.5,
+        "p75": 0.5,
+        "p80": 0.5,
+        "p90": 0.5,
+        "p95": 0.5,
+        "p99": 0.5,
+    }
+    assert summary["raw_abs_delta_distribution"]["p80"] == 0.5
+    assert summary["raw_abs_delta_distribution_by_op"]["select"]["p80"] == 0.5
     assert report["semantic_noop_samples"][0]["seq"] == 6
+
+
+def test_audit_uses_scaled_preclip_delta_for_clip_detection(tmp_path):
+    event = {
+        "seq": 8,
+        "op": "merge",
+        "graph_rpo_credit_backend": "reference_answer_likelihood",
+        "before_hash": "before",
+        "after_hash": "after",
+        "graph_rpo_delta_unclipped": 0.5,
+        "graph_rpo_delta_scale": 5.0,
+        "graph_rpo_delta_scaled_unclipped": 0.1,
+        "graph_rpo_delta": 0.1,
+        "graph_rpo_outcome_gated": False,
+    }
+    path = tmp_path / "scaled.jsonl"
+    path.write_text(
+        json.dumps({"gen_uid": "episode", "graph_trace": {"events": [event]}}),
+        encoding="utf-8",
+    )
+
+    summary = audit_results(
+        [path], backend="reference_answer_likelihood"
+    )["summary"]
+
+    assert summary["clipped_edit_deltas"] == 0
+    assert summary["clip_rate"] == 0.0
+    assert summary["raw_abs_delta_distribution"]["p80"] == 0.5

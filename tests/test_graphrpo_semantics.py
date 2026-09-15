@@ -282,6 +282,7 @@ def test_graph_edit_credit_only_uses_valid_state_changing_edits(monkeypatch):
             plugin_config={
                 "graph_rpo_evaluator_url": "http://evaluator.invalid/score",
                 "graph_rpo_operation_costs": {"merge": 0.1},
+                "graph_rpo_delta_scale": 2.0,
                 "graph_rpo_delta_max": 1.0,
             },
         )
@@ -289,6 +290,8 @@ def test_graph_edit_credit_only_uses_valid_state_changing_edits(monkeypatch):
 
     assert agent.credits == {3: pytest.approx(1.0)}
     assert trace["events"][0]["graph_rpo_delta_unclipped"] > 1.0
+    assert trace["events"][0]["graph_rpo_delta_scale"] == pytest.approx(2.0)
+    assert trace["events"][0]["graph_rpo_delta_scaled_unclipped"] > 1.0
     assert trace["events"][0]["graph_rpo_delta"] == pytest.approx(1.0)
     assert "graph_rpo_delta" not in trace["events"][1]
     assert metrics["graph_rpo_valid_edits"] == 1
@@ -463,19 +466,23 @@ def test_counterfactual_qa_credits_paired_task_outcomes_without_success_gate():
             plugin_config={
                 "graph_rpo_counterfactual_samples": 2,
                 "graph_rpo_operation_costs": {"merge": 0.1},
+                "graph_rpo_delta_scale": 3.0,
                 "graph_rpo_delta_max": 1.0,
                 "graph_rpo_counterfactual_seed": 7,
             },
         )
     )
 
-    assert agent.credits == {12: pytest.approx(0.9)}
+    assert agent.credits == {12: pytest.approx(0.3)}
     assert [call[2] for call in calls[:2]] == [call[2] for call in calls[2:]]
     assert event["graph_rpo_credit_backend"] == "old_policy_counterfactual_qa"
     assert event["graph_rpo_outcome_gated"] is False
     assert len(event["graph_rpo_counterfactual_seeds"]) == 2
     assert event["graph_rpo_utility_before"] == pytest.approx(0.0)
     assert event["graph_rpo_utility_after"] == pytest.approx(1.0)
+    assert event["graph_rpo_delta_unclipped"] == pytest.approx(0.9)
+    assert event["graph_rpo_delta_scale"] == pytest.approx(3.0)
+    assert event["graph_rpo_delta_scaled_unclipped"] == pytest.approx(0.3)
     assert len(event["graph_rpo_counterfactual_before_responses"]) == 2
     assert len(event["graph_rpo_counterfactual_after_responses"]) == 2
     assert event["graph_rpo_counterfactual_before_rewards"] == [0.0, 0.0]
@@ -483,7 +490,7 @@ def test_counterfactual_qa_credits_paired_task_outcomes_without_success_gate():
     assert metrics["graph_rpo_creditable_edits"] == 1
     assert metrics["graph_rpo_credited_edits"] == 1
     assert metrics["graph_rpo_scored_states"] == 2
-    assert metrics["graph_rpo_delta_abs_sum"] == pytest.approx(0.9)
+    assert metrics["graph_rpo_delta_abs_sum"] == pytest.approx(0.3)
     assert metrics["graph_rpo_counterfactual_scored_states"] == 2
     assert metrics["graph_rpo_counterfactual_probe_rollouts"] == 4
     assert metrics["graph_rpo_counterfactual_tagged_responses"] == 4
@@ -491,7 +498,7 @@ def test_counterfactual_qa_credits_paired_task_outcomes_without_success_gate():
     assert metrics["graph_rpo_counterfactual_positive_rewards"] == 2
     assert metrics["graph_rpo_counterfactual_positive_rate"] == 0.5
     assert metrics["graph_rpo_counterfactual_nonzero_edits"] == 1
-    assert metrics["graph_rpo_counterfactual_delta_abs_sum"] == pytest.approx(0.9)
+    assert metrics["graph_rpo_counterfactual_delta_abs_sum"] == pytest.approx(0.3)
 
 
 def test_counterfactual_qa_prompt_and_answer_extraction():
@@ -664,21 +671,33 @@ def test_reference_answer_likelihood_delta_maps_to_edit_tokens():
         plans,
         likelihoods,
         delta_max=1.0,
+        delta_scale=2.0,
         operation_costs={"merge": 0.1},
     )
     assert torch.allclose(
         batch.batch["graph_edit_credit_mask"],
-        torch.tensor([[0.0, 0.5, 0.5, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0, 0.0]]),
+        torch.tensor([[0.0, 0.25, 0.25, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0, 0.0]]),
     )
     assert event["graph_rpo_answer_log_likelihood_before"] == pytest.approx(-2.0)
     assert event["graph_rpo_answer_log_likelihood_after"] == pytest.approx(-1.4)
-    assert event["graph_rpo_delta"] == pytest.approx(0.5)
+    assert event["graph_rpo_delta_unclipped"] == pytest.approx(0.5)
+    assert event["graph_rpo_delta_scale"] == pytest.approx(2.0)
+    assert event["graph_rpo_delta_scaled_unclipped"] == pytest.approx(0.25)
+    assert event["graph_rpo_delta"] == pytest.approx(0.25)
     assert batch.non_tensor_batch["graph_trace"][1]["events"][0][
         "graph_rpo_delta"
-    ] == pytest.approx(0.5)
+    ] == pytest.approx(0.25)
     assert batch.non_tensor_batch["env_stats"][1]["graph_rpo_scored_states"] == 2
     assert metrics["graphrpo/reference_creditable_edits"] == 1
     assert metrics["graphrpo/reference_scored_states"] == 2
+    with pytest.raises(ValueError, match="graph_rpo_delta_scale"):
+        apply_reference_edit_credits(
+            batch,
+            plans,
+            likelihoods,
+            delta_max=1.0,
+            delta_scale=0.0,
+        )
 
 
 def test_old_policy_answer_likelihood_uses_separate_metric_namespace():
@@ -965,6 +984,9 @@ def test_graphrpo_training_wiring_is_explicit():
     zeroshot_pilot_launcher = (
         root / "scripts/pilot_train_bc_ctxgraph_8b_graphrpo_ref_zeroshot_4node_20step_val.sh"
     ).read_text(encoding="utf-8")
+    matched_scale_submitter = (
+        root / "scripts/submit_matched_graphrpo_delta_scale_20step.sh"
+    ).read_text(encoding="utf-8")
     old_policy_smoke_launcher = (
         root / "scripts/smoke_train_bc_ctxgraph_8b_graphrpo_old_policy_4node_2step.sh"
     ).read_text(encoding="utf-8")
@@ -1096,3 +1118,13 @@ def test_graphrpo_training_wiring_is_explicit():
     ).read_text(encoding="utf-8")
     assert '$NUM_NODES nodes [1 search + $((NUM_NODES - 1)) trainer]' in base_launcher
     assert 'trainer.rollout_data_dir=$ROLLOUT_DATA_DIR' in base_launcher
+    assert "graph_rpo_delta_scale=$GRAPH_RPO_DELTA_SCALE" in base_launcher
+    assert "GRAPH_RPO_DELTA_SCALE=${GRAPH_RPO_DELTA_SCALE:-1.0}" in launcher
+    assert "GRAPH_RPO_DELTA_SCALE=${GRAPH_RPO_DELTA_SCALE:-1.0}" in zeroshot_pilot_launcher
+    assert "audit_counterfactual_graph_credit.py" in zeroshot_pilot_launcher
+    assert "GRAPH_RPO_AUDIT_MAX_CLIP_RATE" in zeroshot_pilot_launcher
+    assert "raw_abs_delta_distribution" in matched_scale_submitter
+    assert "float(stats['p80']) / float(sys.argv[2])" in matched_scale_submitter
+    assert "GRAPH_RPO_ALPHA=0.0" in matched_scale_submitter
+    assert "GRAPH_RPO_ALPHA=0.1" in matched_scale_submitter
+    assert matched_scale_submitter.count("sbatch --parsable") == 2

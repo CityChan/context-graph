@@ -76,6 +76,21 @@ def _token_count(tokenizer: Any, text: str) -> int:
         return len(tokenizer.encode(text))
 
 
+def _scale_and_clip_delta(
+    raw_delta: float,
+    *,
+    delta_scale: float,
+    delta_max: float,
+) -> tuple[float, float]:
+    """Return the calibrated pre-clip delta and its bounded training value."""
+    if not math.isfinite(delta_scale) or delta_scale <= 0.0:
+        raise ValueError("graph_rpo_delta_scale must be positive")
+    if not math.isfinite(delta_max) or delta_max <= 0.0:
+        raise ValueError("graph_rpo_delta_max must be positive")
+    scaled_delta = float(raw_delta) / delta_scale
+    return scaled_delta, min(max(scaled_delta, -delta_max), delta_max)
+
+
 def graph_rpo_credit_backend(plugin_config: Any) -> str:
     """Return and validate the configured graph-credit backend."""
     backend = str(
@@ -212,6 +227,7 @@ async def assign_counterfactual_graph_edit_credits(
     num_samples = int(
         _config_get(plugin_config, "graph_rpo_counterfactual_samples", 2)
     )
+    delta_scale = float(_config_get(plugin_config, "graph_rpo_delta_scale", 1.0))
     delta_max = float(_config_get(plugin_config, "graph_rpo_delta_max", 1.0))
     base_seed = int(_config_get(plugin_config, "graph_rpo_counterfactual_seed", 42))
     raw_costs = _config_get(plugin_config, "graph_rpo_operation_costs", {}) or {}
@@ -220,8 +236,7 @@ async def assign_counterfactual_graph_edit_credits(
     }
     if num_samples <= 0:
         raise ValueError("graph_rpo_counterfactual_samples must be positive")
-    if delta_max <= 0.0:
-        raise ValueError("graph_rpo_delta_max must be positive")
+    _scale_and_clip_delta(0.0, delta_scale=delta_scale, delta_max=delta_max)
     if any(value < 0.0 for value in operation_costs.values()):
         raise ValueError("GraphRPO operation costs must be non-negative")
 
@@ -310,7 +325,11 @@ async def assign_counterfactual_graph_edit_credits(
         op = str(event["op"]).lower()
         operation_cost = operation_costs.get(op, 0.0)
         raw_delta = float(after["utility"]) - float(before["utility"]) - operation_cost
-        delta = min(max(raw_delta, -delta_max), delta_max)
+        scaled_delta, delta = _scale_and_clip_delta(
+            raw_delta,
+            delta_scale=delta_scale,
+            delta_max=delta_max,
+        )
         turn_index = event.get("assistant_turn_index")
         if not isinstance(turn_index, int):
             raise GraphRPOEvaluatorError(
@@ -337,6 +356,8 @@ async def assign_counterfactual_graph_edit_credits(
                 "graph_rpo_utility_after": after["utility"],
                 "graph_rpo_operation_cost": operation_cost,
                 "graph_rpo_delta_unclipped": raw_delta,
+                "graph_rpo_delta_scale": delta_scale,
+                "graph_rpo_delta_scaled_unclipped": scaled_delta,
                 "graph_rpo_delta": delta,
                 "graph_rpo_outcome_gated": False,
             }
@@ -557,13 +578,13 @@ async def assign_graph_edit_credits(
     epsilon_v = float(_config_get(plugin_config, "graph_rpo_probability_epsilon", 1e-4))
     confidence_bound = float(_config_get(plugin_config, "graph_rpo_confidence_bound", 8.0))
     serialization_penalty = float(_config_get(plugin_config, "graph_rpo_serialization_penalty", 0.0))
+    delta_scale = float(_config_get(plugin_config, "graph_rpo_delta_scale", 1.0))
     delta_max = float(_config_get(plugin_config, "graph_rpo_delta_max", 1.0))
     timeout_seconds = float(_config_get(plugin_config, "graph_rpo_evaluator_timeout", 120.0))
     raw_costs = _config_get(plugin_config, "graph_rpo_operation_costs", {}) or {}
     operation_costs = {str(key).lower(): float(value) for key, value in dict(raw_costs).items()}
 
-    if delta_max <= 0.0:
-        raise ValueError("graph_rpo_delta_max must be positive")
+    _scale_and_clip_delta(0.0, delta_scale=delta_scale, delta_max=delta_max)
     if any(value < 0.0 for value in operation_costs.values()):
         raise ValueError("GraphRPO operation costs must be non-negative")
 
@@ -607,7 +628,11 @@ async def assign_graph_edit_credits(
         after_index = view_to_index[event["rendered_after"]]
         op = str(event["op"]).lower()
         raw_delta = utilities[after_index] - utilities[before_index] - operation_costs.get(op, 0.0)
-        delta = min(max(raw_delta, -delta_max), delta_max)
+        scaled_delta, delta = _scale_and_clip_delta(
+            raw_delta,
+            delta_scale=delta_scale,
+            delta_max=delta_max,
+        )
         turn_index = event.get("assistant_turn_index")
         if not isinstance(turn_index, int):
             raise GraphRPOEvaluatorError(
@@ -623,6 +648,8 @@ async def assign_graph_edit_credits(
                 "graph_rpo_utility_after": utilities[after_index],
                 "graph_rpo_operation_cost": operation_costs.get(op, 0.0),
                 "graph_rpo_delta_unclipped": raw_delta,
+                "graph_rpo_delta_scale": delta_scale,
+                "graph_rpo_delta_scaled_unclipped": scaled_delta,
                 "graph_rpo_delta": delta,
                 "graph_rpo_outcome_gated": False,
             }

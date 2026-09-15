@@ -1336,6 +1336,7 @@ class RayPPOTrainer:
             plans,
             likelihoods,
             delta_max=float(plugin.get("graph_rpo_delta_max", 1.0)),
+            delta_scale=float(plugin.get("graph_rpo_delta_scale", 1.0)),
             operation_costs=dict(raw_costs),
             credit_backend=backend,
             metric_namespace=metric_namespace,
