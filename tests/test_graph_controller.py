@@ -144,6 +144,27 @@ def test_controller_rejects_action_specific_invalid_fields():
         )
 
 
+def test_controller_maps_idempotent_select_to_pass_when_pass_is_legal():
+    graph = _graph_with_evidence()
+    controller = GraphActionController()
+    graph.active_node_id = "n3"
+    snapshot = controller.snapshot(graph)
+    response = json.dumps({
+        "action": "select",
+        "candidate_indices": [1],
+        "summary": "",
+        "relation": "semantic",
+    })
+
+    assert controller.resolve_action(
+        graph, snapshot, response, allow_pass=True,
+    ) == {"function": "pass", "arguments": {}}
+    with pytest.raises(GraphControllerError, match="already the active focus"):
+        controller.resolve_action(
+            graph, snapshot, response, allow_pass=False,
+        )
+
+
 def test_controller_action_prompt_discloses_legality_and_all_actions():
     graph = _graph_with_evidence()
     controller = GraphActionController()

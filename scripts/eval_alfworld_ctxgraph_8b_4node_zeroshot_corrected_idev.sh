@@ -1,8 +1,8 @@
 #!/bin/bash
-# Matched zero-shot ContextGraph ablation for long-horizon ALFWorld @real.
-# Keeps the original evaluator unchanged while removing three measured sources
-# of context pressure: history replacement, per-action graph dumps, and forced
-# structural edits when the controller has no useful mutation.
+# Matched zero-shot ContextGraph memory ablation for long-horizon ALFWorld @real.
+# Keeps bounded retrieval-history replacement, but removes per-action graph
+# dumps and controller checkpoints that an untrained base model cannot use
+# reliably. The original full-controller evaluator remains unchanged.
 set -euo pipefail
 
 PROJECT_ROOT=/work/09281/chc_1996/vista/context-graph
@@ -32,7 +32,7 @@ python scripts/make_alfworld_data.py \
   --alfworld_data "$ALFWORLD_DATA"
 
 EVAL_TS=$(date +%Y%m%d_%H%M%S)
-export ALFWORLD_EXPERIMENT_NAME="contextgraph_corrected_alfworld_real_8b_4n_zeroshot_n${ALFWORLD_EVAL_SAMPLES}_seed${ALFWORLD_DATA_SEED}_${EVAL_TS}"
+export ALFWORLD_EXPERIMENT_NAME="contextgraph_memory_alfworld_real_8b_4n_zeroshot_n${ALFWORLD_EVAL_SAMPLES}_seed${ALFWORLD_DATA_SEED}_${EVAL_TS}"
 mkdir -p logs
 EVAL_LOG="logs/${ALFWORLD_EXPERIMENT_NAME}.log"
 EVAL_SUMMARY="logs/${ALFWORLD_EXPERIMENT_NAME}.summary.json"
@@ -41,7 +41,7 @@ export WANDB_MODE=disabled
 export ALFWORLD_DISABLE_WANDB=1
 export MODEL_PATH=Qwen/Qwen3-8B
 export ALFWORLD_MODE=real
-export ALFWORLD_METHOD_LABEL="ContextGraph corrected zero-shot"
+export ALFWORLD_METHOD_LABEL="ContextGraph memory-only zero-shot"
 export ALFWORLD_AGENT_LOOP=context_graph_isolated_agent
 export ALFWORLD_WORKFLOW=alfworld_graph
 export ALFWORLD_PROCESS_REWARD='[flat,scope,graph]'
@@ -67,13 +67,13 @@ export ALFWORLD_STRUCTURED_GRAPH_CONTROLLER=True
 export ALFWORLD_CONTROLLER_OWNED_TOOL_FORMATTING=True
 export ALFWORLD_CONTROLLER_ACTION_POLICY=balanced
 export ALFWORLD_CONTROLLER_ALLOW_PASS=True
-export ALFWORLD_CONSOLIDATION_INTERVAL=10
-export ALFWORLD_ENABLE_RETRIEVAL_MEMORY=False
+export ALFWORLD_CONSOLIDATION_INTERVAL=0
+export ALFWORLD_ENABLE_RETRIEVAL_MEMORY=True
 export ALFWORLD_INJECT_GRAPH_STATE_AFTER_ACTION=False
 export ALFWORLD_TRAINER_RESUME_MODE=disable
 
 echo "=============================================================="
-echo "  Corrected ContextGraph ALFWorld evaluation: ${ALFWORLD_EVAL_SAMPLES} fixed episodes"
+echo "  ContextGraph memory-only ALFWorld evaluation: ${ALFWORLD_EVAL_SAMPLES} fixed episodes"
 echo "  Base model: ${MODEL_PATH}; seed: ${ALFWORLD_DATA_SEED}"
 echo "  Raw log: ${EVAL_LOG}"
 echo "=============================================================="

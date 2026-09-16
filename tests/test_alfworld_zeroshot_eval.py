@@ -32,7 +32,7 @@ def test_zeroshot_launcher_uses_fixed_base_model_and_current_controller():
     assert "ALFWORLD_EVAL_SAMPLES=${ALFWORLD_EVAL_SAMPLES:-32}" in launcher
 
 
-def test_corrected_contextgraph_launcher_removes_measured_context_pressure():
+def test_corrected_contextgraph_launcher_uses_bounded_memory_without_checkpoints():
     launcher = (ROOT / "scripts/eval_alfworld_ctxgraph_8b_4node_zeroshot_corrected_idev.sh").read_text(encoding="utf-8")
     assert "export MODEL_PATH=Qwen/Qwen3-8B" in launcher
     assert "export ALFWORLD_VAL_ONLY=True" in launcher
@@ -40,8 +40,8 @@ def test_corrected_contextgraph_launcher_removes_measured_context_pressure():
     assert "export ALFWORLD_STRUCTURED_GRAPH_CONTROLLER=True" in launcher
     assert "export ALFWORLD_CONTROLLER_ACTION_POLICY=balanced" in launcher
     assert "export ALFWORLD_CONTROLLER_ALLOW_PASS=True" in launcher
-    assert "export ALFWORLD_CONSOLIDATION_INTERVAL=10" in launcher
-    assert "export ALFWORLD_ENABLE_RETRIEVAL_MEMORY=False" in launcher
+    assert "export ALFWORLD_CONSOLIDATION_INTERVAL=0" in launcher
+    assert "export ALFWORLD_ENABLE_RETRIEVAL_MEMORY=True" in launcher
     assert "export ALFWORLD_INJECT_GRAPH_STATE_AFTER_ACTION=False" in launcher
     assert "export ALFWORLD_TRAINER_RESUME_MODE=disable" in launcher
     assert "ALFWORLD_EVAL_SAMPLES=${ALFWORLD_EVAL_SAMPLES:-32}" in launcher

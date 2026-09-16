@@ -349,8 +349,9 @@ class GraphActionController:
         try:
             decision = json.loads(response)
         except (TypeError, json.JSONDecodeError) as exc:
+            preview = repr(str(response)[:160])
             raise GraphControllerError(
-                "structured graph response is not valid JSON"
+                f"structured graph response is not valid JSON: {preview}"
             ) from exc
         if not isinstance(decision, dict):
             raise GraphControllerError("structured graph response is not an object")
@@ -408,6 +409,14 @@ class GraphActionController:
             if not allow_pass:
                 raise GraphControllerError("pass is illegal while graph is not saturated")
             return {"function": "pass", "arguments": {}}
+
+        if (
+            action == "select"
+            and by_index[indices[0]].node_id == graph.active_node_id
+        ):
+            if allow_pass:
+                return {"function": "pass", "arguments": {}}
+            raise GraphControllerError("select target is already the active focus")
 
         if action == "merge":
             if not 2 <= len(indices) <= 6:
