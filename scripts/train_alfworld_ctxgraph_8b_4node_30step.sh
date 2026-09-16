@@ -166,7 +166,10 @@ ALFWORLD_BRANCH_LEN=${ALFWORLD_BRANCH_LEN:-2048}
 ALFWORLD_STRUCTURED_GRAPH_CONTROLLER=${ALFWORLD_STRUCTURED_GRAPH_CONTROLLER:-False}
 ALFWORLD_CONTROLLER_OWNED_TOOL_FORMATTING=${ALFWORLD_CONTROLLER_OWNED_TOOL_FORMATTING:-$ALFWORLD_STRUCTURED_GRAPH_CONTROLLER}
 ALFWORLD_CONTROLLER_ACTION_POLICY=${ALFWORLD_CONTROLLER_ACTION_POLICY:-balanced}
+ALFWORLD_CONTROLLER_ALLOW_PASS=${ALFWORLD_CONTROLLER_ALLOW_PASS:-False}
 ALFWORLD_CONSOLIDATION_INTERVAL=${ALFWORLD_CONSOLIDATION_INTERVAL:-0}
+ALFWORLD_ENABLE_RETRIEVAL_MEMORY=${ALFWORLD_ENABLE_RETRIEVAL_MEMORY:-True}
+ALFWORLD_INJECT_GRAPH_STATE_AFTER_ACTION=${ALFWORLD_INJECT_GRAPH_STATE_AFTER_ACTION:-True}
 ALFWORLD_MAX_SESSION=${ALFWORLD_MAX_SESSION:-3}
 ALFWORLD_VAL_MAX_SESSION=${ALFWORLD_VAL_MAX_SESSION:-$ALFWORLD_MAX_SESSION}
 ALFWORLD_SESSION_TIMEOUT=${ALFWORLD_SESSION_TIMEOUT:-300}
@@ -384,6 +387,7 @@ fi
 echo "=============================================================="
 echo "  Launching ${ALFWORLD_METHOD_LABEL} ${RUN_KIND} on ALFWorld"
 echo "  controller: structured=${ALFWORLD_STRUCTURED_GRAPH_CONTROLLER} policy=${ALFWORLD_CONTROLLER_ACTION_POLICY} interval=${ALFWORLD_CONSOLIDATION_INTERVAL}"
+echo "  memory: retrieval=${ALFWORLD_ENABLE_RETRIEVAL_MEMORY} graph_after_action=${ALFWORLD_INJECT_GRAPH_STATE_AFTER_ACTION} controller_pass=${ALFWORLD_CONTROLLER_ALLOW_PASS}"
 echo "  resume_mode: ${ALFWORLD_TRAINER_RESUME_MODE}"
 echo "  vLLM gpu_memory_utilization=0.55 (no embedder co-located, all GPU mem available)"
 echo "=============================================================="
@@ -434,6 +438,9 @@ srun --overlap --nodes=1 --ntasks=1 -w "$NODE0" --chdir="$PROJECT_ROOT" \
   +actor_rollout_ref.rollout.plugin.structured_graph_controller=${ALFWORLD_STRUCTURED_GRAPH_CONTROLLER} \
   +actor_rollout_ref.rollout.plugin.controller_owned_tool_formatting=${ALFWORLD_CONTROLLER_OWNED_TOOL_FORMATTING} \
   +actor_rollout_ref.rollout.plugin.controller_action_policy=${ALFWORLD_CONTROLLER_ACTION_POLICY} \
+  +actor_rollout_ref.rollout.plugin.controller_allow_pass=${ALFWORLD_CONTROLLER_ALLOW_PASS} \
+  +actor_rollout_ref.rollout.plugin.enable_retrieval_memory=${ALFWORLD_ENABLE_RETRIEVAL_MEMORY} \
+  +actor_rollout_ref.rollout.plugin.inject_graph_state_after_action=${ALFWORLD_INJECT_GRAPH_STATE_AFTER_ACTION} \
   +actor_rollout_ref.rollout.plugin.max_turn=${ALFWORLD_MAX_TURN} \
   +actor_rollout_ref.rollout.plugin.retry_cjk=10 \
   +actor_rollout_ref.rollout.plugin.turn_max_new_tokens=${ALFWORLD_TURN_MAX_NEW_TOKENS} \

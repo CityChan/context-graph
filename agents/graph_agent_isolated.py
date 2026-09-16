@@ -345,6 +345,12 @@ async def process_item(
     enable_retrieval_memory = getattr(
         config.plugin, "enable_retrieval_memory", True
     )
+    inject_graph_state_after_action = bool(
+        getattr(config.plugin, "inject_graph_state_after_action", True)
+    )
+    controller_allow_pass = bool(
+        getattr(config.plugin, "controller_allow_pass", False)
+    )
     # Rewriting a user turn after a later assistant turn has been generated
     # changes that assistant turn's conditioning context when VERL reconstructs
     # the training sequence. Keep training trajectories immutable. Evaluation
@@ -963,15 +969,15 @@ async def process_item(
                 + graph.last_retrieval_stats.get('evidence_tokens', 0),
             )
 
-        # The prompt promises an updated graph after every action. Previously
-        # only graph-tool responses (and some multi-branch responses) included
-        # it, so search/open_page created nodes the model never saw and later
-        # operations referenced stale or invented IDs.
-        observation = (
-            f"{observation}\n\n"
-            "[Latest ContextGraph state]\n"
-            f"{graph.to_state_text()}"
-        )
+        # The original protocol appends the complete graph after every action.
+        # Long-horizon environments can disable this duplicate payload while
+        # still receiving graph state after explicit controller checkpoints.
+        if inject_graph_state_after_action:
+            observation = (
+                f"{observation}\n\n"
+                "[Latest ContextGraph state]\n"
+                f"{graph.to_state_text()}"
+            )
 
         observation_turn = len(agent['main'].chat)
         fitted_observation = append_observation_preserving_final_answer(
@@ -1023,7 +1029,7 @@ async def process_item(
                 consolidation_stats['candidate_skips'] += 1
                 print('[GRAPH CONTROLLER SKIP] no legal graph candidates')
             else:
-                allow_pass = graph.is_saturated()
+                allow_pass = controller_allow_pass or graph.is_saturated()
                 controller_prompt = graph_controller.action_prompt(
                     candidate_snapshot,
                     turn_id=main_turn_count,
@@ -1121,7 +1127,7 @@ async def process_item(
                     controller_action = graph_call['function']
                     if controller_action == 'pass':
                         controller_observation = GraphOpResult(
-                            'Pass accepted: graph is saturated.', True
+                            'Pass accepted: no graph edit was required.', True
                         )
                     else:
                         controller_observation = {
@@ -1495,6 +1501,7 @@ async def process_item(
     env.stats['consol_controller_errors'] = consolidation_stats['controller_errors']
     env.stats['consol_candidate_skips'] = consolidation_stats['candidate_skips']
     env.stats['structured_graph_controller'] = int(structured_graph_controller)
+    env.stats['controller_allow_pass'] = int(controller_allow_pass)
     env.stats['controller_structural_policy'] = int(
         controller_action_policy == "structural"
     )
@@ -1516,6 +1523,9 @@ async def process_item(
     env.stats['isolated_total_subgraph_obs'] = sum(s.get('n_observations', 0) for s in branch_subgraph_stats.values())
     env.stats['memory_n_archives'] = len(graph.archives)
     env.stats['memory_history_replacement'] = float(enable_history_replacement)
+    env.stats['memory_graph_state_after_action'] = float(
+        inject_graph_state_after_action
+    )
     env.stats['memory_archived_evidence'] = sum(
         len(archive.evidence) for archive in graph.archives.values()
     )

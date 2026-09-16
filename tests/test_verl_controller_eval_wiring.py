@@ -60,6 +60,17 @@ def test_controller_mode_rejections_do_not_pollute_graph_invalid_ops():
     assert '"controller_structural_policy"' in reward_manager
 
 
+def test_alfworld_controller_supports_non_destructive_long_horizon_ablation():
+    source = _read("agents/graph_agent_isolated.py")
+    assert 'getattr(config.plugin, "controller_allow_pass", False)' in source
+    assert "controller_allow_pass or graph.is_saturated()" in source
+    assert 'getattr(config.plugin, "inject_graph_state_after_action", True)' in source
+    assert "if inject_graph_state_after_action:" in source
+    assert "enable_history_replacement = enable_retrieval_memory and not is_train" in source
+    assert "env.stats['controller_allow_pass']" in source
+    assert "env.stats['memory_graph_state_after_action']" in source
+
+
 def test_sab_8b_eval_has_opt_in_controller_protocol():
     source = _read("scripts/eval_sab_react_8b_4node_smoke.sh")
     assert "SAB_CTXGRAPH_PROTOCOL=${SAB_CTXGRAPH_PROTOCOL:-legacy}" in source

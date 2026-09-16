@@ -32,6 +32,22 @@ def test_zeroshot_launcher_uses_fixed_base_model_and_current_controller():
     assert "ALFWORLD_EVAL_SAMPLES=${ALFWORLD_EVAL_SAMPLES:-32}" in launcher
 
 
+def test_corrected_contextgraph_launcher_removes_measured_context_pressure():
+    launcher = (ROOT / "scripts/eval_alfworld_ctxgraph_8b_4node_zeroshot_corrected_idev.sh").read_text(encoding="utf-8")
+    assert "export MODEL_PATH=Qwen/Qwen3-8B" in launcher
+    assert "export ALFWORLD_VAL_ONLY=True" in launcher
+    assert "export ALFWORLD_ROLLOUT_N=1" in launcher
+    assert "export ALFWORLD_STRUCTURED_GRAPH_CONTROLLER=True" in launcher
+    assert "export ALFWORLD_CONTROLLER_ACTION_POLICY=balanced" in launcher
+    assert "export ALFWORLD_CONTROLLER_ALLOW_PASS=True" in launcher
+    assert "export ALFWORLD_CONSOLIDATION_INTERVAL=10" in launcher
+    assert "export ALFWORLD_ENABLE_RETRIEVAL_MEMORY=False" in launcher
+    assert "export ALFWORLD_INJECT_GRAPH_STATE_AFTER_ACTION=False" in launcher
+    assert "export ALFWORLD_TRAINER_RESUME_MODE=disable" in launcher
+    assert "ALFWORLD_EVAL_SAMPLES=${ALFWORLD_EVAL_SAMPLES:-32}" in launcher
+    assert "ALFWORLD_DATA_SEED=${ALFWORLD_DATA_SEED:-42}" in launcher
+
+
 def test_react_zeroshot_launcher_matches_contextgraph_eval_budget():
     launcher = (ROOT / "scripts/eval_alfworld_react_8b_4node_zeroshot_idev.sh").read_text(encoding="utf-8")
     assert "export MODEL_PATH=Qwen/Qwen3-8B" in launcher
@@ -76,6 +92,9 @@ def test_shared_alfworld_launcher_wires_controller_and_resume_mode():
     assert "plugin.structured_graph_controller=${ALFWORLD_STRUCTURED_GRAPH_CONTROLLER}" in launcher
     assert "plugin.controller_owned_tool_formatting=${ALFWORLD_CONTROLLER_OWNED_TOOL_FORMATTING}" in launcher
     assert "plugin.controller_action_policy=${ALFWORLD_CONTROLLER_ACTION_POLICY}" in launcher
+    assert "plugin.controller_allow_pass=${ALFWORLD_CONTROLLER_ALLOW_PASS}" in launcher
+    assert "plugin.enable_retrieval_memory=${ALFWORLD_ENABLE_RETRIEVAL_MEMORY}" in launcher
+    assert "plugin.inject_graph_state_after_action=${ALFWORLD_INJECT_GRAPH_STATE_AFTER_ACTION}" in launcher
     assert "plugin.consolidation_interval=${ALFWORLD_CONSOLIDATION_INTERVAL}" in launcher
     assert "trainer.resume_mode=${ALFWORLD_TRAINER_RESUME_MODE}" in launcher
 

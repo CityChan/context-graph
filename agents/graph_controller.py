@@ -257,7 +257,8 @@ class GraphActionController:
             for candidate in snapshot.candidates
         )
         pass_rule = (
-            "pass is currently legal because the graph is saturated."
+            "pass is currently legal; use it when no available graph edit "
+            "would improve the working state."
             if allow_pass
             else "pass is currently illegal because the graph is not saturated."
         )
