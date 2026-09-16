@@ -51,6 +51,26 @@ def test_react_zeroshot_launcher_matches_contextgraph_eval_budget():
     assert "export ALFWORLD_TRAINER_RESUME_MODE=disable" in launcher
 
 
+def test_foldagent_zeroshot_launcher_matches_contextgraph_eval_budget():
+    launcher = (ROOT / "scripts/eval_alfworld_foldagent_8b_4node_zeroshot_idev.sh").read_text(encoding="utf-8")
+    assert "export MODEL_PATH=Qwen/Qwen3-8B" in launcher
+    assert "export ALFWORLD_AGENT_LOOP=fold_agent" in launcher
+    assert "export ALFWORLD_WORKFLOW=alfworld_branch" in launcher
+    assert "export ALFWORLD_PROCESS_REWARD='[flat,scope]'" in launcher
+    assert "export ALFWORLD_DATA_VARIANT=alfworld_branch" in launcher
+    assert "ALFWORLD_EVAL_SAMPLES=${ALFWORLD_EVAL_SAMPLES:-32}" in launcher
+    assert "ALFWORLD_DATA_SEED=${ALFWORLD_DATA_SEED:-42}" in launcher
+    assert "export ALFWORLD_PROMPT_LENGTH=4096" in launcher
+    assert "export ALFWORLD_RESPONSE_LENGTH=12288" in launcher
+    assert "export ALFWORLD_MAX_TOKEN_LEN_PER_GPU=16384" in launcher
+    assert "export ALFWORLD_VAL_MAX_TURN=60" in launcher
+    assert "export ALFWORLD_VAL_MAX_SESSION=3" in launcher
+    assert "export ALFWORLD_STRUCTURED_GRAPH_CONTROLLER=False" in launcher
+    assert "export ALFWORLD_CONTROLLER_ACTION_POLICY=balanced" in launcher
+    assert "export ALFWORLD_CONSOLIDATION_INTERVAL=0" in launcher
+    assert "export ALFWORLD_TRAINER_RESUME_MODE=disable" in launcher
+
+
 def test_shared_alfworld_launcher_wires_controller_and_resume_mode():
     launcher = (ROOT / "scripts/train_alfworld_ctxgraph_8b_4node_30step.sh").read_text(encoding="utf-8")
     assert "plugin.structured_graph_controller=${ALFWORLD_STRUCTURED_GRAPH_CONTROLLER}" in launcher
