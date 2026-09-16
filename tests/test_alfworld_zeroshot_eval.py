@@ -46,6 +46,7 @@ def test_react_zeroshot_launcher_matches_contextgraph_eval_budget():
     assert "export ALFWORLD_MAX_TOKEN_LEN_PER_GPU=16384" in launcher
     assert "export ALFWORLD_VAL_MAX_TURN=60" in launcher
     assert "export ALFWORLD_STRUCTURED_GRAPH_CONTROLLER=False" in launcher
+    assert "export ALFWORLD_CONTROLLER_ACTION_POLICY=balanced" in launcher
     assert "export ALFWORLD_CONSOLIDATION_INTERVAL=0" in launcher
     assert "export ALFWORLD_TRAINER_RESUME_MODE=disable" in launcher
 
