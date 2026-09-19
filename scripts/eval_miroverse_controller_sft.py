@@ -248,6 +248,11 @@ def main() -> None:
     os.environ.setdefault("VLLM_CACHE_ROOT", f"/tmp/contextgraph-vllm-{cache_tag}")
     os.environ.setdefault("TORCHINDUCTOR_CACHE_DIR", f"/tmp/contextgraph-inductor-{cache_tag}")
     os.environ.setdefault("TRITON_CACHE_DIR", f"/tmp/contextgraph-triton-{cache_tag}")
+    # vLLM V1 applies every structured-output backend through xgrammar's
+    # torch.compile-decorated bitmask kernel.  The Vista PyTorch/Triton build
+    # emits invalid Inductor Python for that kernel, so run this small mask
+    # operation eagerly.  Callers can explicitly set 0 after upgrading.
+    os.environ.setdefault("TORCH_COMPILE_DISABLE", "1")
     if args.max_samples < 0:
         raise SystemExit("--max-samples must be non-negative")
     data = pd.read_parquet(args.data)
@@ -288,8 +293,6 @@ def main() -> None:
     llm_kwargs: dict[str, Any] = {}
     if args.guided_decoding:
         # vLLM V1 selects structured-output backends at engine initialization.
-        # Leaving this as "auto" prefers xgrammar for this schema, whose
-        # TorchInductor bitmask kernel is unreliable in the Vista environment.
         llm_kwargs["guided_decoding_backend"] = args.guided_decoding_backend
     llm = LLM(
         model=args.model,

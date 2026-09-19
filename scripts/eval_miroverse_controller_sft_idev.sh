@@ -37,6 +37,10 @@ export CUDAHOSTCXX=g++
 export VLLM_CACHE_ROOT=${VLLM_CACHE_ROOT:-/tmp/contextgraph-vllm-${SLURM_JOB_ID:-$$}}
 export TORCHINDUCTOR_CACHE_DIR=${TORCHINDUCTOR_CACHE_DIR:-/tmp/contextgraph-inductor-${SLURM_JOB_ID:-$$}}
 export TRITON_CACHE_DIR=${TRITON_CACHE_DIR:-/tmp/contextgraph-triton-${SLURM_JOB_ID:-$$}}
+# vLLM V1 routes every structured-output backend through xgrammar's
+# torch.compile-decorated grammar bitmask kernel.  Disable that failing
+# Inductor path on Vista while leaving an explicit environment override.
+export TORCH_COMPILE_DISABLE=${TORCH_COMPILE_DISABLE:-1}
 
 echo "Controller-only held-out validation"
 echo "Model: $MODEL_PATH"
@@ -44,6 +48,7 @@ echo "Data: $VALIDATION_FILE"
 echo "Output: $OUTPUT_JSON"
 if [ "$GUIDED_DECODING" = "1" ]; then
   echo "Guided decoding backend: $GUIDED_DECODING_BACKEND"
+  echo "Torch compile disabled: $TORCH_COMPILE_DISABLE"
 fi
 
 set -o pipefail

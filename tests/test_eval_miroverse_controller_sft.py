@@ -1,10 +1,18 @@
 import json
+from pathlib import Path
 
 from scripts.eval_miroverse_controller_sft import (
     replay_response,
     score_response,
     validate_flat_decision,
 )
+
+
+def test_disables_torch_compile_before_importing_vllm():
+    source = Path("scripts/eval_miroverse_controller_sft.py").read_text(encoding="utf-8")
+    disable = 'os.environ.setdefault("TORCH_COMPILE_DISABLE", "1")'
+    assert disable in source
+    assert source.index(disable) < source.index("from vllm import LLM, SamplingParams")
 
 
 def decision(action, indices, summary="", relation="semantic"):
