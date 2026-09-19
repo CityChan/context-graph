@@ -21,6 +21,7 @@ from transformers import AutoTokenizer
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from agents.graph_controller import graph_action_schema
+from agents.structured_outputs import normalize_structured_content
 from agents.utils import CallAPI, TaskContext
 from verl import DataProto
 
@@ -270,18 +271,19 @@ async def preflight(args: argparse.Namespace, workflow: str) -> None:
             raise RuntimeError("Model API returned no choices")
         if WORKFLOWS[workflow] == "graph" and args.structured_graph_controller:
             choice = response.choices[0]
-            content = choice.message.content or ""
+            raw_content = choice.message.content or ""
+            content = normalize_structured_content(raw_content)
             if choice.finish_reason == "length":
                 raise RuntimeError(
                     "Structured-output preflight exhausted its token budget: "
-                    f"content={content!r}"
+                    f"content={raw_content!r}"
                 )
             try:
                 decision = json.loads(content)
             except json.JSONDecodeError as exc:
                 raise RuntimeError(
                     "Structured-output preflight returned invalid JSON "
-                    f"(finish_reason={choice.finish_reason!r}): content={content!r}"
+                    f"(finish_reason={choice.finish_reason!r}): content={raw_content!r}"
                 ) from exc
             if sorted(decision.get("candidate_indices", [])) != [0, 1]:
                 raise RuntimeError(

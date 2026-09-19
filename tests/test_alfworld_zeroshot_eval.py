@@ -108,6 +108,7 @@ def test_single_node_controller_sft_eval_uses_heldout_alfworld_and_structural_po
     assert "MAX_SAMPLES=${MAX_SAMPLES:-8}" in launcher
     assert "data/alfworld_graph_real_test.parquet" in launcher
     assert "--guided-decoding-backend guidance" in launcher
+    assert "--reasoning-parser qwen3" in launcher
     assert "export TORCH_COMPILE_DISABLE=${TORCH_COMPILE_DISABLE:-1}" in launcher
     assert "--structured-graph-controller" in launcher
     assert "--controller-action-policy structural" in launcher

@@ -2,6 +2,7 @@ import pytest
 
 from agents.structured_outputs import (
     build_vllm_guided_decoding,
+    normalize_structured_content,
     normalize_structured_outputs,
 )
 
@@ -29,3 +30,21 @@ def test_vllm_adapter_builds_guided_decoding_only_at_server_boundary():
 def test_structured_outputs_reject_unsupported_envelopes(value):
     with pytest.raises((TypeError, ValueError)):
         normalize_structured_outputs(value)
+
+
+@pytest.mark.parametrize(
+    ("content", "expected"),
+    [
+        ('{"action":"merge"}', '{"action":"merge"}'),
+        (
+            '<think>\n</think>\n\n{"action":"merge"}',
+            '{"action":"merge"}',
+        ),
+        (
+            '<think>consider candidates</think>\n{"action":"prune"}',
+            '{"action":"prune"}',
+        ),
+    ],
+)
+def test_structured_content_removes_leading_qwen_reasoning(content, expected):
+    assert normalize_structured_content(content) == expected

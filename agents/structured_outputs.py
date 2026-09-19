@@ -4,10 +4,25 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 from typing import Any, TypeVar
 
 
 GuidedDecodingT = TypeVar("GuidedDecodingT")
+_LEADING_THINK_BLOCK = re.compile(r"^\s*<think>.*?</think>\s*", re.DOTALL)
+
+
+def normalize_structured_content(value: str) -> str:
+    """Remove a leading Qwen reasoning envelope from structured JSON.
+
+    Qwen3 may emit even an empty ``<think>...</think>`` block when the chat
+    template requests non-thinking mode.  vLLM returns that block in
+    ``message.content`` unless a reasoning parser is active, which otherwise
+    makes a valid guided JSON object fail controller parsing.
+    """
+    if not isinstance(value, str):
+        raise TypeError("structured response content must be a string")
+    return _LEADING_THINK_BLOCK.sub("", value, count=1).strip()
 
 
 def normalize_structured_outputs(value: Any) -> dict[str, Any]:

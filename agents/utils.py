@@ -16,7 +16,7 @@ from typing import Any, Optional
 import asyncio, httpx
 from envs.local_search import LocalSearch
 from envs.alfworld_env import ALFWorldEnv
-from .structured_outputs import normalize_structured_outputs
+from .structured_outputs import normalize_structured_content, normalize_structured_outputs
 
 
 def select_env(ability, config, extra_info=None):
@@ -333,6 +333,8 @@ class CallAPI(LLMClass):  # Call external API (OpenAI)
                 response = await self.client.chat.completions.create(**request)
 
                 text = response.choices[0].message.content or ""
+                if structured_outputs is not None:
+                    text = normalize_structured_content(text)
                 text_ids = self.tokenizer.encode(text, add_special_tokens=False)
 
                 return {

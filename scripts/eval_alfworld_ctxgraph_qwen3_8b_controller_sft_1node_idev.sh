@@ -85,6 +85,7 @@ vllm serve "$MODEL_PATH" \
   --port "$SERVER_PORT" \
   --tensor-parallel-size 1 \
   --trust-remote-code \
+  --reasoning-parser qwen3 \
   --dtype bfloat16 \
   --max-model-len "$MAX_MODEL_LEN" \
   --max-num-seqs 8 \
