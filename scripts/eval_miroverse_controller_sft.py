@@ -61,6 +61,15 @@ def parse_args() -> argparse.Namespace:
         help="Apply the runtime JSON grammar; disabled by default to measure unconstrained controller behavior",
     )
     parser.add_argument(
+        "--guided-decoding-backend",
+        choices=("guidance", "outlines", "lm-format-enforcer", "xgrammar", "auto"),
+        default="guidance",
+        help=(
+            "Engine-level vLLM structured-output backend used when guided decoding is enabled; "
+            "guidance avoids the xgrammar TorchInductor kernel on Vista"
+        ),
+    )
+    parser.add_argument(
         "--enforce-eager",
         action=argparse.BooleanOptionalAction,
         default=True,
@@ -276,6 +285,12 @@ def main() -> None:
         key = (int(row["candidate_count"]), bool(row["allow_pass"]), str(row["action_policy"]))
         groups.setdefault(key, []).append(row_index)
 
+    llm_kwargs: dict[str, Any] = {}
+    if args.guided_decoding:
+        # vLLM V1 selects structured-output backends at engine initialization.
+        # Leaving this as "auto" prefers xgrammar for this schema, whose
+        # TorchInductor bitmask kernel is unreliable in the Vista environment.
+        llm_kwargs["guided_decoding_backend"] = args.guided_decoding_backend
     llm = LLM(
         model=args.model,
         tokenizer=args.model,
@@ -286,6 +301,7 @@ def main() -> None:
         gpu_memory_utilization=args.gpu_memory_utilization,
         trust_remote_code=True,
         enforce_eager=args.enforce_eager,
+        **llm_kwargs,
     )
     predictions = [""] * len(data)
     for (candidate_count, allow_pass, action_policy), row_indices in sorted(groups.items()):
@@ -339,6 +355,9 @@ def main() -> None:
         "data": str(Path(args.data)),
         "rows": len(scored),
         "guided_decoding": bool(args.guided_decoding),
+        "guided_decoding_backend": (
+            args.guided_decoding_backend if args.guided_decoding else None
+        ),
         "parse_valid_rate": _rate(scored, "parse_valid"),
         "schema_valid_rate": _rate(scored, "schema_valid"),
         "action_contract_valid_rate": _rate(scored, "replay_valid"),

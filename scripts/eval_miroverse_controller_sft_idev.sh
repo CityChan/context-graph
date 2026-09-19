@@ -8,12 +8,13 @@ MODEL_PATH=${MODEL_PATH:-$SCRATCH/contextgraph_sft_models/957946_miroverse_qwen3
 VALIDATION_FILE=${VALIDATION_FILE:-$SCRATCH/contextgraph_sft/miroverse_controller_qwen3_8b/contextgraph_sft_validation.parquet}
 OUTPUT_ROOT=${OUTPUT_ROOT:-$SCRATCH/cgeval}
 GUIDED_DECODING=${GUIDED_DECODING:-0}
+GUIDED_DECODING_BACKEND=${GUIDED_DECODING_BACKEND:-guidance}
 if [ "$GUIDED_DECODING" = "1" ]; then
-  DECODING_TAG=guided
-  DECODING_FLAG=--guided-decoding
+  DECODING_TAG=guided-$GUIDED_DECODING_BACKEND
+  DECODING_FLAGS=(--guided-decoding --guided-decoding-backend "$GUIDED_DECODING_BACKEND")
 else
   DECODING_TAG=unguided
-  DECODING_FLAG=--no-guided-decoding
+  DECODING_FLAGS=(--no-guided-decoding)
 fi
 RUN_TAG=${RUN_TAG:-${SLURM_JOB_ID:-local}_miroverse_controller_$DECODING_TAG}
 OUTPUT_JSON=$OUTPUT_ROOT/$RUN_TAG.json
@@ -41,6 +42,9 @@ echo "Controller-only held-out validation"
 echo "Model: $MODEL_PATH"
 echo "Data: $VALIDATION_FILE"
 echo "Output: $OUTPUT_JSON"
+if [ "$GUIDED_DECODING" = "1" ]; then
+  echo "Guided decoding backend: $GUIDED_DECODING_BACKEND"
+fi
 
 set -o pipefail
-python -u scripts/eval_miroverse_controller_sft.py --model "$MODEL_PATH" --data "$VALIDATION_FILE" --output "$OUTPUT_JSON" --max-samples 0 --max-model-len 4096 --max-num-seqs 64 --gpu-memory-utilization 0.85 --enforce-eager "$DECODING_FLAG" 2>&1 | tee "$LOG_PATH"
+python -u scripts/eval_miroverse_controller_sft.py --model "$MODEL_PATH" --data "$VALIDATION_FILE" --output "$OUTPUT_JSON" --max-samples 0 --max-model-len 4096 --max-num-seqs 64 --gpu-memory-utilization 0.85 --enforce-eager "${DECODING_FLAGS[@]}" 2>&1 | tee "$LOG_PATH"
