@@ -6,6 +6,7 @@ from scripts.summarize_alfworld_eval import extract_metrics
 ROOT = Path(__file__).resolve().parents[1]
 CONTROLLER_SFT_1NODE = ROOT / "scripts/eval_alfworld_ctxgraph_qwen3_8b_controller_sft_1node_idev.sh"
 CONTROLLER_SFT_FULL = ROOT / "scripts/eval_alfworld_ctxgraph_qwen3_8b_controller_sft_1node_full.sh"
+CONTROLLER_SFT_TRAIN = ROOT / "scripts/train_alfworld_ctxgraph_qwen3_8b_controller_sft_4node_30step.sh"
 
 
 def test_extract_metrics_from_verl_step_line():
@@ -140,6 +141,30 @@ def test_controller_sft_full_sbatch_runs_all_supported_alfworld_tasks():
     assert "export DATA_SEED=${DATA_SEED:-42}" in launcher
     assert "export NUM_WORKERS=${NUM_WORKERS:-4}" in launcher
     assert "eval_alfworld_ctxgraph_qwen3_8b_controller_sft_1node_idev.sh" in launcher
+
+
+def test_alfworld_runner_accepts_local_merged_model_path():
+    launcher = (ROOT / "scripts/train_alfworld_ctxgraph_8b_4node_30step.sh").read_text(encoding="utf-8")
+    assert 'if [ -d "$MODEL_PATH" ]' in launcher
+    assert 'TRAINER_CACHE_DIR="$MODEL_PATH"' in launcher
+    assert "local MODEL_PATH is missing config.json" in launcher
+    assert "local MODEL_PATH has no non-empty Hugging Face weight files" in launcher
+
+
+def test_controller_sft_foldgrpo_wrapper_uses_training_split_and_controller_protocol():
+    launcher = CONTROLLER_SFT_TRAIN.read_text(encoding="utf-8")
+    assert "#SBATCH -N 4" in launcher
+    assert "#SBATCH -t 12:00:00" in launcher
+    assert "998826_miroverse_qwen3_8b_lora32_4k_merged" in launcher
+    assert "ALFWORLD_STRUCTURED_GRAPH_CONTROLLER=True" in launcher
+    assert "ALFWORLD_CONTROLLER_ACTION_POLICY=structural" in launcher
+    assert "ALFWORLD_CONTROLLER_ALLOW_PASS=False" in launcher
+    assert "ALFWORLD_CONSOLIDATION_INTERVAL=5" in launcher
+    assert "ALFWORLD_TOTAL_STEPS=${ALFWORLD_TOTAL_STEPS:-30}" in launcher
+    assert "ALFWORLD_TRAIN_MAX_SAMPLES=${ALFWORLD_TRAIN_MAX_SAMPLES:-300}" in launcher
+    assert "ALFWORLD_VAL_MAX_SAMPLES=${ALFWORLD_VAL_MAX_SAMPLES:-32}" in launcher
+    assert "scripts/make_alfworld_data.py" in launcher
+    assert "train_alfworld_ctxgraph_8b_4node_30step.sh" in launcher
 
 
 def test_api_evaluator_wires_controller_policy_controls():

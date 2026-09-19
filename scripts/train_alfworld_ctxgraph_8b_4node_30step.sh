@@ -289,7 +289,19 @@ probe "ALFWorld artefacts ok"
 # ── Pre-flight: trainer weights must be present (offline, no auto-dl) ──
 export HF_HUB_CACHE=${HF_HUB_CACHE:-$HF_HOME/hub}
 probe "checking HF model cache for $MODEL_PATH"
-TRAINER_CACHE_DIR="$HF_HUB_CACHE/models--${MODEL_PATH//\//--}"
+if [ -d "$MODEL_PATH" ]; then
+  TRAINER_CACHE_DIR="$MODEL_PATH"
+  if [ ! -s "$TRAINER_CACHE_DIR/config.json" ]; then
+    echo "ERROR: local MODEL_PATH is missing config.json: $TRAINER_CACHE_DIR"
+    exit 1
+  fi
+  if ! find -L "$TRAINER_CACHE_DIR" -maxdepth 1 -type f \( -name '*.safetensors' -o -name 'pytorch_model*.bin' \) -size +0c -print -quit | grep -q .; then
+    echo "ERROR: local MODEL_PATH has no non-empty Hugging Face weight files: $TRAINER_CACHE_DIR"
+    exit 1
+  fi
+else
+  TRAINER_CACHE_DIR="$HF_HUB_CACHE/models--${MODEL_PATH//\//--}"
+fi
 if [ ! -d "$TRAINER_CACHE_DIR" ]; then
   echo "ERROR: $MODEL_PATH not found at $TRAINER_CACHE_DIR"
   echo "       From a login node, run: hf download $MODEL_PATH"
