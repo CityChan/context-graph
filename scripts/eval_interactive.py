@@ -102,6 +102,7 @@ def process_item_for(workflow: str):
 def make_config(args: argparse.Namespace, workflow: str):
     graph = WORKFLOWS[workflow] == "graph"
     return OmegaConf.create({
+        "algorithm": {"adv_estimator": "foldgrpo"},
         "actor_rollout_ref": {"rollout": {
             "prompt_length": args.prompt_length,
             "response_length": args.response_length,

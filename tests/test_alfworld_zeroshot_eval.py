@@ -120,6 +120,7 @@ def test_single_node_controller_sft_eval_uses_heldout_alfworld_and_structural_po
 
 def test_api_evaluator_wires_controller_policy_controls():
     evaluator = (ROOT / "scripts/eval_interactive.py").read_text(encoding="utf-8")
+    assert '"algorithm": {"adv_estimator": "foldgrpo"}' in evaluator
     assert '"--controller-action-policy"' in evaluator
     assert '"--controller-allow-pass"' in evaluator
     assert '"--inject-graph-state-after-action"' in evaluator
