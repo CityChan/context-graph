@@ -96,3 +96,35 @@ def test_call_api_merges_structured_outputs_with_chat_template_kwargs(monkeypatc
         "chat_template_kwargs": {"thinking": False},
         "structured_outputs": {"json": schema},
     }
+
+
+def test_call_api_can_send_openai_json_schema_response_format(monkeypatch):
+    client, completions = _client(monkeypatch, "non-thinking")
+    client.config.plugin.api_structured_output_mode = "response_format"
+    schema = {"type": "object", "properties": {}}
+    asyncio.run(client.create_completion(
+        [1, 2],
+        messages=[{"role": "user", "content": "merge"}],
+        structured_outputs={"json": schema},
+    ))
+    assert completions.calls[0]["response_format"] == {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "contextgraph_controller",
+            "schema": schema,
+        },
+    }
+    assert "structured_outputs" not in completions.calls[0]["extra_body"]
+
+
+def test_call_api_can_send_legacy_guided_json(monkeypatch):
+    client, completions = _client(monkeypatch, "non-thinking")
+    client.config.plugin.api_structured_output_mode = "guided_json"
+    schema = {"type": "object", "properties": {}}
+    asyncio.run(client.create_completion(
+        [1, 2],
+        messages=[{"role": "user", "content": "merge"}],
+        structured_outputs={"json": schema},
+    ))
+    assert completions.calls[0]["extra_body"]["guided_json"] == schema
+    assert "structured_outputs" not in completions.calls[0]["extra_body"]

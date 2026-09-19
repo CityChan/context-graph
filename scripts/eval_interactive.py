@@ -83,6 +83,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--temperature", type=float, default=0.6)
     parser.add_argument("--top-p", type=float, default=0.95)
     parser.add_argument("--reasoning-effort", default=None)
+    parser.add_argument(
+        "--api-structured-output-mode",
+        choices=("auto", "response_format", "structured_outputs", "guided_json"),
+        default="auto",
+    )
     parser.add_argument("--save-messages", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
@@ -118,6 +123,7 @@ def make_config(args: argparse.Namespace, workflow: str):
                 "temperature": args.temperature,
                 "top_p": args.top_p,
                 "reasoning_effort": args.reasoning_effort,
+                "api_structured_output_mode": args.api_structured_output_mode,
                 "val_response_length": args.response_length,
                 "process_reward": "[flat,scope,graph]" if graph else "[flat,scope]",
                 "max_traj": 4,
@@ -268,34 +274,69 @@ async def preflight(args: argparse.Namespace, workflow: str) -> None:
                 "required": ["probe"],
                 "additionalProperties": False,
             }
-            probe_extra_body: dict[str, Any] = {
-                "structured_outputs": {"json": grammar_probe_schema},
-            }
-            if chat_template_kwargs:
-                probe_extra_body["chat_template_kwargs"] = chat_template_kwargs
-            probe_response = await client.chat.completions.create(
-                model=args.model_name,
-                messages=[{
-                    "role": "user",
-                    "content": "Reply exactly NOT_JSON with no braces.",
-                }],
-                max_completion_tokens=64,
-                extra_body=probe_extra_body,
+            candidate_modes = (
+                [args.api_structured_output_mode]
+                if args.api_structured_output_mode != "auto"
+                else ["response_format", "structured_outputs", "guided_json"]
             )
-            probe_raw = probe_response.choices[0].message.content or ""
-            probe_content = normalize_structured_content(probe_raw)
-            try:
-                probe = json.loads(probe_content)
-            except json.JSONDecodeError as exc:
+            probe_errors: dict[str, str] = {}
+            selected_mode = None
+            for candidate_mode in candidate_modes:
+                probe_request: dict[str, Any] = {
+                    "model": args.model_name,
+                    "messages": [{
+                        "role": "user",
+                        "content": "Reply exactly NOT_JSON with no braces.",
+                    }],
+                    "max_completion_tokens": 64,
+                }
+                probe_extra_body: dict[str, Any] = {}
+                if chat_template_kwargs:
+                    probe_extra_body["chat_template_kwargs"] = chat_template_kwargs
+                if candidate_mode == "response_format":
+                    probe_request["response_format"] = {
+                        "type": "json_schema",
+                        "json_schema": {
+                            "name": "contextgraph_grammar_probe",
+                            "schema": grammar_probe_schema,
+                        },
+                    }
+                elif candidate_mode == "structured_outputs":
+                    probe_extra_body["structured_outputs"] = {
+                        "json": grammar_probe_schema,
+                    }
+                elif candidate_mode == "guided_json":
+                    probe_extra_body["guided_json"] = grammar_probe_schema
+                else:
+                    raise ValueError(
+                        "unknown API structured-output mode: "
+                        f"{candidate_mode}"
+                    )
+                if probe_extra_body:
+                    probe_request["extra_body"] = probe_extra_body
+                try:
+                    probe_response = await client.chat.completions.create(
+                        **probe_request
+                    )
+                    probe_raw = probe_response.choices[0].message.content or ""
+                    probe_content = normalize_structured_content(probe_raw)
+                    probe = json.loads(probe_content)
+                    if probe != {"probe": "GRAMMAR_ACTIVE"}:
+                        raise ValueError(f"wrong object: {probe!r}")
+                except Exception as exc:
+                    probe_errors[candidate_mode] = (
+                        f"{type(exc).__name__}: {exc}"
+                    )
+                    continue
+                selected_mode = candidate_mode
+                break
+            if selected_mode is None:
                 raise RuntimeError(
-                    "Structured-output grammar probe was not constrained: "
-                    f"content={probe_raw!r}"
-                ) from exc
-            if probe != {"probe": "GRAMMAR_ACTIVE"}:
-                raise RuntimeError(
-                    "Structured-output grammar probe returned the wrong "
-                    f"object: content={probe_raw!r}"
+                    "No API structured-output mode enforced the grammar: "
+                    f"{probe_errors}"
                 )
+            args.api_structured_output_mode = selected_mode
+            print(f"API structured-output mode: {selected_mode}")
 
         request: dict[str, Any] = {
             "model": args.model_name,
@@ -314,12 +355,27 @@ async def preflight(args: argparse.Namespace, workflow: str) -> None:
                     "a short non-empty summary, and relation=semantic."
                 ),
             }]
-            extra_body: dict[str, Any] = {
-                "structured_outputs": {"json": schema},
-            }
+            extra_body: dict[str, Any] = {}
             if chat_template_kwargs:
                 extra_body["chat_template_kwargs"] = chat_template_kwargs
-            request["extra_body"] = extra_body
+            if args.api_structured_output_mode == "response_format":
+                request["response_format"] = {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "contextgraph_controller_preflight",
+                        "schema": schema,
+                    },
+                }
+            elif args.api_structured_output_mode == "structured_outputs":
+                extra_body["structured_outputs"] = {"json": schema}
+            elif args.api_structured_output_mode == "guided_json":
+                extra_body["guided_json"] = schema
+            else:
+                raise ValueError(
+                    "preflight did not resolve an API structured-output mode"
+                )
+            if extra_body:
+                request["extra_body"] = extra_body
         response = await client.chat.completions.create(**request)
         if not response.choices:
             raise RuntimeError("Model API returned no choices")

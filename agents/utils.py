@@ -333,7 +333,32 @@ class CallAPI(LLMClass):  # Call external API (OpenAI)
                             chat_template_kwargs["enable_thinking"] = True
                     extra_body["chat_template_kwargs"] = chat_template_kwargs
                 if structured_outputs is not None:
-                    extra_body["structured_outputs"] = structured_outputs
+                    structured_outputs = normalize_structured_outputs(
+                        structured_outputs
+                    )
+                    structured_api_mode = str(getattr(
+                        self.config.plugin,
+                        "api_structured_output_mode",
+                        "structured_outputs",
+                    ))
+                    schema = structured_outputs["json"]
+                    if structured_api_mode == "response_format":
+                        request["response_format"] = {
+                            "type": "json_schema",
+                            "json_schema": {
+                                "name": "contextgraph_controller",
+                                "schema": schema,
+                            },
+                        }
+                    elif structured_api_mode == "guided_json":
+                        extra_body["guided_json"] = schema
+                    elif structured_api_mode == "structured_outputs":
+                        extra_body["structured_outputs"] = structured_outputs
+                    else:
+                        raise ValueError(
+                            "unknown API structured-output mode: "
+                            f"{structured_api_mode}"
+                        )
                 if extra_body:
                     request["extra_body"] = extra_body
                 response = await self.client.chat.completions.create(**request)

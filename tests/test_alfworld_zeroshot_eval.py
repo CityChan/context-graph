@@ -126,6 +126,8 @@ def test_api_evaluator_wires_controller_policy_controls():
     assert 'chat_template_kwargs["enable_thinking"] = False' in agent_utils
     assert '"GRAMMAR_ACTIVE"' in evaluator
     assert '"Reply exactly NOT_JSON with no braces."' in evaluator
+    assert '["response_format", "structured_outputs", "guided_json"]' in evaluator
+    assert '"api_structured_output_mode": args.api_structured_output_mode' in evaluator
     assert '"--controller-action-policy"' in evaluator
     assert '"--controller-allow-pass"' in evaluator
     assert '"--inject-graph-state-after-action"' in evaluator
