@@ -175,13 +175,38 @@ def score_response(
         "structural_choice_exact": False,
         "decision_exact": False,
         "predicted_action": None,
+        "predicted_fields": None,
+        "parse_error": None,
+        "schema_error": None,
+        "replay_error": None,
         "error": None,
     }
     try:
         gold = _parse_json_object(gold_response)
         predicted = _parse_json_object(predicted_response)
-        result["parse_valid"] = True
-        result["predicted_action"] = predicted.get("action")
+    except (json.JSONDecodeError, TypeError, ValueError) as exc:
+        result["parse_error"] = str(exc)
+        result["error"] = str(exc)
+        return result
+
+    result["parse_valid"] = True
+    result["predicted_action"] = predicted.get("action")
+    result["predicted_fields"] = sorted(str(key) for key in predicted)
+    result["action_exact"] = predicted.get("action") == gold.get("action")
+    result["indices_exact"] = predicted.get("candidate_indices") == gold.get("candidate_indices")
+    predicted_indices = predicted.get("candidate_indices")
+    gold_indices = gold.get("candidate_indices")
+    if isinstance(predicted_indices, list) and isinstance(gold_indices, list):
+        result["indices_set_exact"] = set(predicted_indices) == set(gold_indices)
+    result["relation_exact"] = predicted.get("relation") == gold.get("relation")
+    result["structural_choice_exact"] = bool(
+        result["action_exact"]
+        and result["indices_set_exact"]
+        and (gold.get("action") != "add_edge" or result["relation_exact"])
+    )
+    result["decision_exact"] = predicted == gold
+
+    try:
         validate_flat_decision(
             predicted,
             candidate_count=candidate_count,
@@ -189,29 +214,18 @@ def score_response(
             action_policy=action_policy,
         )
         result["schema_valid"] = True
-        replay_valid, replay_error = replay_response(
-            predicted_response,
-            candidate_count=candidate_count,
-            allow_pass=allow_pass,
-            action_policy=action_policy,
-        )
-        result["replay_valid"] = replay_valid
-        result["error"] = replay_error
-        result["action_exact"] = predicted.get("action") == gold.get("action")
-        result["indices_exact"] = predicted.get("candidate_indices") == gold.get("candidate_indices")
-        predicted_indices = predicted.get("candidate_indices")
-        gold_indices = gold.get("candidate_indices")
-        if isinstance(predicted_indices, list) and isinstance(gold_indices, list):
-            result["indices_set_exact"] = set(predicted_indices) == set(gold_indices)
-        result["relation_exact"] = predicted.get("relation") == gold.get("relation")
-        result["structural_choice_exact"] = bool(
-            result["action_exact"]
-            and result["indices_set_exact"]
-            and (gold.get("action") != "add_edge" or result["relation_exact"])
-        )
-        result["decision_exact"] = predicted == gold
-    except (GraphControllerError, json.JSONDecodeError, TypeError, ValueError) as exc:
-        result["error"] = str(exc)
+    except (GraphControllerError, TypeError, ValueError) as exc:
+        result["schema_error"] = str(exc)
+
+    replay_valid, replay_error = replay_response(
+        predicted_response,
+        candidate_count=candidate_count,
+        allow_pass=allow_pass,
+        action_policy=action_policy,
+    )
+    result["replay_valid"] = replay_valid
+    result["replay_error"] = replay_error
+    result["error"] = result["schema_error"] or replay_error
     return result
 
 
@@ -334,12 +348,29 @@ def main() -> None:
         "teacher_add_edge_relation_agreement": _rate(relation_rows, "relation_exact"),
         "teacher_structural_choice_agreement": _rate(scored, "structural_choice_exact"),
         "teacher_exact_decision_agreement": _rate(scored, "decision_exact"),
+        "predicted_field_sets": dict(
+            Counter(
+                ",".join(score["predicted_fields"])
+                for score in scored
+                if score["predicted_fields"] is not None
+            )
+        ),
         "gold_action_counts": dict(Counter(str(action) for action in data["action"])),
         "predicted_action_counts": dict(Counter(str(score["predicted_action"]) for score in scored)),
         "error_counts": dict(Counter(str(score["error"]) for score in scored if score["error"])),
+        "schema_error_counts": dict(
+            Counter(str(score["schema_error"]) for score in scored if score["schema_error"])
+        ),
+        "replay_error_counts": dict(
+            Counter(str(score["replay_error"]) for score in scored if score["replay_error"])
+        ),
         "pass_gold_rows": int((data["action"] == "pass").sum()),
         "notes": [
-            "guided decoding is disabled by default so schema validity measures learned behavior rather than grammar enforcement",
+            (
+                "guided decoding constrained responses to the controller JSON schema"
+                if args.guided_decoding
+                else "guided decoding was disabled so schema validity measures learned behavior rather than grammar enforcement"
+            ),
             "teacher agreement is not unique semantic correctness because multiple graph actions may be legal",
             "action contract validity replays the predicted action on a synthetic graph with the same candidate topology",
             "pass behavior is not measured when pass_gold_rows is zero",

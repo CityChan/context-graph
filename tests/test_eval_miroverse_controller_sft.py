@@ -80,3 +80,49 @@ def test_structural_policy_rejects_select_with_multiple_candidates():
     assert not score["schema_valid"]
     assert not score["replay_valid"]
     assert "unavailable" in score["error"]
+
+
+def test_schema_failure_does_not_hide_runtime_replay_or_action_agreement():
+    gold = decision("prune", [0])
+    predicted = json.dumps({
+        "action": "prune",
+        "candidate_indices": [0],
+        "summary": "",
+        "relation": "semantic",
+        "explanation": "extra field rejected by the strict schema",
+    })
+    score = score_response(
+        gold,
+        predicted,
+        candidate_count=2,
+        allow_pass=False,
+        action_policy="structural",
+    )
+    assert score["parse_valid"]
+    assert not score["schema_valid"]
+    assert score["replay_valid"]
+    assert score["action_exact"]
+    assert score["indices_exact"]
+    assert score["schema_error"] == "response fields do not exactly match the controller schema"
+    assert score["replay_error"] is None
+
+
+def test_missing_candidate_indices_reports_schema_and_replay_errors():
+    predicted = json.dumps({
+        "action": "prune",
+        "summary": "",
+        "relation": "semantic",
+    })
+    score = score_response(
+        decision("prune", [0]),
+        predicted,
+        candidate_count=2,
+        allow_pass=False,
+        action_policy="structural",
+    )
+    assert score["parse_valid"]
+    assert not score["schema_valid"]
+    assert not score["replay_valid"]
+    assert score["action_exact"]
+    assert score["schema_error"] == "response fields do not exactly match the controller schema"
+    assert score["replay_error"] == "candidate_indices is not an array"
