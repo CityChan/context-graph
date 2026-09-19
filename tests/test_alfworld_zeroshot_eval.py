@@ -5,6 +5,7 @@ from scripts.summarize_alfworld_eval import extract_metrics
 
 ROOT = Path(__file__).resolve().parents[1]
 CONTROLLER_SFT_1NODE = ROOT / "scripts/eval_alfworld_ctxgraph_qwen3_8b_controller_sft_1node_idev.sh"
+CONTROLLER_SFT_FULL = ROOT / "scripts/eval_alfworld_ctxgraph_qwen3_8b_controller_sft_1node_full.sh"
 
 
 def test_extract_metrics_from_verl_step_line():
@@ -116,6 +117,29 @@ def test_single_node_controller_sft_eval_uses_heldout_alfworld_and_structural_po
     assert "--consolidation-interval" in launcher
     assert "--reasoning-effort non-thinking" in launcher
     assert "scripts/validate_contextgraph_traces.py" in launcher
+
+
+def test_single_node_controller_sft_eval_supports_full_split():
+    launcher = CONTROLLER_SFT_1NODE.read_text(encoding="utf-8")
+    assert 'if [ "$MAX_SAMPLES" -eq 0 ]' in launcher
+    assert "DATA_N_VAL=0" in launcher
+    assert "EPISODE_LABEL=all" in launcher
+    assert '--n_val "$DATA_N_VAL"' in launcher
+    assert '--max-samples "$MAX_SAMPLES"' in launcher
+    assert '--num-workers "$NUM_WORKERS"' in launcher
+
+
+def test_controller_sft_full_sbatch_runs_all_supported_alfworld_tasks():
+    launcher = CONTROLLER_SFT_FULL.read_text(encoding="utf-8")
+    assert "#SBATCH -p gh" in launcher
+    assert "#SBATCH -N 1" in launcher
+    assert "#SBATCH -t 12:00:00" in launcher
+    assert "#SBATCH -A AST24021" in launcher
+    assert "export MAX_SAMPLES=${MAX_SAMPLES:-0}" in launcher
+    assert "export START_INDEX=${START_INDEX:-0}" in launcher
+    assert "export DATA_SEED=${DATA_SEED:-42}" in launcher
+    assert "export NUM_WORKERS=${NUM_WORKERS:-4}" in launcher
+    assert "eval_alfworld_ctxgraph_qwen3_8b_controller_sft_1node_idev.sh" in launcher
 
 
 def test_api_evaluator_wires_controller_policy_controls():

@@ -18,6 +18,7 @@ SERVER_PORT=${SERVER_PORT:-18000}
 MAX_SAMPLES=${MAX_SAMPLES:-8}
 START_INDEX=${START_INDEX:-0}
 DATA_SEED=${DATA_SEED:-42}
+NUM_WORKERS=${NUM_WORKERS:-1}
 MAX_TURN=${MAX_TURN:-60}
 CONSOLIDATION_INTERVAL=${CONSOLIDATION_INTERVAL:-5}
 TURN_MAX_NEW_TOKENS=${TURN_MAX_NEW_TOKENS:-128}
@@ -30,12 +31,16 @@ ARTIFACT_ROOT=${ARTIFACT_ROOT:-$SCRATCH/cgeval/$RUN_TAG}
 RAW_OUTPUT_DIR=$ARTIFACT_ROOT/raw
 VLLM_LOG=$ARTIFACT_ROOT/vllm.log
 
-if ! [[ "$MAX_SAMPLES" =~ ^[1-9][0-9]*$ ]]; then
-  echo "ERROR: MAX_SAMPLES must be a positive integer"
+if ! [[ "$MAX_SAMPLES" =~ ^[0-9]+$ ]]; then
+  echo "ERROR: MAX_SAMPLES must be a non-negative integer (0 evaluates all tasks)"
   exit 2
 fi
 if ! [[ "$START_INDEX" =~ ^[0-9]+$ ]]; then
   echo "ERROR: START_INDEX must be a non-negative integer"
+  exit 2
+fi
+if ! [[ "$NUM_WORKERS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "ERROR: NUM_WORKERS must be a positive integer"
   exit 2
 fi
 test -s "$MODEL_PATH/config.json" || { echo "ERROR: invalid MODEL_PATH=$MODEL_PATH"; exit 2; }
@@ -61,10 +66,22 @@ export QWEN_ENABLE_THINKING=False
 
 test -d "$ALFWORLD_DATA/json_2.1.1" || { echo "ERROR: ALFWorld data missing under $ALFWORLD_DATA"; exit 2; }
 
+if [ "$MAX_SAMPLES" -eq 0 ]; then
+  if [ "$START_INDEX" -ne 0 ]; then
+    echo "ERROR: START_INDEX must be 0 when MAX_SAMPLES=0"
+    exit 2
+  fi
+  DATA_N_VAL=0
+  EPISODE_LABEL=all
+else
+  DATA_N_VAL=$((START_INDEX + MAX_SAMPLES))
+  EPISODE_LABEL="$MAX_SAMPLES from index $START_INDEX"
+fi
+
 python scripts/make_alfworld_data.py \
   --mode real \
   --n_train 16 \
-  --n_val "$((START_INDEX + MAX_SAMPLES))" \
+  --n_val "$DATA_N_VAL" \
   --seed "$DATA_SEED" \
   --alfworld_data "$ALFWORLD_DATA"
 
@@ -74,7 +91,8 @@ test -s "$DATA_PATH" || { echo "ERROR: missing $DATA_PATH"; exit 2; }
 echo "=============================================================="
 echo "  ALFWorld controller-SFT end-to-end diagnostic"
 echo "  Model: $MODEL_PATH"
-echo "  Episodes: $MAX_SAMPLES from index $START_INDEX; seed: $DATA_SEED"
+echo "  Episodes: $EPISODE_LABEL; seed: $DATA_SEED"
+echo "  Workers: $NUM_WORKERS"
 echo "  Controller: structural, interval=$CONSOLIDATION_INTERVAL, pass disabled"
 echo "  Output: $RAW_OUTPUT_DIR"
 echo "=============================================================="
@@ -118,7 +136,7 @@ python scripts/eval_interactive.py \
   --tokenizer-name "$MODEL_PATH" \
   --max-samples "$MAX_SAMPLES" \
   --start-index "$START_INDEX" \
-  --num-workers 1 \
+  --num-workers "$NUM_WORKERS" \
   --prompt-length "$PROMPT_LENGTH" \
   --response-length "$RESPONSE_LENGTH" \
   --max-turn "$MAX_TURN" \
