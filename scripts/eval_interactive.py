@@ -61,6 +61,21 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--graph-controller-max-candidates", type=int, default=12)
     parser.add_argument("--graph-controller-preview-chars", type=int, default=360)
+    parser.add_argument(
+        "--controller-action-policy",
+        choices=("balanced", "structural"),
+        default="balanced",
+    )
+    parser.add_argument(
+        "--controller-allow-pass",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+    )
+    parser.add_argument(
+        "--inject-graph-state-after-action",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
     parser.add_argument("--max-session", type=int, default=4)
     parser.add_argument("--branch-len", type=int, default=8192)
     parser.add_argument("--turn-max-new-tokens", type=int, default=1024)
@@ -122,6 +137,9 @@ def make_config(args: argparse.Namespace, workflow: str):
                 "graph_controller_max_candidates": args.graph_controller_max_candidates,
                 "graph_controller_preview_chars": args.graph_controller_preview_chars,
                 "graph_controller_min_completion_tokens": 256,
+                "controller_action_policy": args.controller_action_policy,
+                "controller_allow_pass": args.controller_allow_pass,
+                "inject_graph_state_after_action": args.inject_graph_state_after_action,
                 "lambda_compact": 0.1,
                 "lambda_cost": 0.005,
                 "scienceworld_max_steps": args.max_turn,

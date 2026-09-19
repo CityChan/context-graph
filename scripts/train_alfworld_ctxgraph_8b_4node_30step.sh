@@ -87,6 +87,10 @@ export CC=gcc
 export CXX=g++
 export CUDAHOSTCXX=g++
 export TORCHDYNAMO_DISABLE=1
+# vLLM V1 applies structured-output masks through an xgrammar
+# torch.compile-decorated kernel. The Vista build can emit invalid Inductor
+# Python for it, so default this small operation to eager execution.
+export TORCH_COMPILE_DISABLE=${TORCH_COMPILE_DISABLE:-1}
 export HYDRA_FULL_ERROR=1
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
 export NCCL_P2P_LEVEL=NVL
