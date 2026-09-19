@@ -320,11 +320,17 @@ class CallAPI(LLMClass):  # Call external API (OpenAI)
                     # older OpenAI SDKs can forward it to a local vLLM server.
                     if reasoning_effort == "non-thinking":
                         chat_template_kwargs = {"thinking": False}
+                        if "qwen" in str(self.model).lower():
+                            # Qwen3's chat template uses enable_thinking;
+                            # `thinking` alone is ignored by that template.
+                            chat_template_kwargs["enable_thinking"] = False
                     else:
                         chat_template_kwargs = {
                             "thinking": True,
                             "reasoning_effort": str(reasoning_effort),
                         }
+                        if "qwen" in str(self.model).lower():
+                            chat_template_kwargs["enable_thinking"] = True
                     extra_body["chat_template_kwargs"] = chat_template_kwargs
                 if structured_outputs is not None:
                     extra_body["structured_outputs"] = structured_outputs

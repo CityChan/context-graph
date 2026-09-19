@@ -62,6 +62,20 @@ def test_call_api_sends_deepseek_non_thinking_template_kwargs(monkeypatch):
     }
 
 
+def test_call_api_sends_qwen_non_thinking_template_kwargs(monkeypatch):
+    client, completions = _client(monkeypatch, "non-thinking")
+    client.model = "contextgraph-qwen3-8b-controller-sft"
+    asyncio.run(client.create_completion(
+        [1, 2], messages=[{"role": "user", "content": "hi"}]
+    ))
+    assert completions.calls[0]["extra_body"] == {
+        "chat_template_kwargs": {
+            "thinking": False,
+            "enable_thinking": False,
+        },
+    }
+
+
 def test_call_api_sends_deepseek_reasoning_effort(monkeypatch):
     client, completions = _client(monkeypatch, "high")
     asyncio.run(client.create_completion([1, 2], messages=[{"role": "user", "content": "hi"}]))

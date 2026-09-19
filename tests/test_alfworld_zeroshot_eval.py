@@ -120,7 +120,12 @@ def test_single_node_controller_sft_eval_uses_heldout_alfworld_and_structural_po
 
 def test_api_evaluator_wires_controller_policy_controls():
     evaluator = (ROOT / "scripts/eval_interactive.py").read_text(encoding="utf-8")
+    agent_utils = (ROOT / "agents/utils.py").read_text(encoding="utf-8")
     assert '"algorithm": {"adv_estimator": "foldgrpo"}' in evaluator
+    assert 'chat_template_kwargs["enable_thinking"] = False' in evaluator
+    assert 'chat_template_kwargs["enable_thinking"] = False' in agent_utils
+    assert '"GRAMMAR_ACTIVE"' in evaluator
+    assert '"Reply exactly NOT_JSON with no braces."' in evaluator
     assert '"--controller-action-policy"' in evaluator
     assert '"--controller-allow-pass"' in evaluator
     assert '"--inject-graph-state-after-action"' in evaluator

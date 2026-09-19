@@ -239,6 +239,64 @@ async def preflight(args: argparse.Namespace, workflow: str) -> None:
         timeout=30.0,
     )
     try:
+        chat_template_kwargs: dict[str, Any] = {}
+        if args.reasoning_effort == "non-thinking":
+            chat_template_kwargs = {"thinking": False}
+            if "qwen" in args.model_name.lower():
+                chat_template_kwargs["enable_thinking"] = False
+        elif args.reasoning_effort:
+            chat_template_kwargs = {
+                "thinking": True,
+                "reasoning_effort": str(args.reasoning_effort),
+            }
+            if "qwen" in args.model_name.lower():
+                chat_template_kwargs["enable_thinking"] = True
+
+        if WORKFLOWS[workflow] == "graph" and args.structured_graph_controller:
+            # An easy JSON instruction can pass even when vLLM silently
+            # ignores structured_outputs. This adversarial probe asks for
+            # invalid plain text; only active grammar masking can satisfy the
+            # schema instead.
+            grammar_probe_schema = {
+                "type": "object",
+                "properties": {
+                    "probe": {
+                        "type": "string",
+                        "enum": ["GRAMMAR_ACTIVE"],
+                    },
+                },
+                "required": ["probe"],
+                "additionalProperties": False,
+            }
+            probe_extra_body: dict[str, Any] = {
+                "structured_outputs": {"json": grammar_probe_schema},
+            }
+            if chat_template_kwargs:
+                probe_extra_body["chat_template_kwargs"] = chat_template_kwargs
+            probe_response = await client.chat.completions.create(
+                model=args.model_name,
+                messages=[{
+                    "role": "user",
+                    "content": "Reply exactly NOT_JSON with no braces.",
+                }],
+                max_completion_tokens=64,
+                extra_body=probe_extra_body,
+            )
+            probe_raw = probe_response.choices[0].message.content or ""
+            probe_content = normalize_structured_content(probe_raw)
+            try:
+                probe = json.loads(probe_content)
+            except json.JSONDecodeError as exc:
+                raise RuntimeError(
+                    "Structured-output grammar probe was not constrained: "
+                    f"content={probe_raw!r}"
+                ) from exc
+            if probe != {"probe": "GRAMMAR_ACTIVE"}:
+                raise RuntimeError(
+                    "Structured-output grammar probe returned the wrong "
+                    f"object: content={probe_raw!r}"
+                )
+
         request: dict[str, Any] = {
             "model": args.model_name,
             "messages": [{"role": "user", "content": "Reply with OK."}],
@@ -259,13 +317,8 @@ async def preflight(args: argparse.Namespace, workflow: str) -> None:
             extra_body: dict[str, Any] = {
                 "structured_outputs": {"json": schema},
             }
-            if args.reasoning_effort == "non-thinking":
-                extra_body["chat_template_kwargs"] = {"thinking": False}
-            elif args.reasoning_effort:
-                extra_body["chat_template_kwargs"] = {
-                    "thinking": True,
-                    "reasoning_effort": str(args.reasoning_effort),
-                }
+            if chat_template_kwargs:
+                extra_body["chat_template_kwargs"] = chat_template_kwargs
             request["extra_body"] = extra_body
         response = await client.chat.completions.create(**request)
         if not response.choices:
