@@ -160,7 +160,7 @@ case "$BC_CONTROLLER_ACTION_POLICY" in
     ;;
 esac
 case "$BC_CTXGRAPH_PROTOCOL" in
-  legacy)
+  legacy|full_policy)
     BC_STRUCTURED_GRAPH_CONTROLLER=false
     BC_CONTROLLER_OWNED_TOOL_FORMATTING=false
     ;;
@@ -173,7 +173,7 @@ case "$BC_CTXGRAPH_PROTOCOL" in
     BC_CONTROLLER_OWNED_TOOL_FORMATTING=true
     ;;
   *)
-    echo "ERROR: BC_CTXGRAPH_PROTOCOL must be legacy or controller; got $BC_CTXGRAPH_PROTOCOL"
+    echo "ERROR: BC_CTXGRAPH_PROTOCOL must be legacy, full_policy, or controller; got $BC_CTXGRAPH_PROTOCOL"
     exit 1
     ;;
 esac

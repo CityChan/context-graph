@@ -84,11 +84,20 @@ def test_sab_8b_eval_has_opt_in_controller_protocol():
 def test_browsecomp_8b_eval_has_opt_in_controller_protocol():
     source = _read("scripts/eval_bc_baseline_8b_4node_zeroshot.sh")
     assert "BC_CTXGRAPH_PROTOCOL=${BC_CTXGRAPH_PROTOCOL:-legacy}" in source
+    assert "legacy|full_policy)" in source
     assert "BC_CTXGRAPH_PROTOCOL=controller requires BC_METHOD=contextgraph" in source
     assert "plugin.structured_graph_controller=$BC_STRUCTURED_GRAPH_CONTROLLER" in source
     assert "plugin.controller_owned_tool_formatting=$BC_CONTROLLER_OWNED_TOOL_FORMATTING" in source
     assert "plugin.controller_action_policy=$BC_CONTROLLER_ACTION_POLICY" in source
     assert "GuidedDecodingParams" in source
+
+
+def test_full_policy_sft_idev_eval_uses_matching_protocol_and_model():
+    wrapper = _read("scripts/eval_bc_gaia_qwen3_8b_full_policy_sft_idev.sh")
+    runner = _read("scripts/eval_bc_gaia_qwen3_8b_base_idev.sh")
+    assert "miroverse_full_policy_qwen3_8b_bs16_1ep_v1_step174_hf" in wrapper
+    assert "EVAL_CTXGRAPH_PROTOCOL=full_policy" in wrapper
+    assert 'BC_CTXGRAPH_PROTOCOL="$EVAL_CTXGRAPH_PROTOCOL"' in runner
 
 
 def test_sab_30b_eval_and_submitter_preserve_protocol_identity():
