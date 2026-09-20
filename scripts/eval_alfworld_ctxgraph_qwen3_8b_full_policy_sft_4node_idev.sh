@@ -8,8 +8,8 @@ PROJECT_ROOT=${PROJECT_ROOT:-/work/09281/chc_1996/vista/context-graph}
 SCRATCH_ROOT=${SCRATCH_ROOT:-/scratch/09281/chc_1996}
 
 export MODEL_PATH=${FULL_POLICY_SFT_MODEL_PATH:-$SCRATCH_ROOT/contextgraph_sft_models/miroverse_full_policy_qwen3_8b_bs16_1ep_v1_step174_hf}
-export ALFWORLD_EXPERIMENT_PREFIX=full_policy_sft
-export ALFWORLD_METHOD_LABEL="ContextGraph full-policy SFT"
+export ALFWORLD_EXPERIMENT_PREFIX=${ALFWORLD_EXPERIMENT_PREFIX:-full_policy_sft}
+export ALFWORLD_METHOD_LABEL=${ALFWORLD_METHOD_LABEL:-"ContextGraph full-policy SFT"}
 export ALFWORLD_STRUCTURED_GRAPH_CONTROLLER=False
 export ALFWORLD_CONTROLLER_OWNED_TOOL_FORMATTING=False
 export ALFWORLD_CONTROLLER_ACTION_POLICY=balanced

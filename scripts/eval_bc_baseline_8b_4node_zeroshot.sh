@@ -145,6 +145,8 @@ BC_METHOD=${BC_METHOD:-baseline}
 BC_EXPERIMENT_MODEL_TAG=${BC_EXPERIMENT_MODEL_TAG:-8b}
 BC_CTXGRAPH_PROTOCOL=${BC_CTXGRAPH_PROTOCOL:-legacy}
 BC_CONTROLLER_ACTION_POLICY=${BC_CONTROLLER_ACTION_POLICY:-structural}
+BC_CONSOLIDATION_INTERVAL=${BC_CONSOLIDATION_INTERVAL:-5}
+BC_AUTO_PRUNE_MAX_ACTIVE=${BC_AUTO_PRUNE_MAX_ACTIVE:-12}
 
 case "$BC_EXPERIMENT_MODEL_TAG" in
   *[!A-Za-z0-9_-]*)
@@ -206,7 +208,7 @@ case "$BC_METHOD" in
     WORKFLOW=search_graph
     PROCESS_REWARD='[flat,scope,graph]'
     LAMBDA_COST=0.02
-    CONSOLIDATION_INTERVAL=5
+    CONSOLIDATION_INTERVAL="$BC_CONSOLIDATION_INTERVAL"
     ;;
   *)
     echo "ERROR: BC_METHOD must be one of: baseline, foldagent, contextgraph (got '$BC_METHOD')"
@@ -532,6 +534,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   +actor_rollout_ref.rollout.plugin.lambda_compact=0.2 \
   +actor_rollout_ref.rollout.plugin.lambda_cost="$LAMBDA_COST" \
   +actor_rollout_ref.rollout.plugin.consolidation_interval="$CONSOLIDATION_INTERVAL" \
+  +actor_rollout_ref.rollout.plugin.auto_prune_max_active="$BC_AUTO_PRUNE_MAX_ACTIVE" \
   +actor_rollout_ref.rollout.plugin.structured_graph_controller=$BC_STRUCTURED_GRAPH_CONTROLLER \
   +actor_rollout_ref.rollout.plugin.controller_owned_tool_formatting=$BC_CONTROLLER_OWNED_TOOL_FORMATTING \
   +actor_rollout_ref.rollout.plugin.controller_action_policy=$BC_CONTROLLER_ACTION_POLICY \

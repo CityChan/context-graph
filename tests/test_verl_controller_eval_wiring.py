@@ -98,6 +98,9 @@ def test_full_policy_sft_idev_eval_uses_matching_protocol_and_model():
     assert "miroverse_full_policy_qwen3_8b_bs16_1ep_v1_step174_hf" in wrapper
     assert "EVAL_CTXGRAPH_PROTOCOL=full_policy" in wrapper
     assert 'BC_CTXGRAPH_PROTOCOL="$EVAL_CTXGRAPH_PROTOCOL"' in runner
+    assert "GAIA_CONTEXT_LENGTH=${GAIA_CONTEXT_LENGTH:-32768}" in runner
+    assert "GAIA_CONSOLIDATION_INTERVAL=${GAIA_CONSOLIDATION_INTERVAL:-5}" in runner
+    assert "GAIA_AUTO_PRUNE_MAX_ACTIVE=${GAIA_AUTO_PRUNE_MAX_ACTIVE:-12}" in runner
 
 
 def test_sab_30b_eval_and_submitter_preserve_protocol_identity():

@@ -385,6 +385,12 @@ async def process_item(
     # produce a graph rather than a tree (cross-subtask relations enabled).
     auto_bind_branch_edges = getattr(config.plugin, "auto_bind_branch_edges", False)
     auto_bind_min_overlap = getattr(config.plugin, "auto_bind_min_overlap", 0.05)
+    # Keep the historical cap by default, but allow retention-focused evals to
+    # postpone heuristic pruning.  A value of 0 disables auto-pruning while
+    # leaving explicit controller/model prune operations available.
+    auto_prune_max_active = max(
+        0, int(getattr(config.plugin, "auto_prune_max_active", 12) or 0)
+    )
     # Forced consolidation: every N main turns env injects a checkpoint where
     # policy MUST emit a graph op or <pass>. <pass> is reward-neutral only if
     # graph.is_saturated() returns True. 0 disables consolidation entirely
@@ -887,7 +893,11 @@ async def process_item(
         # Parent graph stays small (subtask + summary + main observations),
         # so the same heuristic thresholds work fine.
         trace_before = graph_trace.capture(graph)
-        auto_pruned = graph.auto_prune_low_value(max_active=12)
+        auto_pruned = (
+            graph.auto_prune_low_value(max_active=auto_prune_max_active)
+            if auto_prune_max_active > 0
+            else []
+        )
         if auto_pruned:
             graph_trace.record(
                 graph, trace_before, turn_id=main_turn_count,

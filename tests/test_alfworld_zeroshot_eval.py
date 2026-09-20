@@ -38,7 +38,7 @@ def test_zeroshot_launcher_uses_fixed_base_model_and_current_controller():
 def test_full_policy_sft_alfworld_launcher_uses_matched_legacy_protocol():
     launcher = (ROOT / "scripts/eval_alfworld_ctxgraph_qwen3_8b_full_policy_sft_4node_idev.sh").read_text(encoding="utf-8")
     assert "miroverse_full_policy_qwen3_8b_bs16_1ep_v1_step174_hf" in launcher
-    assert "export ALFWORLD_EXPERIMENT_PREFIX=full_policy_sft" in launcher
+    assert "export ALFWORLD_EXPERIMENT_PREFIX=${ALFWORLD_EXPERIMENT_PREFIX:-full_policy_sft}" in launcher
     assert "export ALFWORLD_STRUCTURED_GRAPH_CONTROLLER=False" in launcher
     assert "export ALFWORLD_CONTROLLER_OWNED_TOOL_FORMATTING=False" in launcher
     assert "export ALFWORLD_CONTROLLER_ACTION_POLICY=balanced" in launcher
@@ -109,8 +109,23 @@ def test_shared_alfworld_launcher_wires_controller_and_resume_mode():
     assert "plugin.enable_retrieval_memory=${ALFWORLD_ENABLE_RETRIEVAL_MEMORY}" in launcher
     assert "plugin.inject_graph_state_after_action=${ALFWORLD_INJECT_GRAPH_STATE_AFTER_ACTION}" in launcher
     assert "plugin.consolidation_interval=${ALFWORLD_CONSOLIDATION_INTERVAL}" in launcher
+    assert "plugin.auto_prune_max_active=${ALFWORLD_AUTO_PRUNE_MAX_ACTIVE}" in launcher
+    assert "plugin.final_answer_reserve=${ALFWORLD_FINAL_ANSWER_RESERVE}" in launcher
     assert "trainer.resume_mode=${ALFWORLD_TRAINER_RESUME_MODE}" in launcher
     assert "export TORCH_COMPILE_DISABLE=${TORCH_COMPILE_DISABLE:-1}" in launcher
+
+
+def test_retention_budget_eval_expands_context_and_delays_compression():
+    launcher = (ROOT / "scripts/eval_full_policy_sft_retention_budget_4node_idev.sh").read_text(encoding="utf-8")
+    assert "GAIA_CONTEXT_LENGTH=65536" in launcher
+    assert "GAIA_MAX_TURN=150" in launcher
+    assert "GAIA_CONSOLIDATION_INTERVAL=20" in launcher
+    assert "GAIA_AUTO_PRUNE_MAX_ACTIVE=48" in launcher
+    assert "ALFWORLD_MAX_TOKEN_LEN_PER_GPU=32768" in launcher
+    assert "ALFWORLD_MAX_TURN=120" in launcher
+    assert "ALFWORLD_CONSOLIDATION_INTERVAL=20" in launcher
+    assert "ALFWORLD_AUTO_PRUNE_MAX_ACTIVE=48" in launcher
+    assert "ALFWORLD_FINAL_ANSWER_RESERVE=2048" in launcher
 
 
 def test_single_node_controller_sft_eval_uses_heldout_alfworld_and_structural_policy():
