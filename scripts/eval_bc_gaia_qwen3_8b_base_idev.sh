@@ -7,7 +7,9 @@ set -euo pipefail
 
 PROJECT_ROOT=${PROJECT_ROOT:-/work/09281/chc_1996/vista/context-graph}
 SCRATCH_ROOT=${SCRATCH_ROOT:-/scratch/09281/chc_1996}
-BASE_MODEL_PATH=${BASE_EVAL_MODEL_PATH:-Qwen/Qwen3-8B}
+EVAL_VARIANT=${EVAL_VARIANT:-base}
+EVAL_MODEL_TAG=${EVAL_MODEL_TAG:-qwen3_8b_base}
+EVAL_MODEL_PATH=${EVAL_MODEL_PATH:-${BASE_EVAL_MODEL_PATH:-Qwen/Qwen3-8B}}
 HF_HOME=${HF_HOME:-/work/09281/chc_1996/vista/cache}
 HF_HUB_CACHE=${HF_HUB_CACHE:-$HF_HOME/hub}
 STAMP=${STAMP:-$(date +%Y%m%d_%H%M%S)}
@@ -17,6 +19,9 @@ RUN_GAIA=${RUN_GAIA:-1}
 case "$RUN_BC:$RUN_GAIA" in
   0:0|0:1|1:0|1:1) ;;
   *) echo "ERROR: RUN_BC and RUN_GAIA must each be 0 or 1" >&2; exit 2 ;;
+esac
+case "$EVAL_VARIANT:$EVAL_MODEL_TAG" in
+  *[!A-Za-z0-9_:-]*) echo "ERROR: EVAL_VARIANT and EVAL_MODEL_TAG may contain only letters, numbers, underscores, and hyphens" >&2; exit 2 ;;
 esac
 
 if [ -z "${SLURM_JOB_ID:-}" ] || [ -z "${SLURM_JOB_NODELIST:-}" ]; then
@@ -36,8 +41,8 @@ fi
 
 FULL_NODELIST=$SLURM_JOB_NODELIST
 BC_NODELIST=$(printf '%s\n' "${ALLOC_NODES[@]:0:4}" | paste -sd, -)
-BC_EXPERIMENT="eval_bc_base_controller_qwen3_8b_4n_64k_${STAMP}"
-GAIA_EXPERIMENT="eval_gaia_base_controller_qwen3_8b_${NUM_ALLOC_NODES}n_32k_${STAMP}"
+BC_EXPERIMENT="eval_bc_${EVAL_VARIANT}_controller_${EVAL_MODEL_TAG}_4n_64k_${STAMP}"
+GAIA_EXPERIMENT="eval_gaia_${EVAL_VARIANT}_controller_${EVAL_MODEL_TAG}_${NUM_ALLOC_NODES}n_32k_${STAMP}"
 GAIA_OUTPUT_ROOT="$SCRATCH_ROOT/context-graph-ckpts/$GAIA_EXPERIMENT"
 if [ "$NUM_ALLOC_NODES" -eq 4 ]; then
   GAIA_TRAIN_BATCH_SIZE=30
@@ -48,9 +53,10 @@ else
 fi
 
 echo "=============================================================="
-echo "  Sequential BC-P + GAIA base-model controller evaluation"
+echo "  Sequential BC-P + GAIA controller evaluation"
 echo "  Job: $SLURM_JOB_ID"
-echo "  Model: $BASE_MODEL_PATH"
+echo "  Variant: $EVAL_VARIANT"
+echo "  Model: $EVAL_MODEL_PATH"
 echo "  BC-P nodes: $BC_NODELIST"
 echo "  GAIA nodes: $FULL_NODELIST ($NUM_ALLOC_NODES nodes)"
 echo "  Stages: BC-P=$RUN_BC GAIA=$RUN_GAIA"
@@ -63,12 +69,12 @@ if [ "$RUN_BC" = "1" ]; then
   (
     export SLURM_JOB_NODELIST="$BC_NODELIST"
     export EXPECTED_NUM_NODES=4
-    export MODEL_PATH="$BASE_MODEL_PATH"
+    export MODEL_PATH="$EVAL_MODEL_PATH"
     export HF_HOME HF_HUB_CACHE
     export BC_METHOD=contextgraph
     export BC_CTXGRAPH_PROTOCOL=controller
     export BC_CONTROLLER_ACTION_POLICY=structural
-    export BC_EXPERIMENT_MODEL_TAG=qwen3_8b_base
+    export BC_EXPERIMENT_MODEL_TAG="$EVAL_MODEL_TAG"
     export BC_CONTEXT_LENGTH=65536
     export BC_PROMPT_LENGTH=8192
     export BC_RESPONSE_LENGTH=57344
@@ -93,7 +99,7 @@ if [ "$RUN_GAIA" = "1" ]; then
   (
     export SLURM_JOB_NODELIST="$FULL_NODELIST"
     export EXPECTED_NUM_NODES="$NUM_ALLOC_NODES"
-    export MODEL_PATH="$BASE_MODEL_PATH"
+    export MODEL_PATH="$EVAL_MODEL_PATH"
     export HF_HOME HF_HUB_CACHE
     export EXPERIMENT_NAME="$GAIA_EXPERIMENT"
     export CHECKPOINT_ROOT="$GAIA_OUTPUT_ROOT"
