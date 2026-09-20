@@ -147,6 +147,14 @@ BC_CTXGRAPH_PROTOCOL=${BC_CTXGRAPH_PROTOCOL:-legacy}
 BC_CONTROLLER_ACTION_POLICY=${BC_CONTROLLER_ACTION_POLICY:-structural}
 BC_CONSOLIDATION_INTERVAL=${BC_CONSOLIDATION_INTERVAL:-5}
 BC_AUTO_PRUNE_MAX_ACTIVE=${BC_AUTO_PRUNE_MAX_ACTIVE:-12}
+STRUCTURED_MEMORY_ENABLED=${STRUCTURED_MEMORY_ENABLED:-0}
+STRUCTURED_MEMORY_GAP_INTERVAL=${STRUCTURED_MEMORY_GAP_INTERVAL:-8}
+STRUCTURED_MEMORY_CONTEXT_BUDGET=${STRUCTURED_MEMORY_CONTEXT_BUDGET:-1024}
+STRUCTURED_MEMORY_MAX_CONTEXT_FACTS=${STRUCTURED_MEMORY_MAX_CONTEXT_FACTS:-12}
+STRUCTURED_MEMORY_MAX_FACTS_PER_OBSERVATION=${STRUCTURED_MEMORY_MAX_FACTS_PER_OBSERVATION:-8}
+STRUCTURED_MEMORY_MAX_FACTS=${STRUCTURED_MEMORY_MAX_FACTS:-128}
+STRUCTURED_MEMORY_EXTRACT_MAX_TOKENS=${STRUCTURED_MEMORY_EXTRACT_MAX_TOKENS:-768}
+STRUCTURED_MEMORY_GAP_MAX_TOKENS=${STRUCTURED_MEMORY_GAP_MAX_TOKENS:-512}
 
 case "$BC_EXPERIMENT_MODEL_TAG" in
   *[!A-Za-z0-9_-]*)
@@ -154,6 +162,15 @@ case "$BC_EXPERIMENT_MODEL_TAG" in
     exit 1
     ;;
 esac
+case "$STRUCTURED_MEMORY_ENABLED" in
+  0) STRUCTURED_MEMORY_ENABLED=false ;;
+  1) STRUCTURED_MEMORY_ENABLED=true ;;
+  *) echo "ERROR: STRUCTURED_MEMORY_ENABLED must be 0 or 1"; exit 1 ;;
+esac
+if [ "$STRUCTURED_MEMORY_ENABLED" = "true" ] && { [ "$BC_METHOD" != "contextgraph" ] || [ "$BC_CTXGRAPH_PROTOCOL" != "controller" ]; }; then
+  echo "ERROR: structured memory requires BC_METHOD=contextgraph and BC_CTXGRAPH_PROTOCOL=controller"
+  exit 1
+fi
 case "$BC_CONTROLLER_ACTION_POLICY" in
   balanced|structural) ;;
   *)
@@ -244,6 +261,7 @@ echo "  Experiment: $EXPERIMENT_NAME"
 echo "  Logger: ${probe_msg}"
 echo "  Caps: val_samples=$BC_VAL_MAX_SAMPLES prompt=$BC_PROMPT_LENGTH response=$BC_RESPONSE_LENGTH total_context=$BC_MAX_TOKEN_LEN_PER_GPU max_turn=$BC_MAX_TURN final_answer_reserve=$BC_FINAL_ANSWER_RESERVE"
 echo "  Graph protocol: $BC_CTXGRAPH_PROTOCOL structured_controller=$BC_STRUCTURED_GRAPH_CONTROLLER controller_formatting=$BC_CONTROLLER_OWNED_TOOL_FORMATTING action_policy=$BC_CONTROLLER_ACTION_POLICY"
+echo "  Structured memory: enabled=$STRUCTURED_MEMORY_ENABLED context_budget=$STRUCTURED_MEMORY_CONTEXT_BUDGET max_facts=$STRUCTURED_MEMORY_MAX_FACTS gap_interval=$STRUCTURED_MEMORY_GAP_INTERVAL"
 if [ ${#LONG_CONTEXT_ARGS[@]} -gt 0 ]; then
   echo "  Long context: YaRN factor=$BC_YARN_FACTOR original=$BC_YARN_ORIGINAL_LENGTH (HF actor + vLLM)"
 fi
@@ -538,6 +556,14 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   +actor_rollout_ref.rollout.plugin.structured_graph_controller=$BC_STRUCTURED_GRAPH_CONTROLLER \
   +actor_rollout_ref.rollout.plugin.controller_owned_tool_formatting=$BC_CONTROLLER_OWNED_TOOL_FORMATTING \
   +actor_rollout_ref.rollout.plugin.controller_action_policy=$BC_CONTROLLER_ACTION_POLICY \
+  +actor_rollout_ref.rollout.plugin.structured_memory_enabled=$STRUCTURED_MEMORY_ENABLED \
+  +actor_rollout_ref.rollout.plugin.structured_memory_gap_interval=$STRUCTURED_MEMORY_GAP_INTERVAL \
+  +actor_rollout_ref.rollout.plugin.structured_memory_context_budget=$STRUCTURED_MEMORY_CONTEXT_BUDGET \
+  +actor_rollout_ref.rollout.plugin.structured_memory_max_context_facts=$STRUCTURED_MEMORY_MAX_CONTEXT_FACTS \
+  +actor_rollout_ref.rollout.plugin.structured_memory_max_facts_per_observation=$STRUCTURED_MEMORY_MAX_FACTS_PER_OBSERVATION \
+  +actor_rollout_ref.rollout.plugin.structured_memory_max_facts=$STRUCTURED_MEMORY_MAX_FACTS \
+  +actor_rollout_ref.rollout.plugin.structured_memory_extract_max_tokens=$STRUCTURED_MEMORY_EXTRACT_MAX_TOKENS \
+  +actor_rollout_ref.rollout.plugin.structured_memory_gap_max_tokens=$STRUCTURED_MEMORY_GAP_MAX_TOKENS \
   +actor_rollout_ref.rollout.plugin.max_traj=4 \
   +actor_rollout_ref.rollout.plugin.must_finish=False \
   +actor_rollout_ref.rollout.plugin.double_check=False \

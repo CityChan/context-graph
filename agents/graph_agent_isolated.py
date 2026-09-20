@@ -58,6 +58,13 @@ from .graph_controller import (
     graph_checkpoint_due,
 )
 from .graph_trace import GraphTraceRecorder
+from .structured_memory import (
+    StructuredFactMemory,
+    fact_extraction_schema,
+    gap_analysis_schema,
+    parse_json_object,
+    structured_memory_messages,
+)
 from .graph_rpo import (
     ANSWER_LIKELIHOOD_BACKENDS,
     EXTERNAL_EVALUATOR_BACKEND,
@@ -372,6 +379,49 @@ async def process_item(
     working_memory_keep_recent = max(
         1, int(getattr(config.plugin, "working_memory_keep_recent", 1))
     )
+    structured_memory_requested = bool(
+        getattr(config.plugin, "structured_memory_enabled", False)
+    )
+    if structured_memory_requested and not structured_graph_controller:
+        raise ValueError(
+            "structured_memory_enabled requires structured_graph_controller=True "
+            "so graph operations remain controller-owned and schema-constrained"
+        )
+    if structured_memory_requested and is_train:
+        raise ValueError(
+            "structured_memory_enabled is inference-only: auxiliary controller "
+            "calls are not part of the optimized policy trajectory"
+        )
+    structured_memory_enabled = structured_memory_requested and not is_train
+    structured_memory_tools = {
+        tool.strip()
+        for tool in str(getattr(
+            config.plugin,
+            "structured_memory_tools",
+            "search,open_page,branch_return",
+        )).split(",")
+        if tool.strip()
+    }
+    structured_memory_gap_interval = max(
+        0, int(getattr(config.plugin, "structured_memory_gap_interval", 8) or 0)
+    )
+    structured_memory_context_budget = max(
+        128, int(getattr(config.plugin, "structured_memory_context_budget", 1024))
+    )
+    structured_memory_max_context_facts = max(
+        1, int(getattr(config.plugin, "structured_memory_max_context_facts", 12))
+    )
+    structured_memory_max_facts_per_observation = max(
+        1, int(getattr(
+            config.plugin, "structured_memory_max_facts_per_observation", 8
+        ))
+    )
+    structured_memory_extract_max_tokens = max(
+        128, int(getattr(config.plugin, "structured_memory_extract_max_tokens", 768))
+    )
+    structured_memory_gap_max_tokens = max(
+        128, int(getattr(config.plugin, "structured_memory_gap_max_tokens", 512))
+    )
 
     lambda_compact = getattr(config.plugin, "lambda_compact", 0.1)
     lambda_cost = getattr(config.plugin, "lambda_cost", 0.02)
@@ -442,6 +492,26 @@ async def process_item(
     graph = ContextGraph(tokenizer, namespace_prefix="n")
     query_text = env.instance_info['problem_statement']
     root_id = graph.add_node(query_text, NodeType.QUERY)
+    structured_memory = (
+        StructuredFactMemory(
+            query_text,
+            tokenizer=tokenizer,
+            max_facts=max(
+                1, int(getattr(config.plugin, "structured_memory_max_facts", 128))
+            ),
+        )
+        if structured_memory_enabled else None
+    )
+    structured_memory_stats = {
+        "extraction_calls": 0,
+        "extraction_errors": 0,
+        "facts_added": 0,
+        "facts_deduplicated": 0,
+        "links_added": 0,
+        "gap_calls": 0,
+        "gap_errors": 0,
+        "context_injections": 0,
+    }
     graph_trace = GraphTraceRecorder(graph)
     graph_controller = GraphActionController(
         max_candidates=int(
@@ -471,6 +541,104 @@ async def process_item(
         prompt_turn=prompt_turn,
         process_reward_min_precedence=graph_rpo_enabled,
     )
+
+    async def call_structured_memory_controller(prompt, schema, max_new_tokens):
+        """Run one isolated, schema-constrained memory-controller call."""
+        messages = structured_memory_messages(prompt)
+        controller = Agent(
+            llm_client,
+            messages,
+            tokenizer,
+            config,
+            prompt_turn=len(messages),
+            chat_template_kwargs={"enable_thinking": False},
+        )
+        response = await controller.step(
+            max_new_tokens=max_new_tokens,
+            completion_kwargs={
+                "structured_outputs": {"json": schema},
+                "sampling_params": {
+                    "temperature": 0.0,
+                    "top_p": 1.0,
+                    "max_tokens": max_new_tokens,
+                },
+            },
+        )
+        return parse_json_object(response or "")
+
+    async def update_structured_memory(
+        observation_text,
+        evidence_node_id,
+        tool_name,
+    ):
+        """Extract facts and periodically refresh epistemic gaps."""
+        if (
+            structured_memory is None
+            or not evidence_node_id
+            or tool_name not in structured_memory_tools
+        ):
+            return
+        node = graph.nodes.get(evidence_node_id)
+        if node is None:
+            return
+        structured_memory_stats["extraction_calls"] += 1
+        try:
+            prompt = structured_memory.extraction_prompt(
+                observation_text,
+                evidence_node_id=evidence_node_id,
+                source_metadata=node.metadata,
+            )
+            payload = await call_structured_memory_controller(
+                prompt,
+                fact_extraction_schema(
+                    structured_memory_max_facts_per_observation
+                ),
+                structured_memory_extract_max_tokens,
+            )
+            if payload is None:
+                raise ValueError("fact extractor returned no JSON object")
+            result = structured_memory.add_extraction(
+                payload,
+                evidence_node_id=evidence_node_id,
+                source_metadata=node.metadata,
+            )
+            structured_memory_stats["facts_added"] += result["added"]
+            structured_memory_stats["facts_deduplicated"] += result["deduplicated"]
+            structured_memory_stats["links_added"] += result["links_added"]
+            print(
+                "[STRUCTURED MEMORY] "
+                f"tool={tool_name} node={evidence_node_id} "
+                f"+{result['added']} facts total={result['total_facts']}"
+            )
+        except Exception as error:
+            structured_memory_stats["extraction_errors"] += 1
+            print(f"[STRUCTURED MEMORY ERROR] extraction failed: {error}")
+            return
+
+        if (
+            structured_memory_gap_interval
+            and structured_memory_stats["extraction_calls"]
+            % structured_memory_gap_interval == 0
+            and structured_memory.facts
+        ):
+            structured_memory_stats["gap_calls"] += 1
+            try:
+                payload = await call_structured_memory_controller(
+                    structured_memory.gap_prompt(),
+                    gap_analysis_schema(),
+                    structured_memory_gap_max_tokens,
+                )
+                if payload is None:
+                    raise ValueError("gap analyzer returned no JSON object")
+                structured_memory.update_gaps(payload)
+                print(
+                    "[STRUCTURED MEMORY GAP] "
+                    f"can_answer={structured_memory.can_answer} "
+                    f"gaps={len(structured_memory.missing_information)}"
+                )
+            except Exception as error:
+                structured_memory_stats["gap_errors"] += 1
+                print(f"[STRUCTURED MEMORY ERROR] gap analysis failed: {error}")
     branches = []
     branch_tasks = {}
     branch_return = {}
@@ -566,6 +734,8 @@ async def process_item(
         session_message.append({'role': 'assistant', 'content': response})
         fn_call = extract_fn_call(response)
         new_evidence_node_id = None
+        new_evidence_tool_name = None
+        new_evidence_text = None
 
         # ── Graph operations on parent graph ──
         if (
@@ -762,6 +932,7 @@ async def process_item(
                     parent_id=subtask_id,
                     edge_relation=EdgeRelation.CAUSAL,
                     metadata={
+                        'tool': 'branch_return',
                         'collapsed_from_branch': agent_name,
                         'child_graph_prefix': child_prefix,
                         **{f'child_{k}': v for k, v in child_stats.items()},
@@ -770,6 +941,9 @@ async def process_item(
                 archive_id = child_stats.get('archive_id')
                 if archive_id:
                     graph.attach_archive(summary_id, archive_id)
+                new_evidence_node_id = summary_id
+                new_evidence_tool_name = "branch_return"
+                new_evidence_text = branch_message
                 print(f'[BRANCH ISOLATED] Collapsed {agent_name}: child stats={child_stats}')
 
                 # Improvement #3: auto-bind branch summary to most-related EXISTING
@@ -849,14 +1023,27 @@ async def process_item(
                             'raw_content': observation,
                         },
                     )
+                    new_evidence_tool_name = "search"
+                    new_evidence_text = observation
                 elif fn_call['function'] == 'open_page':
+                    page_metadata = {
+                        key: str(fn_call['arguments'].get(key, ''))[:500]
+                        for key in ('url', 'docid', 'page', 'cursor')
+                        if fn_call['arguments'].get(key) is not None
+                    }
                     new_evidence_node_id = graph.add_node(
                         observation[:800],
                         NodeType.OBSERVATION,
                         parent_id=graph.active_node_id,
                         edge_relation=EdgeRelation.CAUSAL,
-                        metadata={'tool': 'open_page', 'raw_content': observation},
+                        metadata={
+                            'tool': 'open_page',
+                            **page_metadata,
+                            'raw_content': observation,
+                        },
                     )
+                    new_evidence_tool_name = "open_page"
+                    new_evidence_text = observation
                 elif fn_call['function'] == 'action':
                     new_evidence_node_id = graph.add_node(
                         observation[:300],
@@ -869,6 +1056,8 @@ async def process_item(
                             'raw_content': observation,
                         },
                     )
+                    new_evidence_tool_name = "action"
+                    new_evidence_text = observation
                 elif fn_call['function'] == 'think':
                     new_evidence_node_id = graph.add_node(
                         observation[:500],
@@ -877,6 +1066,8 @@ async def process_item(
                         edge_relation=EdgeRelation.CAUSAL,
                         metadata={'tool': 'think', 'raw_content': observation},
                     )
+                    new_evidence_tool_name = "think"
+                    new_evidence_text = observation
             if new_evidence_node_id is not None:
                 graph_trace.record(
                     graph, trace_before, turn_id=main_turn_count,
@@ -890,6 +1081,13 @@ async def process_item(
                 )
 
         # ── Auto graph operations on PARENT graph (only) ──
+        if new_evidence_node_id is not None:
+            await update_structured_memory(
+                new_evidence_text if new_evidence_text is not None else observation,
+                new_evidence_node_id,
+                new_evidence_tool_name or "unknown",
+            )
+
         # Parent graph stays small (subtask + summary + main observations),
         # so the same heuristic thresholds work fine.
         trace_before = graph_trace.capture(graph)
@@ -978,6 +1176,16 @@ async def process_item(
                 graph.last_retrieval_stats.get('summary_tokens', 0)
                 + graph.last_retrieval_stats.get('evidence_tokens', 0),
             )
+
+        if structured_memory is not None:
+            fact_context = structured_memory.render_context(
+                response,
+                max_facts=structured_memory_max_context_facts,
+                max_tokens=structured_memory_context_budget,
+            )
+            if fact_context:
+                observation = f"{observation}\n\n{fact_context}"
+                structured_memory_stats["context_injections"] += 1
 
         # The original protocol appends the complete graph after every action.
         # Long-horizon environments can disable this duplicate payload while
@@ -1221,6 +1429,15 @@ async def process_item(
                     "Your next response must use only an environment or branch "
                     "tool described in the system prompt, in its normal XML format."
                 )
+                if structured_memory is not None:
+                    fact_context = structured_memory.render_context(
+                        query_text,
+                        max_facts=structured_memory_max_context_facts,
+                        max_tokens=structured_memory_context_budget,
+                    )
+                    if fact_context:
+                        controller_ack = f"{controller_ack}\n\n{fact_context}"
+                        structured_memory_stats["context_injections"] += 1
                 fitted_controller_ack = append_observation_preserving_final_answer(
                     agent['main'],
                     controller_ack,
@@ -1383,6 +1600,15 @@ async def process_item(
                 ack = "[CONSOLIDATION ACK] invalid response, continuing."
 
             ack = f"{ack}\n\n[Latest ContextGraph state]\n{graph.to_state_text()}"
+            if structured_memory is not None:
+                fact_context = structured_memory.render_context(
+                    query_text,
+                    max_facts=structured_memory_max_context_facts,
+                    max_tokens=structured_memory_context_budget,
+                )
+                if fact_context:
+                    ack = f"{ack}\n\n{fact_context}"
+                    structured_memory_stats["context_injections"] += 1
             fitted_ack = append_observation_preserving_final_answer(
                 agent['main'],
                 ack,
@@ -1403,6 +1629,25 @@ async def process_item(
     )
     forced_finish = False
     if finalizer_attempted:
+        if structured_memory is not None:
+            fact_context = structured_memory.render_context(
+                query_text,
+                max_facts=structured_memory_max_context_facts,
+                max_tokens=structured_memory_context_budget,
+            )
+            if fact_context:
+                messages = agent['main'].messages()
+                if messages and messages[-1].get("role") == "user":
+                    last_idx = len(messages) - 1
+                    last_content = messages[last_idx].get("content", "")
+                    if "[Structured fact memory" not in last_content:
+                        agent['main'].replace_user_turn(
+                            last_idx, f"{last_content}\n\n{fact_context}"
+                        )
+                        structured_memory_stats["context_injections"] += 1
+                else:
+                    agent['main'].append({"role": "user", "content": fact_context})
+                    structured_memory_stats["context_injections"] += 1
         finalizer_message_start = len(agent['main'].messages())
         forced_finish = await submit_emergency_final_answer(
             agent['main'], env, final_answer_reserve, run_action
@@ -1543,6 +1788,18 @@ async def process_item(
     env.stats['memory_retrieval_summary_tokens'] = retrieval_totals['summary_tokens']
     env.stats['memory_retrieval_evidence_tokens'] = retrieval_totals['evidence_tokens']
     env.stats['memory_retrieval_max_context_tokens'] = retrieval_totals['max_context_tokens']
+    env.stats['structured_memory_enabled'] = int(structured_memory_enabled)
+    for stat_name, stat_value in structured_memory_stats.items():
+        env.stats[f'structured_memory_{stat_name}'] = float(stat_value)
+    memory_state = structured_memory.to_dict() if structured_memory is not None else None
+    if structured_memory is not None:
+        memory_summary_stats = structured_memory.stats()
+        env.stats['structured_memory_facts'] = float(memory_summary_stats['facts'])
+        env.stats['structured_memory_links'] = float(memory_summary_stats['links'])
+        env.stats['structured_memory_gaps'] = float(memory_summary_stats['gaps'])
+        env.stats['structured_memory_can_answer'] = float(
+            memory_summary_stats['can_answer']
+        )
     graph_trace_payload = graph_trace.finalize(graph)
     env.stats['graph_trace_events'] = len(graph_trace_payload['events'])
     env.stats['graph_trace_model_events'] = sum(
@@ -1840,6 +2097,7 @@ async def process_item(
                 'uid': uid,
                 'gen_uid': gen_uid,
                 'graph_state': graph.to_state_text(),
+                'structured_memory': copy.deepcopy(memory_state),
                 'graph_trace': graph_trace_payload,
                 'graph_rewards': graph_rewards,
                 'tool_format_repairs': copy.deepcopy(tool_format_repair_log),
