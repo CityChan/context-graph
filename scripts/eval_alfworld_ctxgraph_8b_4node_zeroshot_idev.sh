@@ -14,6 +14,7 @@ fi
 
 ALFWORLD_EVAL_SAMPLES=${ALFWORLD_EVAL_SAMPLES:-32}
 ALFWORLD_DATA_SEED=${ALFWORLD_DATA_SEED:-42}
+ALFWORLD_EXPERIMENT_PREFIX=${ALFWORLD_EXPERIMENT_PREFIX:-contextgraph}
 export ALFWORLD_DATA=${ALFWORLD_DATA:-$HOME/.cache/alfworld}
 
 if ! [[ "$ALFWORLD_EVAL_SAMPLES" =~ ^[1-9][0-9]*$ ]]; then
@@ -29,16 +30,16 @@ python scripts/make_alfworld_data.py \
   --alfworld_data "$ALFWORLD_DATA"
 
 EVAL_TS=$(date +%Y%m%d_%H%M%S)
-export ALFWORLD_EXPERIMENT_NAME="contextgraph_alfworld_real_8b_4n_zeroshot_n${ALFWORLD_EVAL_SAMPLES}_seed${ALFWORLD_DATA_SEED}_${EVAL_TS}"
+export ALFWORLD_EXPERIMENT_NAME="${ALFWORLD_EXPERIMENT_PREFIX}_alfworld_real_8b_4n_zeroshot_n${ALFWORLD_EVAL_SAMPLES}_seed${ALFWORLD_DATA_SEED}_${EVAL_TS}"
 mkdir -p logs
 EVAL_LOG="logs/${ALFWORLD_EXPERIMENT_NAME}.log"
 EVAL_SUMMARY="logs/${ALFWORLD_EXPERIMENT_NAME}.summary.json"
 
 export WANDB_MODE=disabled
 export ALFWORLD_DISABLE_WANDB=1
-export MODEL_PATH=Qwen/Qwen3-8B
+export MODEL_PATH=${MODEL_PATH:-Qwen/Qwen3-8B}
 export ALFWORLD_MODE=real
-export ALFWORLD_METHOD_LABEL="ContextGraph zero-shot"
+export ALFWORLD_METHOD_LABEL=${ALFWORLD_METHOD_LABEL:-"ContextGraph zero-shot"}
 export ALFWORLD_AGENT_LOOP=context_graph_isolated_agent
 export ALFWORLD_WORKFLOW=alfworld_graph
 export ALFWORLD_PROCESS_REWARD='[flat,scope,graph]'
@@ -60,15 +61,16 @@ export ALFWORLD_BRANCH_LEN=2048
 export ALFWORLD_MAX_SESSION=3
 export ALFWORLD_VAL_MAX_SESSION=3
 export ALFWORLD_SESSION_TIMEOUT=600
-export ALFWORLD_STRUCTURED_GRAPH_CONTROLLER=True
-export ALFWORLD_CONTROLLER_OWNED_TOOL_FORMATTING=True
-export ALFWORLD_CONTROLLER_ACTION_POLICY=structural
+export ALFWORLD_STRUCTURED_GRAPH_CONTROLLER=${ALFWORLD_STRUCTURED_GRAPH_CONTROLLER:-True}
+export ALFWORLD_CONTROLLER_OWNED_TOOL_FORMATTING=${ALFWORLD_CONTROLLER_OWNED_TOOL_FORMATTING:-$ALFWORLD_STRUCTURED_GRAPH_CONTROLLER}
+export ALFWORLD_CONTROLLER_ACTION_POLICY=${ALFWORLD_CONTROLLER_ACTION_POLICY:-structural}
 export ALFWORLD_CONSOLIDATION_INTERVAL=5
 export ALFWORLD_TRAINER_RESUME_MODE=disable
 
 echo "=============================================================="
 echo "  Zero-shot ALFWorld evaluation: ${ALFWORLD_EVAL_SAMPLES} fixed episodes"
-echo "  Base model: ${MODEL_PATH}; seed: ${ALFWORLD_DATA_SEED}"
+echo "  Model: ${MODEL_PATH}; seed: ${ALFWORLD_DATA_SEED}"
+echo "  Controller: structured=${ALFWORLD_STRUCTURED_GRAPH_CONTROLLER}; formatting=${ALFWORLD_CONTROLLER_OWNED_TOOL_FORMATTING}; policy=${ALFWORLD_CONTROLLER_ACTION_POLICY}"
 echo "  Raw log: ${EVAL_LOG}"
 echo "=============================================================="
 

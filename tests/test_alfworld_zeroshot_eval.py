@@ -26,13 +26,23 @@ def test_extract_metrics_from_verl_step_line():
 
 def test_zeroshot_launcher_uses_fixed_base_model_and_current_controller():
     launcher = (ROOT / "scripts/eval_alfworld_ctxgraph_8b_4node_zeroshot_idev.sh").read_text(encoding="utf-8")
-    assert "export MODEL_PATH=Qwen/Qwen3-8B" in launcher
+    assert "export MODEL_PATH=${MODEL_PATH:-Qwen/Qwen3-8B}" in launcher
     assert "export ALFWORLD_VAL_ONLY=True" in launcher
     assert "export ALFWORLD_ROLLOUT_N=1" in launcher
-    assert "export ALFWORLD_STRUCTURED_GRAPH_CONTROLLER=True" in launcher
-    assert "export ALFWORLD_CONTROLLER_ACTION_POLICY=structural" in launcher
+    assert "export ALFWORLD_STRUCTURED_GRAPH_CONTROLLER=${ALFWORLD_STRUCTURED_GRAPH_CONTROLLER:-True}" in launcher
+    assert "export ALFWORLD_CONTROLLER_ACTION_POLICY=${ALFWORLD_CONTROLLER_ACTION_POLICY:-structural}" in launcher
     assert "export ALFWORLD_TRAINER_RESUME_MODE=disable" in launcher
     assert "ALFWORLD_EVAL_SAMPLES=${ALFWORLD_EVAL_SAMPLES:-32}" in launcher
+
+
+def test_full_policy_sft_alfworld_launcher_uses_matched_legacy_protocol():
+    launcher = (ROOT / "scripts/eval_alfworld_ctxgraph_qwen3_8b_full_policy_sft_4node_idev.sh").read_text(encoding="utf-8")
+    assert "miroverse_full_policy_qwen3_8b_bs16_1ep_v1_step174_hf" in launcher
+    assert "export ALFWORLD_EXPERIMENT_PREFIX=full_policy_sft" in launcher
+    assert "export ALFWORLD_STRUCTURED_GRAPH_CONTROLLER=False" in launcher
+    assert "export ALFWORLD_CONTROLLER_OWNED_TOOL_FORMATTING=False" in launcher
+    assert "export ALFWORLD_CONTROLLER_ACTION_POLICY=balanced" in launcher
+    assert "eval_alfworld_ctxgraph_8b_4node_zeroshot_idev.sh" in launcher
 
 
 def test_corrected_contextgraph_launcher_uses_bounded_memory_without_checkpoints():
