@@ -4,10 +4,19 @@ from agents.context_graph import ContextGraph, NodeType
 from agents.graph_controller import GraphActionController
 from agents.structured_memory import (
     StructuredFactMemory,
+    coerce_bool,
     fact_extraction_schema,
     gap_analysis_schema,
     parse_json_object,
 )
+
+
+def test_bool_settings_handle_hydra_and_environment_representations():
+    for value in (True, 1, "1", "true", "TRUE", "yes", "on"):
+        assert coerce_bool(value) is True
+    for value in (False, 0, "0", "false", "FALSE", "no", "off", ""):
+        assert coerce_bool(value) is False
+    assert coerce_bool(None, default=True) is True
 
 
 def _fact(subject, predicate, obj, importance="important", confidence=0.8):
@@ -142,6 +151,7 @@ def test_eval_launchers_wire_structured_memory_without_disabling_controller():
         text = open(path, encoding="utf-8").read()
         assert "plugin.structured_graph_controller" in text
         assert "plugin.structured_memory_enabled" in text
+        assert "plugin.structured_memory_required" in text
         assert "plugin.structured_memory_context_budget" in text
         assert "plugin.structured_memory_max_facts" in text
 
@@ -149,4 +159,5 @@ def test_eval_launchers_wire_structured_memory_without_disabling_controller():
         "scripts/eval_bc_gaia_qwen3_8b_base_idev.sh", encoding="utf-8"
     ).read()
     assert "STRUCTURED_MEMORY_ENABLED=${STRUCTURED_MEMORY_ENABLED:-0}" in wrapper
+    assert "STRUCTURED_MEMORY_REQUIRED=${STRUCTURED_MEMORY_REQUIRED:-$STRUCTURED_MEMORY_ENABLED}" in wrapper
     assert wrapper.count("export STRUCTURED_MEMORY_ENABLED") == 2

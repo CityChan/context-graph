@@ -23,6 +23,22 @@ _IMPORTANCE_SCORE = {
 _LINK_RELATIONS = {"supports", "contradicts", "related"}
 
 
+def coerce_bool(value: Any, *, default: bool = False) -> bool:
+    """Parse bool-like Hydra and environment values without truthy-string bugs."""
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    normalized = str(value).strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off", ""}:
+        return False
+    raise ValueError(f"invalid boolean setting: {value!r}")
+
+
 def _terms(text: str) -> set[str]:
     return {
         token
@@ -472,6 +488,7 @@ __all__ = [
     "EvidenceFact",
     "FactLink",
     "StructuredFactMemory",
+    "coerce_bool",
     "fact_extraction_schema",
     "gap_analysis_schema",
     "parse_json_object",

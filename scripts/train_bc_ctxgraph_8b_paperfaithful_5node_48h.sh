@@ -216,6 +216,7 @@ FINAL_ANSWER_SAFETY_MARGIN=${FINAL_ANSWER_SAFETY_MARGIN:-64}
 CONSOLIDATION_INTERVAL=${CONSOLIDATION_INTERVAL:-5}
 AUTO_PRUNE_MAX_ACTIVE=${AUTO_PRUNE_MAX_ACTIVE:-12}
 STRUCTURED_MEMORY_ENABLED=${STRUCTURED_MEMORY_ENABLED:-0}
+STRUCTURED_MEMORY_REQUIRED=${STRUCTURED_MEMORY_REQUIRED:-$STRUCTURED_MEMORY_ENABLED}
 STRUCTURED_MEMORY_GAP_INTERVAL=${STRUCTURED_MEMORY_GAP_INTERVAL:-8}
 STRUCTURED_MEMORY_CONTEXT_BUDGET=${STRUCTURED_MEMORY_CONTEXT_BUDGET:-1024}
 STRUCTURED_MEMORY_MAX_CONTEXT_FACTS=${STRUCTURED_MEMORY_MAX_CONTEXT_FACTS:-12}
@@ -247,6 +248,11 @@ case "$STRUCTURED_MEMORY_ENABLED" in
   0) STRUCTURED_MEMORY_ENABLED=false ;;
   1) STRUCTURED_MEMORY_ENABLED=true ;;
   *) echo "ERROR: STRUCTURED_MEMORY_ENABLED must be 0 or 1"; exit 1 ;;
+esac
+case "$STRUCTURED_MEMORY_REQUIRED" in
+  0) STRUCTURED_MEMORY_REQUIRED=false ;;
+  1) STRUCTURED_MEMORY_REQUIRED=true ;;
+  *) echo "ERROR: STRUCTURED_MEMORY_REQUIRED must be 0 or 1"; exit 1 ;;
 esac
 if [ "$STRUCTURED_MEMORY_ENABLED" = "true" ] && [ "$BC_CTXGRAPH_PROTOCOL" != "controller" ]; then
   echo "ERROR: structured memory requires BC_CTXGRAPH_PROTOCOL=controller"
@@ -745,6 +751,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   +actor_rollout_ref.rollout.plugin.controller_owned_tool_formatting="$BC_CONTROLLER_OWNED_TOOL_FORMATTING" \
   +actor_rollout_ref.rollout.plugin.controller_action_policy="$BC_CONTROLLER_ACTION_POLICY" \
   +actor_rollout_ref.rollout.plugin.structured_memory_enabled="$STRUCTURED_MEMORY_ENABLED" \
+  +actor_rollout_ref.rollout.plugin.structured_memory_required="$STRUCTURED_MEMORY_REQUIRED" \
   +actor_rollout_ref.rollout.plugin.structured_memory_gap_interval="$STRUCTURED_MEMORY_GAP_INTERVAL" \
   +actor_rollout_ref.rollout.plugin.structured_memory_context_budget="$STRUCTURED_MEMORY_CONTEXT_BUDGET" \
   +actor_rollout_ref.rollout.plugin.structured_memory_max_context_facts="$STRUCTURED_MEMORY_MAX_CONTEXT_FACTS" \

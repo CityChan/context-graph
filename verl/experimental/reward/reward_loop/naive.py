@@ -113,7 +113,17 @@ class NaiveRewardLoopManager(RewardLoopManagerBase):
                       "graph_n_nodes", "graph_n_edges", "graph_n_active",
                       "main_turn", "is_branch", "branch_success",
                       "concise_main", "scope_judge", "skill_bank_enabled",
-                      "skill_bank_injected"):
+                      "skill_bank_injected", "structured_memory_enabled",
+                      "structured_memory_extraction_calls",
+                      "structured_memory_extraction_errors",
+                      "structured_memory_facts_added",
+                      "structured_memory_facts_deduplicated",
+                      "structured_memory_links_added",
+                      "structured_memory_gap_calls",
+                      "structured_memory_gap_errors",
+                      "structured_memory_context_injections",
+                      "structured_memory_facts", "structured_memory_links",
+                      "structured_memory_gaps", "structured_memory_can_answer"):
                 if k in env_stats and k not in reward_extra_info:
                     try:
                         reward_extra_info[k] = float(env_stats[k])

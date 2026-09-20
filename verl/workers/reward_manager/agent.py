@@ -278,6 +278,18 @@ class AgentLoopRewardManager(AbstractRewardManager):
                       "consol_op_rate", "consol_valid_pass_rate",
                       "consol_invalid_pass_rate", "consol_invalid_rate",
                       "graph_trace_events", "graph_trace_model_events",
+                      # StructMem-inspired inference sidecar telemetry
+                      "structured_memory_enabled",
+                      "structured_memory_extraction_calls",
+                      "structured_memory_extraction_errors",
+                      "structured_memory_facts_added",
+                      "structured_memory_facts_deduplicated",
+                      "structured_memory_links_added",
+                      "structured_memory_gap_calls",
+                      "structured_memory_gap_errors",
+                      "structured_memory_context_injections",
+                      "structured_memory_facts", "structured_memory_links",
+                      "structured_memory_gaps", "structured_memory_can_answer",
                       # BrowseComp task-judge audit telemetry
                       "judge_calls", "judge_positive", "judge_strict_em",
                       "judge_relaxed_em", "judge_relaxed_only", "judge_llm",

@@ -60,6 +60,7 @@ from .graph_controller import (
 from .graph_trace import GraphTraceRecorder
 from .structured_memory import (
     StructuredFactMemory,
+    coerce_bool,
     fact_extraction_schema,
     gap_analysis_schema,
     parse_json_object,
@@ -77,6 +78,9 @@ from .graph_rpo import (
     prepare_reference_graph_edit_requests,
 )
 from .trajectory_capture import serialize_agent_trajectories
+
+
+_STRUCTURED_MEMORY_CONFIG_LOGGED = set()
 
 
 def print_chat(chat):
@@ -379,9 +383,26 @@ async def process_item(
     working_memory_keep_recent = max(
         1, int(getattr(config.plugin, "working_memory_keep_recent", 1))
     )
-    structured_memory_requested = bool(
-        getattr(config.plugin, "structured_memory_enabled", False)
+    structured_memory_config_value = getattr(
+        config.plugin, "structured_memory_enabled", None
     )
+    structured_memory_env_value = os.getenv("STRUCTURED_MEMORY_ENABLED")
+    structured_memory_requested = coerce_bool(
+        structured_memory_config_value,
+        default=coerce_bool(structured_memory_env_value, default=False),
+    )
+    structured_memory_required = coerce_bool(
+        getattr(config.plugin, "structured_memory_required", None),
+        default=coerce_bool(
+            os.getenv("STRUCTURED_MEMORY_REQUIRED"), default=False
+        ),
+    )
+    if structured_memory_required and not structured_memory_requested:
+        raise ValueError(
+            "structured memory was required by the launcher but resolved disabled; "
+            f"plugin_value={structured_memory_config_value!r} "
+            f"env_value={structured_memory_env_value!r}"
+        )
     if structured_memory_requested and not structured_graph_controller:
         raise ValueError(
             "structured_memory_enabled requires structured_graph_controller=True "
@@ -393,6 +414,22 @@ async def process_item(
             "calls are not part of the optimized policy trajectory"
         )
     structured_memory_enabled = structured_memory_requested and not is_train
+    structured_memory_config_key = (
+        structured_memory_requested,
+        structured_memory_required,
+        is_train,
+        repr(structured_memory_config_value),
+        repr(structured_memory_env_value),
+    )
+    if structured_memory_config_key not in _STRUCTURED_MEMORY_CONFIG_LOGGED:
+        _STRUCTURED_MEMORY_CONFIG_LOGGED.add(structured_memory_config_key)
+        print(
+            "[STRUCTURED MEMORY CONFIG] "
+            f"plugin={structured_memory_config_value!r} "
+            f"env={structured_memory_env_value!r} "
+            f"required={structured_memory_required} "
+            f"is_train={is_train} enabled={structured_memory_enabled}"
+        )
     structured_memory_tools = {
         tool.strip()
         for tool in str(getattr(
@@ -1799,6 +1836,15 @@ async def process_item(
         env.stats['structured_memory_gaps'] = float(memory_summary_stats['gaps'])
         env.stats['structured_memory_can_answer'] = float(
             memory_summary_stats['can_answer']
+        )
+        print(
+            "[STRUCTURED MEMORY SUMMARY] "
+            f"extractions={structured_memory_stats['extraction_calls']} "
+            f"extraction_errors={structured_memory_stats['extraction_errors']} "
+            f"facts={memory_summary_stats['facts']} "
+            f"links={memory_summary_stats['links']} "
+            f"gaps={memory_summary_stats['gaps']} "
+            f"context_injections={structured_memory_stats['context_injections']}"
         )
     graph_trace_payload = graph_trace.finalize(graph)
     env.stats['graph_trace_events'] = len(graph_trace_payload['events'])
