@@ -59,6 +59,7 @@ from .graph_controller import (
 )
 from .graph_trace import GraphTraceRecorder
 from .structured_memory import (
+    GapStepScheduler,
     StructuredFactMemory,
     coerce_bool,
     fact_extraction_schema,
@@ -465,8 +466,26 @@ async def process_item(
     )
     structured_memory_relation_candidates = max(
         1, int(getattr(
-            config.plugin, "structured_memory_relation_candidates", 24
+            config.plugin, "structured_memory_relation_candidates", 128
         ))
+    )
+    structured_memory_controller_retries = max(
+        0, int(getattr(config.plugin, "structured_memory_controller_retries", 2))
+    )
+    structured_memory_gap_jitter = max(
+        0, int(getattr(config.plugin, "structured_memory_gap_jitter", 1))
+    )
+    structured_memory_stop_on_ready = coerce_bool(
+        getattr(config.plugin, "structured_memory_stop_on_ready", None),
+        default=True,
+    )
+    structured_memory_step_limit = max(
+        0, int(getattr(config.plugin, "structured_memory_step_limit", 40) or 0)
+    )
+    effective_max_turn = (
+        min(max_turn, structured_memory_step_limit)
+        if structured_memory_enabled and structured_memory_step_limit
+        else max_turn
     )
 
     lambda_compact = getattr(config.plugin, "lambda_compact", 0.1)
@@ -560,6 +579,9 @@ async def process_item(
         "zero_fact_extractions": 0,
         "gap_calls": 0,
         "gap_errors": 0,
+        "gap_fallbacks": 0,
+        "controller_retries": 0,
+        "early_stops": 0,
         "context_injections": 0,
         "context_injection_tokens": 0,
         "max_context_snapshot_tokens": 0,
@@ -596,36 +618,58 @@ async def process_item(
     )
 
     async def call_structured_memory_controller(prompt, schema, max_new_tokens):
-        """Run one isolated, schema-constrained memory-controller call."""
-        messages = structured_memory_messages(prompt)
-        controller = Agent(
-            llm_client,
-            messages,
-            tokenizer,
-            config,
-            prompt_turn=len(messages),
-            chat_template_kwargs={"enable_thinking": False},
-        )
-        response = await controller.step(
-            max_new_tokens=max_new_tokens,
-            completion_kwargs={
-                "structured_outputs": {"json": schema},
-                "sampling_params": {
-                    "temperature": 0.0,
-                    "top_p": 1.0,
-                    "max_tokens": max_new_tokens,
+        """Run an isolated controller call with bounded schema-repair retries."""
+        required = set(schema.get("required", []))
+        previous_response = ""
+        for attempt in range(structured_memory_controller_retries + 1):
+            attempt_prompt = prompt
+            if attempt:
+                structured_memory_stats["controller_retries"] += 1
+                attempt_prompt = (
+                    "Your previous response was invalid. Re-emit the decision as one "
+                    "complete JSON object satisfying every required key. Do not explain "
+                    "the correction.\n\nORIGINAL REQUEST:\n"
+                    f"{prompt}\n\nINVALID RESPONSE:\n{previous_response[:2000]}"
+                )
+            messages = structured_memory_messages(attempt_prompt, schema)
+            controller = Agent(
+                llm_client,
+                messages,
+                tokenizer,
+                config,
+                prompt_turn=len(messages),
+                chat_template_kwargs={"enable_thinking": False},
+            )
+            response = await controller.step(
+                max_new_tokens=max_new_tokens,
+                completion_kwargs={
+                    "structured_outputs": {"json": schema},
+                    "sampling_params": {
+                        "temperature": 0.0,
+                        "top_p": 1.0,
+                        "max_tokens": max_new_tokens,
+                    },
                 },
-            },
-        )
-        return parse_json_object(response or "")
+            )
+            previous_response = response or ""
+            payload = parse_json_object(previous_response)
+            if payload is not None and required.issubset(payload):
+                return payload
+        return None
 
+    gap_scheduler = GapStepScheduler(
+        structured_memory_gap_interval,
+        structured_memory_gap_jitter,
+        query_text,
+    )
     last_gap_revision = -1
+    last_stall_gap_revision = -1
     no_progress_streak = 0
 
     async def refresh_structured_memory_gaps(reason):
-        """Refresh answer sufficiency only after semantic state changes."""
+        """Refresh K_cov/K_mis/Q_sug, falling back conservatively on failure."""
         nonlocal last_gap_revision
-        if structured_memory is None or not structured_memory.facts:
+        if structured_memory is None:
             return
         structured_memory_stats["gap_calls"] += 1
         try:
@@ -636,16 +680,19 @@ async def process_item(
             )
             if payload is None:
                 raise ValueError("gap analyzer returned no JSON object")
-            structured_memory.update_gaps(payload)
-            last_gap_revision = structured_memory.revision
-            print(
-                "[STRUCTURED MEMORY GAP] "
-                f"reason={reason} can_answer={structured_memory.can_answer} "
-                f"gaps={len(structured_memory.missing_information)}"
-            )
         except Exception as error:
             structured_memory_stats["gap_errors"] += 1
             print(f"[STRUCTURED MEMORY ERROR] gap analysis failed: {error}")
+            payload = structured_memory.fallback_gap_analysis()
+            structured_memory_stats["gap_fallbacks"] += 1
+            print("[STRUCTURED MEMORY GAP FALLBACK] conservative guidance applied")
+        structured_memory.update_gaps(payload)
+        last_gap_revision = structured_memory.revision
+        print(
+            "[STRUCTURED MEMORY GAP] "
+            f"reason={reason} can_answer={structured_memory.can_answer} "
+            f"gaps={len(structured_memory.missing_information)}"
+        )
 
     def structured_memory_overlay(query, *, final=False):
         """Build and account for one transient, non-persistent snapshot."""
@@ -683,7 +730,7 @@ async def process_item(
         evidence_node_id,
         tool_name,
     ):
-        """Extract facts and periodically refresh epistemic gaps."""
+        """Extract and integrate facts from one evidence-bearing observation."""
         nonlocal no_progress_streak
         if (
             structured_memory is None
@@ -740,24 +787,30 @@ async def process_item(
             )
         except Exception as error:
             structured_memory_stats["extraction_errors"] += 1
+            structured_memory_stats["zero_fact_extractions"] += 1
+            no_progress_streak += 1
             print(f"[STRUCTURED MEMORY ERROR] extraction failed: {error}")
-            return
 
-        semantic_updates = structured_memory_stats["semantic_updates"]
-        periodic_gap_due = bool(
-            result["changed"]
-            and structured_memory_gap_interval
-            and semantic_updates % structured_memory_gap_interval == 0
-        )
+    async def maybe_refresh_structured_memory_gaps(turn):
+        """Run paper-style step scheduling without retrying one stalled revision."""
+        nonlocal last_stall_gap_revision, no_progress_streak
+        if structured_memory is None:
+            return
+        periodic_gap_due = gap_scheduler.due(turn)
         stalled_gap_due = bool(
             no_progress_streak >= 2
-            and structured_memory.revision != last_gap_revision
+            and structured_memory.revision != last_stall_gap_revision
         )
-        if periodic_gap_due or stalled_gap_due:
-            await refresh_structured_memory_gaps(
-                "periodic" if periodic_gap_due else "no-progress"
-            )
-            no_progress_streak = 0
+        if not periodic_gap_due and not stalled_gap_due:
+            return
+        if periodic_gap_due:
+            gap_scheduler.mark_attempt(turn)
+            reason = "periodic-step"
+        else:
+            last_stall_gap_revision = structured_memory.revision
+            reason = "no-progress"
+        await refresh_structured_memory_gaps(reason)
+        no_progress_streak = 0
 
     if structured_memory is not None:
         structured_memory_stats["plan_calls"] += 1
@@ -803,10 +856,23 @@ async def process_item(
         'max_context_tokens': 0,
     }
 
-    while iteration < max_turn:
+    while iteration < effective_max_turn:
         if time.time() - session_start_time > session_timeout:
             print('[SESSION] Session Timeout')
             timed_out = True
+            break
+
+        if (
+            structured_memory is not None
+            and structured_memory_stop_on_ready
+            and structured_memory.ready_to_answer
+            and final_answer_reserve
+        ):
+            structured_memory_stats["early_stops"] += 1
+            print(
+                "[STRUCTURED MEMORY READY] all goals covered; "
+                "stopping exploration for final synthesis"
+            )
             break
 
         iteration += 1
@@ -1030,7 +1096,7 @@ async def process_item(
                 wrapped_action = make_graph_aware_run_action(env, child_graph)
                 agent_return = await agent[agent_name].react(
                     wrapped_action,
-                    max_turn=max_turn,
+                    max_turn=max(1, effective_max_turn - iteration),
                     max_tokens=getattr(config.plugin, "branch_len", None),
                     session_timeout=session_timeout - time.time() + session_start_time,
                     should_continue=lambda resp: '<function=return>' not in resp,
@@ -1228,6 +1294,7 @@ async def process_item(
                 new_evidence_node_id,
                 new_evidence_tool_name or "unknown",
             )
+        await maybe_refresh_structured_memory_gaps(main_turn_count)
 
         # Parent graph stays small (subtask + summary + main observations),
         # so the same heuristic thresholds work fine.
@@ -1357,7 +1424,7 @@ async def process_item(
         # penalized. See ContextGraph.is_saturated() for thresholds.
         checkpoint_due = graph_checkpoint_due(
             main_turn_count,
-            max_turn,
+            effective_max_turn,
             consolidation_interval,
             initial_consolidation_turn,
         )
@@ -1944,7 +2011,7 @@ async def process_item(
         working_context_limit=working_context_limit,
         is_finish=is_finish,
         iteration=iteration,
-        max_turn=max_turn,
+        max_turn=effective_max_turn,
         timed_out=timed_out,
     )
     env.stats.update({k: v for k, v in rollout_status.items() if k != 'termination_reason'})

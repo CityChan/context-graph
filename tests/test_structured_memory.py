@@ -3,6 +3,7 @@ import json
 from agents.context_graph import ContextGraph, NodeType
 from agents.graph_controller import GraphActionController
 from agents.structured_memory import (
+    GapStepScheduler,
     StructuredFactMemory,
     coerce_bool,
     fact_extraction_schema,
@@ -52,6 +53,24 @@ def test_parse_json_object_handles_thinking_and_fences():
     assert parse_json_object("no json") is None
 
 
+def test_parse_json_object_repairs_python_dict_and_skips_malformed_prefix():
+    text = "Here's a bad object {broken}\n{'facts': [], 'links': []}"
+    assert parse_json_object(text) == {"facts": [], "links": []}
+
+
+def test_gap_step_scheduler_is_deterministic_bounded_and_step_based():
+    first = GapStepScheduler(interval=8, jitter=1, seed_text="same task")
+    second = GapStepScheduler(interval=8, jitter=1, seed_text="same task")
+    assert first.next_turn == second.next_turn
+    assert 7 <= first.next_turn <= 9
+    due_turn = first.next_turn
+    assert first.due(due_turn)
+    first.mark_attempt(due_turn)
+    second.mark_attempt(due_turn)
+    assert first.next_turn == second.next_turn
+    assert due_turn + 7 <= first.next_turn <= due_turn + 9
+
+
 def test_fact_memory_deduplicates_and_preserves_provenance():
     memory = StructuredFactMemory("Who won?", max_facts=8)
     first = memory.add_extraction(
@@ -66,6 +85,8 @@ def test_fact_memory_deduplicates_and_preserves_provenance():
     )
     assert first["added"] == 1
     assert second["deduplicated"] == 1
+    assert second["changed"] is True
+    assert second["revision"] == 2
     assert len(memory.facts) == 1
     fact = memory.facts["f1"]
     assert fact.evidence_node_ids == ["n2", "n3"]
@@ -166,6 +187,22 @@ def test_gap_state_is_injected_only_when_answer_is_incomplete():
     })
     assert "[Next-action guidance:" not in memory.render_context("inventor")
     assert "[Readiness]" in memory.render_context("inventor")
+    assert memory.ready_to_answer is True
+
+
+def test_gap_fallback_is_conservative_and_goal_directed():
+    memory = StructuredFactMemory("Identify the inventor")
+    memory.initialize_plan({
+        "plan": "Find and verify the inventor",
+        "goals": ["Find the inventor's full name", "Verify with a primary source"],
+    })
+    payload = memory.fallback_gap_analysis()
+    assert payload["can_answer"] is False
+    assert payload["confidence"] == "low"
+    assert len(payload["missing_information"]) == 2
+    assert payload["suggested_searches"][0] == "Find the inventor's full name"
+    memory.update_gaps(payload)
+    assert memory.ready_to_answer is False
 
 
 def test_sidecar_facts_do_not_expand_graph_action_candidates():
@@ -200,6 +237,10 @@ def test_eval_launchers_wire_structured_memory_without_disabling_controller():
         assert "plugin.structured_memory_max_facts" in text
         assert "plugin.structured_memory_plan_max_tokens" in text
         assert "plugin.structured_memory_relation_candidates" in text
+        assert "plugin.structured_memory_controller_retries" in text
+        assert "plugin.structured_memory_gap_jitter" in text
+        assert "plugin.structured_memory_stop_on_ready" in text
+        assert "plugin.structured_memory_step_limit" in text
 
     wrapper = open(
         "scripts/eval_bc_gaia_qwen3_8b_base_idev.sh", encoding="utf-8"
@@ -207,3 +248,14 @@ def test_eval_launchers_wire_structured_memory_without_disabling_controller():
     assert "STRUCTURED_MEMORY_ENABLED=${STRUCTURED_MEMORY_ENABLED:-0}" in wrapper
     assert "STRUCTURED_MEMORY_REQUIRED=${STRUCTURED_MEMORY_REQUIRED:-$STRUCTURED_MEMORY_ENABLED}" in wrapper
     assert wrapper.count("export STRUCTURED_MEMORY_ENABLED") == 2
+    assert wrapper.count("export STRUCTURED_MEMORY_CONTROLLER_RETRIES") == 2
+    assert wrapper.count("export STRUCTURED_MEMORY_STOP_ON_READY") == 2
+
+    submitter = open(
+        "scripts/submit_eval_gaia_structmem_qwen3_8b_4node.sh", encoding="utf-8"
+    ).read()
+    assert "#SBATCH -N 4" in submitter
+    assert "export RUN_BC=0" in submitter
+    assert "export RUN_GAIA=1" in submitter
+    assert "export STRUCTURED_MEMORY_ENABLED=1" in submitter
+    assert "export STRUCTURED_MEMORY_STEP_LIMIT=40" in submitter

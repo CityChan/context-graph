@@ -9,7 +9,10 @@ and pointers back to that evidence.
 
 from __future__ import annotations
 
+import ast
+import hashlib
 import json
+import random
 import re
 from dataclasses import asdict, dataclass, field
 from typing import Any, Optional
@@ -51,22 +54,87 @@ def _normalized(text: str) -> str:
     return " ".join(str(text).lower().split())
 
 
+def _balanced_object_candidates(text: str) -> list[str]:
+    """Return balanced object substrings, ignoring braces inside strings."""
+    candidates: list[str] = []
+    start: Optional[int] = None
+    depth = 0
+    quote = ""
+    escaped = False
+    for index, char in enumerate(text):
+        if quote:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = ""
+            continue
+        if depth and char in {'"', "'"}:
+            quote = char
+        elif char == "{":
+            if depth == 0:
+                start = index
+            depth += 1
+        elif char == "}" and depth:
+            depth -= 1
+            if depth == 0 and start is not None:
+                candidates.append(text[start : index + 1])
+                start = None
+    return candidates
+
+
 def parse_json_object(text: str) -> Optional[dict[str, Any]]:
-    """Parse one JSON object from a model response without accepting prose."""
+    """Parse one JSON object from imperfect schema-constrained model output.
+
+    vLLM usually enforces valid JSON, but some model/server combinations return
+    fenced JSON, a Python-style dictionary, or reasoning followed by multiple
+    objects.  Try each balanced object independently so one malformed prefix
+    does not discard a later valid controller decision.
+    """
     if not isinstance(text, str) or not text.strip():
         return None
-    candidate = text.strip()
-    fenced = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", candidate)
-    if fenced:
-        candidate = fenced.group(1).strip()
-    start, end = candidate.find("{"), candidate.rfind("}")
-    if start < 0 or end <= start:
-        return None
-    try:
-        value = json.loads(candidate[start : end + 1])
-    except json.JSONDecodeError:
-        return None
-    return value if isinstance(value, dict) else None
+    cleaned = re.sub(r"<think>[\s\S]*?</think>", "", text, flags=re.IGNORECASE)
+    fenced = re.findall(r"```(?:json|python)?\s*([\s\S]*?)\s*```", cleaned)
+    search_spaces = fenced + [cleaned]
+    for search_space in search_spaces:
+        for candidate in _balanced_object_candidates(search_space):
+            try:
+                value = json.loads(candidate)
+            except json.JSONDecodeError:
+                try:
+                    value = ast.literal_eval(candidate)
+                except (SyntaxError, ValueError):
+                    continue
+            if isinstance(value, dict):
+                return value
+    return None
+
+
+class GapStepScheduler:
+    """Deterministic approximately-periodic scheduler for epistemic checks."""
+
+    def __init__(self, interval: int, jitter: int, seed_text: str):
+        self.interval = max(0, int(interval))
+        self.jitter = min(max(0, int(jitter)), max(0, self.interval - 1))
+        seed = int.from_bytes(
+            hashlib.sha256(str(seed_text).encode("utf-8")).digest()[:8], "big"
+        )
+        self._rng = random.Random(seed)
+        self.next_turn: Optional[int] = None
+        if self.interval:
+            self.next_turn = self._next_after(0)
+
+    def _next_after(self, turn: int) -> int:
+        offset = self._rng.randint(-self.jitter, self.jitter) if self.jitter else 0
+        return int(turn) + max(1, self.interval + offset)
+
+    def due(self, turn: int) -> bool:
+        return self.next_turn is not None and int(turn) >= self.next_turn
+
+    def mark_attempt(self, turn: int) -> None:
+        if self.interval:
+            self.next_turn = self._next_after(turn)
 
 
 def fact_extraction_schema(max_facts: int = 8) -> dict[str, Any]:
@@ -244,6 +312,11 @@ class StructuredFactMemory:
         self.revision = 0
         self._by_key: dict[tuple[str, str, str], str] = {}
         self._observation_nodes: dict[str, str] = {}
+
+    @property
+    def ready_to_answer(self) -> bool:
+        """True only for an explicit positive gap decision with no open gaps."""
+        return bool(self.can_answer and not self.missing_information)
 
     def _next_fact_id(self) -> str:
         self._fact_counter += 1
@@ -499,7 +572,9 @@ class StructuredFactMemory:
                 existing_links.add(key)
                 links_added += 1
 
-        changed = bool(added or links_added)
+        # A semantic merge is still a graph update: it adds provenance and may
+        # raise confidence/importance even when it does not allocate a fact ID.
+        changed = bool(added or deduplicated or links_added)
         if changed:
             self.revision += 1
         return {
@@ -535,6 +610,44 @@ class StructuredFactMemory:
         self.gap_reasoning = " ".join(
             str(payload.get("reasoning", "")).split()
         )[:1000]
+
+    def fallback_gap_analysis(self) -> dict[str, Any]:
+        """Build conservative guidance when the learned analyzer is malformed.
+
+        The fallback never declares the task answerable.  It only maps plan goals
+        to lexical fact coverage, preserving forward progress without allowing a
+        weak controller response to terminate the rollout prematurely.
+        """
+        fact_terms = [
+            _terms(fact.text()) | _terms(fact.quote) for fact in self.facts.values()
+        ]
+        goals = self.goals or [self.task]
+        covered: list[str] = []
+        missing: list[str] = []
+        for goal in goals:
+            goal_terms = _terms(goal)
+            overlaps = [len(goal_terms & terms) for terms in fact_terms]
+            if goal_terms and overlaps and max(overlaps) >= min(2, len(goal_terms)):
+                covered.append(goal)
+            else:
+                missing.append(f"Evidence needed for goal: {goal}")
+        if not self.facts and not missing:
+            missing = [f"Evidence needed to answer: {self.task}"]
+        searches = [
+            re.sub(r"^Evidence needed for goal:\s*", "", item)[:500]
+            for item in missing[:3]
+        ]
+        return {
+            "covered_aspects": covered[:8],
+            "missing_information": missing[:5],
+            "suggested_searches": searches,
+            "can_answer": False,
+            "confidence": "low",
+            "reasoning": (
+                "Deterministic fallback used because the learned gap analyzer "
+                "did not return a valid structured decision."
+            ),
+        }
 
     def ranked_facts(self, query: str, max_facts: int = 12) -> list[EvidenceFact]:
         query_terms = _terms(query) | _terms(self.task)
@@ -582,9 +695,12 @@ class StructuredFactMemory:
         )[:1000]
         return (
             "Act as both a fact extractor and semantic relational integrator. "
-            "Extract only task-relevant factual claims from this tool observation. "
-            "Do not copy search-result speculation as fact. Keep quote text short and "
-            "verbatim enough to locate the evidence. Compare every extracted fact "
+            "Extract task-relevant candidate factual claims from this tool observation. "
+            "Search-result snippets may be retained as candidates when clearly "
+            "attributed; assign them lower confidence than directly opened primary "
+            "sources. Never turn a query, unsupported inference, or model speculation "
+            "into a fact. Keep quote text short and verbatim enough to locate the "
+            "evidence. Compare every extracted fact "
             "against the existing fact catalog. Set duplicate_of to the matching fact "
             "ID when the claims are semantically equivalent even if wording differs; "
             "otherwise use an empty string. Emit links whenever a genuinely new fact "
@@ -597,13 +713,21 @@ class StructuredFactMemory:
 
     def gap_prompt(self, max_facts: int = 32) -> str:
         facts = self.fact_catalog(max_facts=max_facts) or "(none)"
+        goals = "\n".join(f"- {goal}" for goal in self.goals) or "- Answer the task"
+        relations = "\n".join(
+            f"- [{link.source_fact_id}] {link.relation} [{link.target_fact_id}]"
+            for link in self.links[:24]
+        ) or "(none)"
         return (
             "Analyze whether the structured evidence is sufficient to answer the task. "
-            "List covered aspects, only concrete missing information, and specific "
-            "search queries that could resolve each gap. Do not propose searches for "
-            "information already present. Set can_answer=true only when the requested "
-            "answer can be directly supported by the facts.\n\n"
-            f"TASK:\n{self.task}\n\nFACTS:\n{facts}"
+            "Treat covered_aspects as K_cov, missing_information as structural K_mis "
+            "links between goals and evidence, and suggested_searches as Q_sug. List "
+            "only concrete missing information and specific searches that resolve it. "
+            "Do not propose searches for information already present. Set "
+            "can_answer=true only when every goal is supported by cited fact IDs and "
+            "missing_information is empty.\n\n"
+            f"TASK:\n{self.task}\n\nGOALS:\n{goals}\n\nFACTS:\n{facts}\n\n"
+            f"FACT RELATIONS:\n{relations}"
         )
 
     def _relation_lines(self, selected_ids: set[str], max_links: int = 12) -> list[str]:
@@ -784,13 +908,24 @@ class StructuredFactMemory:
         }
 
 
-def structured_memory_messages(prompt: str) -> list[dict[str, str]]:
+def structured_memory_messages(
+    prompt: str,
+    schema: Optional[dict[str, Any]] = None,
+) -> list[dict[str, str]]:
+    schema_instruction = ""
+    if schema:
+        schema_instruction = (
+            " The required JSON Schema is: "
+            + json.dumps(schema, ensure_ascii=False, separators=(",", ":"))
+        )
     return [
         {
             "role": "system",
             "content": (
                 "You are a structured-memory controller. Return only the JSON "
-                "object required by the supplied response schema."
+                "object required by the supplied response schema. Do not emit "
+                "analysis, markdown fences, or tool syntax."
+                + schema_instruction
             ),
         },
         {"role": "user", "content": prompt},
@@ -800,6 +935,7 @@ def structured_memory_messages(prompt: str) -> list[dict[str, str]]:
 __all__ = [
     "EvidenceFact",
     "FactLink",
+    "GapStepScheduler",
     "MemoryEdge",
     "MemoryNode",
     "StructuredFactMemory",
