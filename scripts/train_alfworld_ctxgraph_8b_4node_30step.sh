@@ -492,7 +492,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$NODE0" --chdir="$PROJECT_ROOT" \
   +actor_rollout_ref.rollout.plugin.structured_graph_controller=${ALFWORLD_STRUCTURED_GRAPH_CONTROLLER} \
   +actor_rollout_ref.rollout.plugin.structured_memory_enabled=${ALFWORLD_STRUCTURED_MEMORY_ENABLED} \
   +actor_rollout_ref.rollout.plugin.structured_memory_required=${ALFWORLD_STRUCTURED_MEMORY_REQUIRED} \
-  +actor_rollout_ref.rollout.plugin.structured_memory_tools="$ALFWORLD_STRUCTURED_MEMORY_TOOLS" \
+  +actor_rollout_ref.rollout.plugin.structured_memory_tools="'$ALFWORLD_STRUCTURED_MEMORY_TOOLS'" \
   +actor_rollout_ref.rollout.plugin.structured_memory_gap_interval=${ALFWORLD_STRUCTURED_MEMORY_GAP_INTERVAL} \
   +actor_rollout_ref.rollout.plugin.structured_memory_context_budget=${ALFWORLD_STRUCTURED_MEMORY_CONTEXT_BUDGET} \
   +actor_rollout_ref.rollout.plugin.structured_memory_max_context_facts=${ALFWORLD_STRUCTURED_MEMORY_MAX_CONTEXT_FACTS} \

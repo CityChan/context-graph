@@ -266,6 +266,7 @@ def test_eval_launchers_wire_structured_memory_without_disabling_controller():
     assert "plugin.structured_memory_enabled" in alfworld_trainer
     assert "plugin.structured_memory_required" in alfworld_trainer
     assert "plugin.structured_memory_tools" in alfworld_trainer
+    assert 'structured_memory_tools="\'$ALFWORLD_STRUCTURED_MEMORY_TOOLS\'"' in alfworld_trainer
     assert "plugin.structured_memory_context_budget" in alfworld_trainer
     assert "plugin.structured_memory_relation_candidates" in alfworld_trainer
     assert "plugin.structured_memory_controller_retries" in alfworld_trainer
