@@ -64,6 +64,25 @@ class StructuredFakeAgent(FakeAgent):
         return self.response
 
 
+class OverlayCaptureAgent(FakeAgent):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.content_seen_during_step = None
+
+    def replace_user_turn(self, idx, content):
+        self._messages[idx]["content"] = content
+
+    async def step(self, max_new_tokens=None, completion_kwargs=None):
+        self.step_budgets.append(max_new_tokens)
+        user_messages = [
+            message["content"] for message in self._messages
+            if message.get("role") == "user"
+        ]
+        self.content_seen_during_step = user_messages[-1]
+        self._messages.append({"role": "assistant", "content": self.response})
+        return self.response
+
+
 async def fake_action_runner(env, response):
     result = await env.run_action(response)
     if result.get("action") == "finish":
@@ -140,6 +159,21 @@ def test_normal_step_forwards_structured_completion_constraints():
     assert agent.completion_kwargs == [structured]
 
 
+def test_normal_step_uses_memory_overlay_without_persisting_it():
+    agent = OverlayCaptureAgent(context_len=40, response="normal")
+
+    result = asyncio.run(step_preserving_final_answer(
+        agent,
+        reserve_tokens=0,
+        context_overlay="[Current STRUCTMEM state] fact f1",
+    ))
+
+    assert result == "normal"
+    assert "fact f1" in agent.content_seen_during_step
+    assert agent.messages()[0]["content"] == "evidence"
+    assert all("fact f1" not in message["content"] for message in agent.messages())
+
+
 def test_observation_is_truncated_without_consuming_protected_budget():
     agent = ObservationBudgetAgent(context_len=60)
     observation = " ".join(f"token-{i}" for i in range(50))
@@ -195,6 +229,26 @@ def test_finalizer_submits_tool_call_and_uses_only_protected_budget():
     assert env.is_finish is True
     assert agent.step_budgets == [35]
     assert "FINAL ANSWER REQUIRED NOW" in agent.messages()[-2]["content"]
+
+
+def test_finalizer_uses_answer_graph_transiently_and_restores_prompt():
+    response = "<function=finish><parameter=answer>Paris</parameter></function>"
+    agent = OverlayCaptureAgent(context_len=40, response=response)
+    env = FakeEnv()
+
+    finished = asyncio.run(submit_emergency_final_answer(
+        agent,
+        env,
+        reserve_tokens=80,
+        action_runner=fake_action_runner,
+        context_overlay="[STRUCTMEM evidence for final answer] Paris is the capital.",
+    ))
+
+    assert finished is True
+    assert "STRUCTMEM evidence" in agent.content_seen_during_step
+    assert "FINAL ANSWER REQUIRED NOW" in agent.content_seen_during_step
+    assert "STRUCTMEM evidence" not in agent.messages()[0]["content"]
+    assert "FINAL ANSWER REQUIRED NOW" in agent.messages()[0]["content"]
 
 
 def test_finalizer_wraps_plain_text_as_finish_answer():

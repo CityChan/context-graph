@@ -90,10 +90,17 @@ def fact_extraction_schema(max_facts: int = 8) -> dict[str, Any]:
                         },
                         "confidence": {"type": "number", "minimum": 0, "maximum": 1},
                         "quote": {"type": "string"},
+                        "duplicate_of": {
+                            "type": "string",
+                            "description": (
+                                "Existing fact ID expressing the same claim, or an "
+                                "empty string when this is a new fact."
+                            ),
+                        },
                     },
                     "required": [
                         "subject", "predicate", "object", "importance",
-                        "confidence", "quote",
+                        "confidence", "quote", "duplicate_of",
                     ],
                     "additionalProperties": False,
                 },
@@ -130,16 +137,36 @@ def gap_analysis_schema() -> dict[str, Any]:
     return {
         "type": "object",
         "properties": {
+            "covered_aspects": {"type": "array", "items": {"type": "string"}},
             "missing_information": {"type": "array", "items": {"type": "string"}},
             "suggested_searches": {"type": "array", "items": {"type": "string"}},
             "can_answer": {"type": "boolean"},
             "confidence": {
                 "type": "string", "enum": ["high", "medium", "low"],
             },
+            "reasoning": {"type": "string"},
         },
         "required": [
-            "missing_information", "suggested_searches", "can_answer", "confidence",
+            "covered_aspects", "missing_information", "suggested_searches",
+            "can_answer", "confidence", "reasoning",
         ],
+        "additionalProperties": False,
+    }
+
+
+def plan_initialization_schema(max_goals: int = 8) -> dict[str, Any]:
+    """Schema for the paper's initial plan and goal decomposition."""
+    return {
+        "type": "object",
+        "properties": {
+            "plan": {"type": "string"},
+            "goals": {
+                "type": "array",
+                "maxItems": max(1, int(max_goals)),
+                "items": {"type": "string"},
+            },
+        },
+        "required": ["plan", "goals"],
         "additionalProperties": False,
     }
 
@@ -169,6 +196,22 @@ class FactLink:
     reason: str = ""
 
 
+@dataclass
+class MemoryNode:
+    id: str
+    node_type: str
+    content: str
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class MemoryEdge:
+    source_id: str
+    target_id: str
+    relation: str
+    reason: str = ""
+
+
 class StructuredFactMemory:
     """A bounded fact index that never mutates ContextGraph topology."""
 
@@ -184,17 +227,126 @@ class StructuredFactMemory:
         self.max_facts = max(1, int(max_facts))
         self.facts: dict[str, EvidenceFact] = {}
         self.links: list[FactLink] = []
+        self.nodes: dict[str, MemoryNode] = {}
+        self.structural_edges: list[MemoryEdge] = []
+        self.plan_node_id: Optional[str] = None
+        self.plan = ""
+        self.goals: list[str] = []
+        self.covered_aspects: list[str] = []
         self.missing_information: list[str] = []
         self.suggested_searches: list[str] = []
         self.can_answer = False
         self.confidence = "low"
+        self.gap_reasoning = ""
         self._fact_counter = 0
+        self._node_counter = 0
         self._sequence = 0
+        self.revision = 0
         self._by_key: dict[tuple[str, str, str], str] = {}
+        self._observation_nodes: dict[str, str] = {}
 
     def _next_fact_id(self) -> str:
         self._fact_counter += 1
         return f"f{self._fact_counter}"
+
+    def _next_node_id(self, prefix: str) -> str:
+        self._node_counter += 1
+        return f"m{prefix}{self._node_counter}"
+
+    def plan_prompt(self) -> str:
+        return (
+            "Decompose the task into a concise high-level plan and independently "
+            "verifiable information goals. Do not answer the task yet. Goals should "
+            "be concrete enough to guide tool searches.\n\n"
+            f"TASK:\n{self.task}"
+        )
+
+    def initialize_plan(self, payload: dict[str, Any]) -> None:
+        """Initialize plan/goal nodes before exploration."""
+        if self.plan_node_id is not None:
+            return
+        plan = " ".join(str((payload or {}).get("plan", "")).split())[:2000]
+        if not plan:
+            plan = f"Gather and verify the evidence required to answer: {self.task}"
+        raw_goals = (payload or {}).get("goals", [])
+        goals = (
+            [" ".join(str(goal).split())[:500] for goal in raw_goals if str(goal).strip()]
+            if isinstance(raw_goals, list) else []
+        )[:8]
+        self.plan = plan
+        self.goals = goals
+        plan_id = self._next_node_id("plan")
+        self.plan_node_id = plan_id
+        self.nodes[plan_id] = MemoryNode(
+            id=plan_id, node_type="plan", content=plan,
+            metadata={"is_root": True},
+        )
+        for goal in goals:
+            goal_id = self._next_node_id("goal")
+            self.nodes[goal_id] = MemoryNode(
+                id=goal_id, node_type="goal", content=goal,
+            )
+            self.structural_edges.append(MemoryEdge(
+                source_id=plan_id,
+                target_id=goal_id,
+                relation="contains",
+                reason="plan contains goal",
+            ))
+        self.revision += 1
+
+    def record_observation(
+        self,
+        *,
+        evidence_node_id: str,
+        tool_name: str,
+        observation: str,
+        source_metadata: Optional[dict[str, Any]] = None,
+    ) -> None:
+        """Record action/observation structure while raw text stays in ContextGraph."""
+        if not evidence_node_id or evidence_node_id in self._observation_nodes:
+            return
+        raw_metadata = dict(source_metadata or {})
+        raw_metadata.pop("raw_content", None)
+        metadata = json.loads(json.dumps(
+            raw_metadata,
+            ensure_ascii=False,
+            sort_keys=True,
+            default=str,
+        ))
+        action_id = self._next_node_id("action")
+        action_content = str(tool_name)
+        if metadata:
+            action_content += f": {json.dumps(metadata, ensure_ascii=False, sort_keys=True)[:500]}"
+        self.nodes[action_id] = MemoryNode(
+            id=action_id,
+            node_type="action",
+            content=action_content,
+            metadata={"tool": str(tool_name), **metadata},
+        )
+        observation_id = self._next_node_id("obs")
+        self.nodes[observation_id] = MemoryNode(
+            id=observation_id,
+            node_type="observation",
+            content=str(observation)[:1000],
+            metadata={
+                "evidence_node_id": evidence_node_id,
+                "tool": str(tool_name),
+                "content_length": len(str(observation)),
+            },
+        )
+        if self.plan_node_id:
+            self.structural_edges.append(MemoryEdge(
+                source_id=self.plan_node_id,
+                target_id=action_id,
+                relation="produces",
+            ))
+        self.structural_edges.append(MemoryEdge(
+            source_id=action_id,
+            target_id=observation_id,
+            relation="produces",
+            reason=f"result from {tool_name}",
+        ))
+        self._observation_nodes[evidence_node_id] = observation_id
 
     @staticmethod
     def _source_label(metadata: Optional[dict[str, Any]]) -> str:
@@ -238,7 +390,10 @@ class StructuredFactMemory:
                 resolved_ids.append(None)
                 continue
             key = (_normalized(subject), _normalized(predicate), _normalized(obj))
+            duplicate_of = str(raw.get("duplicate_of", "") or "").strip()
             existing_id = self._by_key.get(key)
+            if duplicate_of in preexisting_fact_ids:
+                existing_id = duplicate_of
             if existing_id:
                 fact = self.facts[existing_id]
                 if evidence_node_id not in fact.evidence_node_ids:
@@ -258,7 +413,18 @@ class StructuredFactMemory:
                 ):
                     fact.importance = new_importance
                 resolved_ids.append(existing_id)
+                self._by_key[key] = existing_id
                 deduplicated += 1
+                observation_id = self._observation_nodes.get(evidence_node_id)
+                if observation_id:
+                    edge = MemoryEdge(
+                        source_id=observation_id,
+                        target_id=existing_id,
+                        relation="contains",
+                        reason="observation supports an existing fact",
+                    )
+                    if edge not in self.structural_edges:
+                        self.structural_edges.append(edge)
                 continue
             if len(self.facts) >= self.max_facts:
                 resolved_ids.append(None)
@@ -289,6 +455,13 @@ class StructuredFactMemory:
             self._by_key[key] = fact_id
             resolved_ids.append(fact_id)
             added += 1
+            observation_id = self._observation_nodes.get(evidence_node_id)
+            if observation_id:
+                self.structural_edges.append(MemoryEdge(
+                    source_id=observation_id,
+                    target_id=fact_id,
+                    relation="contains",
+                ))
 
         raw_links = payload.get("links", []) if isinstance(payload, dict) else []
         existing_links = {
@@ -326,18 +499,28 @@ class StructuredFactMemory:
                 existing_links.add(key)
                 links_added += 1
 
+        changed = bool(added or links_added)
+        if changed:
+            self.revision += 1
         return {
             "added": added,
             "deduplicated": deduplicated,
             "links_added": links_added,
             "total_facts": len(self.facts),
+            "changed": changed,
+            "revision": self.revision,
         }
 
     def update_gaps(self, payload: dict[str, Any]) -> None:
         if not isinstance(payload, dict):
             return
+        covered = payload.get("covered_aspects", [])
         missing = payload.get("missing_information", [])
         searches = payload.get("suggested_searches", [])
+        self.covered_aspects = [
+            " ".join(str(item).split())[:500]
+            for item in covered if str(item).strip()
+        ][:8] if isinstance(covered, list) else []
         self.missing_information = [
             " ".join(str(item).split())[:500]
             for item in missing if str(item).strip()
@@ -349,6 +532,9 @@ class StructuredFactMemory:
         self.can_answer = bool(payload.get("can_answer", False))
         confidence = str(payload.get("confidence", "low")).lower()
         self.confidence = confidence if confidence in {"high", "medium", "low"} else "low"
+        self.gap_reasoning = " ".join(
+            str(payload.get("reasoning", "")).split()
+        )[:1000]
 
     def ranked_facts(self, query: str, max_facts: int = 12) -> list[EvidenceFact]:
         query_terms = _terms(query) | _terms(self.task)
@@ -392,12 +578,18 @@ class StructuredFactMemory:
             },
             ensure_ascii=False,
             sort_keys=True,
+            default=str,
         )[:1000]
         return (
+            "Act as both a fact extractor and semantic relational integrator. "
             "Extract only task-relevant factual claims from this tool observation. "
             "Do not copy search-result speculation as fact. Keep quote text short and "
-            "verbatim enough to locate the evidence. Use links only when a new fact "
-            "clearly supports, contradicts, or is related to an existing fact ID.\n\n"
+            "verbatim enough to locate the evidence. Compare every extracted fact "
+            "against the existing fact catalog. Set duplicate_of to the matching fact "
+            "ID when the claims are semantically equivalent even if wording differs; "
+            "otherwise use an empty string. Emit links whenever a genuinely new fact "
+            "supports, contradicts, or is meaningfully related to an existing fact. "
+            "Contradictions must never be silently merged.\n\n"
             f"TASK:\n{self.task}\n\nEVIDENCE NODE: {evidence_node_id}\n"
             f"SOURCE METADATA: {source}\n\nEXISTING FACTS:\n{existing}\n\n"
             f"OBSERVATION:\n{str(observation)[:12000]}"
@@ -407,10 +599,35 @@ class StructuredFactMemory:
         facts = self.fact_catalog(max_facts=max_facts) or "(none)"
         return (
             "Analyze whether the structured evidence is sufficient to answer the task. "
-            "List only concrete missing information and specific searches that could "
-            "resolve it. Do not propose searches for information already present.\n\n"
+            "List covered aspects, only concrete missing information, and specific "
+            "search queries that could resolve each gap. Do not propose searches for "
+            "information already present. Set can_answer=true only when the requested "
+            "answer can be directly supported by the facts.\n\n"
             f"TASK:\n{self.task}\n\nFACTS:\n{facts}"
         )
+
+    def _relation_lines(self, selected_ids: set[str], max_links: int = 12) -> list[str]:
+        contradictions = [
+            link for link in self.links
+            if link.relation == "contradicts"
+            and (
+                link.source_fact_id in selected_ids
+                or link.target_fact_id in selected_ids
+            )
+        ]
+        other = [
+            link for link in self.links
+            if link.relation != "contradicts"
+            and (link.source_fact_id in selected_ids or link.target_fact_id in selected_ids)
+        ]
+        lines = []
+        for link in (contradictions + other)[:max_links]:
+            reason = f": {link.reason}" if link.reason else ""
+            lines.append(
+                f"- [{link.source_fact_id}] {link.relation} "
+                f"[{link.target_fact_id}]{reason}"
+            )
+        return lines
 
     def _truncate(self, text: str, max_tokens: int) -> str:
         max_tokens = max(1, int(max_tokens))
@@ -431,43 +648,139 @@ class StructuredFactMemory:
         max_facts: int = 12,
         max_tokens: int = 1024,
     ) -> str:
-        if not self.facts and not self.missing_information:
+        if (
+            not self.plan
+            and not self.facts
+            and not self.covered_aspects
+            and not self.missing_information
+            and not self.can_answer
+        ):
             return ""
-        lines = ["[Structured fact memory; fact IDs point to raw evidence nodes]"]
-        for fact in self.ranked_facts(query, max_facts=max_facts):
+        lines = ["[Current STRUCTMEM state; this snapshot replaces older snapshots]"]
+        if self.plan:
+            lines.append(f"[Plan] {self.plan}")
+        if self.goals:
+            lines.append("[Goals]")
+            lines.extend(f"- {goal}" for goal in self.goals[:8])
+        ranked = self.ranked_facts(query, max_facts=max_facts)
+        lines.append("[Verified facts; IDs point to raw ContextGraph evidence]")
+        for fact in ranked:
             provenance = ",".join(fact.evidence_node_ids[-2:])
             line = (
                 f"- [{fact.id}] {fact.text()} "
                 f"[{fact.importance}; conf={fact.confidence:.2f}; evidence={provenance}]"
             )
             lines.append(line)
+        relation_lines = self._relation_lines({fact.id for fact in ranked})
+        if relation_lines:
+            lines.append("[Fact relationships]")
+            lines.extend(relation_lines)
+        if self.covered_aspects:
+            lines.append("[Covered aspects]")
+            lines.extend(f"- {item}" for item in self.covered_aspects[:8])
         if self.missing_information:
             lines.append("[Information gaps]")
             lines.extend(f"- {gap}" for gap in self.missing_information[:5])
         if self.suggested_searches and not self.can_answer:
-            lines.append("[Suggested searches]")
+            lines.append("[Next-action guidance: search one unresolved item; avoid repeats]")
             lines.extend(f"- {query}" for query in self.suggested_searches[:3])
+        if self.can_answer:
+            lines.append(
+                "[Readiness] The gap analyzer found sufficient evidence. Stop searching "
+                "and submit the answer with the finish tool."
+            )
+        return self._truncate("\n".join(lines), max_tokens)
+
+    def render_answer_context(
+        self,
+        *,
+        max_facts: int = 24,
+        max_tokens: int = 1024,
+    ) -> str:
+        """Render a compact graph-grounded view for final answer synthesis."""
+        if not self.facts:
+            return ""
+        ranked = self.ranked_facts(self.task, max_facts=max_facts)
+        buckets = {"critical": [], "important": [], "supplementary": []}
+        for fact in ranked:
+            provenance = ",".join(fact.evidence_node_ids[-3:])
+            buckets.setdefault(fact.importance, []).append(
+                f"- [{fact.id}] {fact.text()} "
+                f"[conf={fact.confidence:.2f}; evidence={provenance}]"
+            )
+        lines = [
+            "[STRUCTMEM evidence for final answer]",
+            "Answer from these consolidated facts and relationships. Prefer critical "
+            "facts, resolve contradictions explicitly, and do not invent missing facts.",
+        ]
+        for importance in ("critical", "important", "supplementary"):
+            if buckets.get(importance):
+                lines.append(f"[{importance.title()} facts]")
+                lines.extend(buckets[importance])
+        relation_lines = self._relation_lines({fact.id for fact in ranked}, max_links=20)
+        if relation_lines:
+            lines.append("[Fact relationships]")
+            lines.extend(relation_lines)
+        if self.missing_information:
+            lines.append("[Unresolved gaps]")
+            lines.extend(f"- {gap}" for gap in self.missing_information[:5])
+        lines.append(f"[Gap confidence] {self.confidence}")
         return self._truncate("\n".join(lines), max_tokens)
 
     def stats(self) -> dict[str, Any]:
         return {
             "facts": len(self.facts),
             "links": len(self.links),
+            "nodes": len(self.nodes) + len(self.facts),
+            "structural_edges": len(self.structural_edges),
+            "goals": len(self.goals),
+            "actions": sum(node.node_type == "action" for node in self.nodes.values()),
+            "observations": sum(
+                node.node_type == "observation" for node in self.nodes.values()
+            ),
             "gaps": len(self.missing_information),
             "can_answer": int(self.can_answer),
             "confidence": self.confidence,
+            "revision": self.revision,
         }
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "schema_version": "contextgraph.structured_memory.v1",
+            "schema_version": "contextgraph.structured_memory.v2",
             "task": self.task,
+            "plan": self.plan,
+            "goals": list(self.goals),
+            "nodes": [asdict(node) for node in self.nodes.values()] + [
+                {
+                    "id": fact.id,
+                    "node_type": "fact",
+                    "content": fact.text(),
+                    "metadata": {
+                        "importance": fact.importance,
+                        "confidence": fact.confidence,
+                        "evidence_node_ids": list(fact.evidence_node_ids),
+                    },
+                }
+                for fact in self.facts.values()
+            ],
+            "edges": [asdict(edge) for edge in self.structural_edges] + [
+                {
+                    "source_id": link.source_fact_id,
+                    "target_id": link.target_fact_id,
+                    "relation": link.relation,
+                    "reason": link.reason,
+                }
+                for link in self.links
+            ],
             "facts": [asdict(fact) for fact in self.facts.values()],
             "links": [asdict(link) for link in self.links],
+            "covered_aspects": list(self.covered_aspects),
             "missing_information": list(self.missing_information),
             "suggested_searches": list(self.suggested_searches),
             "can_answer": self.can_answer,
             "confidence": self.confidence,
+            "gap_reasoning": self.gap_reasoning,
+            "revision": self.revision,
         }
 
 
@@ -487,10 +800,13 @@ def structured_memory_messages(prompt: str) -> list[dict[str, str]]:
 __all__ = [
     "EvidenceFact",
     "FactLink",
+    "MemoryEdge",
+    "MemoryNode",
     "StructuredFactMemory",
     "coerce_bool",
     "fact_extraction_schema",
     "gap_analysis_schema",
+    "plan_initialization_schema",
     "parse_json_object",
     "structured_memory_messages",
 ]

@@ -224,6 +224,8 @@ STRUCTURED_MEMORY_MAX_FACTS_PER_OBSERVATION=${STRUCTURED_MEMORY_MAX_FACTS_PER_OB
 STRUCTURED_MEMORY_MAX_FACTS=${STRUCTURED_MEMORY_MAX_FACTS:-128}
 STRUCTURED_MEMORY_EXTRACT_MAX_TOKENS=${STRUCTURED_MEMORY_EXTRACT_MAX_TOKENS:-768}
 STRUCTURED_MEMORY_GAP_MAX_TOKENS=${STRUCTURED_MEMORY_GAP_MAX_TOKENS:-512}
+STRUCTURED_MEMORY_PLAN_MAX_TOKENS=${STRUCTURED_MEMORY_PLAN_MAX_TOKENS:-512}
+STRUCTURED_MEMORY_RELATION_CANDIDATES=${STRUCTURED_MEMORY_RELATION_CANDIDATES:-24}
 TRAIN_LR=${TRAIN_LR:-2e-6}
 USE_KL_LOSS=${USE_KL_LOSS:-True}
 ADV_ESTIMATOR=${ADV_ESTIMATOR:-foldgrpo}
@@ -759,6 +761,8 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   +actor_rollout_ref.rollout.plugin.structured_memory_max_facts="$STRUCTURED_MEMORY_MAX_FACTS" \
   +actor_rollout_ref.rollout.plugin.structured_memory_extract_max_tokens="$STRUCTURED_MEMORY_EXTRACT_MAX_TOKENS" \
   +actor_rollout_ref.rollout.plugin.structured_memory_gap_max_tokens="$STRUCTURED_MEMORY_GAP_MAX_TOKENS" \
+  +actor_rollout_ref.rollout.plugin.structured_memory_plan_max_tokens="$STRUCTURED_MEMORY_PLAN_MAX_TOKENS" \
+  +actor_rollout_ref.rollout.plugin.structured_memory_relation_candidates="$STRUCTURED_MEMORY_RELATION_CANDIDATES" \
   +actor_rollout_ref.rollout.plugin.max_turn="$MAX_TURN" \
   +actor_rollout_ref.rollout.plugin.retry_cjk=10 \
   +actor_rollout_ref.rollout.plugin.turn_max_new_tokens="$TURN_MAX_NEW_TOKENS" \

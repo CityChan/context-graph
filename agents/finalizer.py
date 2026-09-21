@@ -123,22 +123,43 @@ async def step_preserving_final_answer(
     reserve_tokens: int,
     *,
     completion_kwargs=None,
+    context_overlay: str | None = None,
 ):
-    """Generate one normal turn without consuming the final-answer reserve."""
-    reserve_tokens = max(int(reserve_tokens or 0), 0)
-    if reserve_tokens == 0:
-        if completion_kwargs is None:
-            return await agent.step()
-        return await agent.step(completion_kwargs=completion_kwargs)
+    """Generate one normal turn with an optional transient context overlay.
 
-    normal_budget = remaining_generation_tokens(agent) - reserve_tokens
-    if normal_budget < 10:
-        return None
-    if completion_kwargs is None:
-        return await agent.step(max_new_tokens=normal_budget)
-    return await agent.step(
-        max_new_tokens=normal_budget, completion_kwargs=completion_kwargs
-    )
+    The overlay is visible to this generation only. Restoring the original
+    user turn prevents repeatedly injected memory snapshots from accumulating
+    in the persistent trajectory.
+    """
+    overlay_idx = None
+    original_content = None
+    context_overlay = str(context_overlay or "").strip()
+    if context_overlay and agent.messages() and agent.messages()[-1].get("role") == "user":
+        overlay_idx = len(agent.messages()) - 1
+        original_content = agent.messages()[overlay_idx].get("content", "")
+        agent.replace_user_turn(
+            overlay_idx,
+            f"{original_content}\n\n{context_overlay}",
+        )
+
+    try:
+        reserve_tokens = max(int(reserve_tokens or 0), 0)
+        if reserve_tokens == 0:
+            if completion_kwargs is None:
+                return await agent.step()
+            return await agent.step(completion_kwargs=completion_kwargs)
+
+        normal_budget = remaining_generation_tokens(agent) - reserve_tokens
+        if normal_budget < 10:
+            return None
+        if completion_kwargs is None:
+            return await agent.step(max_new_tokens=normal_budget)
+        return await agent.step(
+            max_new_tokens=normal_budget, completion_kwargs=completion_kwargs
+        )
+    finally:
+        if overlay_idx is not None:
+            agent.replace_user_turn(overlay_idx, original_content)
 
 
 def _fallback_finish_call(response: str) -> str:
@@ -159,7 +180,12 @@ def _fallback_finish_call(response: str) -> str:
 
 
 async def submit_emergency_final_answer(
-    agent, env, reserve_tokens: int, action_runner
+    agent,
+    env,
+    reserve_tokens: int,
+    action_runner,
+    *,
+    context_overlay: str | None = None,
 ) -> bool:
     """Spend the protected reserve on one final answer and submit it to the env.
 
@@ -173,20 +199,43 @@ async def submit_emergency_final_answer(
     if getattr(env, "is_finish", False) or getattr(env, "finish", False):
         return False
 
+    overlay_idx = None
+    persistent_content = None
+    context_overlay = str(context_overlay or "").strip()
     if agent.messages() and agent.messages()[-1].get("role") == "user":
         idx = len(agent.messages()) - 1
         content = agent.messages()[idx].get("content", "")
-        agent.replace_user_turn(idx, f"{content}\n\n{FINAL_ANSWER_PROMPT}")
+        persistent_content = f"{content}\n\n{FINAL_ANSWER_PROMPT}"
+        generation_content = persistent_content
+        if context_overlay:
+            # The latest raw observation has already been integrated into the
+            # memory graph. Replace it for this final call to reclaim context,
+            # then restore an auditable prompt-only trajectory afterward.
+            generation_content = f"{context_overlay}\n\n{FINAL_ANSWER_PROMPT}"
+        agent.replace_user_turn(idx, generation_content)
+        overlay_idx = idx
     else:
-        agent.append({"role": "user", "content": FINAL_ANSWER_PROMPT})
+        persistent_content = FINAL_ANSWER_PROMPT
+        generation_content = (
+            f"{context_overlay}\n\n{FINAL_ANSWER_PROMPT}"
+            if context_overlay else FINAL_ANSWER_PROMPT
+        )
+        agent.append({"role": "user", "content": generation_content})
+        overlay_idx = len(agent.messages()) - 1
 
     final_budget = min(reserve_tokens, remaining_generation_tokens(agent))
     if final_budget < 10:
         print(f"[FINALIZER] insufficient protected budget: {final_budget}")
+        if context_overlay and overlay_idx is not None:
+            agent.replace_user_turn(overlay_idx, persistent_content)
         return False
 
     print(f"[FINALIZER] forcing best-effort answer with {final_budget} tokens")
-    response = await agent.step(max_new_tokens=final_budget)
+    try:
+        response = await agent.step(max_new_tokens=final_budget)
+    finally:
+        if context_overlay and overlay_idx is not None:
+            agent.replace_user_turn(overlay_idx, persistent_content)
     if response is None:
         return False
 
