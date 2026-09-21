@@ -259,3 +259,27 @@ def test_eval_launchers_wire_structured_memory_without_disabling_controller():
     assert "export RUN_GAIA=1" in submitter
     assert "export STRUCTURED_MEMORY_ENABLED=1" in submitter
     assert "export STRUCTURED_MEMORY_STEP_LIMIT=40" in submitter
+
+    alfworld_trainer = open(
+        "scripts/train_alfworld_ctxgraph_8b_4node_30step.sh", encoding="utf-8"
+    ).read()
+    assert "plugin.structured_memory_enabled" in alfworld_trainer
+    assert "plugin.structured_memory_required" in alfworld_trainer
+    assert "plugin.structured_memory_tools" in alfworld_trainer
+    assert "plugin.structured_memory_context_budget" in alfworld_trainer
+    assert "plugin.structured_memory_relation_candidates" in alfworld_trainer
+    assert "plugin.structured_memory_controller_retries" in alfworld_trainer
+    assert "plugin.structured_memory_gap_jitter" in alfworld_trainer
+    assert "plugin.structured_memory_stop_on_ready" in alfworld_trainer
+    assert "plugin.structured_memory_step_limit" in alfworld_trainer
+
+    suite = open(
+        "scripts/submit_eval_bcp_gaia_alfworld_structmem_qwen3_8b_4node.sh",
+        encoding="utf-8",
+    ).read()
+    assert "#SBATCH -N 4" in suite
+    assert "RUN_BC=1 RUN_GAIA=1" in suite
+    assert "eval_bc_gaia_qwen3_8b_base_idev.sh" in suite
+    assert "eval_alfworld_ctxgraph_8b_4node_zeroshot_idev.sh" in suite
+    assert "ALFWORLD_STRUCTURED_MEMORY_TOOLS=action,branch_return" in suite
+    assert "ALFWORLD_STRUCTURED_MEMORY_STOP_ON_READY=0" in suite
