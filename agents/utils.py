@@ -183,6 +183,9 @@ class CallLLM(LLMClass):  # Call LLM in Verl RL env
         from uuid import uuid4
 
         structured_outputs = kwargs.pop('structured_outputs', None)
+        bypass_turn_max_new_tokens = bool(
+            kwargs.pop('bypass_turn_max_new_tokens', False)
+        )
 
         max_len = kwargs.pop('max_len', None) or self.config.prompt_length + self.config.response_length
         max_len = min(max_len, self.config.prompt_length + self.config.response_length)
@@ -194,7 +197,11 @@ class CallLLM(LLMClass):  # Call LLM in Verl RL env
         # NOTE: this used to assign to a local `max_tokens` variable that was
         # never read (line 176 below uses `max_new_tokens`), so the cap was
         # silently ignored — fix surfaced when val/overlong_rate hit 0.96.
-        if hasattr(self.config, 'plugin') and getattr(self.config.plugin, 'turn_max_new_tokens', -1) > 0:
+        if (
+            not bypass_turn_max_new_tokens
+            and hasattr(self.config, 'plugin')
+            and getattr(self.config.plugin, 'turn_max_new_tokens', -1) > 0
+        ):
             max_new_tokens = min(max_new_tokens, self.config.plugin.turn_max_new_tokens)
         if 'max_new_tokens' in kwargs:
             max_new_tokens = min(max_new_tokens, kwargs['max_new_tokens'])
@@ -286,8 +293,14 @@ class CallAPI(LLMClass):  # Call external API (OpenAI)
     async def create_completion(self, input_ids, **kwargs):
         max_len = kwargs.pop('max_len', None) or self.config.prompt_length + self.config.response_length
         max_tokens = min(max_len, self.config.prompt_length + self.config.response_length) - len(input_ids)
+        bypass_turn_max_new_tokens = bool(
+            kwargs.pop('bypass_turn_max_new_tokens', False)
+        )
 
-        if getattr(self.config.plugin, 'turn_max_new_tokens', -1) > 0:
+        if (
+            not bypass_turn_max_new_tokens
+            and getattr(self.config.plugin, 'turn_max_new_tokens', -1) > 0
+        ):
             max_tokens = min(max_tokens, self.config.plugin.turn_max_new_tokens)
         if 'max_new_tokens' in kwargs:
             max_tokens = min(max_tokens, kwargs.pop('max_new_tokens'))

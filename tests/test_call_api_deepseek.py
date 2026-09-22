@@ -14,7 +14,7 @@ if importlib.util.find_spec("omegaconf") is None:
     omegaconf.DictConfig = object
     sys.modules["omegaconf"] = omegaconf
 
-from agents.utils import CallAPI
+from agents.utils import CallAPI, CallLLM
 
 
 class _Completions:
@@ -32,6 +32,18 @@ class _Completions:
 class _Tokenizer:
     def encode(self, text, add_special_tokens=False):
         return [1] * len(text.split())
+
+    def decode(self, token_ids, skip_special_tokens=True):
+        return "{}"
+
+
+class _RolloutServer:
+    def __init__(self):
+        self.calls = []
+
+    async def generate(self, **kwargs):
+        self.calls.append(kwargs)
+        return SimpleNamespace(token_ids=[1], log_probs=None)
 
 
 def _client(monkeypatch, reasoning_effort):
@@ -96,6 +108,43 @@ def test_call_api_merges_structured_outputs_with_chat_template_kwargs(monkeypatc
         "chat_template_kwargs": {"thinking": False},
         "structured_outputs": {"json": schema},
     }
+
+
+def test_call_api_can_bypass_agent_turn_token_cap_for_controllers(monkeypatch):
+    client, completions = _client(monkeypatch, "non-thinking")
+    asyncio.run(client.create_completion(
+        [1, 2],
+        messages=[{"role": "user", "content": "return compact JSON"}],
+        max_new_tokens=96,
+        bypass_turn_max_new_tokens=True,
+    ))
+    assert completions.calls[0]["max_completion_tokens"] == 96
+
+
+def test_call_llm_can_bypass_agent_turn_token_cap_for_controllers():
+    async def run():
+        server = _RolloutServer()
+        config = SimpleNamespace(
+            prompt_length=128,
+            response_length=128,
+            plugin=SimpleNamespace(turn_max_new_tokens=64),
+        )
+        client = CallLLM(
+            server,
+            _Tokenizer(),
+            config,
+            asyncio.get_running_loop(),
+        )
+        await client.create_completion(
+            [1, 2],
+            max_len=128,
+            max_new_tokens=96,
+            bypass_turn_max_new_tokens=True,
+        )
+        return server.calls[0]
+
+    call = asyncio.run(run())
+    assert call["sampling_params"]["max_tokens"] == 96
 
 
 def test_call_api_can_send_openai_json_schema_response_format(monkeypatch):

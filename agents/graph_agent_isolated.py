@@ -622,13 +622,22 @@ async def process_item(
         required = set(schema.get("required", []))
         previous_response = ""
         for attempt in range(structured_memory_controller_retries + 1):
+            # Agent action turns are deliberately capped at 512 tokens in the
+            # ALFWorld launcher.  Structured JSON may need more room to close
+            # its arrays/object, especially after several facts accumulate.
+            # Let isolated controller calls use their own budget and expand it
+            # only after a failed parse; otherwise deterministic retries merely
+            # reproduce the same truncated prefix.
+            attempt_max_tokens = max_new_tokens * (attempt + 1)
             attempt_prompt = prompt
             if attempt:
                 structured_memory_stats["controller_retries"] += 1
                 attempt_prompt = (
                     "Your previous response was invalid. Re-emit the decision as one "
-                    "complete JSON object satisfying every required key. Do not explain "
-                    "the correction.\n\nORIGINAL REQUEST:\n"
+                    "complete JSON object satisfying every required key. The prior "
+                    "response may have been truncated: use only necessary array items, "
+                    "keep every string concise, and close the object. Do not explain the "
+                    "correction.\n\nORIGINAL REQUEST:\n"
                     f"{prompt}\n\nINVALID RESPONSE:\n{previous_response[:2000]}"
                 )
             messages = structured_memory_messages(attempt_prompt, schema)
@@ -641,13 +650,14 @@ async def process_item(
                 chat_template_kwargs={"enable_thinking": False},
             )
             response = await controller.step(
-                max_new_tokens=max_new_tokens,
+                max_new_tokens=attempt_max_tokens,
                 completion_kwargs={
+                    "bypass_turn_max_new_tokens": True,
                     "structured_outputs": {"json": schema},
                     "sampling_params": {
                         "temperature": 0.0,
                         "top_p": 1.0,
-                        "max_tokens": max_new_tokens,
+                        "max_tokens": attempt_max_tokens,
                     },
                 },
             )

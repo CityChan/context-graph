@@ -205,9 +205,18 @@ def gap_analysis_schema() -> dict[str, Any]:
     return {
         "type": "object",
         "properties": {
-            "covered_aspects": {"type": "array", "items": {"type": "string"}},
-            "missing_information": {"type": "array", "items": {"type": "string"}},
-            "suggested_searches": {"type": "array", "items": {"type": "string"}},
+            "covered_aspects": {
+                "type": "array", "maxItems": 8,
+                "items": {"type": "string"},
+            },
+            "missing_information": {
+                "type": "array", "maxItems": 5,
+                "items": {"type": "string"},
+            },
+            "suggested_searches": {
+                "type": "array", "maxItems": 3,
+                "items": {"type": "string"},
+            },
             "can_answer": {"type": "boolean"},
             "confidence": {
                 "type": "string", "enum": ["high", "medium", "low"],
@@ -725,7 +734,8 @@ class StructuredFactMemory:
             "only concrete missing information and specific searches that resolve it. "
             "Do not propose searches for information already present. Set "
             "can_answer=true only when every goal is supported by cited fact IDs and "
-            "missing_information is empty.\n\n"
+            "missing_information is empty. Keep every list item and the reasoning "
+            "concise; include only the minimum necessary items.\n\n"
             f"TASK:\n{self.task}\n\nGOALS:\n{goals}\n\nFACTS:\n{facts}\n\n"
             f"FACT RELATIONS:\n{relations}"
         )
@@ -924,7 +934,9 @@ def structured_memory_messages(
             "content": (
                 "You are a structured-memory controller. Return only the JSON "
                 "object required by the supplied response schema. Do not emit "
-                "analysis, markdown fences, or tool syntax."
+                "analysis, markdown fences, or tool syntax. Prefer compact values "
+                "and include only necessary array items so the JSON object always "
+                "finishes within the generation budget."
                 + schema_instruction
             ),
         },

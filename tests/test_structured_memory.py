@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 from agents.context_graph import ContextGraph, NodeType
 from agents.graph_controller import GraphActionController
@@ -43,7 +44,20 @@ def test_schemas_require_bounded_structured_outputs():
         "covered_aspects", "missing_information", "suggested_searches",
         "can_answer", "confidence", "reasoning",
     }
+    gap_schema = gap_analysis_schema()["properties"]
+    assert gap_schema["covered_aspects"]["maxItems"] == 8
+    assert gap_schema["missing_information"]["maxItems"] == 5
+    assert gap_schema["suggested_searches"]["maxItems"] == 3
     assert plan_initialization_schema(3)["properties"]["goals"]["maxItems"] == 3
+
+
+def test_structured_memory_controller_uses_expanding_uncapped_retry_budget():
+    source = (Path(__file__).resolve().parents[1] / "agents/graph_agent_isolated.py").read_text(
+        encoding="utf-8"
+    )
+    assert "attempt_max_tokens = max_new_tokens * (attempt + 1)" in source
+    assert '"bypass_turn_max_new_tokens": True' in source
+    assert '"max_tokens": attempt_max_tokens' in source
 
 
 def test_parse_json_object_handles_thinking_and_fences():

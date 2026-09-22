@@ -19,6 +19,7 @@ def test_vllm_server_adapts_wire_schema_to_v010_guided_decoding():
 def test_call_llm_forwards_structured_outputs_without_mutating_base_sampling():
     source = _read("agents/utils.py")
     assert "structured_outputs = kwargs.pop('structured_outputs', None)" in source
+    assert "kwargs.pop('bypass_turn_max_new_tokens', False)" in source
     assert "sampling_params = dict(self.sampling_params)" in source
     assert "normalize_structured_outputs(structured_outputs)" in source
     assert "structured_outputs and guided_decoding cannot both be set" in source
