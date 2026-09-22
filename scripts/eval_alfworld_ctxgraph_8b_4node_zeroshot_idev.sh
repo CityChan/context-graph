@@ -1,5 +1,6 @@
 #!/bin/bash
 # Fixed-sample zero-shot ContextGraph evaluation on official ALFWorld @real.
+# Supports either a single-node diagnostic or the original four-node run.
 set -euo pipefail
 
 PROJECT_ROOT=/work/09281/chc_1996/vista/context-graph
@@ -8,9 +9,17 @@ conda activate cxtgraph
 cd "$PROJECT_ROOT"
 
 if [ -z "${SLURM_JOB_NODELIST:-}" ]; then
-  echo "ERROR: run this inside a four-node Vista idev allocation"
+  echo "ERROR: run this inside a one-node or four-node Vista idev allocation"
   exit 1
 fi
+
+mapfile -t ALFWORLD_NODELIST < <(scontrol show hostnames "$SLURM_JOB_NODELIST")
+ALFWORLD_NUM_NODES=${#ALFWORLD_NODELIST[@]}
+if [ "$ALFWORLD_NUM_NODES" -ne 1 ] && [ "$ALFWORLD_NUM_NODES" -ne 4 ]; then
+  echo "ERROR: expected 1 or 4 allocated nodes, got $ALFWORLD_NUM_NODES"
+  exit 1
+fi
+export ALFWORLD_EXPECTED_NUM_NODES="$ALFWORLD_NUM_NODES"
 
 ALFWORLD_EVAL_SAMPLES=${ALFWORLD_EVAL_SAMPLES:-32}
 ALFWORLD_DATA_SEED=${ALFWORLD_DATA_SEED:-42}
@@ -30,7 +39,7 @@ python scripts/make_alfworld_data.py \
   --alfworld_data "$ALFWORLD_DATA"
 
 EVAL_TS=$(date +%Y%m%d_%H%M%S)
-export ALFWORLD_EXPERIMENT_NAME="${ALFWORLD_EXPERIMENT_PREFIX}_alfworld_real_8b_4n_zeroshot_n${ALFWORLD_EVAL_SAMPLES}_seed${ALFWORLD_DATA_SEED}_${EVAL_TS}"
+export ALFWORLD_EXPERIMENT_NAME="${ALFWORLD_EXPERIMENT_PREFIX}_alfworld_real_8b_${ALFWORLD_NUM_NODES}n_zeroshot_n${ALFWORLD_EVAL_SAMPLES}_seed${ALFWORLD_DATA_SEED}_${EVAL_TS}"
 mkdir -p logs
 EVAL_LOG="logs/${ALFWORLD_EXPERIMENT_NAME}.log"
 EVAL_SUMMARY="logs/${ALFWORLD_EXPERIMENT_NAME}.summary.json"
@@ -96,6 +105,7 @@ export ALFWORLD_TRAINER_RESUME_MODE=disable
 echo "=============================================================="
 echo "  Zero-shot ALFWorld evaluation: ${ALFWORLD_EVAL_SAMPLES} fixed episodes"
 echo "  Model: ${MODEL_PATH}; seed: ${ALFWORLD_DATA_SEED}"
+echo "  Nodes: ${ALFWORLD_NUM_NODES} (${ALFWORLD_NODELIST[*]})"
 echo "  Controller: structured=${ALFWORLD_STRUCTURED_GRAPH_CONTROLLER}; formatting=${ALFWORLD_CONTROLLER_OWNED_TOOL_FORMATTING}; policy=${ALFWORLD_CONTROLLER_ACTION_POLICY}"
 echo "  StructMem: enabled=${ALFWORLD_STRUCTURED_MEMORY_ENABLED}; tools=${ALFWORLD_STRUCTURED_MEMORY_TOOLS}; step_limit=${ALFWORLD_STRUCTURED_MEMORY_STEP_LIMIT}; stop_on_ready=${ALFWORLD_STRUCTURED_MEMORY_STOP_ON_READY}"
 echo "  Session timeout: ${ALFWORLD_SESSION_TIMEOUT}s"

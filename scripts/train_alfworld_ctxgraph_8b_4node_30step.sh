@@ -10,7 +10,7 @@
 #SBATCH -A AST24021
 
 # ─────────────────────────────────────────────────────────────────────
-# ContextGraph on ALFWorld @real, 8B / 4 nodes / 4h.
+# ContextGraph on ALFWorld @real, 8B / 1 or 4 nodes.
 # Pivot from ALFWorld @hard (cold-start at 0%, all rollouts get reward 0,
 # no gradient).
 # @real shows admissible commands so the baseline has
@@ -109,11 +109,25 @@ mapfile -t NODELIST < <(scontrol show hostnames "$SLURM_JOB_NODELIST")
 NODE0=${NODELIST[0]}
 NODE0_IP=$(getent hosts "$NODE0" | awk '{print $1}')
 NUM_NODES=${#NODELIST[@]}
+ALFWORLD_EXPECTED_NUM_NODES=${ALFWORLD_EXPECTED_NUM_NODES:-4}
 
-if [ "$NUM_NODES" -ne 4 ]; then
-  echo "Expected 4 nodes (set #SBATCH -N 4 or use idev -N 4), got $NUM_NODES"
+if [ "$ALFWORLD_EXPECTED_NUM_NODES" -ne 1 ] && [ "$ALFWORLD_EXPECTED_NUM_NODES" -ne 4 ]; then
+  echo "ERROR: ALFWORLD_EXPECTED_NUM_NODES must be 1 or 4, got $ALFWORLD_EXPECTED_NUM_NODES"
   exit 1
 fi
+if [ "$NUM_NODES" -ne "$ALFWORLD_EXPECTED_NUM_NODES" ]; then
+  echo "ERROR: expected $ALFWORLD_EXPECTED_NUM_NODES allocated nodes, got $NUM_NODES"
+  exit 1
+fi
+
+if [ -z "${ALFWORLD_VLLM_GPU_MEMORY_UTILIZATION:-}" ]; then
+  if [ "$NUM_NODES" -eq 1 ]; then
+    ALFWORLD_VLLM_GPU_MEMORY_UTILIZATION=0.45
+  else
+    ALFWORLD_VLLM_GPU_MEMORY_UTILIZATION=0.55
+  fi
+fi
+export ALFWORLD_VLLM_GPU_MEMORY_UTILIZATION
 
 if [ "${ALFWORLD_DISABLE_WANDB:-0}" = "1" ]; then
   TRAINER_LOGGER='["console"]'
@@ -283,7 +297,7 @@ wait_for_ray_cluster() {
 }
 
 echo "=============================================================="
-echo "  ${ALFWORLD_METHOD_LABEL} on ALFWorld @${ALFWORLD_MODE} (8B, 4 nodes, steps=${ALFWORLD_TOTAL_STEPS})"
+echo "  ${ALFWORLD_METHOD_LABEL} on ALFWorld @${ALFWORLD_MODE} (8B, ${NUM_NODES} nodes, steps=${ALFWORLD_TOTAL_STEPS})"
 echo "  Job: ${SLURM_JOB_ID:-<idev>}   Head: $NODE0 ($NODE0_IP)"
 echo "  Worker(s): ${NODELIST[@]:1}"
 echo "  Trainer model:  $MODEL_PATH"
@@ -397,28 +411,30 @@ probe "Ray head sleep done; launching $((NUM_NODES - 1)) workers"
 
 # ── Ray workers ──
 WORKER_PIDS=()
-for i in $(seq 1 $((NUM_NODES - 1))); do
-  WORKER_NODE=${NODELIST[$i]}
-  srun --overlap --nodes=1 --ntasks=1 -w "$WORKER_NODE" bash -c '
-    source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
-    conda activate cxtgraph
-    export NCCL_HOSTID="${SLURMD_NODENAME:-$(hostname -s)}"
-    export PATH="${CONDA_PREFIX}/bin:${PATH}"
-    hash -r
-    export PATH=/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/bin:${PATH}
-    export LD_LIBRARY_PATH=${CONDA_PREFIX}/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/targets/sbsa-linux/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/lib64:${LD_LIBRARY_PATH}
-    export HF_HOME='"$HF_HOME"'
-    export ALFWORLD_DATA='"$ALFWORLD_DATA"'
-    export ALFWORLD_MAX_ADMISSIBLE_DISPLAY='"$ALFWORLD_MAX_ADMISSIBLE_DISPLAY"'
-    export FLASHINFER_WORKSPACE_BASE=/tmp
-    export HF_HUB_OFFLINE=1
-    export TRANSFORMERS_OFFLINE=1
-    export RAY_raylet_start_wait_time_s='"$RAY_raylet_start_wait_time_s"'
-    ray start --address='"${NODE0_IP}:6379"' --num-cpus=70 --num-gpus=1 --block
-  ' &
-  WORKER_PIDS+=("$!")
-  sleep "$RAY_WORKER_STAGGER_SECONDS"
-done
+if [ "$NUM_NODES" -gt 1 ]; then
+  for ((i = 1; i < NUM_NODES; i++)); do
+    WORKER_NODE=${NODELIST[$i]}
+    srun --overlap --nodes=1 --ntasks=1 -w "$WORKER_NODE" bash -c '
+      source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
+      conda activate cxtgraph
+      export NCCL_HOSTID="${SLURMD_NODENAME:-$(hostname -s)}"
+      export PATH="${CONDA_PREFIX}/bin:${PATH}"
+      hash -r
+      export PATH=/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/bin:${PATH}
+      export LD_LIBRARY_PATH=${CONDA_PREFIX}/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/targets/sbsa-linux/lib:/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8/lib64:${LD_LIBRARY_PATH}
+      export HF_HOME='"$HF_HOME"'
+      export ALFWORLD_DATA='"$ALFWORLD_DATA"'
+      export ALFWORLD_MAX_ADMISSIBLE_DISPLAY='"$ALFWORLD_MAX_ADMISSIBLE_DISPLAY"'
+      export FLASHINFER_WORKSPACE_BASE=/tmp
+      export HF_HUB_OFFLINE=1
+      export TRANSFORMERS_OFFLINE=1
+      export RAY_raylet_start_wait_time_s='"$RAY_raylet_start_wait_time_s"'
+      ray start --address='"${NODE0_IP}:6379"' --num-cpus=70 --num-gpus=1 --block
+    ' &
+    WORKER_PIDS+=("$!")
+    sleep "$RAY_WORKER_STAGGER_SECONDS"
+  done
+fi
 sleep "$RAY_CLUSTER_SETTLE_SECONDS"
 probe "all Ray workers launched, cluster settling"
 
@@ -443,7 +459,7 @@ echo "  controller: structured=${ALFWORLD_STRUCTURED_GRAPH_CONTROLLER} policy=${
 echo "  memory: retrieval=${ALFWORLD_ENABLE_RETRIEVAL_MEMORY} graph_after_action=${ALFWORLD_INJECT_GRAPH_STATE_AFTER_ACTION} controller_pass=${ALFWORLD_CONTROLLER_ALLOW_PASS}"
 echo "  StructMem: enabled=${ALFWORLD_STRUCTURED_MEMORY_ENABLED} tools=${ALFWORLD_STRUCTURED_MEMORY_TOOLS} gap_interval=${ALFWORLD_STRUCTURED_MEMORY_GAP_INTERVAL} jitter=${ALFWORLD_STRUCTURED_MEMORY_GAP_JITTER} retries=${ALFWORLD_STRUCTURED_MEMORY_CONTROLLER_RETRIES} stop_on_ready=${ALFWORLD_STRUCTURED_MEMORY_STOP_ON_READY} step_limit=${ALFWORLD_STRUCTURED_MEMORY_STEP_LIMIT}"
 echo "  resume_mode: ${ALFWORLD_TRAINER_RESUME_MODE}"
-echo "  vLLM gpu_memory_utilization=0.55 (no embedder co-located, all GPU mem available)"
+echo "  vLLM gpu_memory_utilization=${ALFWORLD_VLLM_GPU_MEMORY_UTILIZATION}"
 echo "=============================================================="
 probe "launching trainer (model load + vLLM init typically ~3-5 min before first wandb log)"
 
@@ -458,7 +474,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$NODE0" --chdir="$PROJECT_ROOT" \
   actor_rollout_ref.rollout.mode=async \
   actor_rollout_ref.rollout.dtype=bfloat16 \
   actor_rollout_ref.rollout.calculate_log_probs=True \
-  actor_rollout_ref.rollout.gpu_memory_utilization=0.55 \
+  actor_rollout_ref.rollout.gpu_memory_utilization=${ALFWORLD_VLLM_GPU_MEMORY_UTILIZATION} \
   actor_rollout_ref.model.path="$MODEL_PATH" \
   actor_rollout_ref.rollout.prompt_length=${ALFWORLD_PROMPT_LENGTH} \
   actor_rollout_ref.rollout.response_length=${ALFWORLD_RESPONSE_LENGTH} \

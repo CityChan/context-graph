@@ -39,6 +39,19 @@ def test_zeroshot_launcher_uses_fixed_base_model_and_current_controller():
     assert 'echo "  Session timeout: ${ALFWORLD_SESSION_TIMEOUT}s"' in launcher
 
 
+def test_zeroshot_launcher_supports_one_or_four_idev_nodes():
+    launcher = (ROOT / "scripts/eval_alfworld_ctxgraph_8b_4node_zeroshot_idev.sh").read_text(encoding="utf-8")
+    trainer = (ROOT / "scripts/train_alfworld_ctxgraph_8b_4node_30step.sh").read_text(encoding="utf-8")
+    assert 'ALFWORLD_NUM_NODES=${#ALFWORLD_NODELIST[@]}' in launcher
+    assert 'export ALFWORLD_EXPECTED_NUM_NODES="$ALFWORLD_NUM_NODES"' in launcher
+    assert '${ALFWORLD_NUM_NODES}n_zeroshot' in launcher
+    assert 'ALFWORLD_EXPECTED_NUM_NODES=${ALFWORLD_EXPECTED_NUM_NODES:-4}' in trainer
+    assert 'if [ "$NUM_NODES" -gt 1 ]' in trainer
+    assert 'ALFWORLD_VLLM_GPU_MEMORY_UTILIZATION=0.45' in trainer
+    assert 'ALFWORLD_VLLM_GPU_MEMORY_UTILIZATION=0.55' in trainer
+    assert 'actor_rollout_ref.rollout.gpu_memory_utilization=${ALFWORLD_VLLM_GPU_MEMORY_UTILIZATION}' in trainer
+
+
 def test_full_policy_sft_alfworld_launcher_uses_matched_legacy_protocol():
     launcher = (ROOT / "scripts/eval_alfworld_ctxgraph_qwen3_8b_full_policy_sft_4node_idev.sh").read_text(encoding="utf-8")
     assert "miroverse_full_policy_qwen3_8b_bs16_1ep_v1_step174_hf" in launcher
