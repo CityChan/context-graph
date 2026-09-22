@@ -284,3 +284,4 @@ def test_eval_launchers_wire_structured_memory_without_disabling_controller():
     assert "eval_alfworld_ctxgraph_8b_4node_zeroshot_idev.sh" in suite
     assert "ALFWORLD_STRUCTURED_MEMORY_TOOLS=action,branch_return" in suite
     assert "ALFWORLD_STRUCTURED_MEMORY_STOP_ON_READY=0" in suite
+    assert 'exec > >(tee -a "$SUITE_LOG") 2>&1' in suite

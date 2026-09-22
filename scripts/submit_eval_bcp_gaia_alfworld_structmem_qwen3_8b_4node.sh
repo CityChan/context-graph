@@ -64,9 +64,12 @@ export ALFWORLD_DISABLE_WANDB=1
 export WANDB_MODE=disabled
 
 STAMP=${STAMP:-$(date +%Y%m%d_%H%M%S)}
+SUITE_LOG=${SUITE_LOG:-logs/eval3-sm8b.${SLURM_JOB_ID}.${STAMP}.log}
+exec > >(tee -a "$SUITE_LOG") 2>&1
 echo "=============================================================="
 echo "  BC-P + GAIA + ALFWorld StructMem evaluation"
 echo "  Job: $SLURM_JOB_ID"
+echo "  Suite log: $SUITE_LOG"
 echo "  Model: $EVAL_MODEL_PATH"
 echo "  Nodes: ${ALLOC_NODES[*]}"
 echo "  StructMem: gap=${STRUCTURED_MEMORY_GAP_INTERVAL}+/-${STRUCTURED_MEMORY_GAP_JITTER}, retries=${STRUCTURED_MEMORY_CONTROLLER_RETRIES}, facts=${STRUCTURED_MEMORY_MAX_FACTS}, step_limit=${STRUCTURED_MEMORY_STEP_LIMIT}"
@@ -96,6 +99,7 @@ echo "=============================================================="
 echo "  Evaluation suite complete"
 echo "  BC-P + GAIA exit: $BC_GAIA_RC"
 echo "  ALFWorld exit:    $ALFWORLD_RC"
+echo "  Suite log:        $SUITE_LOG"
 echo "=============================================================="
 
 if [ "$BC_GAIA_RC" -ne 0 ] || [ "$ALFWORLD_RC" -ne 0 ]; then
