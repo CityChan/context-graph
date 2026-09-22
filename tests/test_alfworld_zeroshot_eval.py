@@ -33,6 +33,10 @@ def test_zeroshot_launcher_uses_fixed_base_model_and_current_controller():
     assert "export ALFWORLD_CONTROLLER_ACTION_POLICY=${ALFWORLD_CONTROLLER_ACTION_POLICY:-structural}" in launcher
     assert "export ALFWORLD_TRAINER_RESUME_MODE=disable" in launcher
     assert "ALFWORLD_EVAL_SAMPLES=${ALFWORLD_EVAL_SAMPLES:-32}" in launcher
+    assert 'if [ "$ALFWORLD_STRUCTURED_MEMORY_ENABLED" = "1" ]' in launcher
+    assert "export ALFWORLD_SESSION_TIMEOUT=1800" in launcher
+    assert "export ALFWORLD_SESSION_TIMEOUT=600" in launcher
+    assert 'echo "  Session timeout: ${ALFWORLD_SESSION_TIMEOUT}s"' in launcher
 
 
 def test_full_policy_sft_alfworld_launcher_uses_matched_legacy_protocol():
