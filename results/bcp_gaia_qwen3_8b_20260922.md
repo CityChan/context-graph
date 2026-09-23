@@ -23,7 +23,14 @@ All three runs use Qwen3-8B, 64K context, four nodes, 100 maximum turns, and a
 | Method | Correct | Accuracy | Status | Source |
 |---|---:|---:|---|---|
 | ContextGraph + StructMem + Finalizer (pre-fix) | 39/150 | 26.00% | Complete, but averaged 0.5533 extraction errors per example | `logs/eval-bc-gaia-base8b-structmem-highbudget-4n.1010384.20260920_232150.log` |
-| ContextGraph + StructMem + Finalizer (current fixed) | pending | pending | Rerun entrypoint committed as `scripts/submit_eval_bcp_structmem_finalizer_qwen3_8b_4node.sh` | explicit tee log will be `logs/bcp-smfin8b.<jobid>.<timestamp>.log` |
+| ContextGraph + StructMem + Finalizer (current fixed) | 35/150 | 23.33% | Complete; zero extraction and gap errors, with one consolidation-controller error in total | direct four-node rerun via `scripts/submit_eval_bcp_structmem_finalizer_qwen3_8b_4node.sh`; explicit tee log is `logs/bcp-smfin8b.<jobid>.<timestamp>.log` |
+
+The current fixed rerun additionally reports reward 0.253684, strict EM
+28/150 (18.67%), relaxed EM 47/150 (31.33%), finish rate 100%, average 12.09
+turns, zero token-limit/max-turn/timeout events, 3.34 extraction calls, 9.02
+facts, 2.41 links, and 5.11 context injections per example. The vLLM uvloop
+traceback printed after metric aggregation is shutdown cleanup noise and does
+not alter the completed 150-example metrics.
 
 An additional later ContextGraph + Finalizer run without StructMem scored
 38/150 (25.33%) in `logs/eval-bc-gaia-base-idev.1008275.log`. It is not part
@@ -57,8 +64,9 @@ the matched 916343--916345 control triplet.
 
 - The matched control rows and StructMem rows were produced at different code
   snapshots. They are historical evidence, not a final matched four-way table.
-- The current fixed BC-P treatment must complete before the fixed StructMem
-  result can be compared with newly rerun controls.
+- The current fixed BC-P treatment is complete, but the controls still come
+  from older code snapshots. Rerun the controls on the same commit before
+  treating differences as an isolated StructMem effect.
 - The local GAIA setup uses the BrowseComp-Plus corpus rather than live web
   retrieval. Treat its scores as internal comparisons, not official GAIA or
   paper-comparable scores.
