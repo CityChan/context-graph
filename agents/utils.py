@@ -717,6 +717,7 @@ class Agent(AgentContext):
         self.process_reward_min_precedence = bool(process_reward_min_precedence)
         self.info_cache = {}
         self.tool_format_repairs = []
+        self.model_contexts = []
 
     async def step(self, max_new_tokens=None, retry_cjk=0, completion_kwargs=None):
         prompt = self.context()
@@ -724,6 +725,13 @@ class Agent(AgentContext):
         if max_new_tokens is not None:
             max_len = min(len(prompt) + max_new_tokens, 131072)
         completion_kwargs = dict(completion_kwargs or {})
+        if getattr(self.config.plugin, "capture_model_contexts", False):
+            self.model_contexts.append({
+                "messages": copy.deepcopy(self.chat),
+                "input_ids": list(prompt),
+                "max_len": max_len,
+                "completion_kwargs": copy.deepcopy(completion_kwargs),
+            })
         completion = await self.llm_client.create_completion(
             prompt,
             uid=self.context_uid,

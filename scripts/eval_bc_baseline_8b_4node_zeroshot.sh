@@ -99,7 +99,7 @@ export VLLM_WORKER_MULTIPROC_METHOD=spawn
 export NCCL_P2P_LEVEL=NVL
 
 # ── Project paths ──
-PROJECT_ROOT=/work/09281/chc_1996/vista/context-graph
+PROJECT_ROOT=${PROJECT_ROOT:-/work/09281/chc_1996/vista/context-graph}
 MODEL_PATH=${MODEL_PATH:-Qwen/Qwen3-8B}
 EMBED_MODEL=${EMBED_MODEL:-Qwen/Qwen3-Embedding-8B}
 export HF_HOME=${HF_HOME:-/work/09281/chc_1996/vista/cache}
@@ -147,6 +147,10 @@ BC_CTXGRAPH_PROTOCOL=${BC_CTXGRAPH_PROTOCOL:-legacy}
 BC_CONTROLLER_ACTION_POLICY=${BC_CONTROLLER_ACTION_POLICY:-structural}
 BC_CONSOLIDATION_INTERVAL=${BC_CONSOLIDATION_INTERVAL:-5}
 BC_AUTO_PRUNE_MAX_ACTIVE=${BC_AUTO_PRUNE_MAX_ACTIVE:-12}
+BC_MEMORY_MODE=${BC_MEMORY_MODE:-legacy}
+BC_CAPTURE_MODEL_CONTEXTS=${BC_CAPTURE_MODEL_CONTEXTS:-False}
+BC_VALIDATION_DATA_DIR=${BC_VALIDATION_DATA_DIR:-null}
+BC_VAL_PARQUET=${BC_VAL_PARQUET:-data/bc_test.parquet}
 STRUCTURED_MEMORY_ENABLED=${STRUCTURED_MEMORY_ENABLED:-0}
 STRUCTURED_MEMORY_REQUIRED=${STRUCTURED_MEMORY_REQUIRED:-$STRUCTURED_MEMORY_ENABLED}
 STRUCTURED_MEMORY_GAP_INTERVAL=${STRUCTURED_MEMORY_GAP_INTERVAL:-8}
@@ -275,6 +279,7 @@ echo "  Worker(s): ${NODELIST[@]:1}"
 echo "  Trainer model:  $MODEL_PATH"
 echo "  Embedder model: $EMBED_MODEL"
 echo "  Experiment: $EXPERIMENT_NAME"
+echo "  Memory mode: $BC_MEMORY_MODE; validation dump: $BC_VALIDATION_DATA_DIR"
 echo "  Logger: ${probe_msg}"
 echo "  Caps: val_samples=$BC_VAL_MAX_SAMPLES prompt=$BC_PROMPT_LENGTH response=$BC_RESPONSE_LENGTH total_context=$BC_MAX_TOKEN_LEN_PER_GPU max_turn=$BC_MAX_TURN final_answer_reserve=$BC_FINAL_ANSWER_RESERVE"
 echo "  Graph protocol: $BC_CTXGRAPH_PROTOCOL structured_controller=$BC_STRUCTURED_GRAPH_CONTROLLER controller_formatting=$BC_CONTROLLER_OWNED_TOOL_FORMATTING action_policy=$BC_CONTROLLER_ACTION_POLICY"
@@ -288,7 +293,7 @@ echo "=============================================================="
 # ── Pre-flight: BrowseComp data parquets + HF datasets must exist ──
 probe "checking BrowseComp artefacts"
 TRAIN_PARQUET="$PROJECT_ROOT/data/bc_train.parquet"
-VAL_PARQUET="$PROJECT_ROOT/data/bc_test.parquet"
+VAL_PARQUET="$BC_VAL_PARQUET"
 for f in "$TRAIN_PARQUET" "$VAL_PARQUET"; do
   if [ ! -f "$f" ]; then
     echo "ERROR: missing $f"
@@ -530,6 +535,9 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu=${BC_MAX_TOKEN_LEN_PER_GPU} \
   actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
   actor_rollout_ref.rollout.n=8 \
+  actor_rollout_ref.rollout.val_kwargs.n=1 \
+  actor_rollout_ref.rollout.val_kwargs.do_sample=False \
+  actor_rollout_ref.rollout.val_kwargs.temperature=0.0 \
   actor_rollout_ref.rollout.agent.num_workers=1 \
   actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=1 \
   actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=1 \
@@ -545,7 +553,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   actor_rollout_ref.actor.grad_clip=0.5 \
   actor_rollout_ref.actor.kl_loss_coef=0.0005 \
   data.train_files=data/bc_train.parquet \
-  data.val_files=data/bc_test.parquet \
+  data.val_files="$BC_VAL_PARQUET" \
   data.train_batch_size=12 \
   data.max_prompt_length=${BC_PROMPT_LENGTH} \
   data.max_response_length=${BC_RESPONSE_LENGTH} \
@@ -557,6 +565,8 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   actor_rollout_ref.actor.ppo_infer_max_token_len_per_gpu=${BC_MAX_TOKEN_LEN_PER_GPU} \
   actor_rollout_ref.model.enable_gradient_checkpointing=True \
   +actor_rollout_ref.rollout.plugin.workflow="$WORKFLOW" \
+  +actor_rollout_ref.rollout.plugin.contextgraph_memory_mode="$BC_MEMORY_MODE" \
+  +actor_rollout_ref.rollout.plugin.capture_model_contexts="$BC_CAPTURE_MODEL_CONTEXTS" \
   +actor_rollout_ref.rollout.plugin.max_turn=${BC_MAX_TURN} \
   +actor_rollout_ref.rollout.plugin.retry_cjk=10 \
   +actor_rollout_ref.rollout.plugin.turn_max_new_tokens=${BC_TURN_MAX_NEW_TOKENS} \
@@ -597,6 +607,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   +actor_rollout_ref.rollout.plugin.final_answer_reserve=${BC_FINAL_ANSWER_RESERVE} \
   trainer.val_before_train=True \
   trainer.val_only=True \
+  trainer.validation_data_dir="$BC_VALIDATION_DATA_DIR" \
   trainer.n_gpus_per_node=1 \
   trainer.nnodes=$((NUM_NODES - 1)) \
   trainer.total_training_steps=1 \

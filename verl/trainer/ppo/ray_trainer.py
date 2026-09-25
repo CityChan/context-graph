@@ -645,6 +645,7 @@ class RayPPOTrainer:
             for key in (
                 "messages", "env_stats", "is_finish", "termination_reason",
                 "agent_name", "graph_trace", "graph_state", "graph_rewards",
+                "model_contexts", "branch_model_contexts", "contextgraph_memory_mode",
                 "judge_audit", "uid", "gen_uid",
             ):
                 values = batch.non_tensor_batch.get(key)
@@ -831,6 +832,7 @@ class RayPPOTrainer:
             for key in (
                 "messages", "env_stats", "is_finish", "termination_reason",
                 "agent_name", "graph_trace", "graph_state", "graph_rewards",
+                "model_contexts", "branch_model_contexts", "contextgraph_memory_mode",
                 "judge_audit", "uid", "gen_uid",
             ):
                 values = test_batch.non_tensor_batch.get(key)

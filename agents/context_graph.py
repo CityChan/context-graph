@@ -144,7 +144,11 @@ class ContextGraph:
         tokenizer=None,
         parent: Optional[ContextGraph] = None,
         namespace_prefix: str = "n",
+        memory_policy: str = "legacy",
     ):
+        if memory_policy not in {"legacy", "repaired"}:
+            raise ValueError(f"Unknown graph memory policy: {memory_policy}")
+        self.memory_policy = memory_policy
         self.nodes: dict[str, ContextNode] = {}
         self.edges: list[ContextEdge] = []
         self.active_node_id: Optional[str] = None
@@ -333,6 +337,7 @@ class ContextGraph:
             tokenizer=self.tokenizer,
             parent=self,
             namespace_prefix=prefix,
+            memory_policy=self.memory_policy,
         )
         self.nodes[parent_node_id].child_graph = child
         return child
@@ -801,6 +806,39 @@ class ContextGraph:
             else ""
         )
 
+        # Never expand the root: its temporal children cover the whole history.
+        graph_priority = {}
+        if self.memory_policy == "repaired" and self.active_node_id != self.root_id:
+            focus = self.nodes.get(self.active_node_id)
+            if focus is not None and focus.is_active():
+                graph_priority[focus.id] = 4.0
+                for edge in self.active_edges:
+                    if edge.relation not in (EdgeRelation.CAUSAL, EdgeRelation.SEMANTIC):
+                        continue
+                    if edge.source == focus.id:
+                        graph_priority[edge.target] = max(graph_priority.get(edge.target, 0), 3.0)
+                    elif edge.target == focus.id:
+                        graph_priority[edge.source] = max(graph_priority.get(edge.source, 0), 3.0)
+
+        def passage(content, budget):
+            if self.memory_policy != "repaired" or self._count_tokens(content) <= budget:
+                return content
+            # Rank overlapping token windows, including non-whitespace text.
+            # Final formatting below rechecks the complete block's token cost.
+            width = max(1, min(256, budget))
+            if self.tokenizer is not None:
+                tokens = self.tokenizer.encode(content, add_special_tokens=False)
+                windows = [self.tokenizer.decode(tokens[i:i + width])
+                           for i in range(0, len(tokens), max(1, width // 2))]
+            else:
+                words = list(re.finditer(r"\S+", content))
+                windows = [content[words[i].start():words[min(i + width, len(words)) - 1].end()]
+                           for i in range(0, len(words), max(1, width // 2))]
+            def rank(text):
+                terms = _lexical_terms(text)
+                return 2 * len(terms & query_terms) + len(terms & root_terms)
+            return max(windows, key=rank) if windows else content
+
         def relevance(
             content: str,
             metadata: Optional[dict] = None,
@@ -822,6 +860,20 @@ class ContextGraph:
             # Recency only breaks near-ties; relevance remains query-driven.
             return 2.0 * current_overlap + 0.5 * root_overlap + recency * 1e-6
 
+        if self.memory_policy == "repaired" and not graph_priority:
+            seeds = [node for node in self.active_nodes if node.id != self.root_id]
+            if seeds:
+                seed = max(seeds, key=lambda node: relevance(
+                    node.metadata.get("raw_content", node.content), node.metadata, _seq_key(node.id)
+                ))
+                for edge in self.active_edges:
+                    if edge.relation not in (EdgeRelation.CAUSAL, EdgeRelation.SEMANTIC):
+                        continue
+                    if edge.source == seed.id:
+                        graph_priority[edge.target] = 0.75
+                    elif edge.target == seed.id:
+                        graph_priority[edge.source] = 0.75
+
         summary_candidates = []
         for node in self.nodes.values():
             if (
@@ -832,6 +884,7 @@ class ContextGraph:
                 continue
             score = relevance(node.content, node.metadata, _seq_key(node.id))
             score += max(node.value, 0.0) * 0.1
+            score += graph_priority.get(node.id, 0.0)
             summary_candidates.append((score, _seq_key(node.id), node))
         summary_candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
         selected_summaries = [
@@ -852,6 +905,10 @@ class ContextGraph:
                 continue
             raw = node.metadata.get("raw_content", node.content)
             score = relevance(raw, node.metadata, _seq_key(node.id))
+            score += graph_priority.get(node.id, 0.0)
+            if self.memory_policy == "repaired" and node.status == NodeStatus.PRUNED:
+                # Keep archival recoverability, but prefer live evidence.
+                score -= 3.0
             evidence_candidates.append(
                 (score, _seq_key(node.id), node.id, raw, node.metadata)
             )
@@ -901,6 +958,7 @@ class ContextGraph:
                 if remaining <= header_cost:
                     break
                 content_budget = remaining - header_cost
+                content = passage(content, content_budget)
                 fitted = self._truncate_tokens(content, content_budget)
                 if not fitted:
                     continue
@@ -1007,7 +1065,7 @@ class ContextGraph:
         # Candidates: observation nodes sorted by value (ascending)
         candidates = sorted(
             [n for n in active if n.type == NodeType.OBSERVATION],
-            key=lambda n: (n.value, -_seq_key(n.id)),  # lowest value first, oldest first
+            key=lambda n: (n.value, _seq_key(n.id) if self.memory_policy == "repaired" else -_seq_key(n.id)),
         )
 
         for node in candidates:

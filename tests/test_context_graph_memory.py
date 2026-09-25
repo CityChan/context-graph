@@ -131,3 +131,69 @@ def test_pruning_removes_evidence_from_active_graph_but_not_retrieval():
     )
 
     assert "10 February 1763" in context
+
+
+def test_repaired_focus_and_edges_restore_connected_evidence():
+    graph = ContextGraph(memory_policy="repaired")
+    root = graph.add_node("find code", NodeType.QUERY)
+    graph.add_node("find code distractor", NodeType.OBSERVATION, parent_id=root)
+    graph.add_node("find code another distractor", NodeType.OBSERVATION, parent_id=root)
+    source = graph.add_node("source document", NodeType.OBSERVATION, parent_id=root)
+    answer = graph.add_node("secret 7319", NodeType.OBSERVATION, parent_id=root)
+    before = graph.retrieve_context("find code", max_evidence=2)
+    assert "7319" not in before
+    assert graph.select(source)
+    assert graph.add_edge(source, answer, EdgeRelation.CAUSAL)
+    after = graph.retrieve_context("find code", max_evidence=2)
+    assert "7319" in after
+    assert "source document" in after
+
+
+def test_repaired_pruned_evidence_is_fallback_not_preferred():
+    graph = ContextGraph(memory_policy="repaired")
+    root = graph.add_node("find code", NodeType.QUERY)
+    stale = graph.add_node("find code stale", NodeType.OBSERVATION, parent_id=root)
+    graph.add_node("current code 7319", NodeType.OBSERVATION, parent_id=root)
+    graph.prune(stale)
+    assert "7319" in graph.retrieve_context("find code", max_evidence=1)
+
+
+def test_repaired_retrieves_answer_bearing_passage_beyond_prefix():
+    graph = ContextGraph(memory_policy="repaired")
+    root = graph.add_node("Find the treaty signing date", NodeType.QUERY)
+    raw = "background " * 1600 + "The treaty signing date is 10 February 1763."
+    graph.add_node(raw[:800], NodeType.OBSERVATION, parent_id=root, metadata={"raw_content": raw})
+    result = graph.retrieve_context("treaty signing date", evidence_budget=80)
+    assert "10 February 1763" in result
+    assert graph.last_retrieval_stats["evidence_tokens"] <= 80
+
+
+def test_repaired_auto_prune_keeps_newest_observation():
+    graph = ContextGraph(memory_policy="repaired")
+    root = graph.add_node("task", NodeType.QUERY)
+    ids = [graph.add_node(str(i), NodeType.OBSERVATION, parent_id=root) for i in range(4)]
+    assert graph.auto_prune_low_value(max_active=4) == [ids[0]]
+    assert graph.nodes[ids[-1]].is_active()
+
+
+def test_legacy_auto_prune_is_explicitly_reproducible():
+    graph = ContextGraph()
+    root = graph.add_node("task", NodeType.QUERY)
+    ids = [graph.add_node(str(i), NodeType.OBSERVATION, parent_id=root) for i in range(4)]
+    assert graph.auto_prune_low_value(max_active=4) == [ids[-1]]
+
+
+def test_repaired_passage_uses_actual_token_budget():
+    class CharacterTokenizer:
+        def encode(self, text, **kwargs):
+            return list(map(ord, text))
+
+        def decode(self, tokens, **kwargs):
+            return "".join(map(chr, tokens))
+
+    graph = ContextGraph(tokenizer=CharacterTokenizer(), memory_policy="repaired")
+    root = graph.add_node("treaty signing date", NodeType.QUERY)
+    raw = "background " * 600 + "treaty signing date: 1763"
+    graph.add_node(raw[:800], NodeType.OBSERVATION, parent_id=root, metadata={"raw_content": raw})
+    assert "1763" in graph.retrieve_context("treaty signing date", evidence_budget=120)
+    assert graph.last_retrieval_stats["evidence_tokens"] <= 120

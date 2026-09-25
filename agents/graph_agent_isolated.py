@@ -58,6 +58,7 @@ from .graph_controller import (
     graph_checkpoint_due,
 )
 from .graph_trace import GraphTraceRecorder
+from .context_graph_modes import memory_mode, run_foldagent_equivalent
 from .structured_memory import (
     GapStepScheduler,
     StructuredFactMemory,
@@ -273,6 +274,9 @@ async def process_item(
          retrieval restores relevant evidence. During training, chat history
          stays immutable so generated and optimized prompts remain identical.
     """
+    mode = memory_mode(context.config.actor_rollout_ref.rollout.plugin)
+    if mode == "foldagent":
+        return await run_foldagent_equivalent(item, context)
     os.environ["no_proxy"] = ""
     tokenizer = context.tokenizer
 
@@ -359,11 +363,13 @@ async def process_item(
         config.plugin, "enable_retrieval_memory", True
     )
     inject_graph_state_after_action = bool(
-        getattr(config.plugin, "inject_graph_state_after_action", True)
+        getattr(config.plugin, "inject_graph_state_after_action", mode != "repaired")
     )
     controller_allow_pass = bool(
         getattr(config.plugin, "controller_allow_pass", False)
     )
+    if mode == "repaired":
+        controller_allow_pass = True
     # Rewriting a user turn after a later assistant turn has been generated
     # changes that assistant turn's conditioning context when VERL reconstructs
     # the training sequence. Keep training trajectories immutable. Evaluation
@@ -517,6 +523,8 @@ async def process_item(
     controller_action_policy = str(
         getattr(config.plugin, "controller_action_policy", "balanced")
     ).strip().lower()
+    if mode == "repaired":
+        controller_action_policy = "balanced"
     if controller_action_policy not in {"balanced", "structural"}:
         raise ValueError(
             "controller_action_policy must be balanced or structural; got "
@@ -554,7 +562,7 @@ async def process_item(
     llm_client = context.llm_client
 
     # ── Initialize parent ContextGraph ──
-    graph = ContextGraph(tokenizer, namespace_prefix="n")
+    graph = ContextGraph(tokenizer, namespace_prefix="n", memory_policy=mode)
     query_text = env.instance_info['problem_statement']
     root_id = graph.add_node(query_text, NodeType.QUERY)
     structured_memory = (
@@ -1144,7 +1152,7 @@ async def process_item(
                 branch_subgraph_stats[agent_name] = child_stats
 
                 summary_id = graph.add_node(
-                    branch_message[:2000],
+                    branch_message if mode == "repaired" else branch_message[:2000],
                     NodeType.SUMMARY,
                     parent_id=subtask_id,
                     edge_relation=EdgeRelation.CAUSAL,
@@ -1357,7 +1365,10 @@ async def process_item(
         if enable_history_replacement:
             # Remove old payloads from the model-facing cache. Their raw
             # contents remain recoverable from graph nodes or child archives.
-            while len(working_memory_turns) >= working_memory_keep_recent:
+            compact_history = mode == "legacy" or len(agent['main'].context()) > 0.75 * (
+                agent['main'].prompt_ids_len + config.response_length
+            )
+            while compact_history and len(working_memory_turns) >= working_memory_keep_recent:
                 old_turn = working_memory_turns.pop(0)
                 if old_turn < len(agent['main'].chat):
                     agent['main'].replace_user_turn(
@@ -2271,6 +2282,10 @@ async def process_item(
                 'termination_reason': rollout_status['termination_reason'],
                 'is_finish': is_finish,
                 'agent_name': name,
+                'extra_info': copy.deepcopy(_get(item.non_tensor_batch['extra_info'])),
+                'model_contexts': agent[name].model_contexts,
+                'branch_model_contexts': {key: value.model_contexts for key, value in agent.items() if key != 'main'} if name == 'main' else {},
+                'contextgraph_memory_mode': mode,
                 'message_str': print_chat(session_message),
                 'meta_info': f"N: {len(agent)} | {name} | G:{len(graph.nodes)}n/{len(graph.active_edges)}e [iso]",
                 'process_reward_mask': out['process_reward_mask'],
