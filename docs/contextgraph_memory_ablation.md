@@ -53,6 +53,32 @@ first differing FoldAgent/equivalent main request and any branch divergence.
 Separate GPU runs can diverge despite greedy decoding; inspect preceding model
 outputs before attributing later request differences to the executor.
 
+To diagnose an existing run without GPUs or new generations, run:
+
+```bash
+python scripts/audit_contextgraph_ablation.py outputs/memory-ablation-1020286-20260925_113412
+```
+
+The audit also writes `equivalence_diagnostics.json` with per-task main request
+differences, branch key differences, and comparisons of shared branch requests.
+Request indices are zero-based: index 1 means the second request, with the first
+request matching. The compact stdout summary counts diagnostic categories.
+Details include the first changed message and content window, token mismatch
+offset and window, and changed request budgets or completion arguments.
+
+An appended assistant-message difference is an observed history difference, not
+proof of nondeterministic raw generation: postprocessing can also change it.
+An observation difference calls for tool/environment and orchestration review.
+Identical messages with different tokens or budgets call for prompt assembly or
+configuration review. Rewritten histories are classified separately because
+adjacent snapshots do not necessarily retain the intervening raw output.
+Matching snapshots do not verify all server-side sampling settings. Branches
+are matched only by their stored keys; renamed branches are not assumed equal.
+The evaluation commit remains the original manifest commit. This command
+refreshes the two audit reports only and retains the existing JSONL evidence.
+Exit status 1 still means request equivalence failed, even when diagnostics were
+written successfully; exit status 0 means the recorded requests matched.
+
 Local pure-Python tests do not replace Vista runtime/import validation. A skipped
 replay test means executor equivalence has not yet been verified in that runtime.
 The suite fails its dependency preflight instead of accepting this skip.
