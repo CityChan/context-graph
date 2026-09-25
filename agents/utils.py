@@ -543,7 +543,19 @@ class AgentContext:
     def get_turn_context(self, i):
         tokens = self._render_prefix(self.chat[:i + 1])
         prev = self._render_prefix(self.chat[:i]) if i > 0 else []
-        turn_tokens = tokens[len(prev):]
+        if tokens[:len(prev)] == prev:
+            return tokens[len(prev):]
+        # Qwen3 removes earlier assistant thinking when a new user message
+        # arrives. The previous rendering is then NOT a prefix, and slicing
+        # by its old length can silently drop all or part of the observation.
+        # Keep the recorded trajectory (including policy tokens/logprobs)
+        # unchanged; extract only an independently rendered, verified suffix.
+        turn_tokens = self._render_prefix([self.chat[i]])
+        if not turn_tokens or tokens[-len(turn_tokens):] != turn_tokens:
+            raise ValueError(
+                "Chat template rewrote history and the new turn cannot be "
+                "isolated as a verified suffix; refusing to drop observation tokens."
+            )
         return turn_tokens
 
     def get_generation_prompt(self):

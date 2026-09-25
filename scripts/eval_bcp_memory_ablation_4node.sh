@@ -24,6 +24,7 @@ if ! python -c 'import pytest' >/dev/null 2>&1; then
   echo "Installing missing preflight dependency pytest into the active cxtgraph environment"
   python -m pip install --disable-pip-version-check --retries 2 --timeout 30 'pytest>=7,<9'
 fi
+bash scripts/check_qwen3_observation_tokens.sh
 python -m pytest -q tests/test_context_graph_foldagent_replay.py tests/test_context_graph_memory.py tests/test_context_graph_modes.py tests/test_graph_controller.py
 python scripts/prepare_contextgraph_diagnostic.py --source data/bc_test.parquet --output "$RUN_ROOT/data" --samples "${SAMPLES:-24}" --seed "${SEED:-42}"
 export MODEL_PATH=Qwen/Qwen3-8B

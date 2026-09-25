@@ -82,3 +82,31 @@ written successfully; exit status 0 means the recorded requests matched.
 Local pure-Python tests do not replace Vista runtime/import validation. A skipped
 replay test means executor equivalence has not yet been verified in that runtime.
 The suite fails its dependency preflight instead of accepting this skip.
+
+### Qwen3 observation-token repair
+
+The September 25 run `memory-ablation-1020286-20260925_113412` exposed a
+shared context-construction bug: task 129's branch summary was present in
+`messages` but absent from the next recorded `input_ids` in both FoldAgent and
+equivalent mode. Qwen3's template rewrote historical thinking when a new user
+message arrived. The rendered prefix shrank from 5731 to 5374 tokens, so slicing
+the new render at the old prefix length produced an empty observation.
+
+Incremental construction now checks prefix equality. On a history rewrite it
+renders the new turn independently and requires that it exactly match a suffix
+of the full rendered conversation. Unsupported context-dependent templates
+raise an error instead of silently losing evidence. Existing generated tokens,
+log probabilities and policy masks remain unchanged; this preserves the stored
+rollout trajectory rather than replacing it with a fresh full-chat rendering.
+
+Run the cached, real-Qwen3-tokenizer regression check without GPUs or generation:
+
+```bash
+bash scripts/check_qwen3_observation_tokens.sh
+```
+
+The suite now requires this check before evaluation. Tests cover short branch
+returns, long search observations, replacement/rollback, and training alignment.
+Retain the original run as diagnostic evidence; the repair does not update old
+JSONL inputs or scores. Rerun matched variants under a new output directory before
+assessing performance. Initial generation divergence is a separate open issue.
