@@ -11,7 +11,9 @@ case "${ABLATION_GROUP:-all}" in
   all) variants=(foldagent equivalent legacy repaired) ;;
   controls) variants=(foldagent equivalent) ;;
   graph) variants=(legacy repaired) ;;
-  *) echo "ABLATION_GROUP must be all, controls, or graph" >&2; exit 2 ;;
+  answer) variants=(repaired answer) ;;
+  repeat) variants=(repaired repeat) ;;
+  *) echo "ABLATION_GROUP must be all, controls, graph, answer, or repeat" >&2; exit 2 ;;
 esac
 PROJECT_ROOT=${PROJECT_ROOT:-/work/09281/chc_1996/vista/context-graph}
 cd "$PROJECT_ROOT"
@@ -48,11 +50,14 @@ for variant in "${variants[@]}"; do
   export BC_CONTROLLER_ACTION_POLICY=structural
   export BC_VAL_PARQUET="$RUN_ROOT/data/graph.parquet"
   export BC_MEMORY_MODE="$variant"
+  export BC_DIAGNOSTIC_FIX=none
   if [ "$variant" = foldagent ]; then
     export BC_METHOD=foldagent BC_CTXGRAPH_PROTOCOL=legacy BC_MEMORY_MODE=legacy
     export BC_VAL_PARQUET="$RUN_ROOT/data/foldagent.parquet"
   elif [ "$variant" = equivalent ]; then
     export BC_MEMORY_MODE=foldagent
+  elif [ "$variant" = answer ] || [ "$variant" = repeat ]; then
+    export BC_MEMORY_MODE=repaired BC_DIAGNOSTIC_FIX="$variant"
   fi
   export EXPERIMENT_NAME="memory_ablation_${SLURM_JOB_ID}_${variant}"
   export BC_VALIDATION_DATA_DIR="$RUN_ROOT/$variant"
@@ -60,6 +65,8 @@ for variant in "${variants[@]}"; do
 done
 if [ "${ABLATION_GROUP:-all}" = all ]; then
   python scripts/audit_contextgraph_ablation.py "$RUN_ROOT"
+elif [ "${ABLATION_GROUP:-all}" = answer ] || [ "${ABLATION_GROUP:-all}" = repeat ]; then
+  python scripts/summarize_contextgraph_fix.py "$RUN_ROOT" "${ABLATION_GROUP}"
 else
   echo "Group complete: $RUN_ROOT"
   echo "After both groups finish: python scripts/audit_contextgraph_ablation.py CONTROLS_ROOT --peer-root GRAPH_ROOT"

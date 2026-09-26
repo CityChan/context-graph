@@ -646,7 +646,7 @@ class RayPPOTrainer:
                 "messages", "env_stats", "is_finish", "termination_reason",
                 "agent_name", "graph_trace", "graph_state", "graph_rewards",
                 "model_contexts", "branch_model_contexts", "contextgraph_memory_mode",
-                "judge_audit", "uid", "gen_uid",
+                "judge_audit", "uid", "gen_uid", "diagnostic_fix", "repeat_advice_count",
             ):
                 values = batch.non_tensor_batch.get(key)
                 if values is not None and len(values) == len(scores):
@@ -833,7 +833,7 @@ class RayPPOTrainer:
                 "messages", "env_stats", "is_finish", "termination_reason",
                 "agent_name", "graph_trace", "graph_state", "graph_rewards",
                 "model_contexts", "branch_model_contexts", "contextgraph_memory_mode",
-                "judge_audit", "uid", "gen_uid",
+                "judge_audit", "uid", "gen_uid", "diagnostic_fix", "repeat_advice_count",
             ):
                 values = test_batch.non_tensor_batch.get(key)
                 if values is not None and len(values) == len(scores):

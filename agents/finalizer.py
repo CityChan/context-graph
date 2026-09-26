@@ -202,23 +202,27 @@ async def submit_emergency_final_answer(
     overlay_idx = None
     persistent_content = None
     context_overlay = str(context_overlay or "").strip()
+    final_prompt = FINAL_ANSWER_PROMPT
+    if getattr(getattr(getattr(agent, "config", None), "plugin", None), "diagnostic_fix", "none") == "answer":
+        from .diagnostic_fixes import ANSWER_CONSISTENCY
+        final_prompt += "\n\n" + ANSWER_CONSISTENCY
     if agent.messages() and agent.messages()[-1].get("role") == "user":
         idx = len(agent.messages()) - 1
         content = agent.messages()[idx].get("content", "")
-        persistent_content = f"{content}\n\n{FINAL_ANSWER_PROMPT}"
+        persistent_content = f"{content}\n\n{final_prompt}"
         generation_content = persistent_content
         if context_overlay:
             # The latest raw observation has already been integrated into the
             # memory graph. Replace it for this final call to reclaim context,
             # then restore an auditable prompt-only trajectory afterward.
-            generation_content = f"{context_overlay}\n\n{FINAL_ANSWER_PROMPT}"
+            generation_content = f"{context_overlay}\n\n{final_prompt}"
         agent.replace_user_turn(idx, generation_content)
         overlay_idx = idx
     else:
-        persistent_content = FINAL_ANSWER_PROMPT
+        persistent_content = final_prompt
         generation_content = (
-            f"{context_overlay}\n\n{FINAL_ANSWER_PROMPT}"
-            if context_overlay else FINAL_ANSWER_PROMPT
+            f"{context_overlay}\n\n{final_prompt}"
+            if context_overlay else final_prompt
         )
         agent.append({"role": "user", "content": generation_content})
         overlay_idx = len(agent.messages()) - 1

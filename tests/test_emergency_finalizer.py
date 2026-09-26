@@ -212,6 +212,19 @@ def test_zero_reserve_keeps_legacy_full_observation_behavior():
     assert agent.messages()[-1]["content"] == "full search result"
 
 
+def test_answer_consistency_fix_reaches_finalizer_without_rewriting_answer():
+    for fix in ("none", "answer", "repeat"):
+        response = "<function=finish><parameter=answer>Paris</parameter></function>"
+        agent = OverlayCaptureAgent(context_len=40, response=response)
+        agent.config.plugin = SimpleNamespace(diagnostic_fix=fix)
+        env = FakeEnv()
+        assert asyncio.run(submit_emergency_final_answer(
+            agent, env, reserve_tokens=80, action_runner=fake_action_runner,
+        ))
+        assert ("[FINAL ANSWER CONSISTENCY]" in agent.content_seen_during_step) == (fix == "answer")
+        assert env.calls == [response]
+
+
 def test_finalizer_submits_tool_call_and_uses_only_protected_budget():
     response = (
         "<function=finish>\n"

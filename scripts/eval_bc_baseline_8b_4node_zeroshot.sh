@@ -567,6 +567,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   +actor_rollout_ref.rollout.plugin.workflow="$WORKFLOW" \
   +actor_rollout_ref.rollout.plugin.contextgraph_memory_mode="$BC_MEMORY_MODE" \
   +actor_rollout_ref.rollout.plugin.capture_model_contexts="$BC_CAPTURE_MODEL_CONTEXTS" \
+  +actor_rollout_ref.rollout.plugin.diagnostic_fix="${BC_DIAGNOSTIC_FIX:-none}" \
   +actor_rollout_ref.rollout.plugin.max_turn=${BC_MAX_TURN} \
   +actor_rollout_ref.rollout.plugin.retry_cjk=10 \
   +actor_rollout_ref.rollout.plugin.turn_max_new_tokens=${BC_TURN_MAX_NEW_TOKENS} \

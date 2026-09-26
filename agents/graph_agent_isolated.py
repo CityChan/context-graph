@@ -59,6 +59,7 @@ from .graph_controller import (
 )
 from .graph_trace import GraphTraceRecorder
 from .context_graph_modes import memory_mode, run_foldagent_equivalent
+from .diagnostic_fixes import ANSWER_CONSISTENCY, RepeatAdvice, validate_fix
 from .structured_memory import (
     GapStepScheduler,
     StructuredFactMemory,
@@ -282,6 +283,8 @@ async def process_item(
 
     config = context.config.actor_rollout_ref.rollout
     is_train = context.is_train
+    diagnostic_fix = validate_fix(getattr(config.plugin, "diagnostic_fix", "none"), is_train)
+    repeat_advice = RepeatAdvice()
 
     if not is_train:
         if getattr(config.plugin, "val_response_length", None):
@@ -614,6 +617,9 @@ async def process_item(
     branch_node_map = {}  # branch_name -> subtask_node_id
     branch_subgraph_stats = {}  # branch_name -> child graph stats (for logging)
 
+    if diagnostic_fix == "answer":
+        user_prompt = copy.deepcopy(user_prompt)
+        user_prompt[-1]['content'] += "\n\n" + ANSWER_CONSISTENCY
     prompt_turn = len(user_prompt)
     agent = dict()
     agent['main'] = Agent(
@@ -958,6 +964,9 @@ async def process_item(
 
         session_message.append({'role': 'assistant', 'content': response})
         fn_call = extract_fn_call(response)
+        repeat_hint = ""
+        if diagnostic_fix == "repeat" and fn_call:
+            repeat_hint = repeat_advice.observe(fn_call['function'], fn_call.get('arguments', {}))
         new_evidence_node_id = None
         new_evidence_tool_name = None
         new_evidence_text = None
@@ -1358,6 +1367,8 @@ async def process_item(
 
         if process_reward:
             observation = truncate_text(observation, max_lines=100, merge_repeat=True, merge_num=4)
+        if repeat_hint:
+            observation = repeat_hint + "\n\n" + observation
 
         # The newest payload remains verbatim for immediate reasoning. Older
         # payloads are replaced by archive markers, while query-conditioned
@@ -1553,6 +1564,7 @@ async def process_item(
                     # mutation code.
                     decision_context["decision_raw"] = controller_response
                 graph_call = None
+                repeat_select_hint = ""
                 try:
                     graph_call = graph_controller.resolve_action(
                         graph,
@@ -1562,6 +1574,9 @@ async def process_item(
                         action_policy=controller_action_policy,
                     )
                     controller_action = graph_call['function']
+                    repeat_select_hint = ""
+                    if diagnostic_fix == "repeat" and controller_action == 'pass' and decision_context.get('decision', {}).get('action') == 'select':
+                        repeat_select_hint = repeat_advice.observe('select_noop', {'node_id': graph.active_node_id})
                     if controller_action == 'pass':
                         controller_observation = GraphOpResult(
                             'Pass accepted: no graph edit was required.', True
@@ -1648,6 +1663,8 @@ async def process_item(
                     "Your next response must use only an environment or branch "
                     "tool described in the system prompt, in its normal XML format."
                 )
+                if diagnostic_fix == "repeat" and graph_call is not None and repeat_select_hint:
+                    controller_ack = repeat_select_hint + "\n\n" + controller_ack
                 fitted_controller_ack = append_observation_preserving_final_answer(
                     agent['main'],
                     controller_ack,
@@ -2286,6 +2303,8 @@ async def process_item(
                 'model_contexts': agent[name].model_contexts,
                 'branch_model_contexts': {key: value.model_contexts for key, value in agent.items() if key != 'main'} if name == 'main' else {},
                 'contextgraph_memory_mode': mode,
+                'diagnostic_fix': diagnostic_fix,
+                'repeat_advice_count': repeat_advice.warnings,
                 'message_str': print_chat(session_message),
                 'meta_info': f"N: {len(agent)} | {name} | G:{len(graph.nodes)}n/{len(graph.active_edges)}e [iso]",
                 'process_reward_mask': out['process_reward_mask'],
