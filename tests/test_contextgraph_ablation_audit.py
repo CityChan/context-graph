@@ -34,6 +34,49 @@ def test_audit_rejects_missing_task(tmp_path):
         audit(tmp_path)
 
 
+def split_run(root):
+    controls, graph = root / "controls", root / "graph"
+    controls.mkdir()
+    graph.mkdir()
+    write_run(controls)
+    manifest = {"indices": [7], "commit": "test", "source_sha256": "source",
+                "seed": 42, "samples": 1, "selection": "uniform"}
+    (controls / "data/manifest.json").write_text(json.dumps(manifest))
+    (graph / "data").mkdir()
+    (graph / "data/manifest.json").write_text(json.dumps(manifest))
+    for name in ("legacy", "repaired"):
+        (controls / name).rename(graph / name)
+    return controls, graph
+
+
+def test_split_audit_reads_both_groups_without_moving_evidence(tmp_path):
+    controls, graph = split_run(tmp_path)
+    result = audit(controls, graph)
+    assert len(result["scores"]) == 4
+    assert not result["equivalence_request_differences"]
+    assert (graph / "repaired/0.jsonl").exists()
+    assert (controls / "audit.json").exists()
+    assert not (graph / "audit.json").exists()
+
+
+@pytest.mark.parametrize("key", ["commit", "source_sha256", "indices", "seed", "samples", "selection"])
+def test_split_audit_rejects_incompatible_manifests(tmp_path, key):
+    controls, graph = split_run(tmp_path)
+    path = graph / "data/manifest.json"
+    manifest = json.loads(path.read_text())
+    manifest[key] = "different"
+    path.write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match=key):
+        audit(controls, graph)
+
+
+def test_split_audit_rejects_duplicate_variant(tmp_path):
+    controls, graph = split_run(tmp_path)
+    (graph / "foldagent").mkdir()
+    with pytest.raises(ValueError, match="exactly one directory"):
+        audit(controls, graph)
+
+
 def snapshot(messages, tokens=None, max_len=100):
     return {"messages": messages, "input_ids": tokens or [1], "max_len": max_len,
             "completion_kwargs": {}}

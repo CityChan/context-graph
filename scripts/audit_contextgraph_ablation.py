@@ -105,11 +105,24 @@ def read_main(directory):
     return rows
 
 
-def audit(root):
+def audit(root, peer_root=None):
     root = Path(root)
     manifest = json.loads((root / "data/manifest.json").read_text(encoding="utf-8"))
+    roots = [root]
+    if peer_root is not None:
+        peer_root = Path(peer_root)
+        peer_manifest = json.loads((peer_root / "data/manifest.json").read_text(encoding="utf-8"))
+        for key in ("commit", "source_sha256", "indices", "seed", "samples", "selection"):
+            if key not in manifest or key not in peer_manifest or manifest[key] != peer_manifest[key]:
+                raise ValueError(f"Paired manifest mismatch or missing field: {key}")
+        roots.append(peer_root)
     expected = {f"bcp-diagnostic-{index}" for index in manifest["indices"]}
-    variants = {name: read_main(root / name) for name in ("foldagent", "equivalent", "legacy", "repaired")}
+    variants = {}
+    for name in ("foldagent", "equivalent", "legacy", "repaired"):
+        locations = [directory / name for directory in roots if (directory / name).is_dir()]
+        if len(locations) != 1:
+            raise ValueError(f"Expected exactly one directory for variant {name}, found {len(locations)}")
+        variants[name] = read_main(locations[0])
     for name, rows in variants.items():
         if set(rows) != expected:
             raise ValueError(f"Task coverage mismatch for {name}")
@@ -129,7 +142,7 @@ def audit(root):
         if first is not None or len(left) != len(right) or not branches_match:
             differences.append({"task_id": task, "first_different_request": first, "request_counts": [len(left), len(right)], "branches_match": branches_match})
             diagnostics.append(task_diagnostic(task, variants["foldagent"][task], variants["equivalent"][task]))
-    result = {"commit": manifest["commit"], "scores": scores, "equivalence_request_differences": differences,
+    result = {"commit": manifest["commit"], "run_roots": [str(p.resolve()) for p in roots], "scores": scores, "equivalence_request_differences": differences,
               "diagnostic_categories": dict(Counter(row["main"]["category"] for row in diagnostics)),
               "diagnostic_file": "equivalence_diagnostics.json",
               "note": "Paired diagnostics, not proof of a causal graph benefit. Request divergence requires inspection of preceding outputs."}
@@ -144,7 +157,8 @@ def audit(root):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("root")
+    parser.add_argument("--peer-root", help="Second run directory for a split four-variant evaluation")
     args = parser.parse_args()
-    result = audit(args.root)
+    result = audit(args.root, args.peer_root)
     print(json.dumps(result, indent=2))
     raise SystemExit(1 if result["equivalence_request_differences"] else 0)

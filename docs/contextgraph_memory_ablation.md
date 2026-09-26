@@ -41,6 +41,40 @@ the same rows, base Qwen3-8B, 64K budget, greedy decoding, 100 turns, 10 session
 1024-token finalizer reserve and no StructMem. Only workflow metadata differs.
 Set `SAMPLES=-1` for the full 150-question follow-up after inspecting diagnostics.
 
+With two separate four-node idev allocations, set `ABLATION_GROUP=controls`
+in one to run FoldAgent and equivalent, and `ABLATION_GROUP=graph` in the other
+to run legacy and repaired. Each allocation runs its two variants sequentially;
+the allocations can run concurrently. Use distinct, new `RUN_ROOT` directories.
+Both runs must use the same clean Git commit, source data, `SAMPLES` and `SEED`,
+and evaluation configuration. Each independently prepares the same deterministic
+subset. Group runs defer the four-way audit until both finish. The default
+`ABLATION_GROUP=all` retains the original sequential four-variant workflow.
+
+For example, after updating the checkout once, run in the first idev:
+
+```bash
+ABLATION_GROUP=controls RUN_ROOT="$PWD/outputs/memory-pair-20260926-controls" bash scripts/eval_bcp_memory_ablation_4node.sh
+```
+
+Run in the second idev from the same checkout:
+
+```bash
+ABLATION_GROUP=graph RUN_ROOT="$PWD/outputs/memory-pair-20260926-graph" bash scripts/eval_bcp_memory_ablation_4node.sh
+```
+
+When both finish, in the `cxtgraph` environment run:
+
+```bash
+python scripts/audit_contextgraph_ablation.py outputs/memory-pair-20260926-controls --peer-root outputs/memory-pair-20260926-graph
+```
+
+The joint audit rejects mismatched commit, source hash, sample indices, seed,
+sample count or selection method, and missing or duplicate variants. It reads
+the original artifacts in place and writes reports only to the first directory.
+These checks establish subset/provenance consistency, not equality of every
+runtime or server-side setting. Existing output directories are rejected to
+avoid mixing repeated runs; choose a new pair of directory names for a rerun.
+
 Outputs live in a new `outputs/memory-ablation-<job>-<timestamp>/` directory.
 Each validation JSONL includes task IDs, main and branch model request snapshots
 (messages, exact input IDs, completion constraints/budgets), final messages,

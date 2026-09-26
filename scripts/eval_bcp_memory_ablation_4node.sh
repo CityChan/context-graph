@@ -7,6 +7,12 @@
 #SBATCH -t 06:00:00
 #SBATCH -A AST24021
 set -euo pipefail
+case "${ABLATION_GROUP:-all}" in
+  all) variants=(foldagent equivalent legacy repaired) ;;
+  controls) variants=(foldagent equivalent) ;;
+  graph) variants=(legacy repaired) ;;
+  *) echo "ABLATION_GROUP must be all, controls, or graph" >&2; exit 2 ;;
+esac
 PROJECT_ROOT=${PROJECT_ROOT:-/work/09281/chc_1996/vista/context-graph}
 cd "$PROJECT_ROOT"
 if [ -z "${SLURM_JOB_ID:-}" ]; then
@@ -15,8 +21,10 @@ if [ -z "${SLURM_JOB_ID:-}" ]; then
 fi
 # Base Qwen3-8B, greedy decoding, 64K, shared finalizer, no StructMem.
 RUN_ROOT=${RUN_ROOT:-$PROJECT_ROOT/outputs/memory-ablation-${SLURM_JOB_ID}-$(date +%Y%m%d_%H%M%S)}
-mkdir -p "$RUN_ROOT"
+mkdir -p "$(dirname "$RUN_ROOT")"
+mkdir "$RUN_ROOT" # Refuse to mix a new run with existing artifacts.
 exec > >(tee -a "$RUN_ROOT/suite.log") 2>&1
+echo "Group: ${ABLATION_GROUP:-all}; variants: ${variants[*]}; output: $RUN_ROOT"
 source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
 conda activate cxtgraph
 python -c 'import ray, torch, pyarrow'
@@ -35,7 +43,7 @@ export BC_SESSION_TIMEOUT=3600 BC_TURN_MAX_NEW_TOKENS=2048
 export BC_CONSOLIDATION_INTERVAL=5 BC_AUTO_PRUNE_MAX_ACTIVE=12
 export STRUCTURED_MEMORY_ENABLED=0 STRUCTURED_MEMORY_REQUIRED=0 BC_DISABLE_WANDB=1
 export BC_CAPTURE_MODEL_CONTEXTS=True BC_VAL_MAX_SAMPLES=-1
-for variant in foldagent equivalent legacy repaired; do
+for variant in "${variants[@]}"; do
   export BC_METHOD=contextgraph BC_CTXGRAPH_PROTOCOL=controller
   export BC_CONTROLLER_ACTION_POLICY=structural
   export BC_VAL_PARQUET="$RUN_ROOT/data/graph.parquet"
@@ -50,4 +58,9 @@ for variant in foldagent equivalent legacy repaired; do
   export BC_VALIDATION_DATA_DIR="$RUN_ROOT/$variant"
   bash scripts/eval_bc_baseline_8b_4node_zeroshot.sh
 done
-python scripts/audit_contextgraph_ablation.py "$RUN_ROOT"
+if [ "${ABLATION_GROUP:-all}" = all ]; then
+  python scripts/audit_contextgraph_ablation.py "$RUN_ROOT"
+else
+  echo "Group complete: $RUN_ROOT"
+  echo "After both groups finish: python scripts/audit_contextgraph_ablation.py CONTROLS_ROOT --peer-root GRAPH_ROOT"
+fi
