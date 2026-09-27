@@ -48,6 +48,15 @@ Vista's inherited `CC=nvc` causes an unsupported NVHPC compiler error.
 A small GPU top-k/top-p sampling preflight exercises FlashInfer compilation
 before loading model weights. Compiler selection is scoped to model servers.
 
+Servers explicitly use the Vista CUDA 12.8 toolkit at
+`/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8` and its sibling
+`math_libs/12.8`, matching the existing DeepSeek launcher. Override these with
+`SERVER_CUDA_HOME` and `SERVER_CUDA_MATH_ROOT` if needed. Startup checks nvcc,
+libcudart and math headers; toolkit paths are set before importing FlashInfer.
+Driver stubs are added only to link-time search paths. Each server gets a fresh
+node-local `/tmp/bcp-flashinfer-JOB-*` workspace, avoiding old build files and
+concurrent writes to the shared home cache. No existing caches are deleted.
+
 The two methods use the same 32K budget (8K prompt + 24K response), 100 turns,
 10 sessions, 2048 tokens per turn, greedy decoding, thinking enabled with retained
 thinking history, and 1024-token finalizer reserve. ContextGraph uses its isolated

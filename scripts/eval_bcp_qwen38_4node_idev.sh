@@ -24,6 +24,26 @@ cd "$PROJECT_ROOT"
 case "${1:-}" in
   _server)
     activate "$SERVER_CONDA_ENV"
+    # Use the actual toolkit, not NVHPC's compilers/bin/nvcc wrapper directory.
+    # These defaults match the existing Vista DeepSeek launcher.
+    export CUDA_HOME=${SERVER_CUDA_HOME:-/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8}
+    CUDA_MATH_ROOT=${SERVER_CUDA_MATH_ROOT:-/home1/apps/nvidia/Linux_aarch64/25.3/math_libs/12.8}
+    [ -x "$CUDA_HOME/bin/nvcc" ] || { echo "Missing CUDA compiler: $CUDA_HOME/bin/nvcc"; exit 2; }
+    CUDA_LIB_DIR="$CUDA_HOME/targets/sbsa-linux/lib"
+    [ -s "$CUDA_LIB_DIR/libcudart.so" ] || CUDA_LIB_DIR="$CUDA_HOME/lib64"
+    [ -s "$CUDA_LIB_DIR/libcudart.so" ] || { echo "Missing libcudart.so under $CUDA_HOME"; exit 2; }
+    [ -s "$CUDA_MATH_ROOT/targets/sbsa-linux/include/curand.h" ] || { echo "Missing CUDA math headers under $CUDA_MATH_ROOT"; exit 2; }
+    export CUDA_PATH="$CUDA_HOME" CUDACXX="$CUDA_HOME/bin/nvcc" FLASHINFER_NVCC="$CUDA_HOME/bin/nvcc"
+    export PATH="$CUDA_HOME/bin:$PATH"
+    export LIBRARY_PATH="$CUDA_LIB_DIR:$CUDA_LIB_DIR/stubs:$CUDA_MATH_ROOT/targets/sbsa-linux/lib${LIBRARY_PATH:+:$LIBRARY_PATH}"
+    # Driver stubs belong only in link-time paths, never LD_LIBRARY_PATH.
+    export LD_LIBRARY_PATH="$CONDA_PREFIX/lib:$CUDA_LIB_DIR:$CUDA_MATH_ROOT/targets/sbsa-linux/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+    export CPATH="$CUDA_HOME/include:$CUDA_MATH_ROOT/targets/sbsa-linux/include${CPATH:+:$CPATH}"
+    export FLASHINFER_WORKSPACE_BASE
+    FLASHINFER_WORKSPACE_BASE=$(mktemp -d "/tmp/bcp-flashinfer-${SLURM_JOB_ID}-XXXXXX")
+    echo "Server CUDA: $CUDA_HOME; runtime libraries: $CUDA_LIB_DIR"
+    echo "FlashInfer node-local workspace: $FLASHINFER_WORKSPACE_BASE"
+    "$CUDACXX" --version
     # Vista's module environment can export CC=nvc. FlashInfer uses CC as
     # nvcc's -ccbin, so CUDAHOSTCXX alone does not fix its JIT compiler choice.
     export CC="${SERVER_CC:-gcc}" CXX="${SERVER_CXX:-g++}"
