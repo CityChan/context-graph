@@ -14,6 +14,7 @@ from pathlib import Path
 import random
 import subprocess
 import sys
+import traceback
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -79,7 +80,9 @@ class TokenClient:
 def config_for(args):
     from omegaconf import OmegaConf
     workflow = "search_branch" if args.method == "foldagent" else "search_graph"
-    return OmegaConf.create({"actor_rollout_ref": {"rollout": {
+    # The graph executor reads this even for inference. An empty estimator
+    # explicitly leaves training-only GraphRPO credit assignment disabled.
+    return OmegaConf.create({"algorithm": {"adv_estimator": ""}, "actor_rollout_ref": {"rollout": {
         "prompt_length": 8192, "response_length": 24576,
         "plugin": {
             "workflow": workflow, "max_turn": 100, "val_max_turn": 100,
@@ -210,6 +213,7 @@ async def evaluate(args):
                     json.dumps(extra, ensure_ascii=False, default=str), encoding="utf-8")
             except Exception as exc:
                 result["error"] = repr(exc)
+                traceback.print_exc()
             finally:
                 await client.client.aclose()
             with output_path.open("a", encoding="utf-8") as handle:

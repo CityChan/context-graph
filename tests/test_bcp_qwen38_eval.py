@@ -1,4 +1,5 @@
 import asyncio
+import ast
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -7,6 +8,28 @@ import httpx
 import pytest
 
 from scripts.eval_bcp_qwen38 import TokenClient, completion_budget, select_indices, summarize
+
+
+@pytest.mark.parametrize("method,executor", [
+    ("foldagent", "fold_agent.py"), ("contextgraph", "graph_agent_isolated.py")])
+def test_eval_config_satisfies_executor_root_config_reads(method, executor):
+    # Check the real executor's config dependencies without importing GPU/Ray
+    # modules or contacting a model. This catches absent parents of getattr.
+    from scripts.eval_bcp_qwen38 import config_for
+    config = config_for(SimpleNamespace(method=method, memory_mode="repaired"))
+    source = Path(__file__).resolve().parents[1] / "agents" / executor
+    reads = []
+    for node in ast.walk(ast.parse(source.read_text(encoding="utf-8"))):
+        if isinstance(node, ast.Attribute):
+            expression = ast.unparse(node)
+            if expression.startswith("context.config."):
+                reads.append(expression)
+                value = config
+                for key in expression.split(".")[2:]:
+                    value = getattr(value, key)
+    assert reads
+    assert config.algorithm.adv_estimator not in {"graphrpo", "AdvantageEstimator.GRAPHRPO"}
+    assert config.actor_rollout_ref.rollout.plugin.process_reward is None
 
 
 def test_selection_matches_across_methods_and_shards():
