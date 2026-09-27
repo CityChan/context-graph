@@ -54,8 +54,16 @@ Servers explicitly use the Vista CUDA 12.8 toolkit at
 `SERVER_CUDA_HOME` and `SERVER_CUDA_MATH_ROOT` if needed. Startup checks nvcc,
 libcudart and math headers; toolkit paths are set before importing FlashInfer.
 Driver stubs are added only to link-time search paths. Each server gets a fresh
-node-local `/tmp/bcp-flashinfer-JOB-*` workspace, avoiding old build files and
-concurrent writes to the shared home cache. No existing caches are deleted.
+node-local `/tmp/bcp-server-JOB-*` workspace, avoiding old build files and
+concurrent writes to the shared home cache. FlashInfer, vLLM, TorchInductor,
+Triton, CUDA, XDG and temporary-file directories all live under this unique
+workspace, with effective paths logged before Python starts. Setting only the
+FlashInfer workspace does not relocate vLLM's torch.compile cache. This addresses
+shared-cache exposure after an Inductor autotuning `Stale file handle` failure;
+the failed file's exact path was not present in that log tail, so the underlying
+filesystem cause remains unconfirmed. Compilation stays enabled. First startup
+builds fresh caches; model weights remain in the scratch HF cache.
+No existing caches are deleted.
 
 The two methods use the same 32K budget (8K prompt + 24K response), 100 turns,
 10 sessions, 2048 tokens per turn, greedy decoding, thinking enabled with retained

@@ -39,8 +39,17 @@ case "${1:-}" in
     # Driver stubs belong only in link-time paths, never LD_LIBRARY_PATH.
     export LD_LIBRARY_PATH="$CONDA_PREFIX/lib:$CUDA_LIB_DIR:$CUDA_MATH_ROOT/targets/sbsa-linux/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
     export CPATH="$CUDA_HOME/include:$CUDA_MATH_ROOT/targets/sbsa-linux/include${CPATH:+:$CPATH}"
-    export FLASHINFER_WORKSPACE_BASE
-    FLASHINFER_WORKSPACE_BASE=$(mktemp -d "/tmp/bcp-flashinfer-${SLURM_JOB_ID}-XXXXXX")
+    SERVER_CACHE_ROOT=$(mktemp -d "/tmp/bcp-server-${SLURM_JOB_ID}-XXXXXX")
+    export FLASHINFER_WORKSPACE_BASE="$SERVER_CACHE_ROOT/flashinfer"
+    export VLLM_CACHE_ROOT="$SERVER_CACHE_ROOT/vllm"
+    export TORCHINDUCTOR_CACHE_DIR="$SERVER_CACHE_ROOT/inductor"
+    export TRITON_CACHE_DIR="$SERVER_CACHE_ROOT/triton"
+    export CUDA_CACHE_PATH="$SERVER_CACHE_ROOT/cuda"
+    export XDG_CACHE_HOME="$SERVER_CACHE_ROOT/xdg"
+    export TMPDIR="$SERVER_CACHE_ROOT/tmp" TMP="$SERVER_CACHE_ROOT/tmp" TEMP="$SERVER_CACHE_ROOT/tmp"
+    export VLLM_FLASHINFER_AUTOTUNE_CACHE_DIR="$SERVER_CACHE_ROOT/flashinfer-autotune"
+    mkdir -p "$FLASHINFER_WORKSPACE_BASE" "$VLLM_CACHE_ROOT" "$TORCHINDUCTOR_CACHE_DIR" "$TRITON_CACHE_DIR" "$CUDA_CACHE_PATH" "$XDG_CACHE_HOME" "$TMPDIR" "$VLLM_FLASHINFER_AUTOTUNE_CACHE_DIR"
+    echo "Server node-local caches: root=$SERVER_CACHE_ROOT vllm=$VLLM_CACHE_ROOT inductor=$TORCHINDUCTOR_CACHE_DIR triton=$TRITON_CACHE_DIR tmp=$TMPDIR"
     echo "Server CUDA: $CUDA_HOME; runtime libraries: $CUDA_LIB_DIR"
     echo "FlashInfer node-local workspace: $FLASHINFER_WORKSPACE_BASE"
     "$CUDACXX" --version
