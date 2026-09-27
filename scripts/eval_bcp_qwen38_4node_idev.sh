@@ -24,6 +24,13 @@ cd "$PROJECT_ROOT"
 case "${1:-}" in
   _server)
     activate "$SERVER_CONDA_ENV"
+    # Vista's module environment can export CC=nvc. FlashInfer uses CC as
+    # nvcc's -ccbin, so CUDAHOSTCXX alone does not fix its JIT compiler choice.
+    export CC="${SERVER_CC:-gcc}" CXX="${SERVER_CXX:-g++}"
+    CC=$(command -v "$CC")
+    CXX=$(command -v "$CXX")
+    export CC CXX CUDAHOSTCXX="$CXX" NVCC_CCBIN="$CXX"
+    echo "Server compilers: CC=$CC CXX=$CXX CUDAHOSTCXX=$CUDAHOSTCXX"
     # Same Vista TLS workaround as the DeepSeek server launcher. Apply before
     # importing torch/vLLM; architecture-inspection subprocesses inherit it.
     export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1
@@ -34,6 +41,8 @@ case "${1:-}" in
     export HF_HOME="$SCRATCH/hf_cache" HF_HUB_CACHE="$SCRATCH/hf_cache/hub"
     export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
     python -c 'import os, transformers, vllm; from transformers import AutoConfig; c=AutoConfig.from_pretrained(os.environ["MODEL_PATH"], local_files_only=True); print("Server versions:", transformers.__version__, vllm.__version__, "architecture:", c.architectures, flush=True)'
+    # Exercise the failing CUDA sampling path before loading the 27B weights.
+    python -c 'import torch, flashinfer; x=torch.randn(2, 32, device="cuda", dtype=torch.float32); y=flashinfer.sampling.top_k_top_p_sampling_from_logits(x, 4, 0.9); torch.cuda.synchronize(); assert y.shape == (2,); print("FlashInfer sampling preflight passed", flush=True)'
     exec vllm serve "$MODEL_PATH" --served-model-name "$MODEL_ID" --host 0.0.0.0 --port "$MODEL_PORT" --tensor-parallel-size 1 --language-model-only --dtype bfloat16 --max-model-len 32768 --max-num-seqs "$WORKERS" --gpu-memory-utilization 0.90 --enable-chunked-prefill --generation-config vllm --seed "$SEED"
     ;;
   _search)

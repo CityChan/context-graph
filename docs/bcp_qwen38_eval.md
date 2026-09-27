@@ -41,6 +41,13 @@ still needs validation on the Qwen3.8 run; an inspection failure alone does not
 establish that the model architecture is unsupported. Early service exits print
 the corresponding log tail in `suite.log`.
 
+The server also selects `CC=gcc` and `CXX=g++` after activating Conda (override
+with `SERVER_CC`/`SERVER_CXX`). FlashInfer forwards `CC` to nvcc's `-ccbin`;
+Vista's inherited `CC=nvc` causes an unsupported NVHPC compiler error.
+`CUDAHOSTCXX` and `NVCC_CCBIN` are set to the selected C++ compiler too.
+A small GPU top-k/top-p sampling preflight exercises FlashInfer compilation
+before loading model weights. Compiler selection is scoped to model servers.
+
 The two methods use the same 32K budget (8K prompt + 24K response), 100 turns,
 10 sessions, 2048 tokens per turn, greedy decoding, thinking enabled with retained
 thinking history, and 1024-token finalizer reserve. ContextGraph uses its isolated
