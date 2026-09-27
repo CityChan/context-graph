@@ -24,6 +24,13 @@ cd "$PROJECT_ROOT"
 case "${1:-}" in
   _server)
     activate "$SERVER_CONDA_ENV"
+    # Same Vista TLS workaround as the DeepSeek server launcher. Apply before
+    # importing torch/vLLM; architecture-inspection subprocesses inherit it.
+    export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1
+    TORCH_GLOBAL_DEPS=$(python -c 'import importlib.util, pathlib; s=importlib.util.find_spec("torch"); print(pathlib.Path(s.origin).parent / "lib" / "libtorch_global_deps.so")')
+    [ -s "$TORCH_GLOBAL_DEPS" ] || { echo "Missing PyTorch preload library: $TORCH_GLOBAL_DEPS"; exit 2; }
+    export LD_PRELOAD="$TORCH_GLOBAL_DEPS${LD_PRELOAD:+:$LD_PRELOAD}"
+    echo "Server TLS setup: torch global deps preloaded; CPU thread limits=1"
     export HF_HOME="$SCRATCH/hf_cache" HF_HUB_CACHE="$SCRATCH/hf_cache/hub"
     export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
     python -c 'import os, transformers, vllm; from transformers import AutoConfig; c=AutoConfig.from_pretrained(os.environ["MODEL_PATH"], local_files_only=True); print("Server versions:", transformers.__version__, vllm.__version__, "architecture:", c.architectures, flush=True)'
@@ -121,7 +128,7 @@ done
 wait_health() {
   local url=$1 pid=$2 label=$3
   for ((attempt=0; attempt<1200; attempt++)); do
-    kill -0 "$pid" 2>/dev/null || { echo "$label exited; inspect $RUN_ROOT"; return 1; }
+    kill -0 "$pid" 2>/dev/null || { echo "$label exited; last 120 log lines:"; tail -n 120 "$RUN_ROOT/$label.log" || true; return 1; }
     if curl --noproxy '*' --max-time 3 -fsS "$url" >/dev/null 2>&1; then return 0; fi
     if (( attempt % 60 == 0 )); then echo "Waiting for $label ($attempt seconds)..."; fi
     sleep 1

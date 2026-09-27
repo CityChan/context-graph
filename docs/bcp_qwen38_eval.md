@@ -32,6 +32,15 @@ must already have compatible dependencies. The script checks tokenizer evidence
 retention, model loading, generated token IDs and structured JSON responses.
 Actual architecture/kernel compatibility and memory headroom require the Vista run.
 
+Model servers preload their active environment's `libtorch_global_deps.so` and
+set OpenMP/MKL/OpenBLAS/NumExpr thread limits to one before importing vLLM.
+This carries over the Vista DeepSeek launcher's workaround for the dynamic
+linker's `dl-tls.c: _dl_allocate_tls_init` assertion during subprocess startup.
+It also applies to vLLM's architecture-inspection subprocess. This workaround
+still needs validation on the Qwen3.8 run; an inspection failure alone does not
+establish that the model architecture is unsupported. Early service exits print
+the corresponding log tail in `suite.log`.
+
 The two methods use the same 32K budget (8K prompt + 24K response), 100 turns,
 10 sessions, 2048 tokens per turn, greedy decoding, thinking enabled with retained
 thinking history, and 1024-token finalizer reserve. ContextGraph uses its isolated
