@@ -922,3 +922,13 @@ async def run_action(env, response):
     except Exception as e:
         observation = f"Error: {e}"
     return observation
+
+
+def print_chat(chat):
+    chat_str = ""
+    for turn in chat:
+        if is_weird(str(turn)):
+            chat_str += '# ' + turn['role'] + ' **CJK**\n\n' + turn['content'] + "\n\n---\n\n"
+        else:
+            chat_str += '# ' + turn['role'] + '\n\n' + turn['content'] + "\n\n---\n\n"
+    return chat_str

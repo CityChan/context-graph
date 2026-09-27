@@ -15,6 +15,9 @@ Multi-hop QA wrappers for HotpotQA, MuSiQue, and 2WikiMultiHopQA were removed fr
 
 ## Core Files
 
+See [the codebase map](docs/codebase_map.md) for method entry points, shared
+modules, experimental variants, and cleanup boundaries.
+
 | Path | Purpose |
 | --- | --- |
 | `agents/context_graph.py` | In-memory graph state, graph ops, and graph reward accounting |
