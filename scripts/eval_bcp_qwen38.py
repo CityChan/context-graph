@@ -99,7 +99,8 @@ class TokenClient:
 
 def config_for(args):
     from omegaconf import OmegaConf
-    workflow = "search_branch" if args.method == "foldagent" else "search_graph"
+    workflow = {"react": "search", "foldagent": "search_branch",
+                "contextgraph": "search_graph"}[args.method]
     # The graph executor reads this even for inference. An empty estimator
     # explicitly leaves training-only GraphRPO credit assignment disabled.
     return OmegaConf.create({"algorithm": {"adv_estimator": ""}, "actor_rollout_ref": {"rollout": {
@@ -199,7 +200,7 @@ async def evaluate(args):
         "commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()}
     (root / f"manifest-{args.rank}.json").write_text(json.dumps(manifest, indent=2))
 
-    # Every server must support token completion AND controller JSON before either method runs.
+    # Keep the same server preflight across all methods.
     probe = TokenClient(args.endpoint, args.model, tokenizer, config.actor_rollout_ref.rollout,
                         args.seed, root / f"preflight-{args.rank}.jsonl")
     try:
@@ -254,7 +255,7 @@ def main():
     parser.add_argument("--merge", action="store_true")
     parser.add_argument("--benchmark", choices=["bcp", "gaia"], default="bcp")
     parser.add_argument("--output", required=True)
-    parser.add_argument("--method", choices=["foldagent", "contextgraph"])
+    parser.add_argument("--method", choices=["react", "foldagent", "contextgraph"])
     parser.add_argument("--memory-mode", choices=["legacy", "repaired"], default="repaired")
     parser.add_argument("--model", default="Qwen/Qwen3.8-27B")
     parser.add_argument("--model-path")

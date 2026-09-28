@@ -1,5 +1,5 @@
 #!/bin/bash
-# Existing allocation only. Run once per allocation: foldagent or contextgraph.
+# Existing allocation only. Run once per allocation: react, foldagent or contextgraph.
 set -euo pipefail
 export PROJECT_ROOT=${PROJECT_ROOT:-/work/09281/chc_1996/vista/context-graph}
 export SERVER_CONDA_ENV=${SERVER_CONDA_ENV:-deepseek_v4}
@@ -100,8 +100,8 @@ case "${1:-}" in
     ;;
 esac
 
-export METHOD=${1:?Usage: bash scripts/eval_bcp_qwen38_4node_idev.sh foldagent|contextgraph}
-case "$METHOD" in foldagent|contextgraph) ;; *) echo "Invalid method: $METHOD"; exit 2 ;; esac
+export METHOD=${1:?Usage: bash scripts/eval_bcp_qwen38_4node_idev.sh react|foldagent|contextgraph}
+case "$METHOD" in react|foldagent|contextgraph) ;; *) echo "Invalid method: $METHOD"; exit 2 ;; esac
 : "${SLURM_JOB_ID:?Run inside an existing four-node idev}"
 : "${SLURM_JOB_NODELIST:?Missing allocation nodes}"
 : "${SCRATCH:?Missing Vista scratch directory}"

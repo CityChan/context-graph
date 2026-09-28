@@ -30,7 +30,8 @@ def test_gaia_data_rejects_wrong_benchmark_attachments_and_duplicate_ids():
 
 
 @pytest.mark.parametrize("method,executor", [
-    ("foldagent", "fold_agent.py"), ("contextgraph", "graph_agent_isolated.py")])
+    ("react", "react_agent.py"), ("foldagent", "fold_agent.py"),
+    ("contextgraph", "graph_agent_isolated.py")])
 def test_eval_config_satisfies_executor_root_config_reads(method, executor):
     # Check the real executor's config dependencies without importing GPU/Ray
     # modules or contacting a model. This catches absent parents of getattr.
@@ -49,6 +50,23 @@ def test_eval_config_satisfies_executor_root_config_reads(method, executor):
     assert reads
     assert config.algorithm.adv_estimator not in {"graphrpo", "AdvantageEstimator.GRAPHRPO"}
     assert config.actor_rollout_ref.rollout.plugin.process_reward is None
+
+
+def test_react_uses_linear_workflow_with_matched_evaluation_budget():
+    from scripts.eval_bcp_qwen38 import config_for
+    react = config_for(SimpleNamespace(method="react", memory_mode="repaired"))
+    fold = config_for(SimpleNamespace(method="foldagent", memory_mode="repaired"))
+    rollout = react.actor_rollout_ref.rollout
+    other = fold.actor_rollout_ref.rollout
+    assert rollout.plugin.workflow == "search"
+    assert not rollout.plugin.structured_graph_controller
+    assert not rollout.plugin.controller_owned_tool_formatting
+    assert not rollout.plugin.structured_memory_enabled
+    assert rollout.prompt_length == other.prompt_length == 8192
+    assert rollout.response_length == other.response_length == 24576
+    for key in ("final_answer_reserve", "turn_max_new_tokens", "search_topk_cap",
+                "max_turn", "apply_chat_template_kwargs"):
+        assert rollout.plugin[key] == other.plugin[key]
 
 
 def test_selection_matches_across_methods_and_shards():

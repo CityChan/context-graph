@@ -10,7 +10,7 @@ evaluations in that allocation have finished. The launcher shares the BC-P
 allocation lock, serving fixes, 32K budget, seed 42 and scratch checkpoint.
 It defaults to all rows; `SAMPLES=8` selects a smoke subset.
 
-Update the shared checkout once before starting either method:
+Update the shared checkout once before starting a method:
 
 ```bash
 git pull --ff-only origin master
@@ -28,7 +28,18 @@ In the FoldAgent allocation:
 bash scripts/eval_gaia_qwen35_9b_4node_idev.sh foldagent
 ```
 
-Default data: `data/gaia_validation.parquet`. Both methods use that same file;
+For the ReAct baseline, use an idle four-node allocation:
+
+```bash
+bash scripts/eval_gaia_qwen35_9b_4node_idev.sh react
+```
+
+ReAct uses the existing `search` workflow and `agents/react_agent.py`: a linear
+conversation with search, page opening and answer submission, without branches
+or graph memory. It shares the checkpoint, data, decoding, 32K context budget,
+final-answer reserve and judge settings with the other two methods.
+
+Default data: `data/gaia_validation.parquet`. All methods use that same file;
 the evaluator overrides the workflow per method. `DATA_PATH` can select another
 prepared GAIA parquet; non-GAIA rows, attachments, missing labels and duplicate
 task IDs fail preflight before GPU services start. Do not silently substitute
