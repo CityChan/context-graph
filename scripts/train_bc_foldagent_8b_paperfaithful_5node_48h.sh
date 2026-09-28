@@ -90,7 +90,7 @@ JUDGE_MODEL=${JUDGE_MODEL:-gpt-5-nano}  # match upstream paper; override JUDGE_M
 
 # ── Conda + CUDA ──
 source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
-conda activate cxtgraph
+conda activate ${TRAIN_CONDA_ENV:-cxtgraph}
 export NCCL_HOSTID="${SLURMD_NODENAME:-$(hostname -s)}"
 export PATH="${CONDA_PREFIX}/bin:${PATH}"
 hash -r
@@ -278,7 +278,11 @@ probe "BC parquets + HF datasets ok"
 
 # ── Pre-flight: 8B + embedder weights must be present (offline) ──
 probe "checking model caches"
-TRAINER_CACHE_DIR="$HF_HUB_CACHE/models--${MODEL_PATH//\//--}"
+if [ -s "$MODEL_PATH/config.json" ]; then
+  TRAINER_CACHE_DIR="$MODEL_PATH"
+else
+  TRAINER_CACHE_DIR="$HF_HUB_CACHE/models--${MODEL_PATH//\//--}"
+fi
 EMBED_CACHE_DIR="$HF_HUB_CACHE/models--${EMBED_MODEL//\//--}"
 if [ ! -d "$TRAINER_CACHE_DIR" ]; then
   echo "ERROR: $MODEL_PATH not found at $TRAINER_CACHE_DIR"
@@ -311,7 +315,8 @@ SEARCH_LOG="$PROJECT_ROOT/logs/search-${SLURM_JOB_ID:-idev}-${RUN_TAG}-foldagent
 probe "search server log: $SEARCH_LOG"
 srun --overlap --nodes=1 --ntasks=1 -w "$SEARCH_NODE" bash -c "
   source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
-  conda activate cxtgraph
+  conda activate ${SEARCH_CONDA_ENV:-cxtgraph}
+  if [ ${SEARCH_CLEAR_LD_PRELOAD:-0} = 1 ]; then unset LD_PRELOAD; fi
   cd $PROJECT_ROOT
   export PYTHONPATH=$PROJECT_ROOT:\${PYTHONPATH:-}
   export HF_HOME=$HF_HOME
@@ -382,7 +387,7 @@ probe "ray stop sweep across $NUM_NODES nodes"
 for node in "${NODELIST[@]}"; do
   srun --overlap --nodes=1 --ntasks=1 -w "$node" bash -c '
     source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
-    conda activate cxtgraph
+    conda activate ${TRAIN_CONDA_ENV:-cxtgraph}
     ray stop -f >/dev/null 2>&1 || true
   ' || true
 done
@@ -402,7 +407,7 @@ RAY_HEAD_LOG="$PROJECT_ROOT/logs/ray-head-${SLURM_JOB_ID:-idev}-${RUN_TAG}-folda
 probe "Ray head log: $RAY_HEAD_LOG"
 srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" bash -c '
   source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
-  conda activate cxtgraph
+  conda activate ${TRAIN_CONDA_ENV:-cxtgraph}
   export NCCL_HOSTID="${SLURMD_NODENAME:-$(hostname -s)}"
   export PATH="${CONDA_PREFIX}/bin:${PATH}"
   hash -r
@@ -429,7 +434,7 @@ for i in $(seq 2 $((NUM_NODES - 1))); do  # skip NODELIST[0]=search, [1]=head
   probe "Ray worker log ($WORKER_NODE): $RAY_WORKER_LOG"
   srun --overlap --nodes=1 --ntasks=1 -w "$WORKER_NODE" bash -c '
     source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
-    conda activate cxtgraph
+    conda activate ${TRAIN_CONDA_ENV:-cxtgraph}
     export NCCL_HOSTID="${SLURMD_NODENAME:-$(hostname -s)}"
     export PATH="${CONDA_PREFIX}/bin:${PATH}"
     hash -r
@@ -555,7 +560,8 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   trainer.project_name=context-graph \
   trainer.experiment_name="$EXPERIMENT_NAME" \
   trainer.logger="$TRAINER_LOGGER" \
-  "${RESUME_ARGS[@]}"
+  "${RESUME_ARGS[@]}" \
+  "$@"
 RC=$?
 set -e
 

@@ -1,0 +1,115 @@
+#!/bin/bash
+# Shared batch entry point; submit via submit_train_bcp_qwen35_9b_50step.sh.
+set -euo pipefail
+METHOD=${1:?Expected contextgraph or foldagent}
+case "$METHOD" in contextgraph|foldagent) ;; *) echo "Invalid method: $METHOD" >&2; exit 2 ;; esac
+: "${SLURM_JOB_ID:?Submit with sbatch}"
+: "${SCRATCH:?Vista SCRATCH must be set}"
+export PROJECT_ROOT=${PROJECT_ROOT:-/work/09281/chc_1996/vista/context-graph}
+cd "$PROJECT_ROOT"
+mapfile -t NODES < <(scontrol show hostnames "$SLURM_JOB_NODELIST")
+[ "${#NODES[@]}" -eq 5 ] || { echo "Requires 5 nodes: search + 4 trainer ranks" >&2; exit 2; }
+export EXPECTED_NUM_NODES=5
+export TRAIN_CONDA_ENV=${TRAIN_CONDA_ENV:-deepseek_v4}
+export SEARCH_CONDA_ENV=${SEARCH_CONDA_ENV:-cxtgraph}
+export SEARCH_CLEAR_LD_PRELOAD=1
+export RUN_TAG="qwen35_9b_bcp_${METHOD}_${SLURM_JOB_ID}_$(date +%Y%m%d_%H%M%S)"
+export EXPERIMENT_NAME="train_${RUN_TAG}"
+export CHECKPOINT_ROOT="$SCRATCH/context-graph-ckpts/$EXPERIMENT_NAME"
+RUN_DIR="$PROJECT_ROOT/outputs/$EXPERIMENT_NAME"
+mkdir -p logs
+mkdir "$RUN_DIR"
+exec > >(tee -a "$RUN_DIR/suite.log") 2>&1
+git rev-parse HEAD | tee "$RUN_DIR/commit.txt"
+git diff --exit-code HEAD -- agents envs scripts verl >/dev/null || { echo "Commit tracked code changes before training"; exit 2; }
+echo "BC-P RL model=Qwen/Qwen3.5-9B method=$METHOD steps=50 nodes=5"
+echo "Artifacts=$RUN_DIR checkpoints=$CHECKPOINT_ROOT"
+
+source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
+conda activate "$TRAIN_CONDA_ENV"
+export PYTHONPATH="$PROJECT_ROOT:${PYTHONPATH:-}"
+# Keep the retriever's existing /work cache. Trainer loads an absolute snapshot.
+export HF_HOME=${SEARCH_HF_HOME:-/work/09281/chc_1996/vista/cache}
+export HF_HUB_CACHE=${SEARCH_HF_HUB_CACHE:-$HF_HOME/hub}
+export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1
+export MODEL_REVISION=c202236235762e1c871ad0ccb60c8ee5ba337b9a
+export MODEL_PATH="$SCRATCH/hf_cache/hub/models--Qwen--Qwen3.5-9B/snapshots/$MODEL_REVISION"
+export QWEN_TOKENIZER_PATH="$MODEL_PATH"
+export CC=/usr/bin/gcc CXX=/usr/bin/g++ CUDAHOSTCXX=/usr/bin/g++
+export CUDA_HOME=/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8
+export PATH="$CUDA_HOME/bin:$PATH"
+export LD_LIBRARY_PATH="$CUDA_HOME/targets/sbsa-linux/lib:$CUDA_HOME/lib64:${LD_LIBRARY_PATH:-}"
+export LIBRARY_PATH="$CUDA_HOME/targets/sbsa-linux/lib:$CUDA_HOME/lib64:$CUDA_HOME/targets/sbsa-linux/lib/stubs:${LIBRARY_PATH:-}"
+export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
+export TORCHINDUCTOR_CACHE_DIR="/tmp/torchinductor-$RUN_TAG"
+export TRITON_CACHE_DIR="/tmp/triton-$RUN_TAG"
+export VLLM_CACHE_ROOT="/tmp/vllm-$RUN_TAG"
+TORCH_DEPS=$(find "$CONDA_PREFIX/lib" -path '*/torch/lib/libtorch_global_deps.so' -print -quit)
+[ -n "$TORCH_DEPS" ] || { echo "Missing torch global dependencies in $TRAIN_CONDA_ENV"; exit 2; }
+export LD_PRELOAD="$TORCH_DEPS${LD_PRELOAD:+:$LD_PRELOAD}"
+
+# Import the actual training stack before spending time loading retrieval data.
+python -u scripts/preflight_bcp_qwen35_rl.py --model-path "$MODEL_PATH" --output "$RUN_DIR/preflight.json"
+bash scripts/check_qwen3_observation_tokens.sh
+if [ "${PREFLIGHT_ONLY:-0}" = 1 ]; then
+  echo "BCP_RL_PREFLIGHT_COMPLETE (no training performed)"
+  exit 0
+fi
+if [ -f "${WORK:-/work/09281/chc_1996/vista}/.openai_env" ]; then
+  source "${WORK:-/work/09281/chc_1996/vista}/.openai_env"
+fi
+[ -n "${OPENAI_API_KEY:-}" ] || { echo "Missing judge credentials"; exit 2; }
+export TRAIN_DATA_FILE=data/bc_train.parquet VAL_DATA_FILE=data/bc_test.parquet
+sha256sum "$TRAIN_DATA_FILE" "$VAL_DATA_FILE" | tee "$RUN_DIR/data.sha256"
+export TOTAL_TRAINING_STEPS=50 TRAINER_VAL_ONLY=False
+export TRAINER_RESUME_MODE=disable
+export PROMPT_LENGTH=8192 RESPONSE_LENGTH=24576 CONTEXT_LENGTH=32768
+export TRAIN_BATCH_SIZE=32 ROLLOUT_N=8 PPO_MINI_BATCH_SIZE=32
+export TRAIN_LR=1e-6 USE_KL_LOSS=False ACTOR_KL_LOSS_COEF=0.0 ALGORITHM_KL_COEF=0.0
+export CLIP_RATIO_LOW=0.2 CLIP_RATIO_HIGH=0.28
+export LORA_RANK=0 ENTROPY_FROM_LOGITS_WITH_CHUNKING=True
+export VAL_BEFORE_TRAIN=True TEST_FREQ=10 SAVE_FREQ=5
+export TRAIN_MAX_SAMPLES=-1 VAL_MAX_SAMPLES=-1 DATALOADER_NUM_WORKERS=0
+export MAX_TURN=100 MAX_SESSION=10 VAL_MAX_SESSION=10 TURN_MAX_NEW_TOKENS=2048
+export FINAL_ANSWER_RESERVE=1024 FINAL_ANSWER_SAFETY_MARGIN=64 SESSION_TIMEOUT=3600
+export BC_CTXGRAPH_PROTOCOL=controller BC_CONTROLLER_ACTION_POLICY=balanced
+export STRUCTURED_MEMORY_ENABLED=0 STRUCTURED_MEMORY_REQUIRED=0
+export CONSOLIDATION_INTERVAL=5 AUTO_PRUNE_MAX_ACTIVE=12
+unset RESUME_CHECKPOINT_PATH RESUME_CHECKPOINT_ROOT QWEN_ENABLE_THINKING
+# Native padded HF forward avoids untested Qwen3.5 sequence-packing patches.
+ARGS=(
+  trainer.resume_mode=disable
+  data.seed=42
+  actor_rollout_ref.model.use_remove_padding=False
+  actor_rollout_ref.model.use_fused_kernels=False
+  ++actor_rollout_ref.model.override_config.attn_implementation=sdpa
+  actor_rollout_ref.actor.ulysses_sequence_parallel_size=1
+  actor_rollout_ref.actor.use_dynamic_bsz=False
+  actor_rollout_ref.rollout.enforce_eager=True
+  actor_rollout_ref.rollout.max_model_len=32768
+  actor_rollout_ref.rollout.temperature=1.0
+  actor_rollout_ref.rollout.val_kwargs.n=1
+  actor_rollout_ref.rollout.val_kwargs.do_sample=False
+  actor_rollout_ref.rollout.val_kwargs.temperature=0.0
+  +actor_rollout_ref.rollout.engine_kwargs.vllm.language_model_only=True
+  +actor_rollout_ref.rollout.plugin.contextgraph_memory_mode=repaired
+  +actor_rollout_ref.rollout.plugin.search_topk_cap=5
+  +actor_rollout_ref.rollout.plugin.search_snippet_words=128
+  +actor_rollout_ref.rollout.plugin.search_snippet_chars=2000
+  +actor_rollout_ref.rollout.plugin.open_page_words=4096
+  +actor_rollout_ref.rollout.plugin.open_page_chars=48000
+  +actor_rollout_ref.rollout.plugin.apply_chat_template_kwargs.enable_thinking=True
+  +actor_rollout_ref.rollout.plugin.apply_chat_template_kwargs.preserve_thinking=True
+)
+if [ "$METHOD" = contextgraph ]; then
+  BASE=scripts/train_bc_ctxgraph_8b_paperfaithful_5node_48h.sh
+else
+  BASE=scripts/train_bc_foldagent_8b_paperfaithful_5node_48h.sh
+fi
+printf '%s\n' "${ARGS[@]}" > "$RUN_DIR/overrides.txt"
+set +e
+bash "$BASE" "${ARGS[@]}"
+RC=$?
+set -e
+echo "BCP_RL_EXIT method=$METHOD exit=$RC checkpoint=$CHECKPOINT_ROOT"
+exit "$RC"

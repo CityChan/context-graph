@@ -46,7 +46,8 @@ import vllm.entrypoints.cli.serve
 import zmq
 from ray.actor import ActorHandle
 from vllm import SamplingParams
-from vllm.sampling_params import GuidedDecodingParams
+from vllm import sampling_params as vllm_sampling_params
+from packaging.version import Version
 from vllm.engine.arg_utils import AsyncEngineArgs
 from vllm.entrypoints.openai.api_server import (
     build_app,
@@ -58,7 +59,7 @@ from vllm.outputs import RequestOutput
 from vllm.usage.usage_lib import UsageContext
 
 # vllm >= 0.12 moved these to submodules
-_VLLM_NEW_API = vllm.__version__ > "0.11.0"
+_VLLM_NEW_API = Version(vllm.__version__) >= Version("0.12.0")
 if _VLLM_NEW_API:
     from vllm.utils.argparse_utils import FlexibleArgumentParser
     from vllm.utils.network_utils import get_tcp_uri
@@ -83,7 +84,7 @@ from verl.workers.rollout.vllm_rollout.utils import (
     VLLM_LORA_PATH,
     get_vllm_max_lora_rank,
 )
-from agents.structured_outputs import build_vllm_guided_decoding
+from agents.structured_outputs import build_vllm_structured_sampling_kwargs
 
 logger = logging.getLogger(__file__)
 logger.setLevel(logging.INFO)
@@ -497,10 +498,9 @@ class vLLMHttpServerBase:
                 raise ValueError(
                     "structured_outputs and guided_decoding cannot both be set"
                 )
-            sampling_params["guided_decoding"] = build_vllm_guided_decoding(
-                structured_outputs,
-                GuidedDecodingParams,
-            )
+            sampling_params.update(build_vllm_structured_sampling_kwargs(
+                structured_outputs, vllm_sampling_params,
+            ))
         sampling_params = SamplingParams(**sampling_params)
         prompt_ids = _qwen2_5_vl_dedup_image_tokens(prompt_ids, self.model_config.processor)
         prompt = TokensPrompt(

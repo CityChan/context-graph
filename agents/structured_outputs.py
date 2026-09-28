@@ -29,9 +29,9 @@ def normalize_structured_outputs(value: Any) -> dict[str, Any]:
     """Validate the controller envelope while keeping it Ray-serializable.
 
     External vLLM's OpenAI server accepts ``structured_outputs={"json": ...}``,
-    while the vendored VERL stack uses vLLM 0.10.1 offline ``SamplingParams``.
-    The agent loop therefore transports this small plain dictionary across Ray
-    and converts it to ``GuidedDecodingParams`` inside the rollout server.
+    while VERL uses offline ``SamplingParams``. The agent loop transports this
+    small plain dictionary across Ray; the rollout server adapts it to the
+    legacy GuidedDecodingParams or modern StructuredOutputsParams API.
     """
     if not isinstance(value, dict):
         raise TypeError("structured_outputs must be a dictionary")
@@ -53,3 +53,16 @@ def build_vllm_guided_decoding(
     """Convert the wire envelope to vLLM 0.10.1 GuidedDecodingParams."""
     normalized = normalize_structured_outputs(value)
     return guided_decoding_cls(json=normalized["json"])
+
+
+def build_vllm_structured_sampling_kwargs(value: Any, sampling_module: Any) -> dict[str, Any]:
+    """Adapt the wire schema to the installed vLLM sampling API.
+
+    vLLM 0.12 removed GuidedDecodingParams. Prefer its replacement when
+    available, retaining compatibility with the original 0.10 training env.
+    """
+    normalized = normalize_structured_outputs(value)
+    modern = getattr(sampling_module, "StructuredOutputsParams", None)
+    if modern is not None:
+        return {"structured_outputs": modern(json=normalized["json"])}
+    return {"guided_decoding": sampling_module.GuidedDecodingParams(json=normalized["json"])}

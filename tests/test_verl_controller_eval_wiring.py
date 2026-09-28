@@ -8,12 +8,12 @@ def _read(path: str) -> str:
     return (ROOT / path).read_text(encoding="utf-8")
 
 
-def test_vllm_server_adapts_wire_schema_to_v010_guided_decoding():
+def test_vllm_server_adapts_wire_schema_to_installed_sampling_api():
     source = _read("verl/workers/rollout/vllm_rollout/vllm_async_server.py")
-    assert "from vllm.sampling_params import GuidedDecodingParams" in source
+    assert "from vllm import sampling_params as vllm_sampling_params" in source
     assert 'sampling_params.pop("structured_outputs", None)' in source
-    assert "build_vllm_guided_decoding(" in source
-    assert 'sampling_params["guided_decoding"]' in source
+    assert "build_vllm_structured_sampling_kwargs(" in source
+    assert 'sampling_params.get("guided_decoding")' in source
 
 
 def test_call_llm_forwards_structured_outputs_without_mutating_base_sampling():
