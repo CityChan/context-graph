@@ -2,7 +2,7 @@
 
 ContextGraph extends FoldAgent by managing an agent's working context as a graph instead of a tree. Search results, branches, summaries, and selected focus nodes become explicit graph state that can be merged, linked, selected, and pruned during long-horizon agent rollouts.
 
-The repo is currently scoped to four benchmark tracks:
+The repo currently includes these benchmark tracks:
 
 | Track | Role | Status |
 | --- | --- | --- |
@@ -10,6 +10,7 @@ The repo is currently scoped to four benchmark tracks:
 | GAIA | General assistant/search benchmark | Active text-only integration |
 | ScienceAgentBench (SAB) | Code-execution benchmark | Active evaluation track |
 | ALFWorld | Stateful embodied-text benchmark | Experimental/diagnostic |
+| SWE-bench Verified | Repository issue fixing with official test grading | Adapter implemented; real Docker/model smoke run pending |
 
 Multi-hop QA wrappers for HotpotQA, MuSiQue, and 2WikiMultiHopQA were removed from the active codebase. Shared search infrastructure remains because BrowseComp-Plus still uses it.
 
@@ -17,6 +18,10 @@ Multi-hop QA wrappers for HotpotQA, MuSiQue, and 2WikiMultiHopQA were removed fr
 
 See [the codebase map](docs/codebase_map.md) for method entry points, shared
 modules, experimental variants, and cleanup boundaries.
+
+For ReAct / FoldAgent / ContextGraph on SWE-bench Verified, see the
+[evaluation guide](docs/swebench_verified_eval.md). It separates Vista model
+serving from x86 Docker repository containers and official patch grading.
 
 | Path | Purpose |
 | --- | --- |

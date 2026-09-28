@@ -1,0 +1,3 @@
+# Install in a separate grading environment: python -m pip install -r requirements_swebench_eval.txt
+# Official SWE-bench v3.0.17, immutable commit; generation reuses the repo agent dependencies.
+swebench @ git+https://github.com/SWE-bench/SWE-bench.git@3f01bd622c0a22c00406139f69a234ef08225f22

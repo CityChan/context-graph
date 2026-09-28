@@ -21,7 +21,10 @@ from .structured_outputs import normalize_structured_content, normalize_structur
 
 def select_env(ability, config, extra_info=None):
     # Select env
-    if 'ALFWorld' in ability:
+    if ability.startswith('SWEVerified@'):
+        from envs.swebench_env import SWEVerifiedEnv
+        EnvClass = SWEVerifiedEnv
+    elif 'ALFWorld' in ability:
         EnvClass = ALFWorldEnv
     elif 'ScienceWorld' in ability:
         from envs.scienceworld_env import ScienceWorldEnv

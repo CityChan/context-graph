@@ -244,6 +244,11 @@ def create_chat_code(
     user prompt is augmented with the real workdir layout (cwd, input file
     paths, output target) so the agent does not guess paths.
     """
+    if getattr(env, "prompt_domain", None) == "swebench":
+        from .prompts_swe import create_chat_swe
+        return create_chat_swe(
+            problem_statement, workflow, expose_graph_tools=expose_graph_tools
+        )
     return _build_user_prompt_code(
         problem_statement,
         workflow,
