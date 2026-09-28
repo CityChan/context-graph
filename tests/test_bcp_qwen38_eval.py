@@ -49,7 +49,8 @@ def test_budget_preserves_finalizer_override_without_exceeding_context():
     assert completion_budget(config, [1] * 30, {"max_new_tokens": 1024}) == 2
 
 
-def test_token_client_keeps_exact_ids_and_uses_no_judge_credentials(tmp_path, monkeypatch):
+@pytest.mark.parametrize("model", ["Qwen/Qwen3.8-27B", "Qwen/Qwen3.5-9B"])
+def test_token_client_keeps_exact_ids_and_uses_no_judge_credentials(tmp_path, monkeypatch, model):
     monkeypatch.setenv("OPENAI_API_KEY", "judge-secret-must-not-be-sent")
     requests = []
     def handle(request):
@@ -61,7 +62,7 @@ def test_token_client_keeps_exact_ids_and_uses_no_judge_credentials(tmp_path, mo
         config = SimpleNamespace(prompt_length=8192, response_length=24576,
                                  plugin=SimpleNamespace(turn_max_new_tokens=2048))
         tokenizer = SimpleNamespace(decode=lambda ids, **kwargs: "<think>reason</think>answer")
-        client = TokenClient("http://local-model", "model", tokenizer, config, 42, tmp_path / "audit.jsonl")
+        client = TokenClient("http://local-model", model, tokenizer, config, 42, tmp_path / "audit.jsonl")
         await client.client.aclose()
         client.client = httpx.AsyncClient(transport=httpx.MockTransport(handle), base_url="http://local-model")
         try:
@@ -72,6 +73,7 @@ def test_token_client_keeps_exact_ids_and_uses_no_judge_credentials(tmp_path, mo
             await client.client.aclose()
     asyncio.run(run())
     assert requests[0]["prompt"] == [1, 2, 3]
+    assert requests[0]["model"] == model
     assert requests[0]["return_token_ids"] is True
     assert requests[0]["structured_outputs"] == {"json": {"type": "object"}}
 
@@ -85,6 +87,12 @@ def test_summary_rejects_missing_rows_and_judge_errors(tmp_path):
         (tmp_path / f"results-{rank}.jsonl").write_text(json.dumps(row) + "\n")
     summarize(tmp_path)
     assert json.loads((tmp_path / "summary.json").read_text())["task_accuracy"] == 1
+    manifest["model"] = "Qwen/Qwen3.5-9B"
+    (tmp_path / "manifest-2.json").write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match="model mismatch"):
+        summarize(tmp_path)
+    manifest.pop("model")
+    (tmp_path / "manifest-2.json").write_text(json.dumps(manifest))
     (tmp_path / "results-2.jsonl").write_text("")
     with pytest.raises(ValueError, match="Missing"):
         summarize(tmp_path)

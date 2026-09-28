@@ -5,7 +5,12 @@ export PROJECT_ROOT=${PROJECT_ROOT:-/work/09281/chc_1996/vista/context-graph}
 export SERVER_CONDA_ENV=${SERVER_CONDA_ENV:-deepseek_v4}
 export AGENT_CONDA_ENV=${AGENT_CONDA_ENV:-cxtgraph}
 export CONDA_SH=${CONDA_SH:-/work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh}
-export MODEL_ID=Qwen/Qwen3.8-27B
+export MODEL_ID=${MODEL_ID:-Qwen/Qwen3.8-27B}
+case "$MODEL_ID" in
+  Qwen/Qwen3.8-27B) MODEL_TAG=qwen38 ;;
+  Qwen/Qwen3.5-9B) MODEL_TAG=qwen35-9b ;;
+  *) echo "Unsupported MODEL_ID: $MODEL_ID"; exit 2 ;;
+esac
 export SEARCH_PORT=${SEARCH_PORT:-18999} MODEL_PORT=${MODEL_PORT:-18000}
 export SAMPLES=${SAMPLES:-8} SEED=${SEED:-42} WORKERS=${WORKERS:-2}
 export MEMORY_MODE=${MEMORY_MODE:-repaired}
@@ -70,7 +75,7 @@ case "${1:-}" in
     export HF_HOME="$SCRATCH/hf_cache" HF_HUB_CACHE="$SCRATCH/hf_cache/hub"
     export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
     python -c 'import os, transformers, vllm; from transformers import AutoConfig; c=AutoConfig.from_pretrained(os.environ["MODEL_PATH"], local_files_only=True); print("Server versions:", transformers.__version__, vllm.__version__, "architecture:", c.architectures, flush=True)'
-    # Exercise the failing CUDA sampling path before loading the 27B weights.
+    # Exercise the failing CUDA sampling path before loading the model weights.
     python -c 'import torch, flashinfer; x=torch.randn(2, 32, device="cuda", dtype=torch.float32); y=flashinfer.sampling.top_k_top_p_sampling_from_logits(x, 4, 0.9); torch.cuda.synchronize(); assert y.shape == (2,); print("FlashInfer sampling preflight passed", flush=True)'
     exec vllm serve "$MODEL_PATH" --served-model-name "$MODEL_ID" --host 0.0.0.0 --port "$MODEL_PORT" --tensor-parallel-size 1 --language-model-only --dtype bfloat16 --max-model-len 32768 --max-num-seqs "$WORKERS" --gpu-memory-utilization 0.90 --enable-chunked-prefill --generation-config vllm --seed "$SEED"
     ;;
@@ -85,7 +90,7 @@ case "${1:-}" in
     export HF_HOME="$SCRATCH/hf_cache" HF_HUB_CACHE="$SCRATCH/hf_cache/hub"
     export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 STRUCTURED_MEMORY_ENABLED=0
     unset QWEN_ENABLE_THINKING
-    exec python -u scripts/eval_bcp_qwen38.py --method "$METHOD" --memory-mode "$MEMORY_MODE" --model-path "$MODEL_PATH" --endpoint "$2" --rank "$3" --data "$DATA_PATH" --samples "$SAMPLES" --seed "$SEED" --workers "$WORKERS" --output "$RUN_ROOT"
+    exec python -u scripts/eval_bcp_qwen38.py --method "$METHOD" --memory-mode "$MEMORY_MODE" --model "$MODEL_ID" --model-path "$MODEL_PATH" --endpoint "$2" --rank "$3" --data "$DATA_PATH" --samples "$SAMPLES" --seed "$SEED" --workers "$WORKERS" --output "$RUN_ROOT"
     ;;
 esac
 
@@ -101,12 +106,12 @@ mapfile -t NODES < <(scontrol show hostnames "$SLURM_JOB_NODELIST")
 [ "${#NODES[@]}" -eq 4 ] || { echo "Exactly four nodes required"; exit 2; }
 mkdir -p logs
 exec 9>"logs/bcp-qwen38-${SLURM_JOB_ID}.lock"
-flock -n 9 || { echo "This allocation already has a Qwen3.8 evaluation"; exit 2; }
-export RUN_ROOT=${RUN_ROOT:-$PROJECT_ROOT/outputs/bcp-qwen38-${METHOD}-${SLURM_JOB_ID}-$(date +%Y%m%d_%H%M%S)}
+flock -n 9 || { echo "This allocation already has a Qwen evaluation"; exit 2; }
+export RUN_ROOT=${RUN_ROOT:-$PROJECT_ROOT/outputs/bcp-${MODEL_TAG}-${METHOD}-${SLURM_JOB_ID}-$(date +%Y%m%d_%H%M%S)}
 mkdir -p "$(dirname "$RUN_ROOT")"
 mkdir "$RUN_ROOT" # Do not overwrite or merge an earlier run.
 exec > >(tee -a "$RUN_ROOT/suite.log") 2>&1
-echo "Method=$METHOD memory=$MEMORY_MODE job=$SLURM_JOB_ID samples=$SAMPLES seed=$SEED"
+echo "Model=$MODEL_ID Method=$METHOD memory=$MEMORY_MODE job=$SLURM_JOB_ID samples=$SAMPLES seed=$SEED"
 echo "Output=$RUN_ROOT; allocation time limit still applies."
 git rev-parse HEAD | tee "$RUN_ROOT/commit.txt"
 git diff --exit-code HEAD -- agents envs scripts verl >/dev/null || { echo "Tracked code changes: commit/sync before paired evaluation"; exit 2; }

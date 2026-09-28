@@ -128,6 +128,8 @@ def summarize(root):
     manifests = [json.loads((root / f"manifest-{rank}.json").read_text()) for rank in range(3)]
     fields = ("source_sha256", "indices", "commit", "model_path", "method", "config", "seed", "judge_model")
     for manifest in manifests[1:]:
+        if manifest.get("model") != manifests[0].get("model"):
+            raise ValueError("Shard model mismatch")
         if any(manifest[key] != manifests[0][key] for key in fields):
             raise ValueError("Shard provenance mismatch")
     results = []
@@ -166,7 +168,7 @@ async def evaluate(args):
     root = Path(args.output)
     manifest = {"source_sha256": hashlib.sha256(Path(args.data).read_bytes()).hexdigest(),
         "indices": indices, "rank": args.rank, "method": args.method,
-        "model_path": str(Path(args.model_path).resolve()), "seed": args.seed,
+        "model": args.model, "model_path": str(Path(args.model_path).resolve()), "seed": args.seed,
         "judge_model": os.environ.get("JUDGE_MODEL", "gpt-5-nano"),
         "transformers": transformers.__version__, "config": OmegaConf.to_container(config),
         "commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()}
