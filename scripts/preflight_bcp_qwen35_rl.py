@@ -5,7 +5,23 @@ import argparse
 import importlib
 import importlib.metadata
 import json
+import os
 from pathlib import Path
+import subprocess
+import sys
+import traceback
+
+
+def import_in_fresh_process(module: str, timeout=180):
+    """Do not let a previous probe's partially imported modules mask a cycle."""
+    result = subprocess.run(
+        [sys.executable, "-c", f"import importlib; importlib.import_module({module!r})"],
+        capture_output=True, text=True, timeout=timeout,
+        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+    )
+    if result.returncode:
+        raise RuntimeError(f"Fresh import exited {result.returncode}\n{result.stdout}\n{result.stderr}")
+    return {"fresh_process": True, "returncode": result.returncode}
 
 
 def check_checkpoint(root: Path) -> dict:
@@ -33,7 +49,7 @@ def main():
     parser.add_argument("--model-path", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    report = {"model_path": str(args.model_path), "checks": {}, "errors": {}, "versions": {}}
+    report = {"model_path": str(args.model_path), "checks": {}, "errors": {}, "versions": {}, "tracebacks": {}}
 
     def check(label, fn):
         try:
@@ -41,6 +57,7 @@ def main():
             print(f"PASS {label}", flush=True)
         except Exception as exc:
             report["errors"][label] = f"{type(exc).__name__}: {exc}"
+            report["tracebacks"][label] = traceback.format_exc()
             print(f"FAIL {label}: {type(exc).__name__}: {exc}", flush=True)
 
     for package in ("torch", "transformers", "vllm", "ray", "flash-attn", "hydra-core", "tensordict"):
@@ -63,7 +80,7 @@ def main():
     check("HF model class and tokenizer", model_classes)
     for module in ("scripts.train_fold", "scripts.train_graph", "verl.workers.fsdp_workers",
                    "verl.workers.rollout.vllm_rollout.vllm_async_server"):
-        check(module, lambda module=module: bool(importlib.import_module(module)))
+        check(module, lambda module=module: import_in_fresh_process(module))
 
     def structured_sampling():
         from vllm import SamplingParams, sampling_params

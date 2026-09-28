@@ -20,12 +20,6 @@ from unittest.mock import patch
 import torch
 import vllm
 
-try:
-    from vllm.model_executor.layers.fused_moe.layer import FusedMoE
-    from vllm.model_executor.layers.linear import LinearBase
-except ImportError as e:
-    raise ImportError("FP8 quantization not available") from e
-
 logger = logging.getLogger(__name__)
 
 FP8_BLOCK_QUANT_KWARGS = {
@@ -59,6 +53,7 @@ def is_fp8_model(vllm_config):
 
 
 def get_module_from_param_name(model, name: str):
+    from vllm.model_executor.layers.fused_moe.layer import FusedMoE
     # Split the name into parts (e.g., 'layers', '0', 'self_attn', 'q_proj', 'weight')
     # The module path is all but the last part (the parameter's own name)
     path_parts = name.split(".")
@@ -89,6 +84,8 @@ def get_module_from_param_name(model, name: str):
 
 
 def is_fp8_weight(name, model):
+    from vllm.model_executor.layers.fused_moe.layer import FusedMoE
+    from vllm.model_executor.layers.linear import LinearBase
     if name not in fp8_state.seen_params:
         fp8_state.seen_params.add(name)
         # Filter out bias params

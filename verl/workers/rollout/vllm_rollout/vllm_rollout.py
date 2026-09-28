@@ -94,10 +94,6 @@ logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "WARN"))
 # 3. simplify init logics
 
 
-if is_version_ge(pkg="vllm", minver="0.7.3"):
-    VLLMHijack.hijack()
-
-
 def _check_vllm_version_for_sleep_level():
     # https://github.com/vllm-project/vllm/issues/25171
     minver = "0.11.0"
@@ -203,6 +199,9 @@ class vLLMAsyncRollout(BaseRollout):
         )
         self.vllm_config = all_kwargs[0]["vllm_config"]
         if self.lora_config:
+            # Full-parameter BF16 runs must not load/patch optional LoRA internals.
+            if is_version_ge(pkg="vllm", minver="0.7.3"):
+                VLLMHijack.hijack()
             lora_dtype = getattr(torch, self.config.dtype)
             self.vllm_config.lora_config = LoRAConfig(lora_dtype=lora_dtype, **self.lora_config)
         if self.config.quantization is not None:

@@ -8,7 +8,9 @@ case "$METHOD" in contextgraph|foldagent) ;; *) echo "Invalid method: $METHOD" >
 export PROJECT_ROOT=${PROJECT_ROOT:-/work/09281/chc_1996/vista/context-graph}
 cd "$PROJECT_ROOT"
 mapfile -t NODES < <(scontrol show hostnames "$SLURM_JOB_NODELIST")
-[ "${#NODES[@]}" -eq 5 ] || { echo "Requires 5 nodes: search + 4 trainer ranks" >&2; exit 2; }
+if [ "${PREFLIGHT_ONLY:-0}" != 1 ]; then
+  [ "${#NODES[@]}" -eq 5 ] || { echo "Requires 5 nodes: search + 4 trainer ranks" >&2; exit 2; }
+fi
 export EXPECTED_NUM_NODES=5
 export TRAIN_CONDA_ENV=${TRAIN_CONDA_ENV:-deepseek_v4}
 export SEARCH_CONDA_ENV=${SEARCH_CONDA_ENV:-cxtgraph}
@@ -19,10 +21,21 @@ export CHECKPOINT_ROOT="$SCRATCH/context-graph-ckpts/$EXPERIMENT_NAME"
 RUN_DIR="$PROJECT_ROOT/outputs/$EXPERIMENT_NAME"
 mkdir -p logs
 mkdir "$RUN_DIR"
+exec 3>&2
 exec > >(tee -a "$RUN_DIR/suite.log") 2>&1
+STAGE=environment_setup
+report_exit() {
+  local rc=$?
+  if [ "$rc" -ne 0 ]; then
+    local message="BCP_RL_FAILED method=$METHOD job=$SLURM_JOB_ID stage=$STAGE exit=$rc artifacts=$RUN_DIR"
+    printf '%s\n' "$message"
+    printf '%s\n' "$message" | tee -a "$RUN_DIR/failure.log" >&3
+  fi
+}
+trap report_exit EXIT
 git rev-parse HEAD | tee "$RUN_DIR/commit.txt"
 git diff --exit-code HEAD -- agents envs scripts verl >/dev/null || { echo "Commit tracked code changes before training"; exit 2; }
-echo "BC-P RL model=Qwen/Qwen3.5-9B method=$METHOD steps=50 nodes=5"
+echo "BC-P RL model=Qwen/Qwen3.5-9B method=$METHOD steps=50 nodes=${#NODES[@]} preflight_only=${PREFLIGHT_ONLY:-0}"
 echo "Artifacts=$RUN_DIR checkpoints=$CHECKPOINT_ROOT"
 
 source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
@@ -49,7 +62,9 @@ TORCH_DEPS=$(find "$CONDA_PREFIX/lib" -path '*/torch/lib/libtorch_global_deps.so
 export LD_PRELOAD="$TORCH_DEPS${LD_PRELOAD:+:$LD_PRELOAD}"
 
 # Import the actual training stack before spending time loading retrieval data.
+STAGE=dependency_preflight
 python -u scripts/preflight_bcp_qwen35_rl.py --model-path "$MODEL_PATH" --output "$RUN_DIR/preflight.json"
+STAGE=tokenizer_preflight
 bash scripts/check_qwen3_observation_tokens.sh
 if [ "${PREFLIGHT_ONLY:-0}" = 1 ]; then
   echo "BCP_RL_PREFLIGHT_COMPLETE (no training performed)"
@@ -58,6 +73,7 @@ fi
 if [ -f "${WORK:-/work/09281/chc_1996/vista}/.openai_env" ]; then
   source "${WORK:-/work/09281/chc_1996/vista}/.openai_env"
 fi
+STAGE=training_setup
 [ -n "${OPENAI_API_KEY:-}" ] || { echo "Missing judge credentials"; exit 2; }
 export TRAIN_DATA_FILE=data/bc_train.parquet VAL_DATA_FILE=data/bc_test.parquet
 sha256sum "$TRAIN_DATA_FILE" "$VAL_DATA_FILE" | tee "$RUN_DIR/data.sha256"
@@ -108,6 +124,7 @@ else
 fi
 printf '%s\n' "${ARGS[@]}" > "$RUN_DIR/overrides.txt"
 set +e
+STAGE=training
 bash "$BASE" "${ARGS[@]}"
 RC=$?
 set -e

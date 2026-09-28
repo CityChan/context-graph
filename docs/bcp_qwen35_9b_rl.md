@@ -74,11 +74,31 @@ wiring). One pre-existing ALFWorld source-string assertion in
 `test_verl_controller_eval_wiring.py` fails against the unchanged graph agent;
 it was excluded from the passing targeted run, not repaired by this change.
 
-To submit a dependency-only job (no optimization), for example:
+To submit a dependency-only job (one node, ten minutes, no optimization):
 
 ```bash
-PREFLIGHT_ONLY=1 bash scripts/submit_train_bcp_qwen35_9b_50step.sh contextgraph
+bash scripts/submit_train_bcp_qwen35_9b_50step.sh preflight
 ```
+
+This single job checks both agent entry points in separate Python processes.
+Failed checks include full tracebacks in `preflight.json`. It does not start
+the retriever or test a distributed training step.
+
+Jobs `1031462` (ContextGraph) and `1031463` (FoldAgent), launched from `66099ff`,
+stopped in this dependency check: direct import of `scripts.train_fold` caused
+a circular import, and the old LoRA helper imported `vllm.lora.models`, absent
+in the installed vLLM 0.27.1. Their `.err` files were empty because errors were
+redirected into `.out` and `suite.log`. No training started.
+
+The agent package now defers access to training classes during registration.
+Full-parameter BF16 startup no longer eagerly loads the version-specific LoRA
+patch or FP8 MoE classes. This does not establish compatibility for LoRA or FP8
+training on vLLM 0.27.1. Re-run the short preflight before submitting both
+five-node training jobs.
+
+Startup-fix validation: 46 targeted tests passed, including fresh import-order
+regressions, optional LoRA/FP8 import boundaries, mocked Slurm submission and
+failure-log routing; both changed Bash launchers passed syntax checks.
 
 ## Artifacts
 
@@ -86,6 +106,8 @@ PREFLIGHT_ONLY=1 bash scripts/submit_train_bcp_qwen35_9b_50step.sh contextgraph
   name is `bcp-9b-contextgraph-50` or `bcp-9b-foldagent-50`).
 - Suite: `outputs/train_qwen35_9b_bcp_METHOD_JOBID_TIMESTAMP/`, including
   `suite.log`, `commit.txt`, `preflight.json`, `data.sha256`, `overrides.txt`.
+  Files after the failed stage may not exist. Failures after suite setup now
+  also write `failure.log` and a stage/exit-code summary to Slurm `.err`.
 - Search/Ray logs: `logs/`, filenames include job ID and run tag.
 - Checkpoints: the suite prints the exact scratch path. Confirm a saved
   `global_step_50` and `latest_checkpointed_iteration.txt`; a submission or
