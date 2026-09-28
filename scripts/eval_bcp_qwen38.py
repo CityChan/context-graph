@@ -1,4 +1,4 @@
-"""BC-P evaluation against a local vLLM token-completion endpoint (no training).
+"""BC-P / GAIA text-only evaluation against local vLLM (no training).
 
 Keep the judge's OpenAI credentials/endpoint separate from the model endpoint.
 Send exact agent input IDs and retain generated IDs, including thinking tokens.
@@ -35,6 +35,26 @@ def completion_budget(config, input_ids, kwargs):
         if cap > 0:
             remaining = min(remaining, cap)
     return min(remaining, kwargs.get("max_new_tokens", remaining))
+
+
+def validate_dataset(rows, benchmark):
+    """Reject an accidental BC-P input or unsupported file tasks for GAIA."""
+    if benchmark != "gaia":
+        return
+    if not rows:
+        raise ValueError("Empty GAIA dataset")
+    identities = set()
+    for row in rows:
+        extra = row.get("extra_info") or {}
+        if row.get("ability") != "GAIA" or row.get("data_source") != "gaia":
+            raise ValueError("GAIA requires the prepared GAIA parquet, not BC-P data")
+        if any(str(extra.get(key) or "").strip() for key in ("file_name", "file_path")):
+            raise ValueError("GAIA file attachments are unsupported by this text-only evaluator")
+        identity = extra.get("instance_id") or extra.get("task_id")
+        answer = extra.get("answer")
+        if not identity or identity in identities or not isinstance(answer, str) or not answer.strip():
+            raise ValueError("GAIA requires unique task IDs and nonempty reference answers")
+        identities.add(identity)
 
 
 class TokenClient:
@@ -128,6 +148,8 @@ def summarize(root):
     manifests = [json.loads((root / f"manifest-{rank}.json").read_text()) for rank in range(3)]
     fields = ("source_sha256", "indices", "commit", "model_path", "method", "config", "seed", "judge_model")
     for manifest in manifests[1:]:
+        if manifest.get("benchmark", "bcp") != manifests[0].get("benchmark", "bcp"):
+            raise ValueError("Shard benchmark mismatch")
         if manifest.get("model") != manifests[0].get("model"):
             raise ValueError("Shard model mismatch")
         if any(manifest[key] != manifests[0][key] for key in fields):
@@ -139,7 +161,7 @@ def summarize(root):
     if sorted(actual) != manifests[0]["indices"]:
         raise ValueError("Missing or duplicated evaluation rows; inspect per-shard logs")
     count = len(results)
-    summary = {"method": manifests[0]["method"], "count": count,
+    summary = {"method": manifests[0]["method"], "benchmark": manifests[0].get("benchmark", "bcp"), "count": count,
         "task_successes": sum(row["task_reward"] for row in results),
         "task_accuracy": sum(row["task_reward"] for row in results) / count,
         "finished": sum(row["is_finish"] for row in results),
@@ -161,12 +183,15 @@ async def evaluate(args):
     if not os.environ.get("OPENAI_API_KEY") or os.environ["OPENAI_API_KEY"] == "dummy":
         raise RuntimeError("Real judge credentials are required; local model uses a separate endpoint")
     frame = pd.read_parquet(args.data)
+    validate_dataset(frame.to_dict("records"), args.benchmark)
     indices = select_indices(len(frame), args.samples, args.seed)
     config = config_for(args)
     tokenizer = transformers.AutoTokenizer.from_pretrained(args.model_path, local_files_only=True)
     tokenizer_preflight(tokenizer, config.actor_rollout_ref.rollout)
     root = Path(args.output)
     manifest = {"source_sha256": hashlib.sha256(Path(args.data).read_bytes()).hexdigest(),
+        "benchmark": args.benchmark, "retrieval": "local_bcp_corpus",
+        "data_path": str(Path(args.data).resolve()),
         "indices": indices, "rank": args.rank, "method": args.method,
         "model": args.model, "model_path": str(Path(args.model_path).resolve()), "seed": args.seed,
         "judge_model": os.environ.get("JUDGE_MODEL", "gpt-5-nano"),
@@ -227,6 +252,7 @@ async def evaluate(args):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--merge", action="store_true")
+    parser.add_argument("--benchmark", choices=["bcp", "gaia"], default="bcp")
     parser.add_argument("--output", required=True)
     parser.add_argument("--method", choices=["foldagent", "contextgraph"])
     parser.add_argument("--memory-mode", choices=["legacy", "repaired"], default="repaired")

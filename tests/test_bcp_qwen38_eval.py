@@ -10,6 +10,25 @@ import pytest
 from scripts.eval_bcp_qwen38 import TokenClient, completion_budget, select_indices, summarize
 
 
+def test_gaia_data_rejects_wrong_benchmark_attachments_and_duplicate_ids():
+    from scripts.eval_bcp_qwen38 import validate_dataset
+    from scripts.make_gaia_data import _row_to_task
+    row = _row_to_task({"Question": "Test?", "Final answer": "42", "task_id": "a"}, 0, "search")
+    validate_dataset([row], "gaia")
+    with pytest.raises(ValueError, match="unique"):
+        validate_dataset([row, row], "gaia")
+    row["extra_info"]["file_name"] = "attachment.pdf"
+    with pytest.raises(ValueError, match="attachments"):
+        validate_dataset([row], "gaia")
+    row["extra_info"]["file_name"] = ""
+    row["extra_info"]["answer"] = ""
+    with pytest.raises(ValueError, match="reference answers"):
+        validate_dataset([row], "gaia")
+    row["ability"] = "LocalSearch"
+    with pytest.raises(ValueError, match="prepared GAIA"):
+        validate_dataset([row], "gaia")
+
+
 @pytest.mark.parametrize("method,executor", [
     ("foldagent", "fold_agent.py"), ("contextgraph", "graph_agent_isolated.py")])
 def test_eval_config_satisfies_executor_root_config_reads(method, executor):

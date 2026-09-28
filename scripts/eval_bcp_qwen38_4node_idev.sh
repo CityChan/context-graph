@@ -6,6 +6,12 @@ export SERVER_CONDA_ENV=${SERVER_CONDA_ENV:-deepseek_v4}
 export AGENT_CONDA_ENV=${AGENT_CONDA_ENV:-cxtgraph}
 export CONDA_SH=${CONDA_SH:-/work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh}
 export MODEL_ID=${MODEL_ID:-Qwen/Qwen3.8-27B}
+export BENCHMARK=${BENCHMARK:-bcp}
+case "$BENCHMARK" in
+  bcp) DEFAULT_DATA=bc_test.parquet; RUN_TAG=bcp ;;
+  gaia) DEFAULT_DATA=gaia_validation.parquet; RUN_TAG=gaia-local ;;
+  *) echo "Unsupported BENCHMARK: $BENCHMARK"; exit 2 ;;
+esac
 case "$MODEL_ID" in
   Qwen/Qwen3.8-27B) MODEL_TAG=qwen38 ;;
   Qwen/Qwen3.5-9B) MODEL_TAG=qwen35-9b ;;
@@ -14,7 +20,7 @@ esac
 export SEARCH_PORT=${SEARCH_PORT:-18999} MODEL_PORT=${MODEL_PORT:-18000}
 export SAMPLES=${SAMPLES:-8} SEED=${SEED:-42} WORKERS=${WORKERS:-2}
 export MEMORY_MODE=${MEMORY_MODE:-repaired}
-export DATA_PATH=${DATA_PATH:-$PROJECT_ROOT/data/bc_test.parquet}
+export DATA_PATH=${DATA_PATH:-$PROJECT_ROOT/data/$DEFAULT_DATA}
 export SEARCH_HF_HOME=${SEARCH_HF_HOME:-/work/09281/chc_1996/vista/cache}
 export SEARCH_HF_HUB_CACHE=${SEARCH_HF_HUB_CACHE:-$SEARCH_HF_HOME/hub}
 activate() {
@@ -90,7 +96,7 @@ case "${1:-}" in
     export HF_HOME="$SCRATCH/hf_cache" HF_HUB_CACHE="$SCRATCH/hf_cache/hub"
     export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 STRUCTURED_MEMORY_ENABLED=0
     unset QWEN_ENABLE_THINKING
-    exec python -u scripts/eval_bcp_qwen38.py --method "$METHOD" --memory-mode "$MEMORY_MODE" --model "$MODEL_ID" --model-path "$MODEL_PATH" --endpoint "$2" --rank "$3" --data "$DATA_PATH" --samples "$SAMPLES" --seed "$SEED" --workers "$WORKERS" --output "$RUN_ROOT"
+    exec python -u scripts/eval_bcp_qwen38.py --benchmark "$BENCHMARK" --method "$METHOD" --memory-mode "$MEMORY_MODE" --model "$MODEL_ID" --model-path "$MODEL_PATH" --endpoint "$2" --rank "$3" --data "$DATA_PATH" --samples "$SAMPLES" --seed "$SEED" --workers "$WORKERS" --output "$RUN_ROOT"
     ;;
 esac
 
@@ -107,11 +113,13 @@ mapfile -t NODES < <(scontrol show hostnames "$SLURM_JOB_NODELIST")
 mkdir -p logs
 exec 9>"logs/bcp-qwen38-${SLURM_JOB_ID}.lock"
 flock -n 9 || { echo "This allocation already has a Qwen evaluation"; exit 2; }
-export RUN_ROOT=${RUN_ROOT:-$PROJECT_ROOT/outputs/bcp-${MODEL_TAG}-${METHOD}-${SLURM_JOB_ID}-$(date +%Y%m%d_%H%M%S)}
+export RUN_ROOT=${RUN_ROOT:-$PROJECT_ROOT/outputs/${RUN_TAG}-${MODEL_TAG}-${METHOD}-${SLURM_JOB_ID}-$(date +%Y%m%d_%H%M%S)}
 mkdir -p "$(dirname "$RUN_ROOT")"
 mkdir "$RUN_ROOT" # Do not overwrite or merge an earlier run.
 exec > >(tee -a "$RUN_ROOT/suite.log") 2>&1
 echo "Model=$MODEL_ID Method=$METHOD memory=$MEMORY_MODE job=$SLURM_JOB_ID samples=$SAMPLES seed=$SEED"
+echo "Benchmark=$BENCHMARK data=$DATA_PATH retrieval=local-BCP-corpus"
+if [ "$BENCHMARK" = gaia ]; then echo "GAIA text-only internal comparison; not official GAIA evaluation."; fi
 echo "Output=$RUN_ROOT; allocation time limit still applies."
 git rev-parse HEAD | tee "$RUN_ROOT/commit.txt"
 git diff --exit-code HEAD -- agents envs scripts verl >/dev/null || { echo "Tracked code changes: commit/sync before paired evaluation"; exit 2; }
@@ -135,6 +143,7 @@ export MODEL_PATH=${MODEL_PATH:-}
 MODEL_PATH=$(python -c 'import os,json; from pathlib import Path; from huggingface_hub import snapshot_download; scratch=Path(os.environ["SCRATCH"]).resolve(); p=Path(os.environ["MODEL_PATH"] or snapshot_download(os.environ["MODEL_ID"], cache_dir=str(scratch/"hf_cache"/"hub"), local_files_only=True)).resolve(); assert p.is_relative_to(scratch), "Model must be under SCRATCH"; idx=json.loads((p/"model.safetensors.index.json").read_text()); shards=set(idx["weight_map"].values()); assert shards and all((p/s).is_file() and (p/s).stat().st_size>0 for s in shards), "Incomplete checkpoint"; print(p)')
 export MODEL_PATH
 echo "Resolved HF checkpoint: $MODEL_PATH"
+python -c 'import os,pandas as pd; from scripts.eval_bcp_qwen38 import validate_dataset; f=pd.read_parquet(os.environ["DATA_PATH"]); validate_dataset(f.to_dict("records"),os.environ["BENCHMARK"]); print("Dataset protocol preflight passed:",len(f),"rows")'
 python -c 'import os,pandas as pd; from scripts.eval_bcp_qwen38 import select_indices; from scripts.eval_gaia import _process_item_for_workflow; from transformers import AutoTokenizer; f=pd.read_parquet(os.environ["DATA_PATH"]); ids=select_indices(len(f),int(os.environ["SAMPLES"]),int(os.environ["SEED"])); assert len(ids)>=3; t=AutoTokenizer.from_pretrained(os.environ["MODEL_PATH"],local_files_only=True); [_process_item_for_workflow(w) for w in ("search_branch","search_graph")]; print("Preflight rows:",len(f),"selected:",ids,"tokenizer:",type(t).__name__)'
 python -c 'import os; from types import SimpleNamespace; from transformers import AutoTokenizer; from scripts.eval_bcp_qwen38 import config_for,tokenizer_preflight; os.environ.pop("QWEN_ENABLE_THINKING",None); t=AutoTokenizer.from_pretrained(os.environ["MODEL_PATH"],local_files_only=True); c=config_for(SimpleNamespace(method=os.environ["METHOD"],memory_mode=os.environ["MEMORY_MODE"])); tokenizer_preflight(t,c.actor_rollout_ref.rollout); print("Observation tokenizer preflight passed")'
 python -c 'import os; from openai import OpenAI; c=OpenAI(timeout=60,max_retries=1); r=c.chat.completions.create(model=os.environ["JUDGE_MODEL"],messages=[{"role":"user","content":"Reply OK."}]); assert r.choices; c.close(); print("Judge API preflight passed")'
@@ -191,4 +200,4 @@ rc=0
 for pid in "${EVAL_PIDS[@]}"; do wait "$pid" || rc=1; done
 if [ "$rc" -ne 0 ]; then echo "Evaluation shard failed; inspect eval-*.log"; exit 1; fi
 python scripts/eval_bcp_qwen38.py --merge --output "$RUN_ROOT"
-echo "BCP_EVAL_COMPLETE method=$METHOD output=$RUN_ROOT"
+echo "${BENCHMARK^^}_EVAL_COMPLETE method=$METHOD output=$RUN_ROOT"
