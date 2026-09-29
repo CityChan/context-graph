@@ -126,10 +126,10 @@ class _RewritingTokenizer:
         return self.encode("".join(parts) + ("[assistant]" if add_generation_prompt else ""))
 
 
-def _check_observation_roundtrip(tokenizer, observation):
+def _check_observation_roundtrip(tokenizer, observation, template_kwargs=None):
     config = SimpleNamespace(prompt_length=32768, response_length=32768, plugin=SimpleNamespace())
     chat = [{'role': 'system', 'content': 'Use tools.'}, {'role': 'user', 'content': 'Find evidence.'}]
-    context = AgentContext(chat, tokenizer, config)
+    context = AgentContext(chat, tokenizer, config, chat_template_kwargs=template_kwargs)
     context.context()  # Cache the same generation prefix used for this completion.
     response = '<think>' + 'Reason about the evidence. ' * 150 + '</think>\n<function=search>query</function>'
     ids = tokenizer.encode(response, add_special_tokens=False) + [tokenizer.eos_token_id]
@@ -143,7 +143,8 @@ def _check_observation_roundtrip(tokenizer, observation):
     assert after[:len(before)] != before
     expected = context._render_prefix([context.chat[-1]])
     assert context.chat_ids[-1] == expected
-    assert observation in tokenizer.decode(context.context(), skip_special_tokens=False)
+    # Qwen3.5's template intentionally trims message-edge whitespace.
+    assert observation.strip() in tokenizer.decode(context.context(), skip_special_tokens=False)
     assert (context.chat_ids[:-1], context.log_probs[:-1], context.token_mask[:-1]) == preserved
     assert not any(context.token_mask[-1])
     assert all(p == 0 for p in context.log_probs[-1])
@@ -170,6 +171,25 @@ def test_rewritten_history_preserves_observation_and_training_alignment():
         _check_observation_roundtrip(_RewritingTokenizer(), observation)
 
 
+def test_mapping_default_tokenizer_keeps_ids_and_generation_prefix():
+    from transformers import BatchEncoding
+
+    class MappingDefaultTokenizer(_RewritingTokenizer):
+        def apply_chat_template(self, chat, return_dict=True, **kwargs):
+            ids = super().apply_chat_template(chat, **kwargs)
+            return BatchEncoding({'input_ids': ids, 'attention_mask': [1] * len(ids)}) if return_dict else ids
+
+    tokenizer = MappingDefaultTokenizer()
+    for observation in OBSERVATIONS:
+        _check_observation_roundtrip(tokenizer, observation)
+    chat = [{'role': 'system', 'content': 'Use tools.'}, {'role': 'user', 'content': 'Question'}]
+    config = SimpleNamespace(prompt_length=32768, response_length=32768, plugin=SimpleNamespace())
+    context = AgentContext(chat, tokenizer, config)
+    expected = tokenizer.apply_chat_template(chat, return_dict=False, add_generation_prompt=True)
+    assert context.context() == expected
+    assert context.prompt_ids_len == len(tokenizer.apply_chat_template(chat, return_dict=False))
+
+
 def test_context_dependent_standalone_turn_fails_instead_of_dropping_tokens():
     class UnsupportedTokenizer(_RewritingTokenizer):
         def apply_chat_template(self, chat, **kwargs):
@@ -186,8 +206,9 @@ def test_real_qwen3_observation_and_training_alignment():
         raise unittest.SkipTest('Set QWEN_TOKENIZER_PATH to a cached Qwen3 tokenizer for offline validation')
     from transformers import AutoTokenizer
     tokenizer = AutoTokenizer.from_pretrained(model, local_files_only=True)
-    for observation in OBSERVATIONS:
-        _check_observation_roundtrip(tokenizer, observation)
+    for template_kwargs in ({}, {'enable_thinking': True, 'preserve_thinking': True}):
+        for observation in OBSERVATIONS:
+            _check_observation_roundtrip(tokenizer, observation, template_kwargs)
 
 
 def load_tests(loader, tests, pattern):

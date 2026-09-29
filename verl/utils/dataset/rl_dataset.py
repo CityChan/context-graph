@@ -234,6 +234,9 @@ class RLHFDataset(Dataset):
                 def doc2len(doc) -> int:
                     try:
                         apply_kwargs = dict(**self.apply_chat_template_kwargs)
+                        # HF 5.x defaults to BatchEncoding; len() must count
+                        # prompt tokens here, not the mapping's fields.
+                        apply_kwargs["return_dict"] = False
                         if self.tool_schemas is not None:
                             apply_kwargs["tools"] = self.tool_schemas
 

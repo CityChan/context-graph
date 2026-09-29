@@ -59,6 +59,12 @@ rollout, controller sampling API, and the observation tokenizer regression.
 The tokenizer regression uses Python's built-in `unittest`; `pytest` is not
 required in the training environment. It loads the pinned local tokenizer and
 checks both short branch evidence and long search observations without weights.
+`AgentContext` and the RL prompt-length filter explicitly request token lists:
+Transformers 5.15.1 defaults to `BatchEncoding`, whose length/slicing do not
+represent token IDs. Job `1033347` exposed this at the tokenizer preflight.
+The fix was reproduced and verified with the pinned 9B tokenizer revision under
+both Transformers 4.57.6 and 5.15.1, including exact suffix matching, preservation
+of generated IDs/log probabilities/masks, observation replacement and rollback.
 Missing dependencies or incompatible APIs stop the job before retrieval startup.
 It never installs or upgrades packages in the shared environment.
 

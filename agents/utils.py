@@ -439,6 +439,9 @@ def _chat_template_kwargs(config) -> dict:
 def _apply_chat_template(tokenizer, chat, config, **kwargs):
     template_kwargs = _chat_template_kwargs(config)
     template_kwargs.update(kwargs)
+    # AgentContext slices/counts token IDs, not BatchEncoding fields. HF 5.x
+    # changed apply_chat_template's default to return_dict=True.
+    template_kwargs["return_dict"] = False
     return tokenizer.apply_chat_template(chat, **template_kwargs)
 
 

@@ -73,8 +73,8 @@ def main():
         model_cls = AutoModelForImageTextToText._model_mapping[type(config)]
         tokenizer = AutoTokenizer.from_pretrained(args.model_path, local_files_only=True)
         ids = tokenizer.apply_chat_template([{"role": "user", "content": "Say OK."}],
-            tokenize=True, add_generation_prompt=True, enable_thinking=True)
-        assert ids, "Empty chat template"
+            tokenize=True, return_dict=False, add_generation_prompt=True, enable_thinking=True)
+        assert isinstance(ids, list) and ids and all(isinstance(i, int) for i in ids), "Expected a nonempty list of token IDs"
         return {"model_class": model_cls.__name__, "tokenizer": type(tokenizer).__name__}
 
     check("HF model class and tokenizer", model_classes)

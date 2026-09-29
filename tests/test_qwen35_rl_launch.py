@@ -1,3 +1,4 @@
+import ast
 import importlib.util
 import json
 import os
@@ -55,6 +56,24 @@ def test_preflight_rejects_wrong_model(tmp_path):
     (tmp_path / "config.json").write_text(json.dumps({"model_type": "qwen3"}))
     with pytest.raises(ValueError, match="Expected Qwen3.5"):
         preflight.check_checkpoint(tmp_path)
+
+
+def test_rl_prompt_filter_counts_tokens_with_mapping_default_tokenizer():
+    # Execute the text branch's real length function without loading datasets/Ray.
+    tree = ast.parse((ROOT / 'verl/utils/dataset/rl_dataset.py').read_text(encoding='utf8'))
+    function = next(node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)
+                    and node.name == 'doc2len' and 'tokenizer.apply_chat_template' in ast.unparse(node))
+
+    class Tokenizer:
+        def apply_chat_template(self, chat, return_dict=True, **kwargs):
+            ids = list(range(len(chat[0]['content'])))
+            return {'input_ids': ids, 'attention_mask': [1] * len(ids)} if return_dict else ids
+
+    namespace = {'self': SimpleNamespace(apply_chat_template_kwargs={}, tool_schemas=None,
+                                         max_prompt_length=10), 'tokenizer': Tokenizer(), 'prompt_key': 'prompt'}
+    exec(compile(ast.Module(body=[function], type_ignores=[]), 'prompt-filter', 'exec'), namespace)
+    assert namespace['doc2len']({'prompt': [{'role': 'user', 'content': 'x' * 20}]}) == 20
+    assert namespace['doc2len']({'prompt': [{'role': 'user', 'content': 'short'}]}) == 5
 
 
 @pytest.mark.skipif(not shutil.which("bash"), reason="Bash unavailable")
