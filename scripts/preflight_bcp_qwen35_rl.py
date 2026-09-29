@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import importlib
 import importlib.metadata
+import inspect
 import json
 import os
 from pathlib import Path
@@ -90,6 +91,23 @@ def main():
         SamplingParams(max_tokens=32, **build_vllm_structured_sampling_kwargs(schema, sampling_params))
 
     check("vLLM controller sampling API", structured_sampling)
+
+    def worker_api():
+        from verl.utils.vllm_worker_compat import worker_wrapper_kwargs
+        from verl.workers.rollout.vllm_rollout.vllm_rollout import WorkerWrapperBase
+        from verl.workers.rollout.vllm_rollout.vllm_async_server import ExternalZeroMQDistributedExecutor, Executor
+        sentinel = object()
+        ctor = worker_wrapper_kwargs(WorkerWrapperBase, sentinel)
+        inspect.signature(WorkerWrapperBase.init_worker).bind(sentinel, [dict(vllm_config=sentinel)])
+        base = inspect.signature(Executor.sample_tokens)
+        call = {name: sentinel for name, param in base.parameters.items()
+                if name not in ('self', 'non_block') and param.default is inspect.Parameter.empty}
+        inspect.signature(ExternalZeroMQDistributedExecutor.sample_tokens).bind(sentinel, **call, non_block=False)
+        return {"constructor": str(inspect.signature(WorkerWrapperBase)),
+                "constructor_kwargs": sorted(ctor), "sampling": str(base),
+                "dispatch": "legacy" if hasattr(WorkerWrapperBase, "execute_method") else "direct"}
+
+    check("vLLM worker initialization and RPC signatures", worker_api)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2), encoding="utf8")
     if report["errors"]:

@@ -74,6 +74,7 @@ from verl.utils.device import is_npu_available
 from verl.utils.distributed import initialize_global_process_group_ray
 from verl.utils.ray_utils import ray_noset_visible_devices
 from verl.utils.vllm import TensorLoRARequest, VLLMHijack, is_version_ge
+from verl.utils.vllm_worker_compat import execute_worker_method, worker_wrapper_kwargs
 from verl.utils.vllm.vllm_fp8_utils import apply_vllm_fp8_patches, is_fp8_model, load_quanted_weights
 from verl.workers.config import HFModelConfig, RolloutConfig
 from verl.workers.rollout.base import BaseRollout
@@ -211,7 +212,7 @@ class vLLMAsyncRollout(BaseRollout):
                 apply_vllm_fp8_patches()
             else:
                 raise ValueError(f"Currently only support fp8 quantization, got: {self.config.quantization}")
-        self.inference_engine = WorkerWrapperBase(vllm_config=self.vllm_config)
+        self.inference_engine = WorkerWrapperBase(**worker_wrapper_kwargs(WorkerWrapperBase, self.vllm_config))
         self.inference_engine.init_worker(all_kwargs)
 
     def _load_model(self, *args, **kwargs):
@@ -224,7 +225,7 @@ class vLLMAsyncRollout(BaseRollout):
         elif method == "load_model":
             return self._load_model(*args, **kwargs)
         else:
-            return self.inference_engine.execute_method(method, *args, **kwargs)
+            return execute_worker_method(self.inference_engine, method, *args, **kwargs)
 
     async def resume(self, tags: list[str]):
         """Resume rollout weights or kv cache in GPU memory.

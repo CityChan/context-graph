@@ -137,6 +137,21 @@ ranks. This checks file presence, not checkpoint reload correctness or nonzero
 learning signal. No benchmark accuracy or convergence claim follows from it.
 The ordinary five-node, 50-step submission keeps its original configuration.
 
+The first smoke in allocation `1033347` (`20260929_113214`) reached the three
+trainer ranks and loaded actor weights, then failed before rollout at
+`WorkerWrapperBase(vllm_config=...)`. vLLM 0.27.1 receives this configuration
+through `init_worker`, and no longer exposes the old wrapper `execute_method`.
+The adapter now selects constructor arguments by signature and preserves wrapper
+device/cache hooks during direct RPC dispatch. It also supports the executor's
+`sample_tokens(grammar_output, non_block=...)` interface. See the pinned
+[worker source](https://github.com/vllm-project/vllm/blob/v0.27.1/vllm/v1/worker/worker_base.py)
+and [executor source](https://github.com/vllm-project/vllm/blob/v0.27.1/vllm/v1/executor/abstract.py).
+Preflight checks these worker/adapter signatures before retrieval startup.
+Validation: 36 targeted tests, plus CPU execution of the upstream 0.11.0 and
+0.27.1 wrapper constructors and initialization/device/cache methods with stub
+workers. Actual GPU initialization, weight transfer and training still require
+the next smoke run; this is not a full vLLM-version compatibility guarantee.
+
 - Slurm: `logs/bcp-9b-rl50.METHOD-JOB-NAME.JOBID.out` and `.err` (the exact job
   name is `bcp-9b-contextgraph-50` or `bcp-9b-foldagent-50`).
 - Suite: `outputs/train_qwen35_9b_bcp_METHOD_JOBID_TIMESTAMP/`, including

@@ -13,6 +13,7 @@
 # limitations under the License.
 import argparse
 import asyncio
+import inspect
 import json
 import logging
 import os
@@ -168,16 +169,24 @@ class ExternalZeroMQDistributedExecutor(Executor):
                 future.set_exception(e)
             return future if non_block else future.result()
 
-        def sample_tokens(self, scheduler_output, output, non_block: bool = False):
-            future = Future()
-            try:
-                result = self.collective_rpc(
-                    "sample_tokens", args=(scheduler_output, output)
-                )
-                future.set_result(result[0])
-            except Exception as e:
-                future.set_exception(e)
-            return future if non_block else future.result()
+        if "grammar_output" in inspect.signature(Executor.sample_tokens).parameters:
+            def sample_tokens(self, grammar_output, non_block: bool = False):
+                future = Future()
+                try:
+                    result = self.collective_rpc("sample_tokens", args=(grammar_output,))
+                    future.set_result(result[0])
+                except Exception as e:
+                    future.set_exception(e)
+                return future if non_block else future.result()
+        else:
+            def sample_tokens(self, scheduler_output, output, non_block: bool = False):
+                future = Future()
+                try:
+                    result = self.collective_rpc("sample_tokens", args=(scheduler_output, output))
+                    future.set_result(result[0])
+                except Exception as e:
+                    future.set_exception(e)
+                return future if non_block else future.result()
 
 
 class vLLMHttpServerBase:

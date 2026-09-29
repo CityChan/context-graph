@@ -7,6 +7,7 @@ import subprocess
 import sys
 from types import ModuleType, SimpleNamespace
 from unittest.mock import Mock
+from verl.utils.vllm_worker_compat import worker_wrapper_kwargs
 
 import pytest
 
@@ -102,7 +103,8 @@ def test_worker_patches_lora_only_when_enabled(lora_enabled, monkeypatch):
     namespace = {"torch": SimpleNamespace(distributed=SimpleNamespace(is_initialized=lambda: True), bfloat16="bf16"),
         "Any": object, "os": os, "is_npu_available": False, "ray_noset_visible_devices": lambda: False,
         "VLLMHijack": SimpleNamespace(hijack=hijack), "is_version_ge": lambda **kw: True,
-        "LoRAConfig": lambda **kw: kw, "WorkerWrapperBase": worker}
+        "LoRAConfig": lambda **kw: kw, "WorkerWrapperBase": worker,
+        "worker_wrapper_kwargs": worker_wrapper_kwargs}
     monkeypatch.setenv("RANK", "0")
     exec(compile(ast.Module(body=[method], type_ignores=[]), "worker-method", "exec"), namespace)
     instance = SimpleNamespace(lora_config={"max_loras": 1} if lora_enabled else {},
