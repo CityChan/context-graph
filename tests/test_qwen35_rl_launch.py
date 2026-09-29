@@ -191,14 +191,17 @@ done
 
 
 @pytest.mark.skipif(not shutil.which('bash'), reason='Bash unavailable')
-@pytest.mark.parametrize('profile,nodes,context,mini', [
-    ('default', 5, 32768, 32),
-    ('contextgraph_32k_paper_batch', 5, 32768, 128),
-    ('contextgraph_32k_paper_batch', 4, 32768, 128),
-    ('contextgraph_64k_paper_batch', 5, 65536, 128),
-    ('contextgraph_64k_paper_batch', 4, 65536, 128),
+@pytest.mark.parametrize('profile,nodes,context,mini,topology', [
+    ('default', 5, 32768, 32, 'full'),
+    ('contextgraph_32k_paper_batch', 5, 32768, 128, 'full'),
+    ('contextgraph_32k_paper_batch', 4, 32768, 128, 'full'),
+    ('contextgraph_64k_paper_batch', 5, 65536, 128, 'full'),
+    ('contextgraph_64k_paper_batch', 4, 65536, 128, 'full'),
+    ('contextgraph_32k_paper_batch', 4, 32768, 128, 'idev4_dp2'),
+    ('contextgraph_32k_paper_batch', 3, 32768, 128, 'idev4_dp2'),
+    ('contextgraph_32k_paper_batch', 5, 32768, 128, 'idev4_dp2'),
 ])
-def test_training_profile_reaches_base_launcher(tmp_path, profile, nodes, context, mini):
+def test_training_profile_reaches_base_launcher(tmp_path, profile, nodes, context, mini, topology):
     (tmp_path / 'scripts').mkdir()
     (tmp_path / 'data').mkdir()
     for name in ('bc_train.parquet', 'bc_test.parquet'):
@@ -207,13 +210,18 @@ def test_training_profile_reaches_base_launcher(tmp_path, profile, nodes, contex
     # Exercise the real YaRN decision as well as the wrapper's env/overrides.
     base_source = (ROOT / 'scripts/train_bc_ctxgraph_8b_paperfaithful_5node_48h.sh').read_text(encoding='utf8')
     yarn_block = base_source.split('LONG_CONTEXT_ARGS=()', 1)[1].split('\nprobe()', 1)[0]
+    node_block = base_source[base_source.index('mapfile -t NODELIST'):base_source.index('NODE0=${NODELIST[0]}')]
     base = tmp_path / 'scripts/train_bc_ctxgraph_8b_paperfaithful_5node_48h.sh'
     base.write_text('set -eu\nenv > "$PROJECT_ROOT/captured.env"\n'
+                    + node_block + '\nprintf "%s\\n" "${NODELIST[@]}" > "$PROJECT_ROOT/active-nodes"\n'
+                    +
                     'printf "%s\\n" "$@" > "$PROJECT_ROOT/captured.args"\n'
                     'LONG_CONTEXT_ARGS=()\n' + yarn_block + '\n'
                     'printf "%s\\n" "${#LONG_CONTEXT_ARGS[@]}" > "$PROJECT_ROOT/yarn-count"\n',
                     encoding='utf8', newline='\n')
     setup = tmp_path / 'run.sh'
+    launcher = ('scripts/train_bcp_qwen35_9b_contextgraph_32k_4node_idev.sh' if topology == 'idev4_dp2'
+                else 'scripts/train_bcp_qwen35_9b_50step.sh')
     node_list = ' '.join(f'node{i}' for i in range(nodes))
     setup.write_text('\n'.join([
         f'scontrol() {{ printf "%s\\n" {node_list}; }}',
@@ -221,22 +229,32 @@ def test_training_profile_reaches_base_launcher(tmp_path, profile, nodes, contex
         'source() { :; }', 'conda() { :; }', 'find() { echo /dev/null; }',
         'python() { unset LD_PRELOAD; return 0; }',
         'export -f scontrol git source conda find python',
-        f'bash "{(ROOT / "scripts/train_bcp_qwen35_9b_50step.sh").as_posix()}" contextgraph',
+        f'bash "{(ROOT / launcher).as_posix()}" contextgraph',
     ]) + '\n', encoding='utf8', newline='\n')
     env = dict(os.environ, PROJECT_ROOT=tmp_path.as_posix(), SCRATCH=tmp_path.as_posix(),
                CONDA_PREFIX=tmp_path.as_posix(), SLURM_JOB_ID='fixture', SLURM_JOB_NODELIST='fixture',
-               OPENAI_API_KEY='fixture', BCP_TRAIN_PROFILE=profile, SMOKE_TEST='0', PREFLIGHT_ONLY='0')
+               OPENAI_API_KEY='fixture', BCP_TRAIN_PROFILE=profile, BCP_TRAIN_TOPOLOGY=topology,
+               SMOKE_TEST='0', PREFLIGHT_ONLY='0')
     result = subprocess.run([shutil.which('bash'), setup.as_posix()], cwd=ROOT, env=env,
                             capture_output=True, text=True, timeout=30,
                             creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
-    if nodes == 4:
+    if topology == 'idev4_dp2' and nodes != 4:
+        assert result.returncode == 2
+        assert 'requires exactly 4 allocated nodes' in result.stderr
+        assert not (tmp_path / 'outputs').exists()
+        return
+    if nodes == 4 and topology == 'full':
         assert result.returncode == 2
         assert 'Requires 5 nodes' in result.stderr
         assert not (tmp_path / 'outputs').exists()
         return
     assert result.returncode == 0, result.stdout + result.stderr
     captured = dict(line.split('=', 1) for line in (tmp_path / 'captured.env').read_text().splitlines() if '=' in line)
-    for key, value in dict(EXPECTED_NUM_NODES='5', TOTAL_TRAINING_STEPS='50', TRAIN_BATCH_SIZE='32',
+    active_nodes = 3 if topology == 'idev4_dp2' else 5
+    assert (tmp_path / 'active-nodes').read_text().splitlines() == [f'node{i}' for i in range(active_nodes)]
+    # Selection must not overwrite Slurm's description of the allocation.
+    assert captured['SLURM_JOB_NODELIST'] == 'fixture'
+    for key, value in dict(EXPECTED_NUM_NODES=str(active_nodes), TOTAL_TRAINING_STEPS='50', TRAIN_BATCH_SIZE='32',
                            ROLLOUT_N='8', PPO_MINI_BATCH_SIZE=str(mini), PROMPT_LENGTH='8192',
                            RESPONSE_LENGTH=str(context - 8192), CONTEXT_LENGTH=str(context),
                            BC_APPLY_YARN='0', VAL_BEFORE_TRAIN='True').items():
@@ -248,7 +266,10 @@ def test_training_profile_reaches_base_launcher(tmp_path, profile, nodes, contex
     config = next((tmp_path / 'outputs').glob('*/training-config.txt')).read_text()
     assert f'ppo_mini_batch_size={mini}\n' in config
     assert 'ppo_micro_batch_size_per_gpu=1\n' in config
-    assert 'trainer_ranks=4\n' in config
+    assert f'trainer_ranks={active_nodes - 1}\n' in config
+    assert f'allocated_nodes={nodes}\n' in config
+    if topology == 'idev4_dp2':
+        assert 'unused_nodes=node3\n' in config
     assert 'fixture' not in config  # No judge credential in the manifest.
     if context == 65536:
         assert captured['EXPERIMENT_NAME'].startswith('train64k_')

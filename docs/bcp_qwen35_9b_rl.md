@@ -1,14 +1,34 @@
 # Qwen3.5-9B BC-P RL, 50 steps
 
 Current ContextGraph run: **32K with FoldAgent batch settings**, 50 steps.
-Submit from a Vista login node:
+Run directly in the existing **four-node idev allocation**:
+
+```bash
+cd /work/09281/chc_1996/vista/context-graph && git pull --ff-only origin master && bash scripts/train_bcp_qwen35_9b_contextgraph_32k_4node_idev.sh
+```
+
+This uses the first allocated node for retrieval and the next two for FSDP
+training. The fourth node is excluded from service launches and Ray cleanup.
+The batch remains 32 prompts x 8 rollouts, PPO minibatch configuration 128 and
+microbatch 1. Two trainer ranks divide the main-rollout count (256) and global
+PPO sequence-slot count (1024) exactly; three trainer ranks would not. Per-rank
+normalized PPO minibatch is 512 slots, accumulated one sequence at a time.
+The Slurm allocation variables remain unchanged.
+
+The existing idev walltime applies; the launcher does not submit or extend a
+job. It captures `suite.log` automatically and records active/unused nodes in
+`training-config.txt`. Two training GPUs have more model/optimizer state per
+GPU than the tested three-rank 12K smoke, so 32K fit and completion of 50 steps
+within the remaining walltime are unverified.
+
+For a separate five-node batch allocation, the optional submission is:
 
 ```bash
 cd /work/09281/chc_1996/vista/context-graph && git pull --ff-only origin master && mkdir -p logs && sbatch scripts/train_bcp_qwen35_9b_contextgraph_32k.sbatch
 ```
 
-This uses 8192 prompt + 24576 response tokens, 32 prompts x 8 rollouts,
-PPO minibatch configuration 128 and microbatch 1 per GPU. It requests five
+Both entry points use 8192 prompt + 24576 response tokens, 32 prompts x 8 rollouts,
+PPO minibatch configuration 128 and microbatch 1 per GPU. The batch entry requests five
 nodes (one search + four trainers) for 48 hours. The PPO batching semantics
 described below also apply here. This new 32K profile replaces the proposed
 64K run; selecting the older generic submitter would retain PPO minibatch 32.

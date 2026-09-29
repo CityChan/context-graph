@@ -133,6 +133,12 @@ export PYTHONPATH="$PROJECT_ROOT:${PYTHONPATH:-}"
 
 # ── Node info ──
 mapfile -t NODELIST < <(scontrol show hostnames "$SLURM_JOB_NODELIST")
+if [ -n "${BC_ACTIVE_NODE_COUNT:-}" ]; then
+  [[ "$BC_ACTIVE_NODE_COUNT" =~ ^[1-9][0-9]*$ ]] && [ "$BC_ACTIVE_NODE_COUNT" -ge 3 ] && [ "$BC_ACTIVE_NODE_COUNT" -le "${#NODELIST[@]}" ] || { echo "Invalid BC_ACTIVE_NODE_COUNT: $BC_ACTIVE_NODE_COUNT" >&2; exit 2; }
+  # Restrict every service, Ray sweep and trainer to this allocation prefix.
+  # Keep Slurm's allocation variables intact; the remaining nodes are untouched.
+  NODELIST=("${NODELIST[@]:0:$BC_ACTIVE_NODE_COUNT}")
+fi
 NODE0=${NODELIST[0]}
 NODE0_IP=$(getent hosts "$NODE0" | awk '{print $1}')
 NUM_NODES=${#NODELIST[@]}

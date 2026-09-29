@@ -16,6 +16,9 @@ esac
 export PROJECT_ROOT=${PROJECT_ROOT:-/work/09281/chc_1996/vista/context-graph}
 cd "$PROJECT_ROOT"
 mapfile -t NODES < <(scontrol show hostnames "$SLURM_JOB_NODELIST")
+ALLOCATED_NODE_COUNT=${#NODES[@]}
+UNUSED_NODES=()
+unset BC_ACTIVE_NODE_COUNT
 export EXPECTED_NUM_NODES=5
 PLANNED_STEPS=50
 RUN_MODE=train
@@ -26,6 +29,17 @@ if [ "${SMOKE_TEST:-0}" = 1 ]; then
   PLANNED_STEPS=1
   RUN_MODE=smoke
 fi
+case "${BCP_TRAIN_TOPOLOGY:-full}" in
+  full) ;;
+  idev4_dp2)
+    [ "$BCP_TRAIN_PROFILE" = contextgraph_32k_paper_batch ] && [ "${SMOKE_TEST:-0}" != 1 ] || { echo "idev4_dp2 requires the ContextGraph 32K paper-batch profile" >&2; exit 2; }
+    [ "$ALLOCATED_NODE_COUNT" -eq 4 ] || { echo "idev4_dp2 requires exactly 4 allocated nodes" >&2; exit 2; }
+    UNUSED_NODES=("${NODES[@]:3}")
+    NODES=("${NODES[@]:0:3}")
+    export BC_ACTIVE_NODE_COUNT=3 EXPECTED_NUM_NODES=3
+    ;;
+  *) echo "Unknown BCP_TRAIN_TOPOLOGY: $BCP_TRAIN_TOPOLOGY" >&2; exit 2 ;;
+esac
 if [ "${PREFLIGHT_ONLY:-0}" != 1 ]; then
   [ "${#NODES[@]}" -eq "$EXPECTED_NUM_NODES" ] || { echo "Requires $EXPECTED_NUM_NODES nodes: search + trainer ranks" >&2; exit 2; }
 fi
@@ -54,6 +68,7 @@ git rev-parse HEAD | tee "$RUN_DIR/commit.txt"
 git diff --exit-code HEAD -- agents envs scripts verl >/dev/null || { echo "Commit tracked code changes before training"; exit 2; }
 echo "BC-P RL model=Qwen/Qwen3.5-9B method=$METHOD mode=$RUN_MODE steps=$PLANNED_STEPS nodes=${#NODES[@]} preflight_only=${PREFLIGHT_ONLY:-0}"
 echo "Artifacts=$RUN_DIR checkpoints=$CHECKPOINT_ROOT"
+echo "Allocation=$ALLOCATED_NODE_COUNT nodes; active=${NODES[*]}; unused=${UNUSED_NODES[*]}"
 
 source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
 conda activate "$TRAIN_CONDA_ENV"
@@ -133,6 +148,7 @@ printf '%s\n' "profile=$BCP_TRAIN_PROFILE" "model_revision=$MODEL_REVISION" \
   "train_batch_size=$TRAIN_BATCH_SIZE" "rollout_n=$ROLLOUT_N" \
   "ppo_mini_batch_size=$PPO_MINI_BATCH_SIZE" "ppo_micro_batch_size_per_gpu=1" \
   "trainer_ranks=$((${#NODES[@]} - 1))" "apply_yarn=$BC_APPLY_YARN" \
+  "allocated_nodes=$ALLOCATED_NODE_COUNT" "active_nodes=${NODES[*]}" "unused_nodes=${UNUSED_NODES[*]}" \
   "batch_reference=sunnweiwei/FoldAgent@58a2d6964ecebe99940529eace50a0558901b8a5/scripts/train_bc_qwen3_8b.sh" \
   | tee "$RUN_DIR/training-config.txt"
 unset RESUME_CHECKPOINT_PATH RESUME_CHECKPOINT_ROOT QWEN_ENABLE_THINKING
