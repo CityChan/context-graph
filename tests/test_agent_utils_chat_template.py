@@ -6,9 +6,11 @@ import sys
 import types
 from types import SimpleNamespace
 
-import pytest
+import unittest
+from unittest.mock import patch
 
-pytest.importorskip("transformers")
+if importlib.util.find_spec("transformers") is None:
+    raise unittest.SkipTest("transformers is not installed")
 
 if importlib.util.find_spec("omegaconf") is None:
     omegaconf = types.ModuleType("omegaconf")
@@ -76,8 +78,7 @@ def test_agent_context_defers_unrenderable_system_only_prefix():
     assert context.context() == [10, 11, 20, 21, 99]
 
 
-def test_agent_context_chat_template_override_applies_to_every_render(monkeypatch):
-    monkeypatch.setenv("QWEN_ENABLE_THINKING", "True")
+def test_agent_context_chat_template_override_applies_to_every_render():
     config = SimpleNamespace(
         prompt_length=128,
         response_length=128,
@@ -89,14 +90,15 @@ def test_agent_context_chat_template_override_applies_to_every_render(monkeypatc
         {"role": "user", "content": "task"},
     ]
 
-    context = AgentContext(
-        chat,
-        tokenizer,
-        config,
-        prompt_turn=2,
-        chat_template_kwargs={"enable_thinking": False},
-    )
-    context.context()
+    with patch.dict(os.environ, QWEN_ENABLE_THINKING="True"):
+        context = AgentContext(
+            chat,
+            tokenizer,
+            config,
+            prompt_turn=2,
+            chat_template_kwargs={"enable_thinking": False},
+        )
+        context.context()
 
     assert tokenizer.enable_thinking_values
     assert set(tokenizer.enable_thinking_values) == {False}
@@ -157,12 +159,15 @@ def _check_observation_roundtrip(tokenizer, observation):
     assert (context.chat_ids, context.log_probs, context.token_mask) == preserved
 
 
-@pytest.mark.parametrize('observation', [
+OBSERVATIONS = [
     'Branch has finished its task: the reduction was 70% [70468].',
     'Search results: source 70468 reports a 70% reduction. ' * 120,
-])
-def test_rewritten_history_preserves_observation_and_training_alignment(observation):
-    _check_observation_roundtrip(_RewritingTokenizer(), observation)
+]
+
+
+def test_rewritten_history_preserves_observation_and_training_alignment():
+    for observation in OBSERVATIONS:
+        _check_observation_roundtrip(_RewritingTokenizer(), observation)
 
 
 def test_context_dependent_standalone_turn_fails_instead_of_dropping_tokens():
@@ -171,18 +176,24 @@ def test_context_dependent_standalone_turn_fails_instead_of_dropping_tokens():
             tokens = super().apply_chat_template(chat, **kwargs)
             return [999] + tokens if len(chat) == 1 else tokens
 
-    with pytest.raises(ValueError, match='verified suffix'):
+    with unittest.TestCase().assertRaisesRegex(ValueError, 'verified suffix'):
         _check_observation_roundtrip(UnsupportedTokenizer(), 'Branch evidence: 70%.')
 
 
-@pytest.mark.parametrize('observation', [
-    'Branch has finished its task: the reduction was 70% [70468].',
-    'Search results: source 70468 reports a 70% reduction. ' * 120,
-])
-def test_real_qwen3_observation_and_training_alignment(observation):
+def test_real_qwen3_observation_and_training_alignment():
     model = os.environ.get('QWEN_TOKENIZER_PATH')
     if not model:
-        pytest.skip('Set QWEN_TOKENIZER_PATH to a cached Qwen3 tokenizer for offline validation')
+        raise unittest.SkipTest('Set QWEN_TOKENIZER_PATH to a cached Qwen3 tokenizer for offline validation')
     from transformers import AutoTokenizer
     tokenizer = AutoTokenizer.from_pretrained(model, local_files_only=True)
-    _check_observation_roundtrip(tokenizer, observation)
+    for observation in OBSERVATIONS:
+        _check_observation_roundtrip(tokenizer, observation)
+
+
+def load_tests(loader, tests, pattern):
+    """Allow the offline cluster preflight to run without third-party pytest."""
+    return unittest.TestSuite(
+        unittest.FunctionTestCase(fn)
+        for name, fn in sorted(globals().items())
+        if name.startswith("test_") and callable(fn)
+    )

@@ -56,6 +56,9 @@ The former was used for 9B serving; **serving success does not demonstrate VERL
 training compatibility**. The batch first checks complete checkpoint shards,
 model/tokenizer classes, imports of both agent training loops, FSDP and vLLM
 rollout, controller sampling API, and the observation tokenizer regression.
+The tokenizer regression uses Python's built-in `unittest`; `pytest` is not
+required in the training environment. It loads the pinned local tokenizer and
+checks both short branch evidence and long search observations without weights.
 Missing dependencies or incompatible APIs stop the job before retrieval startup.
 It never installs or upgrades packages in the shared environment.
 
