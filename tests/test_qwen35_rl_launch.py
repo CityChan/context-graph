@@ -188,3 +188,102 @@ done
         assert captured[key] == value
     assert captured['EXPERIMENT_NAME'].startswith('smoke_')
     assert 'actor_rollout_ref.rollout.max_model_len=12288' in (tmp_path / 'captured.args').read_text()
+
+
+@pytest.mark.skipif(not shutil.which('bash'), reason='Bash unavailable')
+@pytest.mark.parametrize('profile,nodes,context,mini', [
+    ('default', 5, 32768, 32),
+    ('contextgraph_64k_paper_batch', 5, 65536, 128),
+    ('contextgraph_64k_paper_batch', 4, 65536, 128),
+])
+def test_training_profile_reaches_base_launcher(tmp_path, profile, nodes, context, mini):
+    (tmp_path / 'scripts').mkdir()
+    (tmp_path / 'data').mkdir()
+    for name in ('bc_train.parquet', 'bc_test.parquet'):
+        (tmp_path / 'data' / name).write_text('fixture')
+    (tmp_path / 'scripts/check_qwen3_observation_tokens.sh').write_text('exit 0\n')
+    # Exercise the real YaRN decision as well as the wrapper's env/overrides.
+    base_source = (ROOT / 'scripts/train_bc_ctxgraph_8b_paperfaithful_5node_48h.sh').read_text(encoding='utf8')
+    yarn_block = base_source.split('LONG_CONTEXT_ARGS=()', 1)[1].split('\nprobe()', 1)[0]
+    base = tmp_path / 'scripts/train_bc_ctxgraph_8b_paperfaithful_5node_48h.sh'
+    base.write_text('set -eu\nenv > "$PROJECT_ROOT/captured.env"\n'
+                    'printf "%s\\n" "$@" > "$PROJECT_ROOT/captured.args"\n'
+                    'LONG_CONTEXT_ARGS=()\n' + yarn_block + '\n'
+                    'printf "%s\\n" "${#LONG_CONTEXT_ARGS[@]}" > "$PROJECT_ROOT/yarn-count"\n',
+                    encoding='utf8', newline='\n')
+    setup = tmp_path / 'run.sh'
+    node_list = ' '.join(f'node{i}' for i in range(nodes))
+    setup.write_text('\n'.join([
+        f'scontrol() {{ printf "%s\\n" {node_list}; }}',
+        'git() { if [ "$1" = rev-parse ]; then echo fake-sha; fi; return 0; }',
+        'source() { :; }', 'conda() { :; }', 'find() { echo /dev/null; }',
+        'python() { unset LD_PRELOAD; return 0; }',
+        'export -f scontrol git source conda find python',
+        f'bash "{(ROOT / "scripts/train_bcp_qwen35_9b_50step.sh").as_posix()}" contextgraph',
+    ]) + '\n', encoding='utf8', newline='\n')
+    env = dict(os.environ, PROJECT_ROOT=tmp_path.as_posix(), SCRATCH=tmp_path.as_posix(),
+               CONDA_PREFIX=tmp_path.as_posix(), SLURM_JOB_ID='fixture', SLURM_JOB_NODELIST='fixture',
+               OPENAI_API_KEY='fixture', BCP_TRAIN_PROFILE=profile, SMOKE_TEST='0', PREFLIGHT_ONLY='0')
+    result = subprocess.run([shutil.which('bash'), setup.as_posix()], cwd=ROOT, env=env,
+                            capture_output=True, text=True, timeout=30,
+                            creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+    if nodes == 4:
+        assert result.returncode == 2
+        assert 'Requires 5 nodes' in result.stderr
+        assert not (tmp_path / 'outputs').exists()
+        return
+    assert result.returncode == 0, result.stdout + result.stderr
+    captured = dict(line.split('=', 1) for line in (tmp_path / 'captured.env').read_text().splitlines() if '=' in line)
+    for key, value in dict(EXPECTED_NUM_NODES='5', TOTAL_TRAINING_STEPS='50', TRAIN_BATCH_SIZE='32',
+                           ROLLOUT_N='8', PPO_MINI_BATCH_SIZE=str(mini), PROMPT_LENGTH='8192',
+                           RESPONSE_LENGTH=str(context - 8192), CONTEXT_LENGTH=str(context),
+                           BC_APPLY_YARN='0', VAL_BEFORE_TRAIN='True').items():
+        assert captured[key] == value
+    args = (tmp_path / 'captured.args').read_text().splitlines()
+    assert f'actor_rollout_ref.rollout.max_model_len={context}' in args
+    assert 'actor_rollout_ref.actor.use_dynamic_bsz=False' in args
+    assert (tmp_path / 'yarn-count').read_text().strip() == '0'
+    config = next((tmp_path / 'outputs').glob('*/training-config.txt')).read_text()
+    assert f'ppo_mini_batch_size={mini}\n' in config
+    assert 'ppo_micro_batch_size_per_gpu=1\n' in config
+    assert 'trainer_ranks=4\n' in config
+    assert 'fixture' not in config  # No judge credential in the manifest.
+    if context == 65536:
+        assert captured['EXPERIMENT_NAME'].startswith('train64k_')
+
+
+@pytest.mark.skipif(not shutil.which('bash'), reason='Bash unavailable')
+def test_64k_batch_entrypoint_selects_profile(tmp_path):
+    (tmp_path / 'scripts').mkdir()
+    (tmp_path / 'scripts/train_bcp_qwen35_9b_50step.sh').write_text(
+        'printf "%s\\n" "$BCP_TRAIN_PROFILE:$SMOKE_TEST:$PREFLIGHT_ONLY:$1"\n', encoding='utf8')
+    result = subprocess.run([shutil.which('bash'), (ROOT / 'scripts/train_bcp_qwen35_9b_contextgraph_64k.sbatch').as_posix()],
+                            cwd=tmp_path, env=dict(os.environ, SMOKE_TEST='1', PREFLIGHT_ONLY='1'),
+                            capture_output=True, text=True, timeout=30,
+                            creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == 'contextgraph_64k_paper_batch:0:0:contextgraph'
+
+
+@pytest.mark.skipif(not shutil.which('bash'), reason='Bash unavailable')
+@pytest.mark.parametrize('native', [False, True])
+def test_qwen3_yarn_default_and_native_model_opt_out(tmp_path, native):
+    source = (ROOT / 'scripts/train_bc_ctxgraph_8b_paperfaithful_5node_48h.sh').read_text(encoding='utf8')
+    block = source.split('LONG_CONTEXT_ARGS=()', 1)[1].split('\nprobe()', 1)[0]
+    script = tmp_path / 'rope.sh'
+    script.write_text('set -eu\nLONG_CONTEXT_ARGS=()\n' + block +
+                      '\nprintf "%s\\n" "${LONG_CONTEXT_ARGS[@]}"\n', encoding='utf8', newline='\n')
+    env = dict(os.environ, CONTEXT_LENGTH='65536')
+    for key in ('BC_APPLY_YARN', 'BC_YARN_FACTOR', 'BC_YARN_ORIGINAL_LENGTH'):
+        env.pop(key, None)
+    if native:
+        env['BC_APPLY_YARN'] = '0'
+    result = subprocess.run([shutil.which('bash'), script.as_posix()], env=env, capture_output=True,
+                            text=True, timeout=30,
+                            creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+    assert result.returncode == 0, result.stderr
+    if native:
+        assert not result.stdout.strip()
+    else:
+        assert len(result.stdout.splitlines()) == 2
+        assert result.stdout.count('rope_type:yarn,factor:2.0,original_max_position_embeddings:32768') == 2

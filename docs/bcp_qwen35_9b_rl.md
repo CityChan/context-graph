@@ -20,7 +20,7 @@ The one-hour ReAct evaluation limit does not apply to these training jobs.
 | Data | `data/bc_train.parquet`; validation `data/bc_test.parquet` |
 | Updates | 50, full parameter FSDP BF16, gradient checkpointing and CPU offload |
 | Batch / samples per prompt | 32 / 8 |
-| PPO minibatch setting | 32 per rank in this fork's padding convention |
+| PPO minibatch setting | 32 prompt units globally; expanded by rollout n before division across trainer ranks |
 | Context | 8192 prompt + 24576 response = 32768 |
 | Optimizer | LR 1e-6, weight decay 0.1, grad clip 0.5; no KL loss |
 | PPO clipping | low 0.2, high 0.28 |
@@ -50,6 +50,67 @@ checkpoint directories, and disables checkpoint resume. HF downloads are not
 performed. Saved training checkpoints go to `$SCRATCH/context-graph-ckpts/`.
 
 ## Runtime checks and validation boundary
+
+### ContextGraph 64K with FoldAgent batch settings
+
+Submit this separate 50-step profile from a Vista login node:
+
+```bash
+cd /work/09281/chc_1996/vista/context-graph && git pull --ff-only origin master && mkdir -p logs && sbatch scripts/train_bcp_qwen35_9b_contextgraph_64k.sbatch
+```
+
+The supplied *Scaling Long-Horizon LLM Agent via Context-Folding* PDF, page 5,
+Section 5.2, reports rollout batch 32, group size 8, PPO batch 128 and 50 steps.
+The [pinned official Qwen3-8B launcher](https://github.com/sunnweiwei/FoldAgent/blob/58a2d6964ecebe99940529eace50a0558901b8a5/scripts/train_bc_qwen3_8b.sh)
+sets `data.train_batch_size=32`, `rollout.n=8`, and
+`actor.ppo_mini_batch_size=128`; this profile aligns those configuration fields.
+
+| Setting | 64K profile |
+|---|---|
+| Backbone | Pinned Qwen3.5-9B checkpoint above |
+| Prompt / response / active context | 8192 / 57344 / 65536 |
+| Training prompts / samples per prompt | 32 / 8 (256 main rollouts before branch expansion) |
+| PPO minibatch configuration | 128 |
+| PPO microbatch per GPU | 1, with gradient accumulation |
+| Topology | 5 GH200 nodes: 1 search + 4 trainer ranks |
+| Updates / requested walltime | 50 / 48 hours |
+
+The existing FSDP implementation, also present in the pinned upstream checkout,
+multiplies the PPO minibatch setting by rollout n before dividing over DP ranks:
+`128 * 8 / 4 = 256` sequence slots per rank. In this repository the controller
+pads the variable number of main/branch trajectories to a multiple of **1024**
+global slots; dummy trajectories are masked. Thus `128` is a configuration
+value, **not a promise of 128 real trajectories per optimizer update**. Padding
+can increase compute and memory costs. We do not change this batching algorithm
+or claim numerical equivalence to the paper's unspecified PPO batching units.
+
+The current four-node smoke topology has three training ranks and cannot evenly
+divide 256 main rollouts. The new entry point requires five nodes; it does not
+silently change the batch size or reuse the reduced smoke settings.
+
+Native padded HF SDPA, microbatch 1, gradient checkpointing and CPU offload are
+retained. The [pinned Qwen3.5 configuration](https://huggingface.co/Qwen/Qwen3.5-9B/blob/c202236235762e1c871ad0ccb60c8ee5ba337b9a/config.json)
+has 262144 native text positions, so the wrapper disables the old Qwen3-8B
+launcher's automatic YaRN override. It does not alter the model's RoPE settings.
+
+This is a batch-configuration-aligned ContextGraph experiment. The paper uses
+Seed-OSS-36B, 32768 active context, FoldAgent rewards and asynchronous off-policy
+rollouts; those are not reproduced by selecting this profile. Validation, search,
+controller and reward settings retain the existing local recipe. The normal 32K
+profile and 12K smoke retain their existing batch sizes.
+
+Artifacts use `outputs/train64k_qwen35_9b_bcp_contextgraph_JOBID_TIMESTAMP/` and
+the corresponding scratch checkpoint directory. `training-config.txt` records
+the resolved context/batch settings and upstream reference, alongside the existing
+commit/data/override files. Slurm logs are `logs/bcp-9b-cg-64k.JOBID.out` / `.err`.
+
+Both methods completed the 12K one-step smoke in allocation 1033347. That proves
+the tested rollout/update/checkpoint path; **64K memory fit, sustained training,
+and a subsequent rollout using updated weights remain unverified**. Local tests
+exercise parameter forwarding, topology rejection and absence of the YaRN
+override with mocked site commands; they do not run GPU training.
+
+### Dependency preflight
 
 Trainer default: `TRAIN_CONDA_ENV=deepseek_v4`; retriever: `SEARCH_CONDA_ENV=cxtgraph`.
 The former was used for 9B serving; **serving success does not demonstrate VERL

@@ -3,6 +3,14 @@
 set -euo pipefail
 METHOD=${1:?Expected contextgraph or foldagent}
 case "$METHOD" in contextgraph|foldagent) ;; *) echo "Invalid method: $METHOD" >&2; exit 2 ;; esac
+export BCP_TRAIN_PROFILE=${BCP_TRAIN_PROFILE:-default}
+case "$BCP_TRAIN_PROFILE" in
+  default) ;;
+  contextgraph_64k_paper_batch)
+    [ "$METHOD" = contextgraph ] && [ "${SMOKE_TEST:-0}" != 1 ] || { echo "64K paper-batch profile requires contextgraph normal training" >&2; exit 2; }
+    ;;
+  *) echo "Unknown BCP_TRAIN_PROFILE: $BCP_TRAIN_PROFILE" >&2; exit 2 ;;
+esac
 : "${SLURM_JOB_ID:?Run inside a Slurm allocation}"
 : "${SCRATCH:?Vista SCRATCH must be set}"
 export PROJECT_ROOT=${PROJECT_ROOT:-/work/09281/chc_1996/vista/context-graph}
@@ -11,6 +19,7 @@ mapfile -t NODES < <(scontrol show hostnames "$SLURM_JOB_NODELIST")
 export EXPECTED_NUM_NODES=5
 PLANNED_STEPS=50
 RUN_MODE=train
+if [ "$BCP_TRAIN_PROFILE" = contextgraph_64k_paper_batch ]; then RUN_MODE=train64k; fi
 if [ "${SMOKE_TEST:-0}" = 1 ]; then
   export EXPECTED_NUM_NODES=4
   PLANNED_STEPS=1
@@ -88,6 +97,12 @@ export TOTAL_TRAINING_STEPS=50 TRAINER_VAL_ONLY=False
 export TRAINER_RESUME_MODE=disable
 export PROMPT_LENGTH=8192 RESPONSE_LENGTH=24576 CONTEXT_LENGTH=32768
 export TRAIN_BATCH_SIZE=32 ROLLOUT_N=8 PPO_MINI_BATCH_SIZE=32
+# The pinned Qwen3.5 checkpoint has 262144 native text positions. Do not apply
+# the older Qwen3-8B base launcher's YaRN override to this model.
+export BC_APPLY_YARN=0
+if [ "$BCP_TRAIN_PROFILE" = contextgraph_64k_paper_batch ]; then
+  export RESPONSE_LENGTH=57344 CONTEXT_LENGTH=65536 PPO_MINI_BATCH_SIZE=128
+fi
 export TRAIN_LR=1e-6 USE_KL_LOSS=False ACTOR_KL_LOSS_COEF=0.0 ALGORITHM_KL_COEF=0.0
 export CLIP_RATIO_LOW=0.2 CLIP_RATIO_HIGH=0.28
 export LORA_RANK=0 ENTROPY_FROM_LOGITS_WITH_CHUNKING=True
@@ -108,6 +123,14 @@ if [ "${SMOKE_TEST:-0}" = 1 ]; then
   export BC_DISABLE_WANDB=1
   echo "Smoke: 3 prompts x 2 rollouts, 3 trainer ranks, 1 step, 12K context; not a performance evaluation."
 fi
+printf '%s\n' "profile=$BCP_TRAIN_PROFILE" "model_revision=$MODEL_REVISION" \
+  "steps=$TOTAL_TRAINING_STEPS" "prompt_length=$PROMPT_LENGTH" \
+  "response_length=$RESPONSE_LENGTH" "context_length=$CONTEXT_LENGTH" \
+  "train_batch_size=$TRAIN_BATCH_SIZE" "rollout_n=$ROLLOUT_N" \
+  "ppo_mini_batch_size=$PPO_MINI_BATCH_SIZE" "ppo_micro_batch_size_per_gpu=1" \
+  "trainer_ranks=$((${#NODES[@]} - 1))" "apply_yarn=$BC_APPLY_YARN" \
+  "batch_reference=sunnweiwei/FoldAgent@58a2d6964ecebe99940529eace50a0558901b8a5/scripts/train_bc_qwen3_8b.sh" \
+  | tee "$RUN_DIR/training-config.txt"
 unset RESUME_CHECKPOINT_PATH RESUME_CHECKPOINT_ROOT QWEN_ENABLE_THINKING
 # Native padded HF forward avoids untested Qwen3.5 sequence-packing patches.
 ARGS=(

@@ -381,7 +381,7 @@ fi
 # Qwen3-8B advertises 40,960 positions. Longer runs must override both the
 # actor/reference HF config and vLLM's independently loaded HF config.
 LONG_CONTEXT_ARGS=()
-if [ "$CONTEXT_LENGTH" -gt 40960 ]; then
+if [ "$CONTEXT_LENGTH" -gt 40960 ] && [ "${BC_APPLY_YARN:-1}" = 1 ]; then
   BC_YARN_FACTOR=${BC_YARN_FACTOR:-2.0}
   BC_YARN_ORIGINAL_LENGTH=${BC_YARN_ORIGINAL_LENGTH:-32768}
   LONG_CONTEXT_OVERRIDE="{max_position_embeddings:${CONTEXT_LENGTH},rope_scaling:{rope_type:yarn,factor:${BC_YARN_FACTOR},original_max_position_embeddings:${BC_YARN_ORIGINAL_LENGTH}}}"

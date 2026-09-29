@@ -256,7 +256,7 @@ def test_64k_training_wrappers_and_long_context_overrides_are_wired():
         "scripts/train_bc_ctxgraph_8b_paperfaithful_5node_48h.sh",
     ):
         source = _read(script)
-        assert 'if [ "$CONTEXT_LENGTH" -gt 40960 ]; then' in source
+        assert 'if [ "$CONTEXT_LENGTH" -gt 40960 ]' in source
         assert "+actor_rollout_ref.model.override_config=" in source
         assert "+actor_rollout_ref.rollout.engine_kwargs.vllm.hf_overrides=" in source
         assert '"${LONG_CONTEXT_ARGS[@]}"' in source
