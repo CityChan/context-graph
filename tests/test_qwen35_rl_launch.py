@@ -21,6 +21,39 @@ def load_file(name, path):
 
 adapter = load_file("structured_adapter", "agents/structured_outputs.py")
 preflight = load_file("rl_preflight", "scripts/preflight_bcp_qwen35_rl.py")
+logging_probe = load_file("logging_probe", "scripts/check_bcp_rl_logging.py")
+
+
+@pytest.mark.parametrize('env', [{}, {'BC_DISABLE_WANDB': '1', 'WANDB_API_KEY': 'secret'}])
+def test_console_logging_does_not_import_wandb(monkeypatch, env):
+    def unexpected_import(name):
+        raise AssertionError(name)
+    monkeypatch.setattr(logging_probe.importlib, 'import_module', unexpected_import)
+    assert logging_probe.check_logging(env)['backend'] == 'console'
+
+
+def test_logging_probe_rejects_namespace_and_checks_sdk_without_initializing(monkeypatch):
+    namespace = SimpleNamespace(__file__=None, __path__=['/repo/wandb'])
+    monkeypatch.setattr(logging_probe.importlib, 'import_module', lambda name: namespace)
+    with pytest.raises(RuntimeError, match='missing callable') as error:
+        logging_probe.check_logging({'WANDB_API_KEY': 'secret'})
+    assert '/repo/wandb' in str(error.value)
+    assert 'secret' not in str(error.value)
+    def no_network(*args, **kwargs):
+        raise AssertionError('Preflight must not initialize a W&B run')
+    for name in ('init', 'log', 'finish', 'Settings'):
+        setattr(namespace, name, no_network)
+    result = logging_probe.check_logging({'WANDB_API_KEY': 'secret'})
+    assert result['api_verified'] and not result['network_verified']
+
+
+@pytest.mark.parametrize('env', [
+    {'BC_REQUIRE_WANDB': '1'},
+    {'BC_REQUIRE_WANDB': '1', 'BC_DISABLE_WANDB': '1', 'WANDB_API_KEY': 'secret'},
+])
+def test_required_logging_rejects_missing_key_or_disabled_backend(env):
+    with pytest.raises(RuntimeError):
+        logging_probe.check_logging(env)
 
 
 @pytest.mark.parametrize("modern", [False, True])
@@ -113,7 +146,8 @@ def test_dependency_probe_uses_fresh_interpreter_and_preserves_traceback(tmp_pat
 
 
 @pytest.mark.skipif(not shutil.which("bash"), reason="Bash unavailable")
-def test_preflight_failure_is_visible_in_slurm_stderr_and_suite(tmp_path):
+@pytest.mark.parametrize('stage', ['logging_preflight', 'dependency_preflight'])
+def test_preflight_failure_is_visible_in_slurm_stderr_and_suite(tmp_path, stage):
     # Stub site commands; never submit a job, load a model or run a trainer.
     setup = tmp_path / "launch.sh"
     setup.write_text("\n".join([
@@ -121,20 +155,21 @@ def test_preflight_failure_is_visible_in_slurm_stderr_and_suite(tmp_path):
         "scontrol() { echo node1; }",
         "git() { if [ \"$1\" = rev-parse ]; then echo fake-sha; fi; return 0; }",
         "source() { :; }", "conda() { :; }",
-        "find() { echo /dev/null; }", "python() { unset LD_PRELOAD; echo simulated-preflight-failure; return 17; }",
+        "find() { echo /dev/null; }",
+        'python() { unset LD_PRELOAD; if [ "$TEST_STAGE" = dependency_preflight ] && [ "$1" = scripts/check_bcp_rl_logging.py ]; then return 0; fi; echo simulated-preflight-failure; return 17; }',
         "export -f scontrol git source conda find python",
         f'bash "{(ROOT / "scripts/train_bcp_qwen35_9b_50step.sh").as_posix()}" contextgraph',
     ]) + "\n", encoding="utf8", newline="\n")
     env = dict(os.environ, PROJECT_ROOT=tmp_path.as_posix(), SCRATCH=tmp_path.as_posix(),
                CONDA_PREFIX=tmp_path.as_posix(), SLURM_JOB_ID="fake", SLURM_JOB_NODELIST="node1",
-               PREFLIGHT_ONLY="1")
+               PREFLIGHT_ONLY="1", TEST_STAGE=stage)
     (tmp_path / "outputs").mkdir()
     result = subprocess.run([shutil.which("bash"), setup.as_posix()], cwd=ROOT, env=env,
         capture_output=True, text=True, timeout=30,
         creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
     assert result.returncode == 17, result.stdout + result.stderr
     assert "BCP_RL_FAILED" in result.stderr
-    assert "stage=dependency_preflight exit=17" in result.stderr
+    assert f"stage={stage} exit=17" in result.stderr
     suite = next((tmp_path / "outputs").glob("*/suite.log")).read_text()
     assert "simulated-preflight-failure" in suite
     assert "BCP_RL_FAILED" in next((tmp_path / "outputs").glob("*/failure.log")).read_text()

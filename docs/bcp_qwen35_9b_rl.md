@@ -180,6 +180,32 @@ override with mocked site commands; they do not run GPU training.
 
 ### Dependency preflight
 
+Before importing the training stack, the shared wrapper now checks the selected
+logging backend in the actual training interpreter and saves
+`logging-preflight.json`. It loads the same `$WORK/.wandb_env` as the base
+launcher and verifies the callable W&B SDK API without creating a run or making
+network requests. Console-only and smoke runs do not require W&B; explicitly
+requiring W&B while disabling it or omitting its key fails early.
+
+ContextGraph run `1033347/20260929_140954` failed after model/vLLM startup,
+before initial validation or any training update, because the imported `wandb`
+module lacked `init`. That traceback does not establish an OOM. Check/install
+the SDK in `deepseek_v4`, the interpreter used by the launcher, even if the
+interactive shell says `cxtgraph`. A missing SDK can leave the repository's
+`wandb/` output directory importable as a namespace; confirm the import path
+before attributing the failure to that cause. Do not remove the log directory.
+For an absent SDK, install it explicitly on Vista, outside any active run:
+
+```bash
+/work/09281/chc_1996/vista/miniconda3/envs/deepseek_v4/bin/python -m pip install wandb
+```
+
+Then rerun the selected idev entry point. The preflight will stop immediately
+with interpreter/import-path diagnostics if installation is still invalid.
+Authentication and network availability are checked by actual W&B startup,
+not this offline API probe. No automatic SDK installation or logger fallback
+is performed by the launcher.
+
 Trainer default: `TRAIN_CONDA_ENV=deepseek_v4`; retriever: `SEARCH_CONDA_ENV=cxtgraph`.
 The former was used for 9B serving; **serving success does not demonstrate VERL
 training compatibility**. The batch first checks complete checkpoint shards,

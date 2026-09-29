@@ -96,6 +96,14 @@ TORCH_DEPS=$(find "$CONDA_PREFIX/lib" -path '*/torch/lib/libtorch_global_deps.so
 [ -n "$TORCH_DEPS" ] || { echo "Missing torch global dependencies in $TRAIN_CONDA_ENV"; exit 2; }
 export LD_PRELOAD="$TORCH_DEPS${LD_PRELOAD:+:$LD_PRELOAD}"
 
+# Resolve the same logger selection as the base launchers before model loading.
+if [ -n "${WORK:-}" ] && [ -f "$WORK/.wandb_env" ]; then
+  source "$WORK/.wandb_env"
+fi
+if [ "${SMOKE_TEST:-0}" = 1 ]; then export BC_DISABLE_WANDB=1; fi
+STAGE=logging_preflight
+python scripts/check_bcp_rl_logging.py "$RUN_DIR/logging-preflight.json"
+
 # Import the actual training stack before spending time loading retrieval data.
 STAGE=dependency_preflight
 python -u scripts/preflight_bcp_qwen35_rl.py --model-path "$MODEL_PATH" --output "$RUN_DIR/preflight.json"
