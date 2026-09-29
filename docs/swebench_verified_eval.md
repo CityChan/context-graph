@@ -14,7 +14,8 @@ No training is performed. Default model: `Qwen/Qwen3.5-9B`.
   Keep its instance images until grading is finished.
 
 Vista ARM nodes are not supported as repository-container hosts by this initial
-adapter. Do not submit the generation/grading script there expecting `sbatch`
+Docker adapter. A separate Apptainer infrastructure probe is provided below;
+it does not yet add Apptainer to generation or grading. Do not submit the generation/grading script there expecting `sbatch`
 alone to provide Docker. Docker Desktop with Linux amd64 containers can be used
 on an x86 Windows machine; Linux x86_64 is the preferred runner. No Modal backend
 is implemented. Running a cloud service would be a separate setup decision.
@@ -97,6 +98,50 @@ hf download Qwen/Qwen3.5-9B --revision c202236235762e1c871ad0ccb60c8ee5ba337b9a 
 ```
 
 ## Optional Vista model server
+
+### Vista ARM image preflight in a batch job
+
+On the Vista login node, submit this independent **one-node CPU (`gg`), one-hour**
+probe; it does not use or restart the model server:
+
+```bash
+mkdir -p logs
+sbatch scripts/preflight_swe_apptainer_vista.sbatch
+```
+
+The `AST24021` account must have access to the selected partition; a `gh` allocation
+can instead be selected with `sbatch --partition=gh` if needed. A rejected submission
+does not run the probe. Slurm logs are `logs/swe-arm-preflight.JOBID.out` / `.err`.
+The log directory must exist **before** submitting.
+
+The probe pins Epoch's `sympy__sympy-20590` ARM64 image by OCI digest
+`sha256:a8b2a5265717391b168a5d7aa884b466e80fa748d074373a56d328cc48d887b9`.
+Registry metadata was checked: Linux ARM64, approximately 0.90 GB compressed.
+The task and base commit were checked against Verified revision
+`c104f840cc67f8b6eec6f759ebc8b2693d585d4a`.
+
+Images and their SIF checksums live under `$SCRATCH/context-graph-swe/images`;
+the Apptainer cache and conversion temporary files also stay on `$SCRATCH`.
+Each run has a fresh `$SCRATCH/context-graph-swe/runs/preflight-JOBID-...` directory
+containing the full log, provenance and a disposable writable repository copy.
+Concurrent image pulls are locked, and cached SIF files are checksum-checked.
+No old artifacts or running services are removed.
+
+The fixed probe checks ARM execution, the exact base commit, activation of the
+image's `testbed` Python environment, import of the writable SymPy checkout, and
+existing public tests in `sympy/core/tests/test_basic.py` (10-minute test timeout).
+It loads no gold/test patch and executes no agent-generated commands. A successful
+run prints `SWE_APPTAINER_PREFLIGHT_COMPLETE` and writes `preflight-complete.txt`.
+This is **not** an issue-resolution test or an evaluation score. Neither this
+probe nor Alpine success proves compatibility of all 500 tasks. Epoch labels its
+ARM images best-effort and untested; actual Vista task execution is still pending.
+See the [image provider](https://github.com/epoch-research/SWE-bench).
+
+The Docker generation/grading workflow below remains unchanged. A production
+Apptainer backend still needs writable per-task repositories, isolation for
+agent commands, patch export, and compatible test execution/report parsing.
+
+### Start the inference service
 
 On the Vista login node, from the project root:
 
