@@ -6,8 +6,8 @@ case "$METHOD" in contextgraph|foldagent) ;; *) echo "Invalid method: $METHOD" >
 export BCP_TRAIN_PROFILE=${BCP_TRAIN_PROFILE:-default}
 case "$BCP_TRAIN_PROFILE" in
   default) ;;
-  contextgraph_64k_paper_batch)
-    [ "$METHOD" = contextgraph ] && [ "${SMOKE_TEST:-0}" != 1 ] || { echo "64K paper-batch profile requires contextgraph normal training" >&2; exit 2; }
+  contextgraph_32k_paper_batch|contextgraph_64k_paper_batch)
+    [ "$METHOD" = contextgraph ] && [ "${SMOKE_TEST:-0}" != 1 ] || { echo "Paper-batch profile requires contextgraph normal training" >&2; exit 2; }
     ;;
   *) echo "Unknown BCP_TRAIN_PROFILE: $BCP_TRAIN_PROFILE" >&2; exit 2 ;;
 esac
@@ -19,6 +19,7 @@ mapfile -t NODES < <(scontrol show hostnames "$SLURM_JOB_NODELIST")
 export EXPECTED_NUM_NODES=5
 PLANNED_STEPS=50
 RUN_MODE=train
+if [ "$BCP_TRAIN_PROFILE" = contextgraph_32k_paper_batch ]; then RUN_MODE=train32k; fi
 if [ "$BCP_TRAIN_PROFILE" = contextgraph_64k_paper_batch ]; then RUN_MODE=train64k; fi
 if [ "${SMOKE_TEST:-0}" = 1 ]; then
   export EXPECTED_NUM_NODES=4
@@ -100,6 +101,9 @@ export TRAIN_BATCH_SIZE=32 ROLLOUT_N=8 PPO_MINI_BATCH_SIZE=32
 # The pinned Qwen3.5 checkpoint has 262144 native text positions. Do not apply
 # the older Qwen3-8B base launcher's YaRN override to this model.
 export BC_APPLY_YARN=0
+if [ "$BCP_TRAIN_PROFILE" = contextgraph_32k_paper_batch ]; then
+  export PPO_MINI_BATCH_SIZE=128
+fi
 if [ "$BCP_TRAIN_PROFILE" = contextgraph_64k_paper_batch ]; then
   export RESPONSE_LENGTH=57344 CONTEXT_LENGTH=65536 PPO_MINI_BATCH_SIZE=128
 fi

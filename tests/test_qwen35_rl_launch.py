@@ -193,6 +193,8 @@ done
 @pytest.mark.skipif(not shutil.which('bash'), reason='Bash unavailable')
 @pytest.mark.parametrize('profile,nodes,context,mini', [
     ('default', 5, 32768, 32),
+    ('contextgraph_32k_paper_batch', 5, 32768, 128),
+    ('contextgraph_32k_paper_batch', 4, 32768, 128),
     ('contextgraph_64k_paper_batch', 5, 65536, 128),
     ('contextgraph_64k_paper_batch', 4, 65536, 128),
 ])
@@ -250,19 +252,22 @@ def test_training_profile_reaches_base_launcher(tmp_path, profile, nodes, contex
     assert 'fixture' not in config  # No judge credential in the manifest.
     if context == 65536:
         assert captured['EXPERIMENT_NAME'].startswith('train64k_')
+    elif profile == 'contextgraph_32k_paper_batch':
+        assert captured['EXPERIMENT_NAME'].startswith('train32k_')
 
 
 @pytest.mark.skipif(not shutil.which('bash'), reason='Bash unavailable')
-def test_64k_batch_entrypoint_selects_profile(tmp_path):
+@pytest.mark.parametrize('context', ['32k', '64k'])
+def test_batch_entrypoint_selects_profile(tmp_path, context):
     (tmp_path / 'scripts').mkdir()
     (tmp_path / 'scripts/train_bcp_qwen35_9b_50step.sh').write_text(
         'printf "%s\\n" "$BCP_TRAIN_PROFILE:$SMOKE_TEST:$PREFLIGHT_ONLY:$1"\n', encoding='utf8')
-    result = subprocess.run([shutil.which('bash'), (ROOT / 'scripts/train_bcp_qwen35_9b_contextgraph_64k.sbatch').as_posix()],
+    result = subprocess.run([shutil.which('bash'), (ROOT / f'scripts/train_bcp_qwen35_9b_contextgraph_{context}.sbatch').as_posix()],
                             cwd=tmp_path, env=dict(os.environ, SMOKE_TEST='1', PREFLIGHT_ONLY='1'),
                             capture_output=True, text=True, timeout=30,
                             creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
     assert result.returncode == 0, result.stderr
-    assert result.stdout.strip() == 'contextgraph_64k_paper_batch:0:0:contextgraph'
+    assert result.stdout.strip() == f'contextgraph_{context}_paper_batch:0:0:contextgraph'
 
 
 @pytest.mark.skipif(not shutil.which('bash'), reason='Bash unavailable')

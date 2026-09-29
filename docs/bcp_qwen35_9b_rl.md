@@ -1,5 +1,25 @@
 # Qwen3.5-9B BC-P RL, 50 steps
 
+Current ContextGraph run: **32K with FoldAgent batch settings**, 50 steps.
+Submit from a Vista login node:
+
+```bash
+cd /work/09281/chc_1996/vista/context-graph && git pull --ff-only origin master && mkdir -p logs && sbatch scripts/train_bcp_qwen35_9b_contextgraph_32k.sbatch
+```
+
+This uses 8192 prompt + 24576 response tokens, 32 prompts x 8 rollouts,
+PPO minibatch configuration 128 and microbatch 1 per GPU. It requests five
+nodes (one search + four trainers) for 48 hours. The PPO batching semantics
+described below also apply here. This new 32K profile replaces the proposed
+64K run; selecting the older generic submitter would retain PPO minibatch 32.
+
+Artifacts: `outputs/train32k_qwen35_9b_bcp_contextgraph_JOBID_TIMESTAMP/`,
+including `training-config.txt`. Slurm logs: `logs/bcp-9b-cg-32k.JOBID.out`
+and `.err`. This is a launch configuration, not evidence of a completed run;
+32K backward memory fit remains to be validated on Vista.
+
+## Original 32K recipes (PPO minibatch configuration 32)
+
 Submit both independent jobs from the Vista login node:
 
 ```bash
@@ -51,7 +71,7 @@ performed. Saved training checkpoints go to `$SCRATCH/context-graph-ckpts/`.
 
 ## Runtime checks and validation boundary
 
-### ContextGraph 64K with FoldAgent batch settings
+### Optional ContextGraph 64K with FoldAgent batch settings
 
 Submit this separate 50-step profile from a Vista login node:
 
