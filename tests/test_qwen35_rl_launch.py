@@ -138,3 +138,53 @@ def test_preflight_failure_is_visible_in_slurm_stderr_and_suite(tmp_path):
     suite = next((tmp_path / "outputs").glob("*/suite.log")).read_text()
     assert "simulated-preflight-failure" in suite
     assert "BCP_RL_FAILED" in next((tmp_path / "outputs").glob("*/failure.log")).read_text()
+
+
+@pytest.mark.skipif(not shutil.which("bash"), reason="Bash unavailable")
+@pytest.mark.parametrize('method', ['contextgraph', 'foldagent'])
+@pytest.mark.parametrize('outcome', ['complete', 'missing_shard', 'trainer_failure'])
+def test_four_node_smoke_runs_one_step_and_audits_all_ranks(tmp_path, method, outcome):
+    (tmp_path / 'scripts').mkdir()
+    (tmp_path / 'data').mkdir()
+    for name in ('bc_train.parquet', 'bc_test.parquet'):
+        (tmp_path / 'data' / name).write_text('fixture')
+    (tmp_path / 'scripts/check_qwen3_observation_tokens.sh').write_text('exit 0\n')
+    base = tmp_path / 'scripts' / ('train_bc_ctxgraph_8b_paperfaithful_5node_48h.sh' if method == 'contextgraph'
+                                   else 'train_bc_foldagent_8b_paperfaithful_5node_48h.sh')
+    base.write_text('''set -eu
+env > "$PROJECT_ROOT/captured.env"
+printf '%s\\n' "$@" > "$PROJECT_ROOT/captured.args"
+if [ "$TEST_OUTCOME" = trainer_failure ]; then exit 17; fi
+mkdir -p "$CHECKPOINT_ROOT/global_step_1/actor"
+printf 1 > "$CHECKPOINT_ROOT/latest_checkpointed_iteration.txt"
+for rank in 0 1 2; do
+  for kind in model optim extra_state; do
+    if [ "$TEST_OUTCOME" = missing_shard ] && [ "$rank:$kind" = 2:optim ]; then continue; fi
+    printf fixture > "$CHECKPOINT_ROOT/global_step_1/actor/${kind}_world_size_3_rank_${rank}.pt"
+  done
+done
+''', encoding='utf8', newline='\n')
+    setup = tmp_path / 'run.sh'
+    setup.write_text('\n'.join([
+        'scontrol() { printf "node1\\nnode2\\nnode3\\nnode4\\n"; }',
+        'git() { if [ "$1" = rev-parse ]; then echo fake-sha; fi; return 0; }',
+        'source() { :; }', 'conda() { :; }', 'find() { echo /dev/null; }',
+        'python() { unset LD_PRELOAD; return 0; }',
+        'export -f scontrol git source conda find python',
+        f'bash "{(ROOT / "scripts/smoke_bcp_qwen35_9b_4node_idev.sh").as_posix()}" "{method}"',
+    ]) + '\n', encoding='utf8', newline='\n')
+    env = dict(os.environ, PROJECT_ROOT=tmp_path.as_posix(), SCRATCH=tmp_path.as_posix(),
+               CONDA_PREFIX=tmp_path.as_posix(), SLURM_JOB_ID='fixture', SLURM_JOB_NODELIST='node[1-4]',
+               OPENAI_API_KEY='fixture', TEST_OUTCOME=outcome, PREFLIGHT_ONLY='1')
+    result = subprocess.run([shutil.which('bash'), setup.as_posix()], cwd=ROOT, env=env,
+                            capture_output=True, text=True, timeout=30,
+                            creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+    assert result.returncode == {'complete': 0, 'missing_shard': 1, 'trainer_failure': 17}[outcome], result.stdout + result.stderr
+    assert ('BCP_RL_SMOKE_COMPLETE' in result.stdout) == (outcome == 'complete')
+    captured = dict(line.split('=', 1) for line in (tmp_path / 'captured.env').read_text().splitlines() if '=' in line)
+    for key, value in dict(EXPECTED_NUM_NODES='4', TOTAL_TRAINING_STEPS='1', TRAIN_BATCH_SIZE='3',
+                           ROLLOUT_N='2', PPO_MINI_BATCH_SIZE='3', VAL_BEFORE_TRAIN='False',
+                           TEST_FREQ='-1', SAVE_FREQ='1', LORA_RANK='0', CONTEXT_LENGTH='12288').items():
+        assert captured[key] == value
+    assert captured['EXPERIMENT_NAME'].startswith('smoke_')
+    assert 'actor_rollout_ref.rollout.max_model_len=12288' in (tmp_path / 'captured.args').read_text()

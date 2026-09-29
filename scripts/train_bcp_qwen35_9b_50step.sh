@@ -3,23 +3,30 @@
 set -euo pipefail
 METHOD=${1:?Expected contextgraph or foldagent}
 case "$METHOD" in contextgraph|foldagent) ;; *) echo "Invalid method: $METHOD" >&2; exit 2 ;; esac
-: "${SLURM_JOB_ID:?Submit with sbatch}"
+: "${SLURM_JOB_ID:?Run inside a Slurm allocation}"
 : "${SCRATCH:?Vista SCRATCH must be set}"
 export PROJECT_ROOT=${PROJECT_ROOT:-/work/09281/chc_1996/vista/context-graph}
 cd "$PROJECT_ROOT"
 mapfile -t NODES < <(scontrol show hostnames "$SLURM_JOB_NODELIST")
-if [ "${PREFLIGHT_ONLY:-0}" != 1 ]; then
-  [ "${#NODES[@]}" -eq 5 ] || { echo "Requires 5 nodes: search + 4 trainer ranks" >&2; exit 2; }
-fi
 export EXPECTED_NUM_NODES=5
+PLANNED_STEPS=50
+RUN_MODE=train
+if [ "${SMOKE_TEST:-0}" = 1 ]; then
+  export EXPECTED_NUM_NODES=4
+  PLANNED_STEPS=1
+  RUN_MODE=smoke
+fi
+if [ "${PREFLIGHT_ONLY:-0}" != 1 ]; then
+  [ "${#NODES[@]}" -eq "$EXPECTED_NUM_NODES" ] || { echo "Requires $EXPECTED_NUM_NODES nodes: search + trainer ranks" >&2; exit 2; }
+fi
 export TRAIN_CONDA_ENV=${TRAIN_CONDA_ENV:-deepseek_v4}
 export SEARCH_CONDA_ENV=${SEARCH_CONDA_ENV:-cxtgraph}
 export SEARCH_CLEAR_LD_PRELOAD=1
 export RUN_TAG="qwen35_9b_bcp_${METHOD}_${SLURM_JOB_ID}_$(date +%Y%m%d_%H%M%S)"
-export EXPERIMENT_NAME="train_${RUN_TAG}"
+export EXPERIMENT_NAME="${RUN_MODE}_${RUN_TAG}"
 export CHECKPOINT_ROOT="$SCRATCH/context-graph-ckpts/$EXPERIMENT_NAME"
 RUN_DIR="$PROJECT_ROOT/outputs/$EXPERIMENT_NAME"
-mkdir -p logs
+mkdir -p logs outputs
 mkdir "$RUN_DIR"
 exec 3>&2
 exec > >(tee -a "$RUN_DIR/suite.log") 2>&1
@@ -35,7 +42,7 @@ report_exit() {
 trap report_exit EXIT
 git rev-parse HEAD | tee "$RUN_DIR/commit.txt"
 git diff --exit-code HEAD -- agents envs scripts verl >/dev/null || { echo "Commit tracked code changes before training"; exit 2; }
-echo "BC-P RL model=Qwen/Qwen3.5-9B method=$METHOD steps=50 nodes=${#NODES[@]} preflight_only=${PREFLIGHT_ONLY:-0}"
+echo "BC-P RL model=Qwen/Qwen3.5-9B method=$METHOD mode=$RUN_MODE steps=$PLANNED_STEPS nodes=${#NODES[@]} preflight_only=${PREFLIGHT_ONLY:-0}"
 echo "Artifacts=$RUN_DIR checkpoints=$CHECKPOINT_ROOT"
 
 source /work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh
@@ -91,6 +98,16 @@ export FINAL_ANSWER_RESERVE=1024 FINAL_ANSWER_SAFETY_MARGIN=64 SESSION_TIMEOUT=3
 export BC_CTXGRAPH_PROTOCOL=controller BC_CONTROLLER_ACTION_POLICY=balanced
 export STRUCTURED_MEMORY_ENABLED=0 STRUCTURED_MEMORY_REQUIRED=0
 export CONSOLIDATION_INTERVAL=5 AUTO_PRUNE_MAX_ACTIVE=12
+if [ "${SMOKE_TEST:-0}" = 1 ]; then
+  export TOTAL_TRAINING_STEPS=1
+  export TRAIN_BATCH_SIZE=3 ROLLOUT_N=2 PPO_MINI_BATCH_SIZE=3
+  export PROMPT_LENGTH=8192 RESPONSE_LENGTH=4096 CONTEXT_LENGTH=12288
+  export VAL_BEFORE_TRAIN=False TEST_FREQ=-1 SAVE_FREQ=1
+  export TRAIN_MAX_SAMPLES=3 VAL_MAX_SAMPLES=3
+  export MAX_TURN=4 MAX_SESSION=1 VAL_MAX_SESSION=1 TURN_MAX_NEW_TOKENS=512 SESSION_TIMEOUT=600
+  export BC_DISABLE_WANDB=1
+  echo "Smoke: 3 prompts x 2 rollouts, 3 trainer ranks, 1 step, 12K context; not a performance evaluation."
+fi
 unset RESUME_CHECKPOINT_PATH RESUME_CHECKPOINT_ROOT QWEN_ENABLE_THINKING
 # Native padded HF forward avoids untested Qwen3.5 sequence-packing patches.
 ARGS=(
@@ -102,7 +119,7 @@ ARGS=(
   actor_rollout_ref.actor.ulysses_sequence_parallel_size=1
   actor_rollout_ref.actor.use_dynamic_bsz=False
   actor_rollout_ref.rollout.enforce_eager=True
-  actor_rollout_ref.rollout.max_model_len=32768
+  actor_rollout_ref.rollout.max_model_len="$CONTEXT_LENGTH"
   actor_rollout_ref.rollout.temperature=1.0
   actor_rollout_ref.rollout.val_kwargs.n=1
   actor_rollout_ref.rollout.val_kwargs.do_sample=False
@@ -117,6 +134,9 @@ ARGS=(
   +actor_rollout_ref.rollout.plugin.apply_chat_template_kwargs.enable_thinking=True
   +actor_rollout_ref.rollout.plugin.apply_chat_template_kwargs.preserve_thinking=True
 )
+if [ "${SMOKE_TEST:-0}" = 1 ]; then
+  ARGS+=(actor_rollout_ref.actor.checkpoint.save_contents='[model,optimizer,extra]')
+fi
 if [ "$METHOD" = contextgraph ]; then
   BASE=scripts/train_bc_ctxgraph_8b_paperfaithful_5node_48h.sh
 else
@@ -129,4 +149,16 @@ bash "$BASE" "${ARGS[@]}"
 RC=$?
 set -e
 echo "BCP_RL_EXIT method=$METHOD exit=$RC checkpoint=$CHECKPOINT_ROOT"
+if [ "$RC" -eq 0 ] && [ "${SMOKE_TEST:-0}" = 1 ]; then
+  STAGE=checkpoint_audit
+  LATEST="$CHECKPOINT_ROOT/latest_checkpointed_iteration.txt"
+  [ -s "$LATEST" ] && [ "$(cat "$LATEST")" = 1 ] || { echo "Missing step-1 checkpoint marker"; exit 1; }
+  for rank in 0 1 2; do
+    for kind in model optim extra_state; do
+      SHARD="$CHECKPOINT_ROOT/global_step_1/actor/${kind}_world_size_3_rank_${rank}.pt"
+      [ -s "$SHARD" ] || { echo "Missing checkpoint shard: $SHARD"; exit 1; }
+    done
+  done
+  echo "BCP_RL_SMOKE_COMPLETE method=$METHOD steps=1 checkpoint=$CHECKPOINT_ROOT/global_step_1" | tee "$RUN_DIR/smoke-complete.txt"
+fi
 exit "$RC"

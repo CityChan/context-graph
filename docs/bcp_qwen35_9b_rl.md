@@ -111,6 +111,32 @@ failure-log routing; both changed Bash launchers passed syntax checks.
 
 ## Artifacts
 
+### Four-node idev training smoke
+
+After preflight passes, use the existing four-node allocation:
+
+```bash
+cd /work/09281/chc_1996/vista/context-graph && git pull --ff-only origin master && bash scripts/smoke_bcp_qwen35_9b_4node_idev.sh contextgraph
+```
+
+Use `foldagent` for the other method, or `both` to run them sequentially and stop
+on the first failure. Do not run both concurrently in the same allocation.
+One node serves retrieval and three train the same pinned full-parameter BF16
+9B model. Smoke overrides: one update, 3 prompts x 2 samples, PPO mini-batch 3
+(2 trajectories per rank before trajectory padding), 8192+4096 token budget,
+4 turns, 1 branch, 512 tokens per turn, 600-second session timeout. It disables
+pre-training/periodic validation and W&B, and saves at step 1. This checks the
+initial weight transfer, rollout, backward/update and checkpoint-writing path;
+it does not verify a second rollout with updated weights or 32K training fit.
+The allocation's remaining walltime still applies; runtime is not guaranteed.
+
+Artifacts go to `outputs/smoke_qwen35_9b_bcp_METHOD_JOBID_TIMESTAMP/` and a fresh
+scratch checkpoint directory. `BCP_RL_SMOKE_COMPLETE` requires trainer exit 0,
+the step-1 marker, and nonempty model/optimizer/extra-state shards for all three
+ranks. This checks file presence, not checkpoint reload correctness or nonzero
+learning signal. No benchmark accuracy or convergence claim follows from it.
+The ordinary five-node, 50-step submission keeps its original configuration.
+
 - Slurm: `logs/bcp-9b-rl50.METHOD-JOB-NAME.JOBID.out` and `.err` (the exact job
   name is `bcp-9b-contextgraph-50` or `bcp-9b-foldagent-50`).
 - Suite: `outputs/train_qwen35_9b_bcp_METHOD_JOBID_TIMESTAMP/`, including
