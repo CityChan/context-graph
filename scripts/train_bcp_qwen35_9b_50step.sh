@@ -6,6 +6,9 @@ case "$METHOD" in contextgraph|foldagent) ;; *) echo "Invalid method: $METHOD" >
 export BCP_TRAIN_PROFILE=${BCP_TRAIN_PROFILE:-default}
 case "$BCP_TRAIN_PROFILE" in
   default) ;;
+  foldagent_32k_paper_batch)
+    [ "$METHOD" = foldagent ] && [ "${SMOKE_TEST:-0}" != 1 ] || { echo "FoldAgent paper-batch profile requires foldagent normal training" >&2; exit 2; }
+    ;;
   contextgraph_32k_paper_batch|contextgraph_64k_paper_batch)
     [ "$METHOD" = contextgraph ] && [ "${SMOKE_TEST:-0}" != 1 ] || { echo "Paper-batch profile requires contextgraph normal training" >&2; exit 2; }
     ;;
@@ -22,7 +25,7 @@ unset BC_ACTIVE_NODE_COUNT
 export EXPECTED_NUM_NODES=5
 PLANNED_STEPS=50
 RUN_MODE=train
-if [ "$BCP_TRAIN_PROFILE" = contextgraph_32k_paper_batch ]; then RUN_MODE=train32k; fi
+if [[ "$BCP_TRAIN_PROFILE" = *_32k_paper_batch ]]; then RUN_MODE=train32k; fi
 if [ "$BCP_TRAIN_PROFILE" = contextgraph_64k_paper_batch ]; then RUN_MODE=train64k; fi
 if [ "${SMOKE_TEST:-0}" = 1 ]; then
   export EXPECTED_NUM_NODES=4
@@ -32,7 +35,7 @@ fi
 case "${BCP_TRAIN_TOPOLOGY:-full}" in
   full) ;;
   idev4_dp2)
-    [ "$BCP_TRAIN_PROFILE" = contextgraph_32k_paper_batch ] && [ "${SMOKE_TEST:-0}" != 1 ] || { echo "idev4_dp2 requires the ContextGraph 32K paper-batch profile" >&2; exit 2; }
+    [[ "$BCP_TRAIN_PROFILE" = *_32k_paper_batch ]] && [ "${SMOKE_TEST:-0}" != 1 ] || { echo "idev4_dp2 requires a 32K paper-batch profile" >&2; exit 2; }
     [ "$ALLOCATED_NODE_COUNT" -eq 4 ] || { echo "idev4_dp2 requires exactly 4 allocated nodes" >&2; exit 2; }
     UNUSED_NODES=("${NODES[@]:3}")
     NODES=("${NODES[@]:0:3}")
@@ -116,7 +119,7 @@ export TRAIN_BATCH_SIZE=32 ROLLOUT_N=8 PPO_MINI_BATCH_SIZE=32
 # The pinned Qwen3.5 checkpoint has 262144 native text positions. Do not apply
 # the older Qwen3-8B base launcher's YaRN override to this model.
 export BC_APPLY_YARN=0
-if [ "$BCP_TRAIN_PROFILE" = contextgraph_32k_paper_batch ]; then
+if [[ "$BCP_TRAIN_PROFILE" = *_32k_paper_batch ]]; then
   export PPO_MINI_BATCH_SIZE=128
 fi
 if [ "$BCP_TRAIN_PROFILE" = contextgraph_64k_paper_batch ]; then

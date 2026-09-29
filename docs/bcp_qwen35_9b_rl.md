@@ -1,5 +1,33 @@
 # Qwen3.5-9B BC-P RL, 50 steps
 
+## FoldAgent in the existing four-node idev
+
+Use the same 32K, 50-step optimization configuration and node layout as the
+ContextGraph idev run:
+
+```bash
+cd /work/09281/chc_1996/vista/context-graph && git pull --ff-only origin master && bash scripts/train_bcp_qwen35_9b_foldagent_32k_4node_idev.sh
+```
+
+Qwen3.5-9B revision, data, 8192+24576 token budget, batch 32 x 8, PPO minibatch
+128, microbatch 1, learning rate, clipping, validation and checkpoint frequency
+all use the shared wrapper. First node serves retrieval; the next two train;
+the fourth is untouched. FoldAgent retains its own agent and `[flat,scope]`
+`paper_signed` process rewards, rather than ContextGraph's graph rewards.
+This is a fresh base-model training run, not a resume from ContextGraph.
+
+Do not start the two methods concurrently in the same allocation: they use the
+same nodes, Ray cluster and search port. If ContextGraph is still running, wait
+for it to finish before pulling or launching FoldAgent. The existing idev
+walltime applies; this script does not submit a batch job or extend the allocation.
+The 12K smoke passed previously; 32K training on two GPUs remains unverified.
+
+Logs and `training-config.txt` are captured under
+`outputs/train32k_qwen35_9b_bcp_foldagent_JOBID_TIMESTAMP/`; checkpoints use
+the corresponding experiment directory under `$SCRATCH/context-graph-ckpts/`.
+
+## ContextGraph in the existing four-node idev
+
 Current ContextGraph run: **32K with FoldAgent batch settings**, 50 steps.
 Run directly in the existing **four-node idev allocation**:
 

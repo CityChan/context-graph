@@ -200,18 +200,24 @@ done
     ('contextgraph_32k_paper_batch', 4, 32768, 128, 'idev4_dp2'),
     ('contextgraph_32k_paper_batch', 3, 32768, 128, 'idev4_dp2'),
     ('contextgraph_32k_paper_batch', 5, 32768, 128, 'idev4_dp2'),
+    ('foldagent_32k_paper_batch', 4, 32768, 128, 'idev4_dp2'),
+    ('foldagent_32k_paper_batch', 3, 32768, 128, 'idev4_dp2'),
+    ('foldagent_32k_paper_batch', 5, 32768, 128, 'full'),
 ])
 def test_training_profile_reaches_base_launcher(tmp_path, profile, nodes, context, mini, topology):
+    method = 'foldagent' if profile.startswith('foldagent_') else 'contextgraph'
+    base_name = ('train_bc_foldagent_8b_paperfaithful_5node_48h.sh' if method == 'foldagent'
+                 else 'train_bc_ctxgraph_8b_paperfaithful_5node_48h.sh')
     (tmp_path / 'scripts').mkdir()
     (tmp_path / 'data').mkdir()
     for name in ('bc_train.parquet', 'bc_test.parquet'):
         (tmp_path / 'data' / name).write_text('fixture')
     (tmp_path / 'scripts/check_qwen3_observation_tokens.sh').write_text('exit 0\n')
     # Exercise the real YaRN decision as well as the wrapper's env/overrides.
-    base_source = (ROOT / 'scripts/train_bc_ctxgraph_8b_paperfaithful_5node_48h.sh').read_text(encoding='utf8')
+    base_source = (ROOT / 'scripts' / base_name).read_text(encoding='utf8')
     yarn_block = base_source.split('LONG_CONTEXT_ARGS=()', 1)[1].split('\nprobe()', 1)[0]
     node_block = base_source[base_source.index('mapfile -t NODELIST'):base_source.index('NODE0=${NODELIST[0]}')]
-    base = tmp_path / 'scripts/train_bc_ctxgraph_8b_paperfaithful_5node_48h.sh'
+    base = tmp_path / 'scripts' / base_name
     base.write_text('set -eu\nenv > "$PROJECT_ROOT/captured.env"\n'
                     + node_block + '\nprintf "%s\\n" "${NODELIST[@]}" > "$PROJECT_ROOT/active-nodes"\n'
                     +
@@ -220,7 +226,7 @@ def test_training_profile_reaches_base_launcher(tmp_path, profile, nodes, contex
                     'printf "%s\\n" "${#LONG_CONTEXT_ARGS[@]}" > "$PROJECT_ROOT/yarn-count"\n',
                     encoding='utf8', newline='\n')
     setup = tmp_path / 'run.sh'
-    launcher = ('scripts/train_bcp_qwen35_9b_contextgraph_32k_4node_idev.sh' if topology == 'idev4_dp2'
+    launcher = (f'scripts/train_bcp_qwen35_9b_{method}_32k_4node_idev.sh' if topology == 'idev4_dp2'
                 else 'scripts/train_bcp_qwen35_9b_50step.sh')
     node_list = ' '.join(f'node{i}' for i in range(nodes))
     setup.write_text('\n'.join([
@@ -229,7 +235,7 @@ def test_training_profile_reaches_base_launcher(tmp_path, profile, nodes, contex
         'source() { :; }', 'conda() { :; }', 'find() { echo /dev/null; }',
         'python() { unset LD_PRELOAD; return 0; }',
         'export -f scontrol git source conda find python',
-        f'bash "{(ROOT / launcher).as_posix()}" contextgraph',
+        f'bash "{(ROOT / launcher).as_posix()}" {method}',
     ]) + '\n', encoding='utf8', newline='\n')
     env = dict(os.environ, PROJECT_ROOT=tmp_path.as_posix(), SCRATCH=tmp_path.as_posix(),
                CONDA_PREFIX=tmp_path.as_posix(), SLURM_JOB_ID='fixture', SLURM_JOB_NODELIST='fixture',
@@ -273,8 +279,8 @@ def test_training_profile_reaches_base_launcher(tmp_path, profile, nodes, contex
     assert 'fixture' not in config  # No judge credential in the manifest.
     if context == 65536:
         assert captured['EXPERIMENT_NAME'].startswith('train64k_')
-    elif profile == 'contextgraph_32k_paper_batch':
-        assert captured['EXPERIMENT_NAME'].startswith('train32k_')
+    elif profile.endswith('_32k_paper_batch'):
+        assert captured['EXPERIMENT_NAME'].startswith(f'train32k_qwen35_9b_bcp_{method}_')
 
 
 @pytest.mark.skipif(not shutil.which('bash'), reason='Bash unavailable')
