@@ -17,7 +17,7 @@ git clean -ffd
 # Remove future refs/objects before any later use of this disposable worktree.
 git for-each-ref --format='delete %(refname)' | git update-ref --stdin
 git reflog expire --expire=now --all
-git gc --prune=now
+git -c pack.threads=1 gc --prune=now
 set +u
 source /opt/miniconda3/etc/profile.d/conda.sh
 conda activate testbed

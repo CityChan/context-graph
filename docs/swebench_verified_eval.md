@@ -36,7 +36,21 @@ printed by pip or the setup log to reuse its installed dependencies. It must be
 a venv under `$SCRATCH/context-graph-swe/envs`; the base RL environment is not
 modified. The preparation venv is created inside it on the first retry.
 
-To also run the image and public-test probe inside an allocation:
+The image/public-test probe can also be run directly with Bash, without a GPU
+or Slurm job ID:
+
+```bash
+cd /work/09281/chc_1996/vista/context-graph && git pull --ff-only origin master && bash scripts/preflight_swe_apptainer_vista.sbatch
+```
+
+This downloads/converts one pinned SymPy ARM image, then runs one public test
+file (600-second test timeout). Image compression uses one worker and a 256 MiB
+squashfs memory setting; this is not a total process memory limit. Logs are
+captured under `$SCRATCH/context-graph-swe/runs/preflight-direct-.../suite.log`.
+Site restrictions still apply to the host where Bash runs. This fixed probe
+does not run an agent, start a model server, or grade generated patches.
+
+To run both setup and the image/public-test probe inside an allocation:
 
 ```bash
 cd /work/09281/chc_1996/vista/context-graph && git pull --ff-only origin master && mkdir -p logs && sbatch scripts/setup_swe_verified_vista.sbatch
@@ -55,8 +69,8 @@ Data uses revision `c104f840cc67f8b6eec6f759ebc8b2693d585d4a` and is reused only
 after validating public/grading checksums, task count, and probe base commit.
 An incomplete existing data directory is rejected rather than overwritten.
 The nested image probe reuses checksum-verified SIF images and records its own
-`preflight-JOBID-...` directory. Large downloads/conversion/tests execute inside
-the allocation. Logs: `logs/swe-env-setup.JOBID.out` and `.err`.
+`preflight-JOBID-...` directory. In batch mode, downloads/conversion/tests execute
+inside the allocation. Logs: `logs/swe-env-setup.JOBID.out` and `.err`.
 
 Success prints `SWE_VISTA_SETUP_COMPLETE`. This means environment preparation
 and one public baseline probe passed; **Apptainer agent execution and grading

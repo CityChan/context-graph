@@ -23,7 +23,9 @@ flock() { :; }
 apptainer() {
     case "$1" in
         --version) echo 'apptainer mock';;
-        pull) [[ "$PROBE_FAILURE" != pull ]] || return 31; printf 'mock-sif' > "$2";;
+        build) [[ "$PROBE_FAILURE" != pull ]] || return 31;
+            [[ "$2" == --mksquashfs-args && "$3" == '-processors 1 -mem 256M' && "$GOMAXPROCS" == 1 ]] || return 98;
+            printf 'mock-sif' > "$4";;
         exec) [[ "$PROBE_FAILURE" != tests ]] || return 32; echo 'mock container success';;
         *) return 99;;
     esac
@@ -72,10 +74,12 @@ def test_corrupt_cached_image_is_rejected(tmp_path):
     assert len(list(tmp_path.glob("scratch/context-graph-swe/runs/*/preflight-complete.txt"))) == 1
 
 
-def test_batch_requires_allocation_and_shell_syntax_is_valid(tmp_path):
+def test_direct_run_has_separate_artifacts_and_shell_syntax_is_valid(tmp_path):
     result = run_batch(tmp_path, job=False)
-    assert result.returncode != 0
-    assert "Submit this script with sbatch" in result.stderr
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "SWE_APPTAINER_PREFLIGHT_COMPLETE" in result.stdout
+    assert "run=direct" in result.stdout
+    assert len(list(tmp_path.glob("scratch/context-graph-swe/runs/preflight-direct-*/suite.log"))) == 1
     for path in (BATCH, PROBE):
         result = subprocess.run([BASH, "-n", path.as_posix()], capture_output=True,
                                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)

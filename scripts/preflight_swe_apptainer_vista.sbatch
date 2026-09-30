@@ -12,7 +12,7 @@
 
 # Infrastructure probe only: no agent, gold patches, grading, or model server.
 set -euo pipefail
-: "${SLURM_JOB_ID:?Submit this script with sbatch}"
+run_label=${SLURM_JOB_ID:-direct}
 : "${SCRATCH:?SCRATCH must be set}"
 PROJECT_ROOT=${PROJECT_ROOT:-/work/09281/chc_1996/vista/context-graph}
 cd "$PROJECT_ROOT"
@@ -23,11 +23,12 @@ for path in "$root" "$root/images" "$root/runs" "$root/apptainer-cache"; do
     case "$(realpath -m "$path")/" in "$scratch_root/"*) ;; *) echo "Path escapes SCRATCH: $path" >&2; exit 1;; esac
 done
 mkdir -p "$root/images" "$root/runs" "$root/apptainer-cache" logs
-run_dir=$(mktemp -d "$root/runs/preflight-${SLURM_JOB_ID}-XXXXXX")
+run_dir=$(mktemp -d "$root/runs/preflight-${run_label}-XXXXXX")
 exec > >(tee -a "$run_dir/suite.log") 2>&1
 stage=environment
 trap 'rc=$?; if (( rc != 0 )); then echo "SWE_APPTAINER_PREFLIGHT_FAILED stage=$stage exit=$rc artifacts=$run_dir"; fi' EXIT
-echo "SWE Apptainer infrastructure preflight job=$SLURM_JOB_ID node=$(hostname) artifacts=$run_dir"
+echo "SWE Apptainer infrastructure preflight run=$run_label node=$(hostname) artifacts=$run_dir"
+export GOMAXPROCS=1 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
 [[ $(uname -m) == aarch64 ]] || { echo "This probe requires an aarch64 node"; exit 1; }
 module load tacc-apptainer/1.4.1
 apptainer --version
@@ -52,7 +53,8 @@ echo "Image=$image_uri"
     if [[ -e "$image_name" || -e "$image_name.sha256" ]]; then
         sha256sum --check "$image_name.sha256"
     else
-        apptainer pull "$run_dir/image.sif" "$image_uri"
+        # Build from the pinned OCI image so squashfs resource limits are explicit.
+        apptainer build --mksquashfs-args "-processors 1 -mem 256M" "$run_dir/image.sif" "$image_uri"
         mv -- "$run_dir/image.sif" "$image"
         sha256sum "$image_name" > "$image_name.sha256"
     fi
