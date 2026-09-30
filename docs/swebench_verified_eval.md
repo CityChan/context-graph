@@ -24,6 +24,18 @@ No Slurm job ID is required or fabricated. If a dependency wheel is unavailable,
 installation fails explicitly. Without an allocation, this prepares only the
 Python/data part of the environment, not the full ARM execution environment.
 
+Data/tokenizer preparation uses a separate `preparation/` venv without inherited
+Torch/CUDA, Ray, or TensorDict. Transformers 5 can import an installed Torch even
+for tokenizer-only work; disabling `USE_TORCH` alone is insufficient. Package
+versions are read from metadata, and `runtime_imports_checked=false` explicitly
+records that agent runtime imports were not tested. Stage markers are flushed to
+the setup log before metadata, tokenizer, and dataset checks.
+
+After a failed setup, set `SWE_AGENT_ENV` to the existing `agent-...` directory
+printed by pip or the setup log to reuse its installed dependencies. It must be
+a venv under `$SCRATCH/context-graph-swe/envs`; the base RL environment is not
+modified. The preparation venv is created inside it on the first retry.
+
 To also run the image and public-test probe inside an allocation:
 
 ```bash

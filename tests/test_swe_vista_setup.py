@@ -3,11 +3,46 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
+import builtins
+from types import SimpleNamespace
 
 import pytest
 
 from scripts.eval_swebench_verified import DATASET, file_hash, write_json
 from scripts.prepare_swe_verified_vista import REVISION, check_data
+
+
+def test_prepare_checks_metadata_without_importing_model_runtimes(tmp_path, monkeypatch):
+    from scripts import prepare_swe_verified_vista as setup
+    prepared(tmp_path)
+    original_import = builtins.__import__
+
+    def guarded_import(name, *args, **kwargs):
+        if name.split(".")[0] in {"torch", "ray", "tensordict", "tensorflow", "jax"}:
+            raise AssertionError(f"Unnecessary runtime import: {name}")
+        return original_import(name, *args, **kwargs)
+
+    def tokenizer_load(*args, **kwargs):
+        assert all(os.environ[name] == "0" for name in ("USE_TORCH", "USE_TF", "USE_FLAX"))
+        return SimpleNamespace(apply_chat_template=lambda *a, **k: [1, 2])
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+    monkeypatch.setattr(setup.importlib.util, "find_spec", lambda name: None)
+    monkeypatch.setattr(setup.importlib.metadata, "version", lambda name: "test-version")
+    monkeypatch.setitem(sys.modules, "transformers", SimpleNamespace(
+        AutoTokenizer=SimpleNamespace(from_pretrained=tokenizer_load)))
+    for name in ("USE_TORCH", "USE_TF", "USE_FLAX"):
+        monkeypatch.setenv(name, "1")
+    report = tmp_path / "environment.json"
+    monkeypatch.setattr(sys, "argv", ["prepare", "--data-dir", str(tmp_path),
+                                    "--model-path", str(tmp_path), "--report", str(report)])
+    setup.main()
+    result = json.loads(report.read_text())
+    assert result["versions"]["transformers"] == "test-version"
+    assert "torch" not in result["versions"]
+    assert result["runtime_imports_checked"] is False
+    assert result["evaluation_performed"] is False
 
 
 def prepared(root):
@@ -61,7 +96,8 @@ def test_setup_shell_syntax():
 
 @pytest.mark.skipif(not shutil.which("bash"), reason="Bash required")
 @pytest.mark.parametrize("allocated", [False, True])
-def test_direct_setup_marks_image_pending_and_allocation_runs_probe(tmp_path, allocated):
+@pytest.mark.parametrize("reuse", [False, True])
+def test_direct_setup_marks_image_pending_and_allocation_runs_probe(tmp_path, allocated, reuse):
     root = Path(__file__).resolve().parents[1]
     (tmp_path / "scripts").mkdir()
     (tmp_path / "scripts/preflight_swe_apptainer_vista.sbatch").write_text(
@@ -73,20 +109,31 @@ def test_direct_setup_marks_image_pending_and_allocation_runs_probe(tmp_path, al
 git() { echo fixture-commit; }
 flock() { :; }
 fake_python() {
-    mkdir -p "$4/bin"
-    printf '#!/bin/bash\\nexit 0\\n' > "$4/bin/python"
-    chmod +x "$4/bin/python"
+    local destination="${@: -1}"
+    mkdir -p "$destination/bin"
+    printf '#!/bin/bash\\nexit 0\\n' > "$destination/bin/python"
+    chmod +x "$destination/bin/python"
 }
 ''', encoding="utf8", newline="\n")
     env = dict(os.environ, PROJECT_ROOT=tmp_path.as_posix(), SCRATCH=scratch.as_posix(),
                BASH_ENV=mocks.as_posix(), SWE_BASE_PYTHON="fake_python")
     env.pop("SLURM_JOB_ID", None)
+    env.pop("SWE_AGENT_ENV", None)
+    if reuse:
+        venv = scratch / "context-graph-swe/envs/previous"
+        (venv / "bin").mkdir(parents=True)
+        (venv / "pyvenv.cfg").write_text("include-system-site-packages = true\n")
+        (venv / "bin/python").write_text("#!/bin/bash\nexit 0\n", newline="\n")
+        (venv / "bin/python").chmod(0o755)
+        env["SWE_AGENT_ENV"] = venv.as_posix()
     if allocated:
         env["SLURM_JOB_ID"] = "123"
     result = subprocess.run([shutil.which("bash"), (root / "scripts/setup_swe_verified_vista.sbatch").as_posix()],
                             env=env, text=True, capture_output=True, timeout=30,
                             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
     assert result.returncode == 0, result.stdout + result.stderr
+    if reuse:
+        assert list((scratch / "context-graph-swe/envs").iterdir()) == [venv]
     assert (tmp_path / "probe-ran").exists() == allocated
     completion = next(scratch.glob("context-graph-swe/runs/*/setup-complete.txt")).read_text()
     assert f"image_preflight={'passed' if allocated else 'pending'}" in completion

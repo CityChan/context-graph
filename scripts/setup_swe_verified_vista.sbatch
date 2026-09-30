@@ -30,24 +30,42 @@ trap 'rc=$?; if (( rc != 0 )); then echo "SWE_VISTA_SETUP_FAILED stage=$stage ex
 git rev-parse HEAD > "$run_dir/commit.txt"
 echo "Preparing SWE infrastructure on $(hostname); artifacts=$run_dir"
 # Reuse the installed ARM PyTorch through system-site-packages. pip writes only
-# into this fresh dedicated venv, never into the RL environment.
+# into a dedicated venv, never into the RL environment.
 base_python=${SWE_BASE_PYTHON:-/work/09281/chc_1996/vista/miniconda3/envs/deepseek_v4/bin/python}
-venv_dir=$(mktemp -d "$root/envs/agent-${run_label}-XXXXXX")
-"$base_python" -m venv --system-site-packages "$venv_dir"
+if [[ -n "${SWE_AGENT_ENV:-}" ]]; then
+    venv_dir=$(realpath -e "$SWE_AGENT_ENV")
+    case "$venv_dir/" in "$root/envs/"*) ;; *) echo "SWE_AGENT_ENV must be inside $root/envs"; exit 2;; esac
+    [[ -f "$venv_dir/pyvenv.cfg" && -x "$venv_dir/bin/python" ]] || { echo "SWE_AGENT_ENV must be an existing venv"; exit 2; }
+else
+    venv_dir=$(mktemp -d "$root/envs/agent-${run_label}-XXXXXX")
+    "$base_python" -m venv --system-site-packages "$venv_dir"
+fi
+echo "SWE agent environment: $venv_dir"
+printf 'python=%s\n' "$venv_dir/bin/python" > "$run_dir/paths.txt"
 export PYTHONNOUSERSITE=1 PYTHONPATH="$PROJECT_ROOT"
-export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
+export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 RAYON_NUM_THREADS=1 TOKENIZERS_PARALLELISM=false
 unset HF_HUB_OFFLINE HF_DATASETS_OFFLINE TRANSFORMERS_OFFLINE
 export HF_HOME="$root/hf-cache" PIP_CACHE_DIR="$root/pip-cache"
 "$venv_dir/bin/python" -m pip install --only-binary=:all: -r requirements_swebench_generation.txt
 "$venv_dir/bin/python" -m pip freeze > "$run_dir/python-freeze.txt"
+stage=preparation_environment
+# Do not inherit GPU libraries. Transformers 5 can import installed Torch even
+# for AutoTokenizer, and no model runtime is needed to prepare this dataset.
+prepare_env="$venv_dir/preparation"
+if [[ ! -d "$prepare_env" ]]; then
+    "$base_python" -m venv "$prepare_env"
+fi
+"$prepare_env/bin/python" -m pip install --only-binary=:all: -r requirements_swebench_prepare.txt
+"$prepare_env/bin/python" -m pip freeze > "$run_dir/preparation-freeze.txt"
+echo "SWE preparation environment: $prepare_env"
 stage=data_and_tokenizer
 data_dir="$root/data/verified-c104f840"
 model_path="$scratch_root/hf_cache/hub/models--Qwen--Qwen3.5-9B/snapshots/c202236235762e1c871ad0ccb60c8ee5ba337b9a"
 (
     flock -w 600 9
-    "$venv_dir/bin/python" scripts/prepare_swe_verified_vista.py --data-dir "$data_dir" --model-path "$model_path" --report "$run_dir/environment.json"
+    "$prepare_env/bin/python" scripts/prepare_swe_verified_vista.py --data-dir "$data_dir" --model-path "$model_path" --report "$run_dir/environment.json"
 ) 9> "$root/data/verified.lock"
-printf 'python=%s\ndata_dir=%s\nmodel_path=%s\n' "$venv_dir/bin/python" "$data_dir" "$model_path" > "$run_dir/paths.txt"
+printf 'python=%s\npreparation_python=%s\ndata_dir=%s\nmodel_path=%s\n' "$venv_dir/bin/python" "$prepare_env/bin/python" "$data_dir" "$model_path" > "$run_dir/paths.txt"
 image_preflight=pending
 if [[ -n "${SLURM_JOB_ID:-}" ]]; then
     stage=arm_image_and_public_tests
