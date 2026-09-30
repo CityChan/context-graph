@@ -43,7 +43,14 @@ def checked_eval_script(script):
              "assert p.is_relative_to(pathlib.Path('/testbed')), str(p); "
              "assert sys.prefix == '/opt/miniconda3/envs/testbed', sys.prefix; "
              "print('SWE_ARM_IMPORT_OK', p)" + '"\n')
-    return (script.replace(header, "set -euxo pipefail\n")
+    # --no-home leaves the host HOME path unavailable. Use the container's private
+    # /tmp for Git/Conda/pip user configuration, outside the submitted repository.
+    setup = ('set -euxo pipefail\n'
+             'HOME=$(mktemp -d /tmp/swe-grade-home-XXXXXX)\n'
+             'export HOME\n'
+             'export XDG_CONFIG_HOME="$HOME/.config"\n'
+             'mkdir -p "$XDG_CONFIG_HOME"\n')
+    return (script.replace(header, setup)
             .replace(install, install + check)
             .replace(marker, "set +e\n" + marker))
 
@@ -82,7 +89,8 @@ def evaluate(task, patch, folder, root, timeout):
         if status in (124, 137) or text.endswith("\n[output truncated]"):
             raise RuntimeError("Grading timeout or truncated output; not a model failure")
         if status or not any(line.startswith("SWE_ARM_IMPORT_OK /testbed/") for line in text.splitlines()):
-            raise RuntimeError("Grading setup/import verification failed; inspect test_output.txt")
+            raise RuntimeError(f"Grading setup/import verification failed (exit {status}); "
+                               f"log={log}\nLast output:\n{text[-4000:]}")
         statuses, found = get_logs_eval(spec, str(log))
         if not found or not set(statuses).intersection(spec.FAIL_TO_PASS + spec.PASS_TO_PASS):
             raise RuntimeError("Missing parseable task test results; inspect test_output.txt")

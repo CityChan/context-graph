@@ -370,6 +370,9 @@ copy enables shell error checking during setup and verifies that SymPy imports f
 `/testbed` using the testbed Python prefix. Error checking is disabled at the upstream
 test-output boundary so failing tests still produce complete grading logs. Setup or
 import verification failures abort grading rather than count as unresolved tasks.
+Grading also creates a private HOME under the container's isolated `/tmp`, so
+`git config --global` and package configuration do not reference the unavailable
+host home. Setup failures include the log tail in the error output.
 
 Before another generation run, use the existing compute allocation to calibrate
 only (no model endpoint or GPU inference needed):

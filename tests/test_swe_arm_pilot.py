@@ -144,6 +144,33 @@ def test_setup_failure_stops_but_test_failure_keeps_end_marker(tmp_path, install
 
 
 @pytest.mark.skipif(not shutil.which("bash"), reason="Bash required")
+def test_grading_git_config_uses_private_home(tmp_path):
+    from scripts.grade_swe_arm_pilot import checked_eval_script
+    script = ("set -uxo pipefail\n"
+              "git config --global --add safe.directory /testbed\n"
+              "git config --global --get-all safe.directory\n"
+              "python -m pip install -e .\n"
+              ": '>>>>> Start Test Output'\ntrue\n")
+    # Run real Git with a nonexistent inherited HOME. Replace only allocation of
+    # the private container /tmp directory and the unavailable container Python.
+    private = tmp_path / "private-home"
+    private.mkdir()
+    target = tmp_path / "eval.sh"
+    target.write_text('mktemp() { printf "%s" "$TEST_PRIVATE_HOME"; }\npython() { return 0; }\n'
+                      + checked_eval_script(script), newline="\n")
+    env = dict(os.environ, HOME=str(tmp_path / "missing-host-home"),
+               XDG_CONFIG_HOME=str(tmp_path / "missing-host-config"),
+               TEST_PRIVATE_HOME=private.as_posix())
+    env.pop("GIT_CONFIG_GLOBAL", None)
+    result = subprocess.run([shutil.which("bash"), target.as_posix()], env=env, capture_output=True,
+                            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+    assert result.returncode == 0, result.stderr.decode(errors="replace")
+    assert b"/testbed" in result.stdout
+    assert "/testbed" in (private / ".gitconfig").read_text()
+    assert not (tmp_path / "missing-host-home").exists()
+
+
+@pytest.mark.skipif(not shutil.which("bash"), reason="Bash required")
 def test_runner_shell_syntax():
     runner = Path(__file__).resolve().parents[1] / "scripts/run_swe_arm_pilot_idev.sh"
     result = subprocess.run([shutil.which("bash"), "-n", runner.as_posix()], capture_output=True,
