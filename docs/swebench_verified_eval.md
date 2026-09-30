@@ -36,8 +36,10 @@ printed by pip or the setup log to reuse its installed dependencies. It must be
 a venv under `$SCRATCH/context-graph-swe/envs`; the base RL environment is not
 modified. The preparation venv is created inside it on the first retry.
 
-The image/public-test probe can also be run directly with Bash, without a GPU
-or Slurm job ID:
+The image/public-test probe can be run directly with Bash **on a compute node**
+(for example inside `idev`). It does not need GPU computation. TACC login nodes
+block Apptainer: direct Bash there is supported only for Python/data setup above.
+Do not bypass the site wrapper or fabricate a Slurm job ID.
 
 ```bash
 cd /work/09281/chc_1996/vista/context-graph && git pull --ff-only origin master && bash scripts/preflight_swe_apptainer_vista.sbatch
@@ -47,7 +49,8 @@ This downloads/converts one pinned SymPy ARM image, then runs one public test
 file (600-second test timeout). Image compression uses one worker and a 256 MiB
 squashfs memory setting; this is not a total process memory limit. Logs are
 captured under `$SCRATCH/context-graph-swe/runs/preflight-direct-.../suite.log`.
-Site restrictions still apply to the host where Bash runs. This fixed probe
+The script rejects login hosts and checks actual image/test artifacts, because
+the TACC login wrapper can print a refusal yet return exit code zero. This fixed probe
 does not run an agent, start a model server, or grade generated patches.
 
 To run both setup and the image/public-test probe inside an allocation:

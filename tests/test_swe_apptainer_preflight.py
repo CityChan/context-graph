@@ -22,15 +22,19 @@ def run_batch(tmp_path, failure="", job=True):
     : "$BASH_COMPLETION_DEBUG"
 }
 uname() { echo aarch64; }
+hostname() { if [[ "$PROBE_FAILURE" == login ]]; then echo login1.vista.tacc.utexas.edu; else echo c609-071; fi; }
 flock() { :; }
 apptainer() {
     [[ "$-" == *u* ]] || return 97
     case "$1" in
-        --version) echo 'apptainer mock';;
+        --version) if [[ "$PROBE_FAILURE" == wrapper ]]; then echo 'Please do not run Apptainer on login nodes!'; else echo 'apptainer version 1.4.1'; fi;;
         build) [[ "$PROBE_FAILURE" != pull ]] || return 31;
             [[ "$2" == --mksquashfs-args && "$3" == '-processors 1 -mem 256M' && "$GOMAXPROCS" == 1 ]] || return 98;
+            [[ "$PROBE_FAILURE" != missing_image ]] || return 0;
             printf 'mock-sif' > "$4";;
-        exec) [[ "$PROBE_FAILURE" != tests ]] || return 32; echo 'mock container success';;
+        exec) [[ "$PROBE_FAILURE" != tests ]] || return 32;
+            [[ "$PROBE_FAILURE" != no_tests ]] || return 0;
+            echo 'SWE_APPTAINER_PUBLIC_TESTS_PASSED';;
         *) return 99;;
     esac
 }
@@ -61,7 +65,7 @@ def test_batch_publishes_pinned_image_and_separate_run_artifacts(tmp_path):
         assert "evaluation_performed=false" in record.read_text()
 
 
-@pytest.mark.parametrize("failure,code,stage", [("module", 30, "environment"), ("pull", 31, "image_pull"), ("tests", 32, "repository_and_tests")])
+@pytest.mark.parametrize("failure,code,stage", [("login", 2, "environment"), ("wrapper", 2, "environment"), ("module", 30, "environment"), ("pull", 31, "image_pull"), ("missing_image", 2, "image_pull"), ("tests", 32, "repository_and_tests"), ("no_tests", 2, "repository_and_tests")])
 def test_batch_fails_without_publishing_completion(tmp_path, failure, code, stage):
     result = run_batch(tmp_path, failure)
     assert result.returncode == code, result.stdout + result.stderr

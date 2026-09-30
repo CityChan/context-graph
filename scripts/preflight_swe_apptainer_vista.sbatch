@@ -28,6 +28,9 @@ exec > >(tee -a "$run_dir/suite.log") 2>&1
 stage=environment
 trap 'rc=$?; if (( rc != 0 )); then echo "SWE_APPTAINER_PREFLIGHT_FAILED stage=$stage exit=$rc artifacts=$run_dir"; fi' EXIT
 echo "SWE Apptainer infrastructure preflight run=$run_label node=$(hostname) artifacts=$run_dir"
+case "$(hostname -s)" in
+    login*) echo "TACC login nodes cannot run Apptainer. Run this script on a compute node via idev or sbatch." >&2; exit 2;;
+esac
 export GOMAXPROCS=1 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
 [[ $(uname -m) == aarch64 ]] || { echo "This probe requires an aarch64 node"; exit 1; }
 # TACC's module sources interactive completion code that reads unset variables.
@@ -35,7 +38,9 @@ export GOMAXPROCS=1 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
 set +u
 module load tacc-apptainer/1.4.1
 set -u
-apptainer --version
+apptainer_version=$(apptainer --version)
+printf '%s\n' "$apptainer_version"
+[[ "$apptainer_version" =~ ^apptainer\ version\ [0-9] ]] || { echo "Apptainer is unavailable on this host (a site wrapper may have returned success without running it)." >&2; exit 2; }
 unset APPTAINER_BIND APPTAINER_BINDPATH SINGULARITY_BIND SINGULARITY_BINDPATH
 export APPTAINER_CACHEDIR="$root/apptainer-cache"
 export APPTAINER_TMPDIR="$run_dir/tmp"
@@ -59,6 +64,7 @@ echo "Image=$image_uri"
     else
         # Build from the pinned OCI image so squashfs resource limits are explicit.
         apptainer build --mksquashfs-args "-processors 1 -mem 256M" "$run_dir/image.sif" "$image_uri"
+        [[ -s "$run_dir/image.sif" ]] || { echo "Apptainer returned without creating an image." >&2; exit 2; }
         mv -- "$run_dir/image.sif" "$image"
         sha256sum "$image_name" > "$image_name.sha256"
     fi
@@ -69,7 +75,8 @@ printf 'instance=%s\nbase_commit=%s\nimage_uri=%s\nimage_path=%s\n' "$instance" 
 stage=repository_and_tests
 # This runs only our fixed probe, not generated/untrusted agent commands.
 # Disable site-wide host binds; expose only the fresh worktree and read-only probe.
-apptainer exec --cleanenv --containall --no-mount hostfs,bind-paths --bind "$run_dir/worktree:/workspace" --bind "$PROJECT_ROOT/scripts/check_swe_apptainer_sympy.sh:/probe.sh:ro" --pwd /workspace "$image" /bin/bash --noprofile --norc /probe.sh "$base_commit"
+apptainer exec --cleanenv --containall --no-mount hostfs,bind-paths --bind "$run_dir/worktree:/workspace" --bind "$PROJECT_ROOT/scripts/check_swe_apptainer_sympy.sh:/probe.sh:ro" --pwd /workspace "$image" /bin/bash --noprofile --norc /probe.sh "$base_commit" | tee "$run_dir/public-tests.log"
+grep -qx 'SWE_APPTAINER_PUBLIC_TESTS_PASSED' "$run_dir/public-tests.log" || { echo "Container did not confirm public test completion." >&2; exit 2; }
 stage=complete
 printf 'instance=%s\npublic_baseline_tests=passed\nevaluation_performed=false\n' "$instance" > "$run_dir/preflight-complete.txt"
 echo "SWE_APPTAINER_PREFLIGHT_COMPLETE instance=$instance artifacts=$run_dir evaluation_performed=false"
