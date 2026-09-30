@@ -7,6 +7,35 @@ No training is performed. Default model: `Qwen/Qwen3.5-9B`.
 
 ## Execution layout
 
+### Prepare the Vista environment first
+
+Run on the Vista login node:
+
+```bash
+cd /work/09281/chc_1996/vista/context-graph && git pull --ff-only origin master && mkdir -p logs && sbatch scripts/setup_swe_verified_vista.sbatch
+```
+
+This one-node `gg`, one-hour job prepares Python, pinned Verified data, the
+existing Qwen3.5-9B tokenizer, and the SymPy ARM image/public-test probe. It
+creates a fresh venv under `$SCRATCH/context-graph-swe/envs`, inheriting installed
+packages from `deepseek_v4` to reuse ARM PyTorch without changing the RL environment.
+Additional dependencies are installed into the new venv; its dependency snapshot,
+Python executable, data path, and checks are recorded under
+`$SCRATCH/context-graph-swe/runs/setup-JOBID-...`. This is an inherited environment,
+not an independently reproducible lockfile environment.
+
+Data uses revision `c104f840cc67f8b6eec6f759ebc8b2693d585d4a` and is reused only
+after validating public/grading checksums, task count, and probe base commit.
+An incomplete existing data directory is rejected rather than overwritten.
+The nested image probe reuses checksum-verified SIF images and records its own
+`preflight-JOBID-...` directory. Large downloads/conversion/tests execute inside
+the allocation. Logs: `logs/swe-env-setup.JOBID.out` and `.err`.
+
+Success prints `SWE_VISTA_SETUP_COMPLETE`. This means environment preparation
+and one public baseline probe passed; **Apptainer agent execution and grading
+are still pending**, and no model server or evaluation is launched. The Docker
+workflow below remains the currently implemented end-to-end evaluation path.
+
 - **Model server:** one Vista GPU node, or an existing compatible vLLM server.
 - **Agent runner and repository containers:** a machine with access to a Linux
   **x86_64 Docker daemon**. CPU-only is sufficient here; inference is remote.
