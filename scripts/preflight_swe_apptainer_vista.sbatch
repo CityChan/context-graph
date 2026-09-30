@@ -30,7 +30,11 @@ trap 'rc=$?; if (( rc != 0 )); then echo "SWE_APPTAINER_PREFLIGHT_FAILED stage=$
 echo "SWE Apptainer infrastructure preflight run=$run_label node=$(hostname) artifacts=$run_dir"
 export GOMAXPROCS=1 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
 [[ $(uname -m) == aarch64 ]] || { echo "This probe requires an aarch64 node"; exit 1; }
+# TACC's module sources interactive completion code that reads unset variables.
+# Keep errexit enabled so a failed module load still stops this preflight.
+set +u
 module load tacc-apptainer/1.4.1
+set -u
 apptainer --version
 unset APPTAINER_BIND APPTAINER_BINDPATH SINGULARITY_BIND SINGULARITY_BINDPATH
 export APPTAINER_CACHEDIR="$root/apptainer-cache"

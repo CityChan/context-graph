@@ -17,10 +17,14 @@ def run_batch(tmp_path, failure="", job=True):
     scratch = tmp_path / "scratch"
     scratch.mkdir(exist_ok=True)
     setup = tmp_path / "mock-tools.sh"
-    setup.write_text("""module() { :; }
+    setup.write_text("""module() {
+    [[ "$PROBE_FAILURE" != module ]] || return 30
+    : "$BASH_COMPLETION_DEBUG"
+}
 uname() { echo aarch64; }
 flock() { :; }
 apptainer() {
+    [[ "$-" == *u* ]] || return 97
     case "$1" in
         --version) echo 'apptainer mock';;
         build) [[ "$PROBE_FAILURE" != pull ]] || return 31;
@@ -34,6 +38,7 @@ apptainer() {
     env = dict(os.environ, BASH_ENV=setup.as_posix(), PROJECT_ROOT=ROOT.as_posix(),
                SCRATCH=scratch.as_posix(), PROBE_FAILURE=failure)
     env.pop("SLURM_JOB_ID", None)
+    env.pop("BASH_COMPLETION_DEBUG", None)
     if job:
         env["SLURM_JOB_ID"] = "12345"
     return subprocess.run([BASH, BATCH.as_posix()], cwd=ROOT, env=env,
@@ -56,7 +61,7 @@ def test_batch_publishes_pinned_image_and_separate_run_artifacts(tmp_path):
         assert "evaluation_performed=false" in record.read_text()
 
 
-@pytest.mark.parametrize("failure,code,stage", [("pull", 31, "image_pull"), ("tests", 32, "repository_and_tests")])
+@pytest.mark.parametrize("failure,code,stage", [("module", 30, "environment"), ("pull", 31, "image_pull"), ("tests", 32, "repository_and_tests")])
 def test_batch_fails_without_publishing_completion(tmp_path, failure, code, stage):
     result = run_batch(tmp_path, failure)
     assert result.returncode == code, result.stdout + result.stderr
