@@ -13,10 +13,17 @@ An Apptainer adapter now supports **only `sympy__sympy-20590`** with the pinned
 image used by the preflight. This is an ARM compatibility evaluation, not the
 official x86 Docker environment or a full 500-instance Verified score.
 
-On a GH compute node, keep the model server running with
-`bash scripts/serve_swe_qwen35_9b_vista.sbatch`. Once `/v1/models` responds, run
-the following in another shell on a compute node in the allocation (set
-`SWE_ENDPOINT=http://SERVER-NODE:18000` if the server is on another node):
+The pilot now defaults to 65,536 total context tokens for both FoldAgent and
+ContextGraph: 8,192 prompt tokens and 57,344 response tokens. Start a matching
+model server on a GH compute node with
+`SWE_MODEL_MAX_LEN=65536 bash scripts/serve_swe_qwen35_9b_vista.sbatch`.
+The previously running 32K server cannot serve this pilot; stop it before
+reusing its GPU and port, or use a free GPU and a different `MODEL_PORT`.
+The server uses one GPU; additional allocated nodes do not combine GPU memory.
+Check `/v1/models` for `max_model_len: 65536` before evaluation. Once it
+responds, run the following in another shell on a compute node in the
+allocation (set `SWE_ENDPOINT=http://SERVER-NODE:18000` if the server is on
+another node):
 
 ```bash
 cd /work/09281/chc_1996/vista/context-graph && git pull --ff-only origin master && SWE_AGENT_ENV=/scratch/09281/chc_1996/context-graph-swe/envs/agent-direct-Rs4ngP bash scripts/run_swe_arm_pilot_idev.sh contextgraph
@@ -27,7 +34,9 @@ calibrates a clean baseline (must be unresolved) and reference patch (must be
 resolved), generates a model patch using the existing code agent, and grades it
 in a fresh workspace with upstream test scripts and parsers. Calibration's
 reference patch and test scripts are never mounted in the generation sandbox.
-`foldagent` and `react` are also accepted, with the same budgets and task.
+Run the same command with `foldagent` to compare on the same task and budget.
+`react` is also accepted. Set `SWE_CONTEXT_LENGTH=32768` to reproduce the
+earlier 32K pilot, with a server configured for at least 32K.
 
 The sandbox uses a network namespace with networking disabled and fails if the
 site does not support it; there is no silent fallback to host execution/network.
@@ -39,7 +48,8 @@ Artifacts: `$SCRATCH/context-graph-swe/runs/arm-pilot-JOBID-.../suite.log`,
 `calibration/`, `generation/instances/`, and `generation/grading-arm/summary.json`.
 `SWE_ARM_RUN_COMPLETE` means the one-task flow completed; inspect `resolved`
 separately. Local tests cover adapters and real agent loops with mocked containers;
-the first real ARM generation/calibration/grading run remains to be verified.
+real ARM generation, calibration, and grading have also completed for this one
+instance. Neither pilot result is an official x86 SWE-bench score.
 
 ### Prepare the Vista environment first
 

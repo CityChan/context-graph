@@ -94,11 +94,16 @@ def load_public(root):
 
 def config_for(args):
     from omegaconf import OmegaConf
+    context_length = int(getattr(args, "context_length", 32768))
+    if context_length < 32768 or context_length > 65536:
+        raise ValueError("SWE context length must be between 32768 and 65536")
+    prompt_length = 8192
+    response_length = context_length - prompt_length
     return OmegaConf.create({"algorithm": {"adv_estimator": ""}, "actor_rollout_ref": {"rollout": {
-        "prompt_length": 8192, "response_length": 24576, "plugin": {
+        "prompt_length": prompt_length, "response_length": response_length, "plugin": {
             "workflow": WORKFLOWS[args.method], "max_turn": args.max_turn,
             "max_session": 10, "val_max_session": 10, "session_timeout": args.task_timeout,
-            "branch_len": 24576, "turn_max_new_tokens": 2048, "val_response_length": 24576,
+            "branch_len": response_length, "turn_max_new_tokens": 2048, "val_response_length": response_length,
             "process_reward": None, "max_traj": 11, "must_finish": False, "enable_summary": False,
             "structured_graph_controller": args.method == "contextgraph",
             "controller_action_policy": "balanced", "consolidation_interval": 5,
@@ -408,6 +413,7 @@ def main():
     run.add_argument("--instance-ids", nargs="+")
     run.add_argument("--seed", type=int, default=42)
     run.add_argument("--workers", type=int, default=1)
+    run.add_argument("--context-length", type=int, default=32768, help="Total agent context tokens, up to 65536")
     run.add_argument("--max-turn", type=int, default=100)
     run.add_argument("--task-timeout", type=int, default=3600)
     run.add_argument("--memory", default="8g")

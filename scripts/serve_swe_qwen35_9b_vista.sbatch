@@ -20,6 +20,9 @@ export SERVER_CONDA_ENV=${SERVER_CONDA_ENV:-deepseek_v4}
 export MODEL_ID=Qwen/Qwen3.5-9B
 export MODEL_REVISION=${MODEL_REVISION:-c202236235762e1c871ad0ccb60c8ee5ba337b9a}
 export MODEL_PORT=${MODEL_PORT:-18000} WORKERS=${WORKERS:-2} SEED=${SEED:-42}
+export MODEL_MAX_LEN=${SWE_MODEL_MAX_LEN:-65536}
+case "$MODEL_MAX_LEN" in 32768|65536) ;; *) echo "Unsupported SWE model context: $MODEL_MAX_LEN"; exit 2;; esac
+echo "SWE server max_model_len=$MODEL_MAX_LEN"
 cd "$PROJECT_ROOT"
 set +u
 source "$CONDA_SH"

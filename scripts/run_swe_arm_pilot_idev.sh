@@ -11,7 +11,11 @@ root="$(realpath -e "$SCRATCH")/context-graph-swe"
 agent_env=${SWE_AGENT_ENV:?Set SWE_AGENT_ENV to the dedicated agent venv printed by setup}
 agent_python="$agent_env/bin/python"
 endpoint=${SWE_ENDPOINT:-http://127.0.0.1:18000}
-if [[ "$method" != calibrate ]]; then curl --connect-timeout 5 --max-time 15 -fsS "$endpoint/v1/models"; fi
+context_length=${SWE_CONTEXT_LENGTH:-65536}
+case "$context_length" in 32768|65536) ;; *) echo "Expected SWE_CONTEXT_LENGTH=32768 or 65536"; exit 2;; esac
+if [[ "$method" != calibrate ]]; then
+  curl --connect-timeout 5 --max-time 15 -fsS "$endpoint/v1/models" | "$agent_python" -c 'import json,sys; model=json.load(sys.stdin)["data"][0]; need=int(sys.argv[1]); have=int(model["max_model_len"]); assert have >= need, f"vLLM max_model_len={have} < requested SWE context={need}; start a matching server"; print(f"SWE_MODEL_CONTEXT_OK max_model_len={have} requested={need}")' "$context_length"
+fi
 set +u
 module load tacc-apptainer/1.4.1
 set -u
@@ -20,7 +24,7 @@ export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 TOKENIZERS_PAR
 mkdir -p "$root/runs"
 run=$(mktemp -d "$root/runs/arm-pilot-${SLURM_JOB_ID}-XXXXXX")
 exec > >(tee -a "$run/suite.log") 2>&1
-echo "SWE ARM pilot: method=$method endpoint=$endpoint artifacts=$run"
+echo "SWE ARM pilot: method=$method context=$context_length endpoint=$endpoint artifacts=$run"
 stage=grading_environment
 trap 'rc=$?; if (( rc != 0 )); then echo "SWE_ARM_PILOT_FAILED stage=$stage exit=$rc artifacts=$run"; fi' EXIT
 # Dedicated grading environment, without inherited GPU runtimes.
@@ -36,7 +40,7 @@ model="$SCRATCH/hf_cache/hub/models--Qwen--Qwen3.5-9B/snapshots/c202236235762e1c
 # Apply the same Vista Torch TLS preload used by the working model server.
 preload=$("$agent_python" -c 'import importlib.util,pathlib; print(pathlib.Path(importlib.util.find_spec("torch").origin).parent / "lib/libtorch_global_deps.so")')
 [[ -s "$preload" ]] || { echo "Missing Torch TLS preload: $preload"; exit 2; }
-LD_PRELOAD="$preload${LD_PRELOAD:+:$LD_PRELOAD}" "$agent_python" scripts/eval_swebench_verified.py generate --backend apptainer --apptainer-root "$root" --data-dir "$data" --output "$run/generation" --method "$method" --model-path "$model" --endpoint "$endpoint" --instance-ids sympy__sympy-20590 --samples 1 --workers 1
+LD_PRELOAD="$preload${LD_PRELOAD:+:$LD_PRELOAD}" "$agent_python" scripts/eval_swebench_verified.py generate --backend apptainer --apptainer-root "$root" --data-dir "$data" --output "$run/generation" --method "$method" --model-path "$model" --endpoint "$endpoint" --context-length "$context_length" --instance-ids sympy__sympy-20590 --samples 1 --workers 1
 stage=grading
 "$grade_env/bin/python" scripts/grade_swe_arm_pilot.py --data-dir "$data" --apptainer-root "$root" --output "$run/generation"
 stage=complete

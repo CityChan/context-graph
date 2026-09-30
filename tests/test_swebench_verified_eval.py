@@ -52,10 +52,16 @@ def test_deterministic_paired_selection_and_unknown_id_rejected():
         select_tasks(rows + rows, -1, 42)
 
 
-def test_matched_budgets_and_code_workflows():
-    configs = [config_for(args(method)).actor_rollout_ref.rollout for method in ("react", "foldagent", "contextgraph")]
+@pytest.mark.parametrize("context_length", [32768, 65536])
+def test_matched_budgets_and_code_workflows(context_length):
+    method_args = [args(method) for method in ("react", "foldagent", "contextgraph")]
+    for method_arg in method_args:
+        method_arg.context_length = context_length
+    configs = [config_for(method_arg).actor_rollout_ref.rollout for method_arg in method_args]
     assert [c.plugin.workflow for c in configs] == ["code", "code_branch", "code_graph"]
-    assert all(c.prompt_length + c.response_length == 32768 for c in configs)
+    assert all(c.prompt_length == 8192 and c.response_length == context_length - 8192 for c in configs)
+    assert all(c.plugin.branch_len == context_length - 8192 for c in configs)
+    assert all(c.plugin.val_response_length == context_length - 8192 for c in configs)
     assert all(c.plugin.turn_max_new_tokens == 2048 for c in configs)
     assert all(c.plugin.process_reward is None for c in configs)
 
