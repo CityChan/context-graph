@@ -7,6 +7,40 @@ No training is performed. Default model: `Qwen/Qwen3.5-9B`.
 
 ## Execution layout
 
+### Single-task ARM pilot after a successful container preflight
+
+An Apptainer adapter now supports **only `sympy__sympy-20590`** with the pinned
+image used by the preflight. This is an ARM compatibility evaluation, not the
+official x86 Docker environment or a full 500-instance Verified score.
+
+On a GH compute node, keep the model server running with
+`bash scripts/serve_swe_qwen35_9b_vista.sbatch`. Once `/v1/models` responds, run
+the following in another shell on a compute node in the allocation (set
+`SWE_ENDPOINT=http://SERVER-NODE:18000` if the server is on another node):
+
+```bash
+cd /work/09281/chc_1996/vista/context-graph && git pull --ff-only origin master && SWE_AGENT_ENV=/scratch/09281/chc_1996/context-graph-swe/envs/agent-direct-Rs4ngP bash scripts/run_swe_arm_pilot_idev.sh contextgraph
+```
+
+The runner installs the pinned upstream harness in a separate grading venv,
+calibrates a clean baseline (must be unresolved) and reference patch (must be
+resolved), generates a model patch using the existing code agent, and grades it
+in a fresh workspace with upstream test scripts and parsers. Calibration's
+reference patch and test scripts are never mounted in the generation sandbox.
+`foldagent` and `react` are also accepted, with the same budgets and task.
+
+The sandbox uses a network namespace with networking disabled and fails if the
+site does not support it; there is no silent fallback to host execution/network.
+Only a fresh task worktree is writable, mounted over `/testbed` so original image
+Git refs are hidden. Per-task RAM/CPU cgroups are not implemented: allocation
+limits apply, numerical libraries use one thread, and tool commands time out.
+
+Artifacts: `$SCRATCH/context-graph-swe/runs/arm-pilot-JOBID-.../suite.log`,
+`calibration/`, `generation/instances/`, and `generation/grading-arm/summary.json`.
+`SWE_ARM_RUN_COMPLETE` means the one-task flow completed; inspect `resolved`
+separately. Local tests cover adapters and real agent loops with mocked containers;
+the first real ARM generation/calibration/grading run remains to be verified.
+
 ### Prepare the Vista environment first
 
 Run on the Vista login node:
@@ -76,9 +110,9 @@ The nested image probe reuses checksum-verified SIF images and records its own
 inside the allocation. Logs: `logs/swe-env-setup.JOBID.out` and `.err`.
 
 Success prints `SWE_VISTA_SETUP_COMPLETE`. This means environment preparation
-and one public baseline probe passed; **Apptainer agent execution and grading
-are still pending**, and no model server or evaluation is launched. The Docker
-workflow below remains the currently implemented end-to-end evaluation path.
+and one public baseline probe passed; no model server or evaluation is launched.
+The ARM single-task pilot above is a separate invocation. The Docker workflow
+below remains the path for arbitrary Verified instances.
 
 - **Model server:** one Vista GPU node, or an existing compatible vLLM server.
 - **Agent runner and repository containers:** a machine with access to a Linux
@@ -87,8 +121,8 @@ workflow below remains the currently implemented end-to-end evaluation path.
   Keep its instance images until grading is finished.
 
 Vista ARM nodes are not supported as repository-container hosts by this initial
-Docker adapter. A separate Apptainer infrastructure probe is provided below;
-it does not yet add Apptainer to generation or grading. Do not submit the generation/grading script there expecting `sbatch`
+Docker adapter. Use the explicit single-task Apptainer pilot above on Vista.
+Do not submit the default Docker generation/grading script there expecting `sbatch`
 alone to provide Docker. Docker Desktop with Linux amd64 containers can be used
 on an x86 Windows machine; Linux x86_64 is the preferred runner. No Modal backend
 is implemented. Running a cloud service would be a separate setup decision.
@@ -207,7 +241,8 @@ It loads no gold/test patch and executes no agent-generated commands. A successf
 run prints `SWE_APPTAINER_PREFLIGHT_COMPLETE` and writes `preflight-complete.txt`.
 This is **not** an issue-resolution test or an evaluation score. Neither this
 probe nor Alpine success proves compatibility of all 500 tasks. Epoch labels its
-ARM images best-effort and untested; actual Vista task execution is still pending.
+ARM images best-effort and untested. The public baseline passed 22 tests on
+Vista job 1035198; model-generated patch execution and grading remain to be validated.
 See the [image provider](https://github.com/epoch-research/SWE-bench).
 
 The Docker generation/grading workflow below remains unchanged. A production

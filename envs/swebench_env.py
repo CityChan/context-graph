@@ -179,8 +179,13 @@ class SWEVerifiedEnv:
     async def init_env(self, item):
         task = public_instance(json.loads(self.ability.split("@", 1)[1]))
         settings = self.config.plugin
-        self.sandbox = DockerSandbox(task, memory=settings.swe_memory,
-            cpus=settings.swe_cpus, tool_timeout=settings.swe_tool_timeout)
+        if settings.get("swe_backend", "docker") == "apptainer":
+            from envs.swebench_apptainer import ApptainerSandbox
+            self.sandbox = ApptainerSandbox(task, root=settings.swe_apptainer_root,
+                memory=settings.swe_memory, cpus=settings.swe_cpus, tool_timeout=settings.swe_tool_timeout)
+        else:
+            self.sandbox = DockerSandbox(task, memory=settings.swe_memory,
+                cpus=settings.swe_cpus, tool_timeout=settings.swe_tool_timeout)
         await blocking_call(self.sandbox.start)
         # Set this only after successful initialization; legacy agent loops catch
         # init errors, so they must not continue with a half-initialized task.

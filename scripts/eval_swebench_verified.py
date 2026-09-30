@@ -105,6 +105,8 @@ def config_for(args):
             "auto_prune_max_active": 12, "auto_bind_branch_edges": True,
             "lambda_compact": 0.0, "lambda_cost": 0.0,
             "swe_memory": args.memory, "swe_cpus": args.cpus, "swe_tool_timeout": 90,
+            "swe_backend": getattr(args, "backend", "docker"),
+            "swe_apptainer_root": getattr(args, "apptainer_root", None),
             "apply_chat_template_kwargs": {"enable_thinking": True, "preserve_thinking": True},
         }}}})
 
@@ -186,7 +188,6 @@ async def generate_one(task, args, config, tokenizer, root, process_item):
 
 
 async def generate(args):
-    import docker
     from transformers import AutoTokenizer
     from omegaconf import OmegaConf
     from scripts.eval_bcp_qwen38 import TokenClient, tokenizer_preflight
@@ -194,13 +195,27 @@ async def generate(args):
     from agents.graph_agent_code_isolated import process_item as graph_process
     rows, dataset_manifest = load_public(Path(args.data_dir))
     selected = select_tasks(rows, args.samples, args.seed, args.instance_ids)
-    client = docker.from_env(timeout=20)
-    try:
-        info = client.info()
-        if info.get("OSType") != "linux" or info.get("Architecture") not in ("x86_64", "amd64"):
-            raise RuntimeError("Use a Linux x86_64 Docker daemon for official Verified images")
-    finally:
-        client.close()
+    if getattr(args, "backend", "docker") == "apptainer":
+        from envs.swebench_apptainer import ApptainerSandbox
+        if not args.apptainer_root or len(selected) != 1:
+            raise ValueError("ARM pilot requires --apptainer-root and one pinned instance")
+        sandbox = ApptainerSandbox(selected[0], root=args.apptainer_root)
+        try:
+            sandbox.start()
+            status, output = sandbox.execute("print('SWE_ARM_SANDBOX_READY')")
+            if status or "SWE_ARM_SANDBOX_READY" not in output:
+                raise RuntimeError(f"ARM sandbox preflight failed: {output}")
+        finally:
+            sandbox.close()
+    else:
+        import docker
+        client = docker.from_env(timeout=20)
+        try:
+            info = client.info()
+            if info.get("OSType") != "linux" or info.get("Architecture") not in ("x86_64", "amd64"):
+                raise RuntimeError("Use a Linux x86_64 Docker daemon for official Verified images")
+        finally:
+            client.close()
     root = Path(args.output).resolve()
     root.mkdir(parents=True, exist_ok=False)
     config = config_for(args)
@@ -225,6 +240,7 @@ async def generate(args):
         cwd=Path(__file__).resolve().parents[1], text=True, creationflags=creationflags).strip()
     write_json(root / "manifest.json", {"dataset": dataset_manifest, "method": args.method,
         "model": args.model, "model_path": str(Path(args.model_path).resolve()), "seed": args.seed,
+        "backend": getattr(args, "backend", "docker"),
         "instance_ids": [task["instance_id"] for task in selected], "commit": commit,
         "harness_commit": HARNESS_COMMIT, "config": OmegaConf.to_container(config),
         "agent_loop": "graph_agent_code_isolated" if args.method == "contextgraph" else "fold_agent_code",
@@ -280,6 +296,8 @@ def validate_predictions(root):
 
 def grading_summary(root, grade_root):
     manifest, predictions = validate_predictions(root)
+    if manifest.get("backend", "docker") != "docker":
+        raise ValueError("ARM pilot results have a separate grading-arm/summary.json")
     results = read_jsonl(root / "results.jsonl")
     metadata = read_json(grade_root / "grading_manifest.json")
     if metadata["predictions_sha256"] != file_hash(root / "predictions.jsonl"):
@@ -320,6 +338,8 @@ def grade(args):
     import docker
     root = Path(args.output).resolve()
     manifest, predictions = validate_predictions(root)
+    if manifest.get("backend", "docker") != "docker":
+        raise ValueError("Use grade_swe_arm_pilot.py for ARM results; official Docker grading is separate")
     data_dir = Path(args.data_dir).resolve()
     _, dataset_manifest = load_public(data_dir)
     if manifest["dataset"] != dataset_manifest:
@@ -392,6 +412,8 @@ def main():
     run.add_argument("--task-timeout", type=int, default=3600)
     run.add_argument("--memory", default="8g")
     run.add_argument("--cpus", type=float, default=4)
+    run.add_argument("--backend", choices=("docker", "apptainer"), default="docker")
+    run.add_argument("--apptainer-root")
     grading = sub.add_parser("grade", help="Run the pinned official Docker harness")
     grading.add_argument("--data-dir", required=True)
     grading.add_argument("--output", required=True)
