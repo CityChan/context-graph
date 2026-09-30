@@ -64,7 +64,8 @@ class ApptainerSandbox:
         if status:
             raise RuntimeError(f"ARM sandbox initialization failed: {output}")
 
-    def _exec(self, command, *, limit=24000, initializing=False, timeout=None, inputs=None):
+    def _exec(self, command, *, limit=24000, initializing=False, timeout=None, inputs=None,
+              stdout_only=False):
         if self.work is None:
             raise RuntimeError("Sandbox has not started")
         target = "/workspace" if initializing else "/testbed"
@@ -81,10 +82,15 @@ class ApptainerSandbox:
         env["GOMAXPROCS"] = "1"
         # GNU timeout supervises the Apptainer process group, including children.
         argv = ["timeout", "--signal=TERM", "--kill-after=5", str(timeout or self.tool_timeout)] + argv
-        with tempfile.TemporaryFile() as output:
-            result = subprocess.run(argv, env=env, cwd=self.work, stdout=output, stderr=subprocess.STDOUT)
+        with tempfile.TemporaryFile() as output, tempfile.TemporaryFile() as diagnostics:
+            result = subprocess.run(argv, env=env, cwd=self.work, stdout=output,
+                                    stderr=diagnostics if stdout_only else subprocess.STDOUT)
             output.seek(0)
             content = output.read(limit + 1)
+            if stdout_only and result.returncode:
+                diagnostics.seek(0)
+                detail = diagnostics.read(limit).decode("utf-8", errors="replace")
+                raise RuntimeError(f"ARM patch extraction failed (exit {result.returncode}): {detail}")
         text = content[:limit].decode("utf-8", errors="replace")
         if len(content) > limit:
             text += "\n[output truncated]"
@@ -94,7 +100,7 @@ class ApptainerSandbox:
         return self._exec("source /opt/miniconda3/etc/profile.d/conda.sh && conda activate testbed && python -c " + shlex.quote(code))
 
     def patch(self):
-        status, patch = self._exec("git add -N -- . && git -c core.quotePath=false diff --no-ext-diff --binary " + BASE + " --", limit=8 * 1024 * 1024)
+        status, patch = self._exec("git add -N -- . && git -c core.quotePath=false diff --no-ext-diff --binary " + BASE + " --", limit=8 * 1024 * 1024, stdout_only=True)
         if status or patch.endswith("\n[output truncated]"):
             raise RuntimeError("ARM patch extraction failed or exceeded 8 MiB")
         return patch

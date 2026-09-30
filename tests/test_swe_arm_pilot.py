@@ -77,6 +77,35 @@ def test_start_cleans_failed_worktree_and_patch_failure_is_not_empty_success(tmp
     assert not list((tmp_path / "sandboxes").iterdir())
 
 
+@pytest.mark.parametrize("patch", [b"", b"diff --git a/file b/file\n--- a/file\n+++ b/file\n"])
+def test_patch_excludes_container_stderr(tmp_path, monkeypatch, patch):
+    sandbox = ApptainerSandbox(task(), root=tmp_path)
+    sandbox.image = cached(tmp_path)
+    sandbox.work = tmp_path
+
+    def run(argv, **kwargs):
+        kwargs["stdout"].write(patch)
+        kwargs["stderr"].write(b"INFO: gocryptfs not found, will not be able to use gocryptfs\n")
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(subprocess, "run", run)
+    assert sandbox.patch() == patch.decode()
+
+
+def test_patch_preserves_failed_command_diagnostics(tmp_path, monkeypatch):
+    sandbox = ApptainerSandbox(task(), root=tmp_path)
+    sandbox.image = cached(tmp_path)
+    sandbox.work = tmp_path
+
+    def run(argv, **kwargs):
+        kwargs["stderr"].write(b"fatal: bad revision")
+        return SimpleNamespace(returncode=128)
+
+    monkeypatch.setattr(subprocess, "run", run)
+    with pytest.raises(RuntimeError, match="fatal: bad revision"):
+        sandbox.patch()
+
+
 @pytest.mark.skipif(not shutil.which("bash"), reason="Bash required")
 def test_runner_shell_syntax():
     runner = Path(__file__).resolve().parents[1] / "scripts/run_swe_arm_pilot_idev.sh"
