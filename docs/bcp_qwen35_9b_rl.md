@@ -9,8 +9,8 @@ ContextGraph idev run:
 cd /work/09281/chc_1996/vista/context-graph && git pull --ff-only origin master && bash scripts/train_bcp_qwen35_9b_foldagent_32k_4node_idev.sh
 ```
 
-Qwen3.5-9B revision, data, 8192+24576 token budget, batch 32 x 8, PPO minibatch
-128, microbatch 1, learning rate, clipping, validation and checkpoint frequency
+Qwen3.5-9B revision, data, 8192+24576 token budget, batch 8 x 4, PPO minibatch
+8, microbatch 1, learning rate, clipping, validation and checkpoint frequency
 all use the shared wrapper. First node serves retrieval; the next two train;
 the fourth is untouched. FoldAgent retains its own agent and `[flat,scope]`
 `paper_signed` process rewards, rather than ContextGraph's graph rewards.
@@ -28,7 +28,7 @@ the corresponding experiment directory under `$SCRATCH/context-graph-ckpts/`.
 
 ## ContextGraph in the existing four-node idev
 
-Current ContextGraph run: **32K with FoldAgent batch settings**, 50 steps.
+Current ContextGraph run: **32K, batch 8 x 4**, 50 steps.
 Run directly in the existing **four-node idev allocation**:
 
 ```bash
@@ -37,10 +37,15 @@ cd /work/09281/chc_1996/vista/context-graph && git pull --ff-only origin master 
 
 This uses the first allocated node for retrieval and the next two for FSDP
 training. The fourth node is excluded from service launches and Ray cleanup.
-The batch remains 32 prompts x 8 rollouts, PPO minibatch configuration 128 and
-microbatch 1. Two trainer ranks divide the main-rollout count (256) and global
-PPO sequence-slot count (1024) exactly; three trainer ranks would not. Per-rank
-normalized PPO minibatch is 512 slots, accumulated one sequence at a time.
+The batch is 8 prompts x 4 rollouts, PPO minibatch configuration 8 and
+microbatch 1. Two trainer ranks divide the main-rollout count (32) and global
+PPO sequence-slot count (32) exactly; three trainer ranks would not. Per-rank
+normalized PPO minibatch is 16 slots, accumulated one sequence at a time.
+Both idev launchers select a `*_32k_small_batch` profile. This reduces the main
+rollout count eightfold from the previous 32 x 8 setting; it is no longer the
+paper batch configuration. Historical paper-batch profiles remain available.
+The smaller batch still needs a complete 32K training-step validation; it does
+not guarantee that rollout timeouts or memory pressure are eliminated.
 The Slurm allocation variables remain unchanged.
 
 The existing idev walltime applies; the launcher does not submit or extend a

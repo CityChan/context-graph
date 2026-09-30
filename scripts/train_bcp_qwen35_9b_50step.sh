@@ -6,10 +6,10 @@ case "$METHOD" in contextgraph|foldagent) ;; *) echo "Invalid method: $METHOD" >
 export BCP_TRAIN_PROFILE=${BCP_TRAIN_PROFILE:-default}
 case "$BCP_TRAIN_PROFILE" in
   default) ;;
-  foldagent_32k_paper_batch)
+  foldagent_32k_paper_batch|foldagent_32k_small_batch)
     [ "$METHOD" = foldagent ] && [ "${SMOKE_TEST:-0}" != 1 ] || { echo "FoldAgent paper-batch profile requires foldagent normal training" >&2; exit 2; }
     ;;
-  contextgraph_32k_paper_batch|contextgraph_64k_paper_batch)
+  contextgraph_32k_paper_batch|contextgraph_32k_small_batch|contextgraph_64k_paper_batch)
     [ "$METHOD" = contextgraph ] && [ "${SMOKE_TEST:-0}" != 1 ] || { echo "Paper-batch profile requires contextgraph normal training" >&2; exit 2; }
     ;;
   *) echo "Unknown BCP_TRAIN_PROFILE: $BCP_TRAIN_PROFILE" >&2; exit 2 ;;
@@ -25,7 +25,7 @@ unset BC_ACTIVE_NODE_COUNT
 export EXPECTED_NUM_NODES=5
 PLANNED_STEPS=50
 RUN_MODE=train
-if [[ "$BCP_TRAIN_PROFILE" = *_32k_paper_batch ]]; then RUN_MODE=train32k; fi
+if [[ "$BCP_TRAIN_PROFILE" = *_32k_*_batch ]]; then RUN_MODE=train32k; fi
 if [ "$BCP_TRAIN_PROFILE" = contextgraph_64k_paper_batch ]; then RUN_MODE=train64k; fi
 if [ "${SMOKE_TEST:-0}" = 1 ]; then
   export EXPECTED_NUM_NODES=4
@@ -35,7 +35,7 @@ fi
 case "${BCP_TRAIN_TOPOLOGY:-full}" in
   full) ;;
   idev4_dp2)
-    [[ "$BCP_TRAIN_PROFILE" = *_32k_paper_batch ]] && [ "${SMOKE_TEST:-0}" != 1 ] || { echo "idev4_dp2 requires a 32K paper-batch profile" >&2; exit 2; }
+    [[ "$BCP_TRAIN_PROFILE" = *_32k_*_batch ]] && [ "${SMOKE_TEST:-0}" != 1 ] || { echo "idev4_dp2 requires a 32K training profile" >&2; exit 2; }
     [ "$ALLOCATED_NODE_COUNT" -eq 4 ] || { echo "idev4_dp2 requires exactly 4 allocated nodes" >&2; exit 2; }
     UNUSED_NODES=("${NODES[@]:3}")
     NODES=("${NODES[@]:0:3}")
@@ -129,6 +129,10 @@ export TRAIN_BATCH_SIZE=32 ROLLOUT_N=8 PPO_MINI_BATCH_SIZE=32
 export BC_APPLY_YARN=0
 if [[ "$BCP_TRAIN_PROFILE" = *_32k_paper_batch ]]; then
   export PPO_MINI_BATCH_SIZE=128
+fi
+if [[ "$BCP_TRAIN_PROFILE" = *_32k_small_batch ]]; then
+  # 8 prompts x 4 rollouts; PPO expands prompt units to 32 global slots.
+  export TRAIN_BATCH_SIZE=8 ROLLOUT_N=4 PPO_MINI_BATCH_SIZE=8
 fi
 if [ "$BCP_TRAIN_PROFILE" = contextgraph_64k_paper_batch ]; then
   export RESPONSE_LENGTH=57344 CONTEXT_LENGTH=65536 PPO_MINI_BATCH_SIZE=128

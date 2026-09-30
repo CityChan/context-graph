@@ -232,11 +232,11 @@ done
     ('contextgraph_32k_paper_batch', 4, 32768, 128, 'full'),
     ('contextgraph_64k_paper_batch', 5, 65536, 128, 'full'),
     ('contextgraph_64k_paper_batch', 4, 65536, 128, 'full'),
-    ('contextgraph_32k_paper_batch', 4, 32768, 128, 'idev4_dp2'),
-    ('contextgraph_32k_paper_batch', 3, 32768, 128, 'idev4_dp2'),
-    ('contextgraph_32k_paper_batch', 5, 32768, 128, 'idev4_dp2'),
-    ('foldagent_32k_paper_batch', 4, 32768, 128, 'idev4_dp2'),
-    ('foldagent_32k_paper_batch', 3, 32768, 128, 'idev4_dp2'),
+    ('contextgraph_32k_small_batch', 4, 32768, 8, 'idev4_dp2'),
+    ('contextgraph_32k_small_batch', 3, 32768, 8, 'idev4_dp2'),
+    ('contextgraph_32k_small_batch', 5, 32768, 8, 'idev4_dp2'),
+    ('foldagent_32k_small_batch', 4, 32768, 8, 'idev4_dp2'),
+    ('foldagent_32k_small_batch', 3, 32768, 8, 'idev4_dp2'),
     ('foldagent_32k_paper_batch', 5, 32768, 128, 'full'),
 ])
 def test_training_profile_reaches_base_launcher(tmp_path, profile, nodes, context, mini, topology):
@@ -295,8 +295,9 @@ def test_training_profile_reaches_base_launcher(tmp_path, profile, nodes, contex
     assert (tmp_path / 'active-nodes').read_text().splitlines() == [f'node{i}' for i in range(active_nodes)]
     # Selection must not overwrite Slurm's description of the allocation.
     assert captured['SLURM_JOB_NODELIST'] == 'fixture'
-    for key, value in dict(EXPECTED_NUM_NODES=str(active_nodes), TOTAL_TRAINING_STEPS='50', TRAIN_BATCH_SIZE='32',
-                           ROLLOUT_N='8', PPO_MINI_BATCH_SIZE=str(mini), PROMPT_LENGTH='8192',
+    small_batch = profile.endswith('_small_batch')
+    for key, value in dict(EXPECTED_NUM_NODES=str(active_nodes), TOTAL_TRAINING_STEPS='50', TRAIN_BATCH_SIZE='8' if small_batch else '32',
+                           ROLLOUT_N='4' if small_batch else '8', PPO_MINI_BATCH_SIZE=str(mini), PROMPT_LENGTH='8192',
                            RESPONSE_LENGTH=str(context - 8192), CONTEXT_LENGTH=str(context),
                            BC_APPLY_YARN='0', VAL_BEFORE_TRAIN='True').items():
         assert captured[key] == value
@@ -314,7 +315,7 @@ def test_training_profile_reaches_base_launcher(tmp_path, profile, nodes, contex
     assert 'fixture' not in config  # No judge credential in the manifest.
     if context == 65536:
         assert captured['EXPERIMENT_NAME'].startswith('train64k_')
-    elif profile.endswith('_32k_paper_batch'):
+    elif '_32k_' in profile:
         assert captured['EXPERIMENT_NAME'].startswith(f'train32k_qwen35_9b_bcp_{method}_')
 
 
