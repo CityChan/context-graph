@@ -106,6 +106,43 @@ def test_patch_preserves_failed_command_diagnostics(tmp_path, monkeypatch):
         sandbox.patch()
 
 
+def test_private_grading_environment_mount_and_cleanup(tmp_path, monkeypatch):
+    sandbox = ApptainerSandbox(task(), root=tmp_path)
+    sandbox.image = cached(tmp_path)
+    sandbox.work = tmp_path / "sandboxes/sympy-test"
+    sandbox.work.mkdir(parents=True)
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append(argv)
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(subprocess, "run", run)
+    sandbox.prepare_grading_environment()
+    runtime = sandbox.runtime
+    assert f"{runtime}:/runtime-copy" in calls[0]
+    assert "cp -a --no-preserve=ownership /opt/miniconda3/envs/testbed/." in calls[0][-1]
+    sandbox._exec("true")
+    assert f"{runtime}:/opt/miniconda3/envs/testbed" in calls[1]
+    sandbox.close()
+    assert not runtime.exists()
+
+
+@pytest.mark.skipif(not shutil.which("bash"), reason="Bash required")
+@pytest.mark.parametrize("install_exit", [0, 1])
+def test_setup_failure_stops_but_test_failure_keeps_end_marker(tmp_path, install_exit):
+    from scripts.grade_swe_arm_pilot import checked_eval_script
+    script = "set -uxo pipefail\npython -m pip install -e .\n: '>>>>> Start Test Output'\nfalse\necho TESTS_COMPLETED\n"
+    # Shell fixture: stand in for pip/import, exercising the actual error boundaries.
+    prefix = f"python() {{ return {install_exit}; }}\n"
+    target = tmp_path / "eval.sh"
+    target.write_text(prefix + checked_eval_script(script), newline="\n")
+    result = subprocess.run([shutil.which("bash"), target.as_posix()], capture_output=True,
+                            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+    assert (b"TESTS_COMPLETED" in result.stdout) == (install_exit == 0)
+    assert result.returncode == install_exit
+
+
 @pytest.mark.skipif(not shutil.which("bash"), reason="Bash required")
 def test_runner_shell_syntax():
     runner = Path(__file__).resolve().parents[1] / "scripts/run_swe_arm_pilot_idev.sh"
@@ -114,10 +151,10 @@ def test_runner_shell_syntax():
     assert result.returncode == 0, result.stderr
 
 
-@pytest.mark.parametrize("mode", ["pass", "fail", "apply_failed", "wrapper", "timeout", "missing_tests"])
+@pytest.mark.parametrize("mode", ["pass", "fail", "apply_failed", "wrapper", "timeout", "missing_tests", "setup_failed", "missing_import"])
 def test_grading_distinguishes_model_failure_from_infrastructure(tmp_path, monkeypatch, mode):
     from scripts import grade_swe_arm_pilot as grade
-    spec = SimpleNamespace(eval_script="upstream test script", FAIL_TO_PASS=["test_bug"], PASS_TO_PASS=[])
+    spec = SimpleNamespace(eval_script="set -uxo pipefail\npython -m pip install -e .\n: '>>>>> Start Test Output'\nfalse\n", FAIL_TO_PASS=["test_bug"], PASS_TO_PASS=[])
     monkeypatch.setitem(sys.modules, "swebench.harness.test_spec.test_spec",
                         SimpleNamespace(make_test_spec=lambda task: spec))
     monkeypatch.setitem(sys.modules, "swebench.harness.grading", SimpleNamespace(
@@ -129,16 +166,17 @@ def test_grading_distinguishes_model_failure_from_infrastructure(tmp_path, monke
         provenance = {"sif_sha256": "fixture"}
         def __init__(self, *a, **k): pass
         def start(self): pass
+        def prepare_grading_environment(self): pass
         def _exec(self, command, **kwargs):
             if "git apply" in command:
                 return (1 if mode == "apply_failed" else 0,
                         "site refused execution" if mode == "wrapper" else "SWE_ARM_APPLY_STARTED")
             assert kwargs["inputs"] == tmp_path / "grade/inputs"
-            return (124 if mode == "timeout" else 0), "test log"
+            return (124 if mode == "timeout" else 1 if mode == "setup_failed" else 0), ("test log" if mode == "missing_import" else "SWE_ARM_IMPORT_OK /testbed/sympy/__init__.py\ntest log")
         def close(self): Sandbox.closed = True
 
     monkeypatch.setattr(grade, "ApptainerSandbox", Sandbox)
-    if mode in {"wrapper", "timeout", "missing_tests"}:
+    if mode in {"wrapper", "timeout", "missing_tests", "setup_failed", "missing_import"}:
         with pytest.raises(RuntimeError):
             grade.evaluate(task(), "patch", tmp_path / "grade", tmp_path, 10)
         assert not (tmp_path / "grade/report.json").exists()

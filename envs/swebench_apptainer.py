@@ -41,6 +41,8 @@ class ApptainerSandbox:
         self.root = Path(root).resolve()
         self.tool_timeout = tool_timeout
         self.work = None
+        self.runtime = None
+        self.runtime_ready = False
         self.provenance = {}
 
     def start(self):
@@ -64,6 +66,19 @@ class ApptainerSandbox:
         if status:
             raise RuntimeError(f"ARM sandbox initialization failed: {output}")
 
+    def prepare_grading_environment(self):
+        """Own a fresh writable copy at the original prefix; never mutate the SIF."""
+        if self.work is None or self.runtime is not None:
+            raise RuntimeError("Expected a started sandbox without a grading environment")
+        self.runtime = Path(tempfile.mkdtemp(prefix="runtime-", dir=self.root / "sandboxes"))
+        status, output = self._exec(
+            "set -e; cp -a --no-preserve=ownership /opt/miniconda3/envs/testbed/. /runtime-copy/; "
+            "chmod -R u+rwX /runtime-copy", timeout=600)
+        if status:
+            raise RuntimeError(f"Cannot prepare writable grading environment: {output}")
+        self.runtime_ready = True
+        self.provenance["grading_environment"] = "private writable copy at original testbed prefix"
+
     def _exec(self, command, *, limit=24000, initializing=False, timeout=None, inputs=None,
               stdout_only=False):
         if self.work is None:
@@ -74,6 +89,9 @@ class ApptainerSandbox:
                 "--bind", f"{self.work}:{target}", "--pwd", target]
         if inputs is not None:
             argv += ["--bind", f"{Path(inputs).resolve()}:/grading-input:ro"]
+        if self.runtime is not None:
+            runtime_target = "/opt/miniconda3/envs/testbed" if self.runtime_ready else "/runtime-copy"
+            argv += ["--bind", f"{self.runtime}:{runtime_target}"]
         argv += [str(self.image), "/bin/bash", "--noprofile", "--norc", "-c",
                  "export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 PYTHONNOUSERSITE=1; " + command]
         # Strip host credentials, preload libraries, and implicit container binds.
@@ -106,6 +124,13 @@ class ApptainerSandbox:
         return patch
 
     def close(self):
+        if self.runtime is not None:
+            runtime = self.runtime.resolve()
+            if runtime.parent != (self.root / "sandboxes").resolve() or not runtime.name.startswith("runtime-"):
+                raise RuntimeError("Refusing to clean an unmanaged grading environment")
+            shutil.rmtree(runtime)
+            self.runtime = None
+            self.runtime_ready = False
         if self.work is not None:
             # Delete only the fresh directory created by this sandbox instance.
             work = self.work.resolve()

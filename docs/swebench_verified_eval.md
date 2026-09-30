@@ -356,3 +356,30 @@ evaluation, and record Docker/runtime/model versions with the resulting artifact
 References: [official evaluation guide](https://www.swebench.com/SWE-bench/guides/evaluation/),
 [pinned official harness](https://github.com/SWE-bench/SWE-bench/tree/3f01bd622c0a22c00406139f69a234ef08225f22),
 [Verified dataset](https://huggingface.co/datasets/princeton-nlp/SWE-bench_Verified).
+# ARM grading environment repair
+
+The initial ARM pilot merged container stderr into exported patches and attempted
+an editable install into the read-only SIF environment. Patch extraction now keeps
+stdout separate. Grading copies `/opt/miniconda3/envs/testbed` into a fresh private
+scratch directory and binds that copy back at the same prefix. The copy is removed
+when grading finishes; the shared image and agent environment are unchanged.
+This uses Apptainer [writable bind mounts](https://apptainer.org/docs/user/1.1/bind_paths_and_mounts.html).
+
+The pinned upstream evaluation script is saved as `upstream_eval.sh`. Its executed
+copy enables shell error checking during setup and verifies that SymPy imports from
+`/testbed` using the testbed Python prefix. Error checking is disabled at the upstream
+test-output boundary so failing tests still produce complete grading logs. Setup or
+import verification failures abort grading rather than count as unresolved tasks.
+
+Before another generation run, use the existing compute allocation to calibrate
+only (no model endpoint or GPU inference needed):
+
+```bash
+cd /work/09281/chc_1996/vista/context-graph && SWE_AGENT_ENV=/scratch/09281/chc_1996/context-graph-swe/envs/agent-direct-Rs4ngP bash scripts/run_swe_arm_pilot_idev.sh calibrate
+```
+
+Require `SWE_ARM_CALIBRATION_COMPLETE` and inspect the new calibration logs for
+successful installation and `SWE_ARM_IMPORT_OK /testbed/...`. Earlier calibration
+results do not validate this repaired installation path. Local tests cover shell
+failure propagation, mount isolation, and patch extraction; Vista execution is
+still required to validate the writable environment copy on the actual image.

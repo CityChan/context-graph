@@ -31,6 +31,23 @@ def require_harness():
         raise RuntimeError("Install requirements_swebench_eval.txt in the grading venv")
 
 
+def checked_eval_script(script):
+    """Fail on setup errors, but retain upstream handling of failed tests."""
+    header = "set -uxo pipefail\n"
+    install = "python -m pip install -e .\n"
+    marker = ": '>>>>> Start Test Output'\n"
+    if any(script.count(part) != 1 for part in (header, install, marker)):
+        raise RuntimeError("Pinned SymPy evaluation script changed; review setup boundaries")
+    check = ('python -c "import pathlib,sys,sympy; '
+             'p=pathlib.Path(sympy.__file__).resolve(); '
+             "assert p.is_relative_to(pathlib.Path('/testbed')), str(p); "
+             "assert sys.prefix == '/opt/miniconda3/envs/testbed', sys.prefix; "
+             "print('SWE_ARM_IMPORT_OK', p)" + '"\n')
+    return (script.replace(header, "set -euxo pipefail\n")
+            .replace(install, install + check)
+            .replace(marker, "set +e\n" + marker))
+
+
 def evaluate(task, patch, folder, root, timeout):
     from swebench.harness.test_spec.test_spec import make_test_spec
     from swebench.harness.grading import get_eval_report, get_logs_eval
@@ -38,12 +55,14 @@ def evaluate(task, patch, folder, root, timeout):
     inputs = folder / "inputs"
     inputs.mkdir()
     spec = make_test_spec(task)
-    (inputs / "eval.sh").write_text(spec.eval_script, encoding="utf8", newline="\n")
+    (folder / "upstream_eval.sh").write_text(spec.eval_script, encoding="utf8", newline="\n")
+    (inputs / "eval.sh").write_text(checked_eval_script(spec.eval_script), encoding="utf8", newline="\n")
     (inputs / "model.patch").write_text(patch, encoding="utf8", newline="\n")
     prediction = {"instance_id": INSTANCE, "model_name_or_path": "arm-pilot", "model_patch": patch}
     sandbox = ApptainerSandbox(task, root=root)
     try:
         sandbox.start()
+        sandbox.prepare_grading_environment()
         write_json(folder / "image.json", sandbox.provenance)
         if patch.strip():
             status, text = sandbox._exec("echo SWE_ARM_APPLY_STARTED; git apply --verbose /grading-input/model.patch", inputs=inputs)
@@ -62,6 +81,8 @@ def evaluate(task, patch, folder, root, timeout):
         log.write_text(text, encoding="utf8")
         if status in (124, 137) or text.endswith("\n[output truncated]"):
             raise RuntimeError("Grading timeout or truncated output; not a model failure")
+        if status or not any(line.startswith("SWE_ARM_IMPORT_OK /testbed/") for line in text.splitlines()):
+            raise RuntimeError("Grading setup/import verification failed; inspect test_output.txt")
         statuses, found = get_logs_eval(spec, str(log))
         if not found or not set(statuses).intersection(spec.FAIL_TO_PASS + spec.PASS_TO_PASS):
             raise RuntimeError("Missing parseable task test results; inspect test_output.txt")

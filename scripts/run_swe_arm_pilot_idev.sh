@@ -6,12 +6,12 @@ set -euo pipefail
 case "$(hostname -s)" in login*) echo 'Run this on the compute node'; exit 2;; esac
 cd "${PROJECT_ROOT:-/work/09281/chc_1996/vista/context-graph}"
 method=${1:-contextgraph}
-case "$method" in contextgraph|foldagent|react) ;; *) echo 'Expected contextgraph, foldagent, or react'; exit 2;; esac
+case "$method" in contextgraph|foldagent|react|calibrate) ;; *) echo 'Expected contextgraph, foldagent, react, or calibrate'; exit 2;; esac
 root="$(realpath -e "$SCRATCH")/context-graph-swe"
 agent_env=${SWE_AGENT_ENV:?Set SWE_AGENT_ENV to the dedicated agent venv printed by setup}
 agent_python="$agent_env/bin/python"
 endpoint=${SWE_ENDPOINT:-http://127.0.0.1:18000}
-curl --connect-timeout 5 --max-time 15 -fsS "$endpoint/v1/models"
+if [[ "$method" != calibrate ]]; then curl --connect-timeout 5 --max-time 15 -fsS "$endpoint/v1/models"; fi
 set +u
 module load tacc-apptainer/1.4.1
 set -u
@@ -30,6 +30,7 @@ if [[ ! -x "$grade_env/bin/python" ]]; then "$agent_python" -m venv "$grade_env"
 data="$root/data/verified-c104f840"
 stage=calibration
 "$grade_env/bin/python" scripts/grade_swe_arm_pilot.py --data-dir "$data" --apptainer-root "$root" --output "$run/calibration" --calibrate
+if [[ "$method" == calibrate ]]; then echo "SWE_ARM_CALIBRATION_COMPLETE artifacts=$run"; exit 0; fi
 stage=generation
 model="$SCRATCH/hf_cache/hub/models--Qwen--Qwen3.5-9B/snapshots/c202236235762e1c871ad0ccb60c8ee5ba337b9a"
 # Apply the same Vista Torch TLS preload used by the working model server.
