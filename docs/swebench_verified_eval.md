@@ -11,6 +11,21 @@ No training is performed. Default model: `Qwen/Qwen3.5-9B`.
 
 Run on the Vista login node:
 
+For Python/data/tokenizer preparation directly with Bash, without an allocation:
+
+```bash
+cd /work/09281/chc_1996/vista/context-graph && git pull --ff-only origin master && bash scripts/setup_swe_verified_vista.sbatch
+```
+
+This mode uses one CPU thread for numerical libraries and installs wheels only
+(no source compilation). It prints `SWE_VISTA_PYTHON_DATA_READY`, records
+`image_preflight=pending`, and does not convert images or execute repository tests.
+No Slurm job ID is required or fabricated. If a dependency wheel is unavailable,
+installation fails explicitly. Without an allocation, this prepares only the
+Python/data part of the environment, not the full ARM execution environment.
+
+To also run the image and public-test probe inside an allocation:
+
 ```bash
 cd /work/09281/chc_1996/vista/context-graph && git pull --ff-only origin master && mkdir -p logs && sbatch scripts/setup_swe_verified_vista.sbatch
 ```

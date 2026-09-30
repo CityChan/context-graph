@@ -57,3 +57,39 @@ def test_setup_shell_syntax():
     result = subprocess.run([shutil.which("bash"), "-n", script.as_posix()], capture_output=True,
                             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
     assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.skipif(not shutil.which("bash"), reason="Bash required")
+@pytest.mark.parametrize("allocated", [False, True])
+def test_direct_setup_marks_image_pending_and_allocation_runs_probe(tmp_path, allocated):
+    root = Path(__file__).resolve().parents[1]
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts/preflight_swe_apptainer_vista.sbatch").write_text(
+        'touch "$PROJECT_ROOT/probe-ran"\n', encoding="utf8", newline="\n")
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    mocks = tmp_path / "mocks.sh"
+    mocks.write_text('''uname() { echo aarch64; }
+git() { echo fixture-commit; }
+flock() { :; }
+fake_python() {
+    mkdir -p "$4/bin"
+    printf '#!/bin/bash\\nexit 0\\n' > "$4/bin/python"
+    chmod +x "$4/bin/python"
+}
+''', encoding="utf8", newline="\n")
+    env = dict(os.environ, PROJECT_ROOT=tmp_path.as_posix(), SCRATCH=scratch.as_posix(),
+               BASH_ENV=mocks.as_posix(), SWE_BASE_PYTHON="fake_python")
+    env.pop("SLURM_JOB_ID", None)
+    if allocated:
+        env["SLURM_JOB_ID"] = "123"
+    result = subprocess.run([shutil.which("bash"), (root / "scripts/setup_swe_verified_vista.sbatch").as_posix()],
+                            env=env, text=True, capture_output=True, timeout=30,
+                            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (tmp_path / "probe-ran").exists() == allocated
+    completion = next(scratch.glob("context-graph-swe/runs/*/setup-complete.txt")).read_text()
+    assert f"image_preflight={'passed' if allocated else 'pending'}" in completion
+    assert "evaluation_performed=false" in completion
+    assert ("SWE_VISTA_SETUP_COMPLETE" in result.stdout) == allocated
+    assert ("SWE_VISTA_PYTHON_DATA_READY" in result.stdout) != allocated
