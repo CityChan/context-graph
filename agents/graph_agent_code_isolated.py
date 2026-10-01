@@ -27,6 +27,7 @@ Trade-offs vs the global variant:
 This variant is registered as agent loop name ``context_graph_isolated_agent``.
 """
 
+
 import os
 import time
 import copy
@@ -58,8 +59,8 @@ from typing import Any, Union
 from verl import DataProto
 from .utils import Agent, select_env, truncate_text, is_weird, TaskContext, run_action, AgentLoopOutput, AgentLoopMetrics
 from .finalizer import remaining_generation_tokens, step_preserving_final_answer
-from .rollout_status import classify_rollout_status
-from .prompts import BRANCH_MESSAGE, SUMMARY_PROMPT_CODE
+from .rollout_status import classify_rollout_status, validate_session_summary
+from .prompts import BRANCH_MESSAGE
 from .prompts_code import create_chat_code
 from .verifier import judge_scope
 from .context_graph import ContextGraph, GraphOpResult, NodeType, NodeStatus, EdgeRelation
@@ -127,6 +128,7 @@ async def process_item(
     tokenizer = context.tokenizer
 
     config = context.config.actor_rollout_ref.rollout
+    validate_session_summary(config.plugin)
     is_train = context.is_train
 
     if not is_train:
@@ -164,7 +166,6 @@ async def process_item(
     )
 
     branch_prompt = BRANCH_MESSAGE
-    summary_prompt = SUMMARY_PROMPT_CODE
 
     max_turn = getattr(config.plugin, 'max_turn', 64) if config.plugin else 64
     max_session = getattr(config.plugin, "max_session", 5)
@@ -175,7 +176,6 @@ async def process_item(
     if process_reward is not None and isinstance(process_reward, str) and process_reward.lower() == "none":
         process_reward = None
     max_traj = getattr(config.plugin, "max_traj", None)
-    enable_summary = getattr(config.plugin, "enable_summary", False)
 
     lambda_compact = getattr(config.plugin, "lambda_compact", 0.1)
     lambda_cost = getattr(config.plugin, "lambda_cost", 0.02)
@@ -249,7 +249,6 @@ async def process_item(
     branch_tasks = {}
     branch_return = {}
     init_len = len(agent['main'].context())
-    current = 'main'
     session_start_time = time.time()
     iteration = 0
     main_turn_count = 0   # counts only main-agent turns (not branch internals)
@@ -275,30 +274,6 @@ async def process_item(
         # add_node() resets it back to 0 whenever new content arrives this turn.
         graph.turns_since_last_node_add += 1
 
-        if enable_summary and len(agent[current].context()) - init_len > config.response_length * 0.95:
-            if len(agent) >= max_session:
-                print('[SESSION] Session OOC after session', len(agent))
-                break
-            agent[current].rollback(k=2)
-            agent[current].append({'role': 'assistant', 'content': ""})
-            agent[current].append({'role': 'user', 'content': summary_prompt})
-            session_message.append({'role': 'user', 'content': summary_prompt})
-            response = await agent[current].step()
-            session_message.append({'role': 'assistant', 'content': response})
-            if response is None:
-                break
-            summary = extract_summary(response) or response
-            graph.add_node(summary, NodeType.SUMMARY,
-                          parent_id=graph.active_node_id,
-                          edge_relation=EdgeRelation.TEMPORAL)
-            next_session_prompt = (
-                f"For this question, you have already made the following progress in previous session, "
-                f"summarized as follow:\n\n{summary}\n\nNow continue work on it.")
-            current = current + '+'
-            agent[current] = Agent(llm_client, user_prompt, tokenizer, config, prompt_turn=prompt_turn)
-            agent[current].append({'role': 'assistant', 'content': ""})
-            agent[current].append({'role': 'user', 'content': next_session_prompt})
-            session_message.append({'role': 'user', 'content': next_session_prompt})
 
         response = await agent['main'].step()
 

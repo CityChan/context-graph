@@ -46,8 +46,9 @@ Now give me your judge of <good> or <error>, and a one-sentence, very brief expl
         return 1, judge_results
     elif '<fine>' in judge_results:
         return 0, judge_results
-    else:
+    elif '<error>' in judge_results:
         return -1, judge_results
+    return 0, f"[scope check ungraded] {judge_results}"
 
 
 # async def judge_turn(assign, completion):

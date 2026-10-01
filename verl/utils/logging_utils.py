@@ -14,8 +14,29 @@
 
 import logging
 import os
+from copy import deepcopy
 
 import torch
+from omegaconf import OmegaConf
+
+
+_SENSITIVE_ENV_MARKERS = ("KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIAL")
+
+
+def redact_ray_init_kwargs(ray_init_kwargs):
+    """Return a log-safe copy without exposing credentials in env vars."""
+    if OmegaConf.is_config(ray_init_kwargs):
+        redacted = OmegaConf.to_container(ray_init_kwargs, resolve=False)
+    else:
+        redacted = deepcopy(ray_init_kwargs)
+
+    env_vars = redacted.get("runtime_env", {}).get("env_vars", {})
+    if isinstance(env_vars, dict):
+        for name in env_vars:
+            upper_name = str(name).upper()
+            if any(marker in upper_name for marker in _SENSITIVE_ENV_MARKERS):
+                env_vars[name] = "[REDACTED]"
+    return redacted
 
 
 def set_basic_config(level):

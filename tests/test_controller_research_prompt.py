@@ -20,8 +20,9 @@ def test_controller_prompt_restores_deep_research_workflow():
 
     assert "Construct your research plan" in user_prompt
     assert "Branch sub-tasks to explore independent angles" in user_prompt
-    assert "unlimited thinking budget" in user_prompt
-    assert "Do not stop at the first plausible answer" in user_prompt
+    assert "unlimited thinking budget" not in user_prompt
+    assert "if the remaining budget permits" in user_prompt
+    assert "Explicit harness instructions to finalize take precedence" in user_prompt
 
 
 def test_controller_prompt_keeps_graph_protocol_isolated():

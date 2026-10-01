@@ -9,12 +9,16 @@ import ast
 import asyncio, json, httpx
 import logging
 import string
+if __package__:
+    from .judge_client import call_openai_raw
+else:
+    from judge_client import call_openai_raw
 
 # call this once early (after your logging.basicConfig if you use it)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 
-GRADER_TEMPLATE = """
+GRADER_TEMPLATE = r"""
 Judge whether the following [response] to [question] is correct or not based on the precise and unambiguous [correct_answer] below.
 
 [question]: {question}
@@ -190,41 +194,6 @@ def searchr1_em_score(labels, prediction: str) -> bool:
     normalized_prediction = searchr1_normalize_answer(prediction)
     return any(searchr1_normalize_answer(label) == normalized_prediction for label in labels)
 
-
-async def call_openai(messages, model='gpt-5-nano', max_retries=3):
-    openai_url = os.getenv("OPENAI_URL")
-    for attempt in range(max_retries):
-        try:
-            async with httpx.AsyncClient(timeout=300.0) as c:
-                r = await c.post(openai_url, json={
-                    "model": model,
-                    "messages": messages
-                })
-                r.raise_for_status()
-                return r.json()["content"]
-        except Exception as e:
-            if attempt == max_retries - 1:
-                print(f"[CALL OPENAI] Error after {max_retries} attempts: {str(e)}")
-                return f"Error after {max_retries} attempts: {str(e)}"
-            await asyncio.sleep(1 * (attempt + 1))
-    return ""
-
-
-async def call_openai_raw(messages, model='gpt-4o-mini', max_retries=3):
-    from openai import AsyncOpenAI
-    if isinstance(messages, str):
-        messages = [{'role': 'user', 'content': messages}]
-    client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-    for attempt in range(max_retries):
-        try:
-            resp = await client.chat.completions.create(model=model, messages=messages)
-            return resp.choices[0].message.content or ""
-        except Exception as e:
-            if attempt == max_retries - 1:
-                print(f"[OPENAI] Error after {max_retries} attempts: {e}")
-                return f"Error: {e}"
-            await asyncio.sleep(1 * (attempt + 1))
-    return ""
 
 async def judge(question, correct_answer, predicted_answer, audit_sink=None):
     # Patch browsecomp typo
@@ -479,6 +448,7 @@ class LocalSearch:
         self.open_page_chars = max(256, int(getattr(self.config.plugin, "open_page_chars", 48000)))
         self.visited_pages = set()
         self.is_finish = False
+        self.emergency_finish_wrapped = False
 
     async def init_env(self, item):
         extra = item.non_tensor_batch['extra_info']
@@ -521,7 +491,6 @@ class LocalSearch:
                 name = fn['function']
                 if name == 'search':
                     self.stats['search'] += 1
-                    self.stats['is_search'] = 1
                     query = fn['arguments'].get('query', '')
                     topk = (lambda v: int(v) if str(v).isdigit() else 10)(fn['arguments'].get('topk', 10))
                     topk = min(max(topk, 1), self.search_topk_cap)
@@ -530,6 +499,7 @@ class LocalSearch:
                     else:
                         observation += f'[Search Results for "{query}"]\n'
                         serp = await self.client.search(query, 50)
+                        self.stats['is_search'] = 1
                         show_topk = 0
                         for i, page in enumerate(serp, 1):
                             # Formatted entry for each search result
@@ -578,8 +548,6 @@ class LocalSearch:
                             )
                         observation += "\n"
                 elif name == 'finish':
-                    self.stats['is_finish'] = 1
-                    self.is_finish = True
                     answer = fn['arguments'].get('answer', "")
                     explanation = fn['arguments'].get('explanation', None)
                     confidence = fn['arguments'].get('confidence', None)
@@ -594,13 +562,11 @@ class LocalSearch:
                         if self.predicted_answer[0] != answer:
                             self.stats['change_answer'] += 1
 
-                    if self.stats['search'] == 0:
-                        if em_score(self.label_answer, answer) and self.must_search:
+                    if not self.stats['is_search']:
+                        if self.must_search:
                             observation = "Answer submission failed. You MUST use the search tool to verify the answer and all the evidence, and cite the correct source document in your explanation to support your claim."
-                            self.must_search = False
                             return {'observation': observation.strip()}
                         answer = ""  # No search no reward
-                    self.predicted_answer = (answer, explanation, confidence)
 
                     if 'insufficient' in answer.lower() and self.donotgiveup:
                         observation = "The answer is guaranteed to be found through sufficient search and reading. Do not give up; try searching deeper or using alternative approaches."
@@ -609,7 +575,7 @@ class LocalSearch:
 
                     if '<q1>' in self.label_answer:
                         label_answer_dict = extract_q_dict(self.label_answer)
-                        predicted_answer_dict = extract_q_dict(self.predicted_answer[0])
+                        predicted_answer_dict = extract_q_dict(answer)
                         missing = []
                         for k in label_answer_dict:
                             if k not in predicted_answer_dict:
@@ -633,6 +599,9 @@ Take Corrective Action: If you notice any gaps or unsupported points, revisit th
 Once you’re confident everything is covered and verified, submit the final answer and include enough citations for all supporting evidence."""
                         self.double_check = False
                         return {'observation': observation.strip()}
+                    self.predicted_answer = (answer, explanation, confidence)
+                    self.stats['is_finish'] = 1
+                    self.is_finish = True
                     return {'action': 'finish'}
                 else:
                     # Clearer error for unsupported functions
@@ -696,41 +665,18 @@ Once you’re confident everything is covered and verified, submit the final ans
         )
 
     async def get_reward(self, item, messages, context):
+        try:
+            return await self._get_reward(item, messages, context)
+        finally:
+            await self.client.close()
+
+    async def _get_reward(self, item, messages, context):
         if self.env_fail:  # If env fail, direct return 0 reward
             return "", 0, {}
-        if self.predicted_answer is None:
-            # Fallback: model didn't emit a parseable <answer>...</answer> tag.
-            # This is common under greedy decoding (do_sample=False) at val time:
-            # sampled training rollouts hit the format, but greedy collapses to a
-            # search-only mode that never finalizes. Recover the signal by taking
-            # the last assistant message and letting the judge (em_score /
-            # relaxed_em / LLM grader) handle extraction.
-            last_assistant_text = ""
-            for m in reversed(messages or []):
-                role = m.get("role") if isinstance(m, dict) else getattr(m, "role", None)
-                if role == "assistant":
-                    content = m.get("content") if isinstance(m, dict) else getattr(m, "content", "")
-                    last_assistant_text = (content or "").strip()
-                    break
-            if not last_assistant_text:
-                return "", 0, {}
-            # Try a looser regex grab first: "Answer: X" / "answer is X" / final line
-            ans = None
-            mm = re.search(r"(?:^|\n)\s*(?:final\s+answer|answer)\s*[:=]\s*(.+?)(?:\n|$)",
-                           last_assistant_text, re.IGNORECASE)
-            if mm:
-                ans = mm.group(1).strip().rstrip(".")
-            if not ans:
-                # last non-empty line
-                for line in reversed(last_assistant_text.splitlines()):
-                    line = line.strip()
-                    if line:
-                        ans = line.rstrip(".")
-                        break
-            ans = ans or last_assistant_text
-            self.predicted_answer = (ans, "", 0.0)
-        # print(self.label_answer)
-        # print(self.predicted_answer[0])
+        if not self.is_finish or self.predicted_answer is None:
+            # A search query, rejected finish, or unsubmitted guess is not an
+            # answer. Only the environment's accepted finish can earn reward.
+            return "", 0, {}
         reward = await self.score_answer(
             self.predicted_answer[0], audit_sink=self.judge_audit
         )

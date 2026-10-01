@@ -20,6 +20,11 @@ import sys
 import threading
 from collections import deque, defaultdict
 
+if __package__:
+    from .async_results import deliver_result
+else:  # Also support python envs/search_server.py.
+    from async_results import deliver_result
+
 import torch
 import torch.nn.functional as F
 import numpy as np
@@ -412,7 +417,7 @@ class HighThroughputSearchServer:
 
                 if request_id in self.pending_requests:
                     future = self.pending_requests.pop(request_id)
-                    future.set_result(result)
+                    deliver_result(future, result)
 
             except Empty:
                 continue
@@ -464,6 +469,10 @@ class HighThroughputSearchServer:
         except asyncio.TimeoutError:
             self.pending_requests.pop(request_id, None)
             raise HTTPException(status_code=408, detail="Timeout")
+        finally:
+            # Also remove cancelled/disconnected requests; CancelledError does
+            # not pass through the timeout handler.
+            self.pending_requests.pop(request_id, None)
 
     def shutdown(self):
         """Clean shutdown"""

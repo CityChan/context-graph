@@ -1,4 +1,5 @@
 import asyncio
+import pytest
 from types import SimpleNamespace
 
 from agents.finalizer import (
@@ -298,3 +299,46 @@ def test_finalizer_repairs_finish_call_with_missing_answer():
 
     assert finished is True
     assert "<parameter=answer>Best effort:" in env.calls[0]
+
+
+@pytest.mark.parametrize("response", [
+    "<think>Paris is a candidate</think><function=search><parameter=query>Paris</parameter></function>",
+    "<function=finish><parameter=answer>Paris</parameter></function><function=search></function>",
+    "<function=branch><parameter=prompt>Research Paris</parameter></function>",
+    "<think>Paris might be the answer",  # Truncated reasoning, no final answer.
+    "<function=finish><parameter=explanation>Paris</parameter></function>",
+])
+def test_finalizer_never_scores_reasoning_or_research_arguments(response):
+    from agents.agent_text import extract_fn_call
+
+    env = FakeEnv()
+    asyncio.run(submit_emergency_final_answer(
+        FakeAgent(response=response), env, 30, fake_action_runner,
+    ))
+    call = extract_fn_call(env.calls[0])
+    assert call["function"] == "finish"
+    assert "Paris" not in call["arguments"]["answer"]
+    assert env.emergency_finish_wrapped
+
+
+def test_finalizer_strips_thinking_before_wrapping_plain_answer():
+    env = FakeEnv()
+    asyncio.run(submit_emergency_final_answer(
+        FakeAgent(response="<think>London?</think>Paris"), env, 30, fake_action_runner,
+    ))
+    assert "<parameter=answer>Paris</parameter>" in env.calls[0]
+    assert "London" not in env.calls[0]
+
+
+def test_finalizer_does_not_retry_an_environment_rejection():
+    calls = []
+
+    async def reject(env, response):
+        calls.append(response)
+        return "Search is required before finish"
+
+    finished = asyncio.run(submit_emergency_final_answer(
+        FakeAgent(response="Paris"), FakeEnv(), 30, reject,
+    ))
+    assert not finished
+    assert len(calls) == 1

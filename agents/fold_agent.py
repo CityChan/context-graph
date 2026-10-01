@@ -24,8 +24,8 @@ from .finalizer import (
     step_preserving_final_answer,
     submit_emergency_final_answer,
 )
-from .rollout_status import classify_rollout_status
-from .prompts import create_chat, BRANCH_MESSAGE_SEARCH, BRANCH_MESSAGE, SUMMARY_PROMPT_CODE, SUMMARY_PROMPT_SEARCH
+from .rollout_status import classify_rollout_status, validate_session_summary
+from .prompts import create_chat, BRANCH_MESSAGE_SEARCH, BRANCH_MESSAGE
 from .verifier import judge_scope
 
 
@@ -42,6 +42,7 @@ async def process_item(
     tokenizer = context.tokenizer
 
     config = context.config.actor_rollout_ref.rollout
+    validate_session_summary(config.plugin)
     is_train = context.is_train
 
     if not is_train:
@@ -75,7 +76,6 @@ async def process_item(
     user_prompt = create_chat(env.instance_info['problem_statement'], workflow, item)
 
     branch_prompt = BRANCH_MESSAGE_SEARCH if 'search' in workflow else BRANCH_MESSAGE
-    summary_prompt = SUMMARY_PROMPT_SEARCH if 'search' in workflow else SUMMARY_PROMPT_CODE
 
     max_turn = getattr(config.plugin, 'max_turn', 64) if config.plugin else 64
     final_answer_reserve = max(int(getattr(config.plugin, 'final_answer_reserve', 0) or 0), 0)
@@ -94,7 +94,6 @@ async def process_item(
     if process_reward is not None and isinstance(process_reward, str) and process_reward.lower() == "none":
         process_reward = None
     max_traj = getattr(config.plugin, "max_traj", None)
-    enable_summary = getattr(config.plugin, "enable_summary", False)
 
     llm_client = context.llm_client
 
@@ -105,7 +104,6 @@ async def process_item(
     branch_tasks = {}
     branch_return = {}
     init_len = len(agent['main'].context())
-    current = 'main'
     session_start_time = time.time()
     iteration = 0
     mask_rollout = True  # If True then no grad update on this traj
@@ -123,27 +121,6 @@ async def process_item(
 
         iteration += 1
 
-        if enable_summary and len(agent[current].context()) - init_len > config.response_length * 0.95:  # summary
-            if len(agent) >= max_session:
-                print('[SESSION] Session OOC after session', len(agent))
-                break
-            agent[current].rollback(k=2)  # rollback last turn
-            agent[current].append({'role': 'assistant', 'content': "", })
-            agent[current].append({'role': 'user', 'content': summary_prompt})
-            session_message.append({'role': 'user', 'content': summary_prompt})
-            response = await agent[current].step()
-            session_message.append({'role': 'assistant', 'content': response})
-            if response is None:
-                break
-            summary = extract_summary(response) or response
-            next_session_prompt = (
-                f"For this question, you have already made the following progress in previous session, "
-                f"summarized as follow:\n\n{summary}\n\nNow continue work on it.")
-            current = current + '+'
-            agent[current] = Agent(llm_client, user_prompt, tokenizer, config, prompt_turn=prompt_turn)
-            agent[current].append({'role': 'assistant', 'content': ""})
-            agent[current].append({'role': 'user', 'content': next_session_prompt})
-            session_message.append({'role': 'user', 'content': next_session_prompt})
 
         response = await step_preserving_final_answer(
             agent['main'], protected_final_answer_budget

@@ -2,7 +2,7 @@ import pytest
 
 pytest.importorskip("ray")
 
-from verl.trainer.main_ppo import _redact_ray_init_kwargs
+from verl.utils.logging_utils import redact_ray_init_kwargs as _redact_ray_init_kwargs
 
 
 def test_redact_ray_init_kwargs_hides_sensitive_env_values():

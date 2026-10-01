@@ -1,6 +1,6 @@
 """Shared emergency final-answer policy for finite-context agent rollouts."""
 
-import re
+from .agent_text import extract_fn_call
 
 
 OBSERVATION_TRUNCATION_MARKER = (
@@ -163,10 +163,12 @@ async def step_preserving_final_answer(
 
 
 def _fallback_finish_call(response: str) -> str:
-    """Wrap non-tool finalizer output in a parseable best-effort finish call."""
-    answer = (response or "Best effort: unable to determine a more specific answer.").strip()
-    answer = re.sub(r"</?function(?:=[^>]+)?>", " ", answer)
-    answer = re.sub(r"</?parameter(?:=[^>]+)?>", " ", answer)
+    """Accept visible prose only; research/tool arguments are not an answer."""
+    answer = (response or "").strip()
+    if "</think>" in answer:
+        answer = answer.rsplit("</think>", 1)[1].strip()
+    if any(marker in answer for marker in ("<think>", "<function", "<parameter", "<tool_call")):
+        answer = ""
     answer = " ".join(answer.split())
     if not answer:
         answer = "Best effort: unable to determine a more specific answer."
@@ -189,9 +191,9 @@ async def submit_emergency_final_answer(
 ) -> bool:
     """Spend the protected reserve on one final answer and submit it to the env.
 
-    The model gets the complete current trajectory. If it ignores the requested
-    finish schema, its generated best effort is wrapped in a finish call so an
-    exhausted rollout still submits an answer instead of silently terminating.
+    The model gets the current trajectory. Visible non-tool prose may be
+    wrapped in a finish call; reasoning and research calls become an explicit
+    unable-to-answer fallback. Environment rejection is respected.
     """
     reserve_tokens = max(int(reserve_tokens or 0), 0)
     if reserve_tokens == 0:
@@ -243,17 +245,22 @@ async def submit_emergency_final_answer(
     if response is None:
         return False
 
+    # Never execute research calls emitted alongside a finish, or score tool
+    # arguments/reasoning as if the model had submitted an answer.
+    visible_response = response.rsplit("</think>", 1)[-1].strip()
+    call = extract_fn_call(visible_response)
     valid_finish = bool(
-        "<function=finish>" in response
-        and re.search(r"<parameter=answer>\s*\S.*?</parameter>", response, re.DOTALL)
+        call and call["function"] == "finish"
+        and call["arguments"].get("answer", "").strip()
+        and visible_response.count("<function=") == 1
+        and "</function>" in visible_response
+        and "<think>" not in visible_response
+        and "<tool_call" not in visible_response
     )
     if hasattr(env, "emergency_finish_wrapped"):
         env.emergency_finish_wrapped = not valid_finish
-    candidate = response if valid_finish else _fallback_finish_call(response)
-    # Some environments reject the first finish only to clear a one-time guard
-    # (must-search / do-not-give-up). Re-submit the identical answer once.
-    for _ in range(2):
-        observation = await action_runner(env, candidate)
-        if observation is None:
-            return True
-    return False
+    candidate = visible_response if valid_finish else _fallback_finish_call(response)
+    # Honor environment guards. Repeating a rejected finish can bypass the
+    # must-search requirement without ever performing a search.
+    observation = await action_runner(env, candidate)
+    return observation is None

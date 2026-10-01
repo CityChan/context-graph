@@ -60,18 +60,8 @@ async def call_openai(messages, model='gpt-5-nano', max_retries=3):
         api_key = os.getenv("OPENAI_API_KEY", "")
         if not api_key or api_key == "dummy":
             return "Error: no OPENAI_URL and no valid OPENAI_API_KEY"
-        from openai import AsyncOpenAI
-        client = AsyncOpenAI(api_key=api_key)
-        for attempt in range(max_retries):
-            try:
-                resp = await client.chat.completions.create(model=model, messages=messages)
-                return resp.choices[0].message.content or ""
-            except Exception as e:
-                if attempt == max_retries - 1:
-                    print(f"[CALL OPENAI] Error after {max_retries} attempts: {str(e)}")
-                    return f"Error after {max_retries} attempts: {str(e)}"
-                await asyncio.sleep(1 * (attempt + 1))
-        return ""
+        from envs.judge_client import call_openai_raw
+        return await call_openai_raw(messages, model=model, max_retries=max_retries)
 
     for attempt in range(max_retries):
         try:
