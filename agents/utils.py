@@ -17,6 +17,7 @@ import asyncio, httpx
 from envs.local_search import LocalSearch
 from envs.alfworld_env import ALFWorldEnv
 from .structured_outputs import normalize_structured_content, normalize_structured_outputs
+from .session_summary import SessionSummaryMixin
 
 
 def select_env(ability, config, extra_info=None):
@@ -701,7 +702,7 @@ class AgentContext:
         }
 
 
-class Agent(AgentContext):
+class Agent(SessionSummaryMixin, AgentContext):
     # Agent utils
     def __init__(
         self,
@@ -732,10 +733,16 @@ class Agent(AgentContext):
         max_len = self.prompt_ids_len + self.config.response_length
         if max_new_tokens is not None:
             max_len = min(len(prompt) + max_new_tokens, 131072)
+        if getattr(self.config.plugin, "enable_summary", False):
+            remaining = self.remaining_generation_tokens()
+            if remaining < 10:
+                return None
+            max_len = min(len(prompt) + remaining, self.config.prompt_length + self.config.response_length,
+                          len(prompt) + max_new_tokens if max_new_tokens is not None else 131072)
         completion_kwargs = dict(completion_kwargs or {})
         if getattr(self.config.plugin, "capture_model_contexts", False):
             self.model_contexts.append({
-                "messages": copy.deepcopy(self.chat),
+                "messages": copy.deepcopy(self.working_messages()),
                 "input_ids": list(prompt),
                 "max_len": max_len,
                 "completion_kwargs": copy.deepcopy(completion_kwargs),
@@ -744,7 +751,7 @@ class Agent(AgentContext):
             prompt,
             uid=self.context_uid,
             max_len=max_len,
-            messages=self.chat,
+            messages=self.working_messages(),
             **completion_kwargs,
         )
         if completion is None:

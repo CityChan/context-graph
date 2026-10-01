@@ -22,8 +22,19 @@ short smoke below first. Pre-training validation and multi-turn rollouts can
 leave the update progress bar at zero while generation is active.
 
 The October 1 review fixes final-answer acceptance, judge cleanup and search
-result delivery; old scores retain the earlier protocol. `enable_summary=True`
-is rejected because legacy session restart did not switch the active trajectory.
+result delivery; old scores retain the earlier protocol. The follow-up fix makes
+`enable_summary=True` an opt-in working-context restart: by default it attempts
+a summary at half the configured context window, caps summary output at 512
+tokens and permits at most four restarts. Overrides are
+`plugin.summary_context_threshold`, `plugin.summary_max_tokens`, and
+`plugin.summary_max_restarts`. Summary requests, outputs and observations share
+the original response budget; restarting does not grant a new budget. An invalid
+or oversized summary is not installed, and the original task is retained.
+Training exports each session separately with its actual prompt and log-probs;
+graph turn references remain absolute. `max_traj` selects whole agent trajectories,
+including all their summary segments. Existing launch defaults remain unchanged.
+All seven executors close their environment on normal completion, initialization
+failure, exception or cancellation, including failures before reward collection.
 See the [review and open decisions](project_review_20261001.md), including the
 success-gated graph cost and inherited branch-budget semantics.
 

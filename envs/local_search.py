@@ -296,9 +296,19 @@ class AsyncSearchClient:
         self.backoff = backoff
         self._clients = [httpx.AsyncClient(base_url=url) for url in self.base_urls]
         self._next_client = 0
+        self._close_task = None
 
     async def close(self):
-        await asyncio.gather(*(client.aclose() for client in self._clients))
+        if self._close_task is None:
+            self._close_task = asyncio.create_task(self._close_all())
+        await asyncio.shield(self._close_task)
+
+    async def _close_all(self):
+        results = await asyncio.gather(
+            *(client.aclose() for client in self._clients), return_exceptions=True)
+        for result in results:
+            if isinstance(result, BaseException):
+                raise result
 
     def _round_robin_client(self):
         client = self._clients[self._next_client]
@@ -422,7 +432,6 @@ class LocalSearch:
 
         base_url = os.getenv("LOCAL_SEARCH_URL")
 
-        self.client = AsyncSearchClient(base_url=base_url)
         self.question = None
         self.label_answer = None
         self.predicted_answer = None
@@ -449,6 +458,8 @@ class LocalSearch:
         self.visited_pages = set()
         self.is_finish = False
         self.emergency_finish_wrapped = False
+        # Allocate connections only after all constructor validation succeeds.
+        self.client = AsyncSearchClient(base_url=base_url)
 
     async def init_env(self, item):
         extra = item.non_tensor_batch['extra_info']
@@ -663,6 +674,9 @@ Once you’re confident everything is covered and verified, submit the final ans
             predicted_answer,
             audit_sink=audit_sink,
         )
+
+    async def aclose(self):
+        await self.client.close()
 
     async def get_reward(self, item, messages, context):
         try:

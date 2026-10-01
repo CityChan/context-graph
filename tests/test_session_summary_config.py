@@ -7,11 +7,12 @@ import pytest
 from agents.rollout_status import validate_session_summary
 
 
-def test_unsupported_restart_is_rejected_but_default_preserves_branching():
+def test_restart_is_opt_in_and_rejects_invalid_limits():
     validate_session_summary(SimpleNamespace())
     validate_session_summary(SimpleNamespace(enable_summary=False))
-    with pytest.raises(ValueError, match="did not switch"):
-        validate_session_summary(SimpleNamespace(enable_summary=True))
+    validate_session_summary(SimpleNamespace(enable_summary=True))
+    with pytest.raises(ValueError, match="summary_max_tokens"):
+        validate_session_summary(SimpleNamespace(enable_summary=True, summary_max_tokens=0))
 
 
 @pytest.mark.parametrize("name", ["fold_agent", "fold_agent_code", "graph_agent", "graph_agent_isolated", "graph_agent_code_isolated"])

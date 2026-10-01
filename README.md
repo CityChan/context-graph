@@ -83,8 +83,10 @@ Global and isolated ContextGraph are distinct variants. The isolated executor's
 `legacy`, `repaired` and `foldagent` memory modes are experimental controls.
 Training keeps generated history immutable; graph pruning is not a guarantee
 that the policy's entire training context shrinks. Branch-return summaries and
-graph merge summaries remain supported. The broken legacy session-restart
-option `enable_summary=True` now fails explicitly; keep it false.
+graph merge summaries remain supported. Opt-in `enable_summary=True` restarts
+the working context using a bounded summary, keeps the original total token
+budget, and exports separate training segments with their original log-probs.
+Existing launch profiles keep this option disabled by default.
 
 ## Validation and reproducibility
 

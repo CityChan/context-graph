@@ -19,6 +19,8 @@ Stop researching and do not call search, open_page, branch, or return. Using onl
 
 def remaining_generation_tokens(agent) -> int:
     """Return tokens left in the rollout's prompt+response budget."""
+    if hasattr(agent, "remaining_generation_tokens"):
+        return agent.remaining_generation_tokens()
     budget_end = int(agent.prompt_ids_len) + int(agent.config.response_length)
     return max(budget_end - len(agent.context()), 0)
 

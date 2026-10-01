@@ -12,6 +12,7 @@ handles tool-call parsing for python_exec + finish.
 
 import os
 import asyncio
+from .environment_lifecycle import managed_environment
 import copy
 from uuid import uuid4
 
@@ -48,120 +49,116 @@ async def process_item(
     print(is_train, EnvClass)
     env = EnvClass(config, tokenizer, ability)
 
-    try:
-        await env.init_env(item)
-    except Exception as e:
-        print(f"[Error] during environment init: {str(e)}")
+    async with managed_environment(env):
+        try:
+            await env.init_env(item)
+        except Exception as e:
+            print(f"[Error] during environment init: {str(e)}")
+            raise
 
-    workflow = _get(item.non_tensor_batch['extra_info']).get('workflow', None) or getattr(
-        config.plugin, "workflow", "code")
-    user_prompt = create_chat_code(env.instance_info['problem_statement'], workflow, item, env=env)
-    max_turn = getattr(config.plugin, 'max_turn', 32) if config.plugin else 32
+        workflow = _get(item.non_tensor_batch['extra_info']).get('workflow', None) or getattr(
+            config.plugin, "workflow", "code")
+        user_prompt = create_chat_code(env.instance_info['problem_statement'], workflow, item, env=env)
+        max_turn = getattr(config.plugin, 'max_turn', 32) if config.plugin else 32
 
-    llm_client = context.llm_client
-    prompt_turn = len(user_prompt)
+        llm_client = context.llm_client
+        prompt_turn = len(user_prompt)
 
-    agent = Agent(llm_client, user_prompt, tokenizer, config, prompt_turn=prompt_turn)
-    init_len = len(agent.context())
-    iteration = 0
-    natural_finish = False
-    while iteration < max_turn:
-        iteration += 1
-        response = await agent.step()
-        if response is None:
-            natural_finish = True
-            break
-        observation = await run_action(env, response)
-        if observation is None:
-            natural_finish = True
-            break
-        agent.append({'role': 'user', 'content': observation})
+        agent = Agent(llm_client, user_prompt, tokenizer, config, prompt_turn=prompt_turn)
+        init_len = len(agent.context())
+        iteration = 0
+        natural_finish = False
+        while iteration < max_turn:
+            iteration += 1
+            response = await agent.step()
+            if response is None:
+                natural_finish = True
+                break
+            observation = await run_action(env, response)
+            if observation is None:
+                natural_finish = True
+                break
+            agent.append({'role': 'user', 'content': observation})
 
-    is_finish = bool(getattr(env, 'is_finish', False) or getattr(env, 'finish', False))
+        is_finish = bool(getattr(env, 'is_finish', False) or getattr(env, 'finish', False))
 
-    print('[TASK] Task Finish, Start Reward')
-    try:
-        score_msg, reward, reward_dict = await asyncio.wait_for(
-            env.get_reward(item, agent.messages(), context), timeout=60 * 10)
-        score = (score_msg, reward)
-        print(score)
-    except Exception as e:
-        print(f"[Error] Getting reward: {e}")
-        score, reward_dict = ("", 0), {"ans_reward": 0.0, "format_reward": 0.0, "ref_reward": 0.0}
+        print('[TASK] Task Finish, Start Reward')
+        try:
+            score_msg, reward, reward_dict = await asyncio.wait_for(
+                env.get_reward(item, agent.messages(), context), timeout=60 * 10)
+            score = (score_msg, reward)
+            print(score)
+        except Exception as e:
+            print(f"[Error] Getting reward: {e}")
+            score, reward_dict = ("", 0), {"ans_reward": 0.0, "format_reward": 0.0, "ref_reward": 0.0}
 
-    mask_rollout = not (is_finish or score[1] > 0)
+        mask_rollout = not (is_finish or score[1] > 0)
 
-    if not hasattr(env, 'stats') or env.stats is None:
-        env.stats = {}
-    main_response_tokens = max(len(agent.context()) - init_len, 0)
-    main_context_tokens = len(agent.context())
-    working_context_limit = config.prompt_length + config.response_length
-    rollout_status = classify_rollout_status(
-        response_tokens=main_response_tokens,
-        response_limit=config.response_length,
-        main_context_tokens=main_context_tokens,
-        working_context_limit=working_context_limit,
-        is_finish=is_finish,
-        iteration=iteration,
-        max_turn=max_turn,
-        timed_out=False,
-    )
-    env.stats['task_reward'] = float(score[1])
-    env.stats['main_turn'] = int(iteration)
-    env.stats['main_len'] = min(main_response_tokens, config.response_length)
-    env.stats['main_context_tokens'] = main_context_tokens
-    env.stats['working_context_limit'] = working_context_limit
-    env.stats['is_branch'] = 0
-    env.stats['branch_success'] = 0
-    env.stats.update({k: v for k, v in rollout_status.items() if k != 'termination_reason'})
-    env.stats['concise_main'] = 1 - rollout_status['unfolded_main']
-    # Surface real-eval VER (valid_execution) + produced-file count so they
-    # aggregate into val/* metrics. At 8B zero-shot SR floors to 0, so VER is
-    # the signal that separates the agents. Only present under SAB_REAL_EVAL=1.
-    if isinstance(reward_dict, dict):
-        for _k in (
-            'valid_execution', 'produced_files', 'valid_result_json',
-            'hms_score', 'hms_context_recall', 'hms_mean_accuracy', 'judge_error',
-        ):
-            if _k in reward_dict:
-                try:
-                    env.stats[_k] = float(reward_dict[_k])
-                except (TypeError, ValueError):
-                    pass
+        if not hasattr(env, 'stats') or env.stats is None:
+            env.stats = {}
+        main_response_tokens = max(len(agent.context()) - init_len, 0)
+        main_context_tokens = len(agent.context())
+        working_context_limit = config.prompt_length + config.response_length
+        rollout_status = classify_rollout_status(
+            response_tokens=main_response_tokens,
+            response_limit=config.response_length,
+            main_context_tokens=main_context_tokens,
+            working_context_limit=working_context_limit,
+            is_finish=is_finish,
+            iteration=iteration,
+            max_turn=max_turn,
+            timed_out=False,
+        )
+        env.stats['task_reward'] = float(score[1])
+        env.stats['main_turn'] = int(iteration)
+        env.stats['main_len'] = min(main_response_tokens, config.response_length)
+        env.stats['main_context_tokens'] = main_context_tokens
+        env.stats['working_context_limit'] = working_context_limit
+        env.stats['is_branch'] = 0
+        env.stats['branch_success'] = 0
+        env.stats.update({k: v for k, v in rollout_status.items() if k != 'termination_reason'})
+        env.stats['concise_main'] = 1 - rollout_status['unfolded_main']
+        # Surface real-eval VER (valid_execution) + produced-file count so they
+        # aggregate into val/* metrics. At 8B zero-shot SR floors to 0, so VER is
+        # the signal that separates the agents. Only present under SAB_REAL_EVAL=1.
+        if isinstance(reward_dict, dict):
+            for _k in (
+                'valid_execution', 'produced_files', 'valid_result_json',
+                'hms_score', 'hms_context_recall', 'hms_mean_accuracy', 'judge_error',
+            ):
+                if _k in reward_dict:
+                    try:
+                        env.stats[_k] = float(reward_dict[_k])
+                    except (TypeError, ValueError):
+                        pass
 
-    # Clean up the sandbox (release the namespace dict so GC can reclaim it).
-    try:
-        if hasattr(env, 'close'):
-            env.close()
-    except Exception:
-        pass
 
-    out_data = await agent.get_data()
-    agent_reward = score[1]
-    out = AgentLoopOutput(
-        prompt_ids=out_data['prompt_ids'],
-        response_ids=out_data['response_ids'],
-        response_mask=out_data['response_mask'],
-        response_logprobs=out_data['response_logprobs'],
-        multi_modal_data={},
-        metrics=AgentLoopMetrics(),
-        reward_score=agent_reward,
-        num_turns=out_data['num_turns'],
-        extra_fields={
-            'messages': out_data['messages'],
-            'env_stats': copy.deepcopy(env.stats),
-            'mask_rollout': mask_rollout,
-            'overlong': rollout_status['overlong'],
-            'no_finish': rollout_status['no_finish'],
-            'hit_token_limit': rollout_status['hit_token_limit'],
-            'hit_max_turn': rollout_status['hit_max_turn'],
-            'hit_timeout': rollout_status['hit_timeout'],
-            'unfolded_main': rollout_status['unfolded_main'],
-            'termination_reason': rollout_status['termination_reason'],
-            'is_finish': is_finish,
-            'process_reward_mask': out_data['process_reward_mask'],
-            'uid': uid,
-            'gen_uid': gen_uid,
-        },
-    )
-    return out
+        out_data = await agent.get_data()
+        agent_reward = score[1]
+        out = AgentLoopOutput(
+            prompt_ids=out_data['prompt_ids'],
+            response_ids=out_data['response_ids'],
+            response_mask=out_data['response_mask'],
+            response_logprobs=out_data['response_logprobs'],
+            multi_modal_data={},
+            metrics=AgentLoopMetrics(),
+            reward_score=agent_reward,
+            num_turns=out_data['num_turns'],
+            extra_fields={
+                'messages': out_data['messages'],
+                'env_stats': copy.deepcopy(env.stats),
+                'mask_rollout': mask_rollout,
+                'overlong': rollout_status['overlong'],
+                'no_finish': rollout_status['no_finish'],
+                'hit_token_limit': rollout_status['hit_token_limit'],
+                'hit_max_turn': rollout_status['hit_max_turn'],
+                'hit_timeout': rollout_status['hit_timeout'],
+                'unfolded_main': rollout_status['unfolded_main'],
+                'termination_reason': rollout_status['termination_reason'],
+                'is_finish': is_finish,
+                'process_reward_mask': out_data['process_reward_mask'],
+                'uid': uid,
+                'gen_uid': gen_uid,
+            },
+        )
+        return out

@@ -7,11 +7,17 @@ import copy
 
 def serialize_agent_trajectories(agent):
     """Snapshot every main/branch chat for complete-policy distillation."""
-    return [
-        {
-            "agent_name": name,
-            "is_main": name == "main",
-            "messages": copy.deepcopy(instance.messages()),
-        }
-        for name, instance in agent.items()
-    ]
+    trajectories = []
+    for name, instance in agent.items():
+        sessions = (instance.session_views() if getattr(instance, "summary_sessions", None)
+                    else [(None, 0, instance)])
+        for index, start, view in sessions:
+            row = {
+                "agent_name": name,
+                "is_main": name == "main",
+                "messages": copy.deepcopy(view.messages()),
+            }
+            if index is not None:
+                row.update(summary_session_index=index, archive_start_turn=start)
+            trajectories.append(row)
+    return trajectories

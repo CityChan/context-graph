@@ -20,7 +20,7 @@ that every GPU, container or distributed execution path is defect-free.
 | Search-client lifetime at reward collection | Per-environment HTTP pools remained open after scoring | Close in reward collection's `finally`, including scoring exceptions |
 | Cross-thread asyncio result delivery | Search collector thread called `Future.set_result` directly | Schedule on owning loop with `call_soon_threadsafe`, check cancellation inside callback; debug-loop/cancellation tests |
 | Pending cancelled searches | Cancellation could leave entries in `pending_requests` | Remove entries in `finally`, in addition to completion/timeout cleanup |
-| Broken session restart | Five executors made `main+` summaries but continued stepping `main` | Remove the unusable repeated blocks; reject `enable_summary=True` before environment initialization |
+| Broken session restart | Five executors made `main+` summaries but continued stepping `main` | Follow-up: switch the actual working context, preserve absolute graph indices and aggregate budget, export aligned training segments |
 | Inconsistent result aggregation | Aggregation assumed nonempty selection and did not check per-rank placement or binary task rewards | Shared validator checks selection, rank, provenance, row placement and task outcomes; exporter also reconciles stored summaries |
 
 The empty-select graph-controller crash was already fixed in baseline commit
@@ -55,10 +55,12 @@ The existing untracked Qwen3-235B teacher launcher is outside this change.
 
 ## Remaining decisions and limitations
 
-1. **Session summary restart is unsupported.** Re-enabling it needs explicit
-   active-session switching, graph turn-index rebasing, aggregate budget and
-   training-trajectory accounting tests. Branch-return summaries and graph
-   merge summaries are unaffected by this guard.
+1. **Session summary restart repaired in the follow-up.** The opt-in path now
+   changes actual model input without renumbering archived turns. Separate
+   training segments preserve the conditioning context, token masks and log-probs.
+   Summary costs count toward the original budget. Branch-return summaries and
+   graph merge summaries remain separate mechanisms. GPU training with this
+   option still requires a runtime smoke; existing launch defaults stay false.
 2. **Graph cost is success-gated.** `compute_graph_reward` applies
    `lambda_cost * cost` only when task reward is positive. The current
    ContextGraph launcher uses `lambda_cost=0.02`; this can make equal-cost
@@ -78,11 +80,13 @@ The existing untracked Qwen3-235B teacher launcher is outside this change.
    checkpoint reload and 48-hour stability need a real allocation. An active
    search log or zero-percent update bar cannot prove either deadlock or progress
    through an optimizer step.
-6. **Resource cleanup before reward collection remains incomplete.** The
-   search-client close now covers normal reward collection and judge failures.
-   A model/executor exception before reward collection still needs an outer
-   environment-lifetime cleanup path; this review does not claim that all
-   cancellation paths across all benchmark environments are covered.
+6. **Resource cleanup repaired in the follow-up.** Seven executors now own
+   their environment from initialization through return using a shared async
+   context manager. It awaits asynchronous close, supports synchronous close,
+   completes cleanup through repeated cancellation, and preserves the original
+   exception if cleanup also fails. LocalSearch connection closure is idempotent.
+   These guarantees cover Python exceptions/cancellation, not process termination
+   such as SIGKILL or node failure.
 7. **Official SWE evaluation is outstanding.** The saved Verified record is
    one empty-patch ARM pilot. Later 64K Lite runs are console evidence only in
    this checkout. No full official x86 Verified or Lite score is established.
@@ -101,7 +105,12 @@ locally, so their recorded hashes/calibration are not independently revalidated.
 
 ## Validation
 
-Final local suite: **653 passed, 5 skipped**, no failures (26.43 seconds).
+Follow-up local suite: **690 passed, 5 skipped**, no failures (27.16 seconds).
+The original review had 653 passing tests. The added regressions cover actual
+summary continuation in all five executors, exact model-input/training-prefix
+alignment, multiple restarts and aggregate budgets, graph credit indices, and
+cleanup in all seven executors before reward collection. Repeated cancellation
+and partial connection-close failures are also covered.
 Executed with `python -m pytest -q tests --tb=short -rs` in an isolated
 Windows Python 3.11 environment with the existing CPU dependencies plus Ray
 2.58.0, cloudpickle 3.1.2, TensorDict 0.10.0, codetiming 1.4.0,
@@ -115,7 +124,8 @@ collection it had 568 passing tests, 20 Ray-import failures, two stale assertion
 failures and eight skips. The missing dependencies and stale assertions were
 addressed without replacing GPU execution with a claimed live training result.
 
-Additional checks:
+Additional checks recorded by the original review (the follow-up also passes
+`git diff --check`):
 
 - Python AST syntax: **527 files passed**, including the vendored Python tree.
 - Bash syntax: **219 tracked `.sh` / `.sbatch` files passed** with `bash -n`.

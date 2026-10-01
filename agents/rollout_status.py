@@ -7,18 +7,13 @@ description of why generation stopped.
 
 
 def validate_session_summary(plugin):
-    """Reject the legacy restart mode until trajectory/graph rebasing is supported.
-
-    Previously it generated a summary into an unused main+ session while the
-    executor kept stepping main. Branch return summaries and graph merge
-    summaries are separate mechanisms and remain available.
-    """
+    """Validate the opt-in bounded working-session restart settings."""
     if getattr(plugin, "enable_summary", False):
-        raise ValueError(
-            "enable_summary=True is unsupported: legacy session restart did not "
-            "switch the active trajectory. Use enable_summary=False; branch "
-            "summaries and graph memory operations remain available."
-        )
+        for name, default in (("summary_max_tokens", 512), ("summary_max_restarts", 4)):
+            if int(getattr(plugin, name, default)) <= 0:
+                raise ValueError(f"{name} must be positive")
+        if int(getattr(plugin, "summary_context_threshold", 0)) < 0:
+            raise ValueError("summary_context_threshold must be nonnegative")
 
 
 def classify_rollout_status(
