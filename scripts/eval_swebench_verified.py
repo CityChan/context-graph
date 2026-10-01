@@ -1,4 +1,4 @@
-"""Prepare, generate, and officially grade SWE-bench Verified patches.
+"""Prepare, generate, and officially grade SWE-bench Verified or Lite patches.
 
 Generation uses existing code agent loops and a separate local vLLM endpoint.
 The generation summary deliberately contains no accuracy/reward metric.
@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from envs.swebench_env import PUBLIC_FIELDS, public_instance
 
 DATASET = "princeton-nlp/SWE-bench_Verified"
+DATASETS = {"verified": (DATASET, 500), "lite": ("princeton-nlp/SWE-bench_Lite", 300)}
 HARNESS_COMMIT = "3f01bd622c0a22c00406139f69a234ef08225f22"  # v3.0.17
 WORKFLOWS = {"react": "code", "foldagent": "code_branch", "contextgraph": "code_graph"}
 
@@ -57,20 +58,21 @@ def prepare(args):
     from datasets import load_dataset
     from huggingface_hub import HfApi
     # Resolve symbolic revisions once and use the immutable commit for download.
-    revision = HfApi().dataset_info(DATASET, revision=args.revision).sha
-    rows = list(load_dataset(DATASET, split="test", revision=revision))
-    if len(rows) != 500:
-        raise ValueError(f"Expected 500 Verified test instances, got {len(rows)}")
+    dataset, expected_count = DATASETS[getattr(args, "dataset", "verified")]
+    revision = HfApi().dataset_info(dataset, revision=args.revision).sha
+    rows = list(load_dataset(dataset, split="test", revision=revision))
+    if len(rows) != expected_count:
+        raise ValueError(f"Expected {expected_count} {dataset} test instances, got {len(rows)}")
     public = [public_instance(row) for row in rows]
-    if len({row["instance_id"] for row in public}) != 500:
-        raise ValueError("Duplicate Verified task IDs")
+    if len({row["instance_id"] for row in public}) != expected_count:
+        raise ValueError("Duplicate task IDs")
     root = Path(args.data_dir)
     root.mkdir(parents=True, exist_ok=False)
     (root / "public").mkdir()
     (root / "grading").mkdir()
     write_json(root / "public/instances.json", public)
     write_json(root / "grading/instances.json", rows)
-    manifest = {"dataset": DATASET, "revision": revision, "split": "test", "count": len(rows),
+    manifest = {"dataset": dataset, "revision": revision, "split": "test", "count": len(rows),
         "public_sha256": file_hash(root / "public/instances.json"),
         "grading_sha256": file_hash(root / "grading/instances.json"),
         "harness_commit": HARNESS_COMMIT}
@@ -80,12 +82,14 @@ def prepare(args):
 
 def load_public(root):
     manifest = read_json(root / "manifest.json")
-    if manifest["dataset"] != DATASET or manifest["split"] != "test" or manifest["count"] != 500:
-        raise ValueError("Not a prepared SWE-bench Verified test dataset")
+    counts = {name: count for name, count in DATASETS.values()}
+    expected_count = counts.get(manifest.get("dataset"))
+    if expected_count is None or manifest.get("split") != "test" or manifest.get("count") != expected_count:
+        raise ValueError("Not a prepared SWE-bench Verified or Lite test dataset")
     if file_hash(root / "public/instances.json") != manifest["public_sha256"]:
         raise ValueError("Public dataset hash mismatch")
     rows = read_json(root / "public/instances.json")
-    if len(rows) != 500 or len({row["instance_id"] for row in rows}) != 500:
+    if len(rows) != expected_count or len({row["instance_id"] for row in rows}) != expected_count:
         raise ValueError("Incomplete or duplicated public dataset")
     if any(set(row) != set(PUBLIC_FIELDS) for row in rows):
         raise ValueError("Generation input must contain public fields only")
@@ -199,6 +203,8 @@ async def generate(args):
     from agents.fold_agent_code import process_item as fold_process
     from agents.graph_agent_code_isolated import process_item as graph_process
     rows, dataset_manifest = load_public(Path(args.data_dir))
+    if getattr(args, "dataset", None) and dataset_manifest["dataset"] != DATASETS[args.dataset][0]:
+        raise ValueError("Prepared dataset does not match requested benchmark")
     selected = select_tasks(rows, args.samples, args.seed, args.instance_ids)
     if getattr(args, "backend", "docker") == "apptainer":
         from envs.swebench_apptainer import ApptainerSandbox
@@ -218,7 +224,7 @@ async def generate(args):
         try:
             info = client.info()
             if info.get("OSType") != "linux" or info.get("Architecture") not in ("x86_64", "amd64"):
-                raise RuntimeError("Use a Linux x86_64 Docker daemon for official Verified images")
+                raise RuntimeError("Use a Linux x86_64 Docker daemon for official SWE-bench images")
         finally:
             client.close()
     root = Path(args.output).resolve()
@@ -324,7 +330,7 @@ def grading_summary(root, grade_root):
             resolved.append(identity)
         else:
             unresolved.append(identity)
-    summary = {"benchmark": "SWE-bench_Verified", "method": manifest["method"],
+    summary = {"benchmark": manifest["dataset"]["dataset"].split("/")[-1], "method": manifest["method"],
         "count": len(predictions), "resolved": len(resolved), "unresolved": len(unresolved),
         "empty_patches": len(empty), "harness_errors": len(errors),
         "pass_at_1": len(resolved) / len(predictions) if not errors else None,
@@ -347,6 +353,8 @@ def grade(args):
         raise ValueError("Use grade_swe_arm_pilot.py for ARM results; official Docker grading is separate")
     data_dir = Path(args.data_dir).resolve()
     _, dataset_manifest = load_public(data_dir)
+    if getattr(args, "dataset", None) and dataset_manifest["dataset"] != DATASETS[args.dataset][0]:
+        raise ValueError("Prepared dataset does not match requested benchmark")
     if manifest["dataset"] != dataset_manifest:
         raise ValueError("Generation and grading datasets differ")
     gold_path = data_dir / "grading/instances.json"
@@ -399,11 +407,13 @@ def grade(args):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
-    prep = sub.add_parser("prepare", help="Download and pin all 500 Verified test tasks")
+    prep = sub.add_parser("prepare", help="Download and pin Verified or Lite test tasks")
     prep.add_argument("--data-dir", required=True)
     prep.add_argument("--revision", default="main")
+    prep.add_argument("--dataset", choices=DATASETS, default="verified")
     run = sub.add_parser("generate", help="Generate patches; no accuracy is computed")
     run.add_argument("--data-dir", required=True)
+    run.add_argument("--dataset", choices=DATASETS, help="Require this prepared benchmark")
     run.add_argument("--output", required=True)
     run.add_argument("--method", choices=WORKFLOWS, required=True)
     run.add_argument("--model", default="Qwen/Qwen3.5-9B")
@@ -422,6 +432,7 @@ def main():
     run.add_argument("--apptainer-root")
     grading = sub.add_parser("grade", help="Run the pinned official Docker harness")
     grading.add_argument("--data-dir", required=True)
+    grading.add_argument("--dataset", choices=DATASETS, help="Require this prepared benchmark")
     grading.add_argument("--output", required=True)
     grading.add_argument("--grade-dir", default="grading")
     grading.add_argument("--workers", type=int, default=1)

@@ -2,6 +2,7 @@ import asyncio
 import json
 from pathlib import Path
 from types import SimpleNamespace
+import sys
 
 import pytest
 
@@ -10,7 +11,8 @@ from envs.swebench_env import (
     DockerSandbox, SWEVerifiedEnv, capture_environments, image_name, public_instance, repository_reset_command,
 )
 from scripts.eval_swebench_verified import (
-    config_for, file_hash, grading_summary, select_tasks, validate_predictions, write_json,
+    DATASETS, config_for, file_hash, grading_summary, load_public, prepare,
+    select_tasks, validate_predictions, write_json,
 )
 
 
@@ -50,6 +52,33 @@ def test_deterministic_paired_selection_and_unknown_id_rejected():
         select_tasks(rows, 5, 42, ["missing"])
     with pytest.raises(ValueError):
         select_tasks(rows + rows, -1, 42)
+
+
+def test_lite_prepare_pins_300_public_and_private_rows(tmp_path, monkeypatch):
+    rows = [dict(task(i + 1), patch="PRIVATE", test_patch="PRIVATE_TEST") for i in range(300)]
+    seen = []
+    class FakeApi:
+        def dataset_info(self, name, revision):
+            seen.append((name, revision))
+            return SimpleNamespace(sha="a" * 40)
+    def fake_load(name, split, revision):
+        seen.append((name, split, revision))
+        return rows
+    monkeypatch.setitem(sys.modules, "datasets", SimpleNamespace(load_dataset=fake_load))
+    monkeypatch.setitem(sys.modules, "huggingface_hub", SimpleNamespace(HfApi=FakeApi))
+    data = tmp_path / "lite"
+    prepare(SimpleNamespace(dataset="lite", data_dir=data, revision="main"))
+    public, manifest = load_public(data)
+    assert manifest["dataset"] == DATASETS["lite"][0]
+    assert manifest["count"] == len(public) == 300
+    assert all("patch" not in row and "test_patch" not in row for row in public)
+    assert file_hash(data / "grading/instances.json") == manifest["grading_sha256"]
+    assert seen == [(DATASETS["lite"][0], "main"), (DATASETS["lite"][0], "test", "a" * 40)]
+    bad = json.loads((data / "manifest.json").read_text())
+    bad["count"] = 500
+    write_json(data / "manifest.json", bad)
+    with pytest.raises(ValueError, match="Not a prepared"):
+        load_public(data)
 
 
 @pytest.mark.parametrize("context_length", [32768, 65536])
@@ -228,7 +257,8 @@ def test_git_patch_includes_committed_staged_unstaged_new_and_deleted_files(tmp_
 def grading_fixture(root):
     predictions = [{"instance_id": task(i)["instance_id"], "model_name_or_path": "react--Qwen/9B",
                     "model_patch": "diff" if i != 3 else ""} for i in (1, 2, 3)]
-    write_json(root / "manifest.json", {"method": "react", "instance_ids": [p["instance_id"] for p in predictions]})
+    write_json(root / "manifest.json", {"method": "react", "dataset": {"dataset": DATASETS["verified"][0]},
+        "instance_ids": [p["instance_id"] for p in predictions]})
     for name, rows in (("predictions.jsonl", predictions), ("results.jsonl", [
             {"instance_id": p["instance_id"], "status": "generated"} for p in predictions])):
         (root / name).write_text("\n".join(json.dumps(p) for p in rows), encoding="utf-8")
@@ -243,9 +273,14 @@ def grading_fixture(root):
     return grading
 
 
-def test_official_reports_only_and_empty_patches_remain_in_denominator(tmp_path):
+@pytest.mark.parametrize("dataset", ["verified", "lite"])
+def test_official_reports_only_and_empty_patches_remain_in_denominator(tmp_path, dataset):
     grading = grading_fixture(tmp_path)
+    manifest = json.loads((tmp_path / "manifest.json").read_text())
+    manifest["dataset"]["dataset"] = DATASETS[dataset][0]
+    write_json(tmp_path / "manifest.json", manifest)
     summary = grading_summary(tmp_path, grading)
+    assert summary["benchmark"] == DATASETS[dataset][0].split("/")[-1]
     assert summary["pass_at_1"] == pytest.approx(1 / 3)
     assert summary["resolved"] == summary["unresolved"] == summary["empty_patches"] == 1
 

@@ -1,4 +1,5 @@
 import hashlib
+import json
 from pathlib import Path
 from types import SimpleNamespace
 import os
@@ -9,10 +10,31 @@ import sys
 import pytest
 
 from envs.swebench_apptainer import ApptainerSandbox, BASE, IMAGE_NAME, INSTANCE, checked_image
+from scripts.eval_swebench_verified import DATASETS, file_hash, write_json
+from scripts.grade_swe_arm_pilot import load_task
 
 
 def task():
     return dict(instance_id=INSTANCE, repo="sympy/sympy", base_commit=BASE, problem_statement="Fix the bug")
+
+
+def test_lite_arm_pilot_uses_pinned_sympy_task_and_rejects_verified_data(tmp_path):
+    data = tmp_path / "lite"
+    (data / "public").mkdir(parents=True)
+    (data / "grading").mkdir()
+    rows = [dict(task(), patch="gold", test_patch="test")]
+    rows += [dict(instance_id=f"django__django-{i}", repo="django/django", base_commit="a" * 40,
+                  problem_statement="Fix a bug", patch="gold", test_patch="test") for i in range(299)]
+    write_json(data / "public/instances.json", [
+        {key: row[key] for key in ("instance_id", "repo", "base_commit", "problem_statement")} for row in rows])
+    write_json(data / "grading/instances.json", rows)
+    write_json(data / "manifest.json", {"dataset": DATASETS["lite"][0], "split": "test", "count": 300,
+        "revision": "a" * 40, "public_sha256": file_hash(data / "public/instances.json"),
+        "grading_sha256": file_hash(data / "grading/instances.json")})
+    selected, manifest = load_task(data, "lite")
+    assert selected["instance_id"] == INSTANCE and manifest["dataset"] == DATASETS["lite"][0]
+    with pytest.raises(ValueError, match="requested benchmark"):
+        load_task(data, "verified")
 
 
 def cached(root):

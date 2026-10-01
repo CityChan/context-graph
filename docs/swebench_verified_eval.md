@@ -1,5 +1,38 @@
 # SWE-bench Verified evaluation
 
+## SWE-bench Lite evaluation on an x86 Docker host
+
+The same agent and pinned official harness now support the 300-instance Lite
+test split. Its dataset revision and public/grading SHA-256 files are recorded
+separately under `data/swebench-lite`; generation and grading reject a mismatched
+manifest. On a Linux x86_64 Docker host, first follow the environment and
+tokenizer setup below, and connect `SWE_ENDPOINT` to a live matching vLLM server.
+Then run one method at a time:
+
+```bash
+SWE_SAMPLES=5 SWE_CONTEXT_LENGTH=65536 bash scripts/run_swe_lite_docker.sh foldagent
+```
+
+Set `SWE_SAMPLES=-1` for all 300 Lite tasks and use `contextgraph` for the paired
+method. The job checks the Docker architecture and model context length, prepares
+Lite data if absent, generates patches, then runs the pinned official harness.
+It writes separate `outputs/swe-lite-METHOD-.../` artifacts and a log under
+`logs/`. For a non-default layout set `SWE_AGENT_PYTHON`, `SWE_GRADE_PYTHON`,
+`SWE_MODEL_PATH`, `SWE_ENDPOINT`, or `SWE_LITE_DATA_DIR`.
+
+For a single Lite compatibility pilot on an existing Vista ARM idev allocation,
+reuse the pinned SymPy image and the current model server:
+
+```bash
+cd /work/09281/chc_1996/vista/context-graph && SWE_BENCHMARK=lite SWE_AGENT_ENV=/scratch/09281/chc_1996/context-graph-swe/envs/agent-direct-Rs4ngP bash scripts/run_swe_arm_pilot_idev.sh foldagent
+```
+
+Run `contextgraph` separately for the paired task. The ARM pilot prepares a
+separate Lite manifest and checks that its SymPy task matches the pinned image
+before calibration and grading. It is one task and is **not** an official x86
+Lite score. The 300-task Lite job requires x86 Docker; a 5-task Docker run is a
+smoke test, not a 300-task benchmark result.
+
 This adapter generates repository patches with ReAct, FoldAgent, or isolated
 ContextGraph, then evaluates those patches with the official SWE-bench harness.
 It does **not** use the BC-P search corpus, answer matching, or an LLM judge.

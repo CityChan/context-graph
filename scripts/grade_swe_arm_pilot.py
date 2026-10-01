@@ -9,12 +9,14 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from envs.swebench_apptainer import ApptainerSandbox, INSTANCE, BASE
-from scripts.eval_swebench_verified import (HARNESS_COMMIT, file_hash, load_public,
+from scripts.eval_swebench_verified import (DATASETS, HARNESS_COMMIT, file_hash, load_public,
     read_json, read_jsonl, validate_predictions, write_json)
 
 
-def load_task(data_dir):
+def load_task(data_dir, benchmark=None):
     _, manifest = load_public(data_dir)
+    if benchmark and manifest["dataset"] != DATASETS[benchmark][0]:
+        raise ValueError("Prepared dataset does not match requested benchmark")
     gold = data_dir / "grading/instances.json"
     if file_hash(gold) != manifest["grading_sha256"]:
         raise ValueError("Grading dataset checksum mismatch")
@@ -104,13 +106,14 @@ def evaluate(task, patch, folder, root, timeout):
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--data-dir", type=Path, required=True)
+    p.add_argument("--dataset", choices=DATASETS)
     p.add_argument("--apptainer-root", type=Path, required=True)
     p.add_argument("--output", type=Path, required=True)
     p.add_argument("--calibrate", action="store_true")
     p.add_argument("--test-timeout", type=int, default=1800)
     args = p.parse_args()
     require_harness()
-    task, dataset = load_task(args.data_dir)
+    task, dataset = load_task(args.data_dir, args.dataset)
     if args.calibrate:
         args.output.mkdir(parents=True, exist_ok=False)
         baseline = evaluate(task, "", args.output / "baseline", args.apptainer_root, args.test_timeout)

@@ -7,6 +7,8 @@ case "$(hostname -s)" in login*) echo 'Run this on the compute node'; exit 2;; e
 cd "${PROJECT_ROOT:-/work/09281/chc_1996/vista/context-graph}"
 method=${1:-contextgraph}
 case "$method" in contextgraph|foldagent|react|calibrate) ;; *) echo 'Expected contextgraph, foldagent, react, or calibrate'; exit 2;; esac
+benchmark=${SWE_BENCHMARK:-verified}
+case "$benchmark" in verified|lite) ;; *) echo 'SWE_BENCHMARK must be verified or lite'; exit 2;; esac
 root="$(realpath -e "$SCRATCH")/context-graph-swe"
 agent_env=${SWE_AGENT_ENV:?Set SWE_AGENT_ENV to the dedicated agent venv printed by setup}
 agent_python="$agent_env/bin/python"
@@ -24,24 +26,34 @@ export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 TOKENIZERS_PAR
 mkdir -p "$root/runs"
 run=$(mktemp -d "$root/runs/arm-pilot-${SLURM_JOB_ID}-XXXXXX")
 exec > >(tee -a "$run/suite.log") 2>&1
-echo "SWE ARM pilot: method=$method context=$context_length endpoint=$endpoint artifacts=$run"
+echo "SWE ARM pilot: benchmark=$benchmark method=$method context=$context_length endpoint=$endpoint artifacts=$run"
 stage=grading_environment
 trap 'rc=$?; if (( rc != 0 )); then echo "SWE_ARM_PILOT_FAILED stage=$stage exit=$rc artifacts=$run"; fi' EXIT
 # Dedicated grading environment, without inherited GPU runtimes.
 grade_env="$agent_env/grading"
 if [[ ! -x "$grade_env/bin/python" ]]; then "$agent_python" -m venv "$grade_env"; fi
 "$grade_env/bin/python" -m pip install -r requirements_swebench_eval.txt
-data="$root/data/verified-c104f840"
+if [[ "$benchmark" == lite ]]; then
+  data="$root/data/lite"
+  prepare_python="$agent_env/preparation/bin/python"
+  [[ -x "$prepare_python" ]] || { echo "Missing SWE preparation environment: $prepare_python" >&2; exit 2; }
+  stage=lite_data
+  if [[ ! -e "$data" ]]; then
+    "$prepare_python" scripts/eval_swebench_verified.py prepare --dataset lite --data-dir "$data"
+  fi
+else
+  data="$root/data/verified-c104f840"
+fi
 stage=calibration
-"$grade_env/bin/python" scripts/grade_swe_arm_pilot.py --data-dir "$data" --apptainer-root "$root" --output "$run/calibration" --calibrate
+"$grade_env/bin/python" scripts/grade_swe_arm_pilot.py --dataset "$benchmark" --data-dir "$data" --apptainer-root "$root" --output "$run/calibration" --calibrate
 if [[ "$method" == calibrate ]]; then echo "SWE_ARM_CALIBRATION_COMPLETE artifacts=$run"; exit 0; fi
 stage=generation
 model="$SCRATCH/hf_cache/hub/models--Qwen--Qwen3.5-9B/snapshots/c202236235762e1c871ad0ccb60c8ee5ba337b9a"
 # Apply the same Vista Torch TLS preload used by the working model server.
 preload=$("$agent_python" -c 'import importlib.util,pathlib; print(pathlib.Path(importlib.util.find_spec("torch").origin).parent / "lib/libtorch_global_deps.so")')
 [[ -s "$preload" ]] || { echo "Missing Torch TLS preload: $preload"; exit 2; }
-LD_PRELOAD="$preload${LD_PRELOAD:+:$LD_PRELOAD}" "$agent_python" scripts/eval_swebench_verified.py generate --backend apptainer --apptainer-root "$root" --data-dir "$data" --output "$run/generation" --method "$method" --model-path "$model" --endpoint "$endpoint" --context-length "$context_length" --instance-ids sympy__sympy-20590 --samples 1 --workers 1
+LD_PRELOAD="$preload${LD_PRELOAD:+:$LD_PRELOAD}" "$agent_python" scripts/eval_swebench_verified.py generate --dataset "$benchmark" --backend apptainer --apptainer-root "$root" --data-dir "$data" --output "$run/generation" --method "$method" --model-path "$model" --endpoint "$endpoint" --context-length "$context_length" --instance-ids sympy__sympy-20590 --samples 1 --workers 1
 stage=grading
-"$grade_env/bin/python" scripts/grade_swe_arm_pilot.py --data-dir "$data" --apptainer-root "$root" --output "$run/generation"
+"$grade_env/bin/python" scripts/grade_swe_arm_pilot.py --dataset "$benchmark" --data-dir "$data" --apptainer-root "$root" --output "$run/generation"
 stage=complete
 echo "SWE_ARM_RUN_COMPLETE artifacts=$run (one task; ARM compatibility result)"
