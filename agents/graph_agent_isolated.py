@@ -794,8 +794,12 @@ async def process_item(
                 break
 
             summary_start = len(agent['main'].messages())
+            summary_attempts_before = getattr(agent['main'], 'summary_attempts', 0)
             await agent['main'].maybe_restart_session(protected_final_answer_budget)
             session_message.extend(agent['main'].messages()[summary_start:])
+            iteration += getattr(agent['main'], 'summary_attempts', 0) - summary_attempts_before
+            if iteration >= effective_max_turn:
+                break
 
             iteration += 1
             main_turn_count += 1
@@ -927,7 +931,9 @@ async def process_item(
             # ── Branch: spawn isolated child subgraph ──
             elif fn_call is not None and fn_call['function'] == 'branch':
                 trace_before = graph_trace.capture(graph)
-                if len(branches) + 1 > max_session:
+                if iteration >= effective_max_turn:
+                    observation = "No remaining turn budget to start a branch."
+                elif len(branches) + 1 > max_session:
                     observation = f"You've already reached the limit of {len(branches)} branch calls. Continue working independently."
                     graph_trace.record(
                         graph, trace_before, turn_id=main_turn_count,
@@ -983,7 +989,7 @@ async def process_item(
                     wrapped_action = make_graph_aware_run_action(env, child_graph)
                     agent_return = await agent[agent_name].react(
                         wrapped_action,
-                        max_turn=max(1, effective_max_turn - iteration),
+                        max_turn=max(0, effective_max_turn - iteration),
                         max_tokens=getattr(config.plugin, "branch_len", None),
                         session_timeout=session_timeout - time.time() + session_start_time,
                         should_continue=lambda resp: '<function=return>' not in resp,
@@ -1314,7 +1320,7 @@ async def process_item(
             # asking the policy to emit a graph op or <pass>. <pass> is valid
             # (reward-neutral) only when the graph is saturated; otherwise
             # penalized. See ContextGraph.is_saturated() for thresholds.
-            checkpoint_due = graph_checkpoint_due(
+            checkpoint_due = iteration < effective_max_turn and graph_checkpoint_due(
                 main_turn_count,
                 effective_max_turn,
                 consolidation_interval,

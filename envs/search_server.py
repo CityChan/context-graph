@@ -210,49 +210,33 @@ def encode_corpus():
 
 def high_speed_batcher(request_queue: mp.Queue, batch_queue: mp.Queue,
                        max_batch_size: int = 512, batch_timeout: float = 0.005):
-    """Ultra-fast batcher optimized for high throughput"""
+    """Batch requests with bounded backpressure instead of dropping work."""
 
     batch_requests = []
     last_batch_time = time.time()
 
     while True:
         try:
-            # Very short timeout for maximum responsiveness
             request = request_queue.get(timeout=batch_timeout)
-
-            if request is None:  # Shutdown
-                if batch_requests:
-                    batch_queue.put(SearchBatch(requests=batch_requests))
-                break
-
-            batch_requests.append(request)
-            current_time = time.time()
-
-            # Send batch if full or timeout exceeded
-            if (len(batch_requests) >= max_batch_size or
-                    (current_time - last_batch_time) >= batch_timeout):
-                batch_queue.put_nowait(SearchBatch(requests=batch_requests))
-                batch_requests = []
-                last_batch_time = current_time
-
         except Empty:
-            # Process any pending requests immediately for low latency
             if batch_requests:
-                current_time = time.time()
-                if (current_time - last_batch_time) >= batch_timeout:
-                    batch_queue.put_nowait(SearchBatch(requests=batch_requests))
-                    batch_requests = []
-                    last_batch_time = current_time
+                batch_queue.put(SearchBatch(requests=batch_requests))
+                batch_requests = []
+                last_batch_time = time.time()
             continue
 
-        except Full:
-            # If batch queue is full, just reset and continue
-            batch_requests = []
-            last_batch_time = time.time()
-            continue
+        if request is None:  # Flush accepted work before shutting down.
+            if batch_requests:
+                batch_queue.put(SearchBatch(requests=batch_requests))
+            break
 
-        except Exception:
-            # On any error, reset batch to avoid getting stuck
+        batch_requests.append(request)
+        if (len(batch_requests) >= max_batch_size or
+                time.time() - last_batch_time >= batch_timeout):
+            # Stop draining the bounded input queue until workers have room.
+            # New HTTP requests then receive the existing overload response
+            # instead of an accepted request silently disappearing here.
+            batch_queue.put(SearchBatch(requests=batch_requests))
             batch_requests = []
             last_batch_time = time.time()
 

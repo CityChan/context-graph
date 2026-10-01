@@ -790,6 +790,10 @@ class Agent(SessionSummaryMixin, AgentContext):
             should_continue = lambda st: True
         session_start_time = time.time()
         iteration = 0
+        max_turn = max(int(max_turn), 0)
+        # The return summary is a model call too: reserve one of the caller's
+        # remaining turns for it, rather than issuing an uncounted extra call.
+        action_turn_limit = max(max_turn - int(summary_prompt is not None), 0)
         if max_tokens is not None:
             max_tokens = max_tokens - 512
         else:
@@ -798,7 +802,7 @@ class Agent(SessionSummaryMixin, AgentContext):
         last_response = None
         response = None
         init_len = len(self.context(turn_cut=self.prompt_turn))
-        while iteration < max_turn:
+        while iteration < action_turn_limit:
             if time.time() - session_start_time > session_timeout:  # TODO add session timeout
                 print('[SESSION] Session Timeout')
                 break
@@ -823,15 +827,18 @@ class Agent(SessionSummaryMixin, AgentContext):
                 observation += '\n' + observation_prompt
             self.append({'role': 'user', 'content': observation, })
 
-        if last_response is None and summary_prompt is not None:
+        if (last_response is None and summary_prompt is not None
+                and iteration < max_turn
+                and time.time() - session_start_time <= session_timeout):
             if len(self.context()) - init_len > self.config.response_length - 1024:  # summary
                 self.rollback(k=2)
             if self.chat[-1]['role'] == 'user':
                 self.append({'role': 'assistant', 'content': "", })
             self.append({'role': 'user', 'content': summary_prompt, })
+            iteration += 1
             last_response = await self.step(max_new_tokens=4096)
-        elif last_response is None:
-            last_response = str(response)
+        if last_response is None:
+            last_response = str(response) if response is not None else "Branch stopped without a response: no remaining budget."
 
         return {'last_response': last_response, 'iteration': iteration}
 

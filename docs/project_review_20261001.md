@@ -20,6 +20,8 @@ that every GPU, container or distributed execution path is defect-free.
 | Search-client lifetime at reward collection | Per-environment HTTP pools remained open after scoring | Close in reward collection's `finally`, including scoring exceptions |
 | Cross-thread asyncio result delivery | Search collector thread called `Future.set_result` directly | Schedule on owning loop with `call_soon_threadsafe`, check cancellation inside callback; debug-loop/cancellation tests |
 | Pending cancelled searches | Cancellation could leave entries in `pending_requests` | Remove entries in `finally`, in addition to completion/timeout cleanup |
+| Accepted searches lost under backpressure | Full batch queues dropped pending work; timeout flush could terminate the batcher | Block downstream enqueue without draining upstream; regressions cover size, timeout and shutdown flush, bounded batches and delivery exactly once |
+| Branch calls exceeded remaining turns | Children received the full turn limit and return summaries were uncounted | Pass remaining turns, count return/session summaries, and suppress exhausted-budget branches and graph checkpoints across five executors |
 | Broken session restart | Five executors made `main+` summaries but continued stepping `main` | Follow-up: switch the actual working context, preserve absolute graph indices and aggregate budget, export aligned training segments |
 | Inconsistent result aggregation | Aggregation assumed nonempty selection and did not check per-rank placement or binary task rewards | Shared validator checks selection, rank, provenance, row placement and task outcomes; exporter also reconciles stored summaries |
 
@@ -35,8 +37,8 @@ retain their original code commits and were not rescored.
 ## Cleanup and organization
 
 - Removed the unused duplicate proxy judge and consolidated direct judge requests.
-- Removed five ineffective session-restart blocks. This disables an unsupported
-  option explicitly; it does **not** implement safe session rebasing.
+- Replaced five ineffective session-restart blocks with the safe, opt-in working
+  context restart implemented in the follow-up.
 - Shared live/offline evaluation validation in `scripts/evaluation_records.py`.
 - Relocated the unchanged Ray-environment log redactor into
   `verl/utils/logging_utils.py`, retaining its training-entrypoint alias. Its
@@ -105,8 +107,11 @@ locally, so their recorded hashes/calibration are not independently revalidated.
 
 ## Validation
 
-Follow-up local suite: **690 passed, 5 skipped**, no failures (27.16 seconds).
-The original review had 653 passing tests. The added regressions cover actual
+Latest local suite: **719 passed, 5 skipped**, no failures (27.54 seconds).
+The original review had 653 passing tests; the session/cleanup follow-up had 690.
+The latest 29 regressions cover remaining branch-turn budgets, summary-call
+accounting, exhausted-budget checkpoints, and lossless batch-queue backpressure.
+Earlier added regressions cover actual
 summary continuation in all five executors, exact model-input/training-prefix
 alignment, multiple restarts and aggregate budgets, graph credit indices, and
 cleanup in all seven executors before reward collection. Repeated cancellation

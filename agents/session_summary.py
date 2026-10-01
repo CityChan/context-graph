@@ -90,6 +90,7 @@ class SessionSummaryMixin:
         if cap < 32:
             self.rollback()
             return False
+        self.summary_attempts = getattr(self, "summary_attempts", 0) + 1
         response = await self.step(max_new_tokens=cap)
         if response is None:
             self.rollback()

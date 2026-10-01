@@ -209,8 +209,12 @@ async def process_item(
                 break
 
             summary_start = len(agent['main'].messages())
+            summary_attempts_before = getattr(agent['main'], 'summary_attempts', 0)
             await agent['main'].maybe_restart_session(0)
             session_message.extend(agent['main'].messages()[summary_start:])
+            iteration += getattr(agent['main'], 'summary_attempts', 0) - summary_attempts_before
+            if iteration >= max_turn:
+                break
 
             iteration += 1
 
@@ -241,7 +245,9 @@ async def process_item(
 
             # ── Handle branch (creates subtask node in graph) ──
             elif fn_call is not None and fn_call['function'] == 'branch':
-                if len(branches) + 1 > max_session:
+                if iteration >= max_turn:
+                    observation = "No remaining turn budget to start a branch."
+                elif len(branches) + 1 > max_session:
                     observation = f"You've already reached the limit of {len(branches)} branch calls. Continue working independently."
                 else:
                     description = fn_call['arguments'].get('description', 'Agent')
@@ -271,7 +277,7 @@ async def process_item(
 
                     agent_return = await agent[agent_name].react(
                         partial(run_action, env),
-                        max_turn=max_turn,
+                        max_turn=max(0, max_turn - iteration),
                         max_tokens=getattr(config.plugin, "branch_len", None),
                         session_timeout=session_timeout - time.time() + session_start_time,
                         should_continue=lambda resp: '<function=return>' not in resp,
