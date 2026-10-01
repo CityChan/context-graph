@@ -144,6 +144,21 @@ def test_controller_rejects_action_specific_invalid_fields():
         )
 
 
+@pytest.mark.parametrize("indices", [[], [1, 0], [1, 1]])
+@pytest.mark.parametrize("allow_pass", [False, True])
+def test_controller_rejects_select_arity_before_active_focus_lookup(indices, allow_pass):
+    graph = _graph_with_evidence()
+    graph.active_node_id = "n3"
+    controller = GraphActionController()
+    snapshot = controller.snapshot(graph)
+    response = json.dumps({
+        "action": "select", "candidate_indices": indices,
+        "summary": "", "relation": "semantic",
+    })
+    with pytest.raises(GraphControllerError, match="select requires exactly 1"):
+        controller.resolve_action(graph, snapshot, response, allow_pass=allow_pass)
+
+
 def test_controller_maps_idempotent_select_to_pass_when_pass_is_legal():
     graph = _graph_with_evidence()
     controller = GraphActionController()

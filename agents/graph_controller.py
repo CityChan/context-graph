@@ -410,14 +410,6 @@ class GraphActionController:
                 raise GraphControllerError("pass is illegal while graph is not saturated")
             return {"function": "pass", "arguments": {}}
 
-        if (
-            action == "select"
-            and by_index[indices[0]].node_id == graph.active_node_id
-        ):
-            if allow_pass:
-                return {"function": "pass", "arguments": {}}
-            raise GraphControllerError("select target is already the active focus")
-
         if action == "merge":
             if not 2 <= len(indices) <= 6:
                 raise GraphControllerError("merge requires 2 to 6 candidate indices")
@@ -442,6 +434,13 @@ class GraphActionController:
                 f"{action} requires exactly {required_arity} candidate "
                 f"{'indices' if required_arity > 1 else 'index'}"
             )
+        if (
+            action == "select"
+            and by_index[indices[0]].node_id == graph.active_node_id
+        ):
+            if allow_pass:
+                return {"function": "pass", "arguments": {}}
+            raise GraphControllerError("select target is already the active focus")
         if action == "add_edge":
             if indices[0] == indices[1]:
                 raise GraphControllerError("add_edge requires distinct candidates")
