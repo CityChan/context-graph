@@ -9,7 +9,7 @@ case "$BCP_TRAIN_PROFILE" in
   foldagent_32k_paper_batch|foldagent_32k_small_batch|foldagent_32k_three_rank_batch)
     [ "$METHOD" = foldagent ] && [ "${SMOKE_TEST:-0}" != 1 ] || { echo "FoldAgent paper-batch profile requires foldagent normal training" >&2; exit 2; }
     ;;
-  contextgraph_32k_paper_batch|contextgraph_32k_small_batch|contextgraph_32k_three_rank_batch|contextgraph_64k_paper_batch)
+  contextgraph_32k_paper_batch|contextgraph_32k_small_batch|contextgraph_32k_three_rank_batch|contextgraph_32k_4x4_batch|contextgraph_64k_paper_batch)
     [ "$METHOD" = contextgraph ] && [ "${SMOKE_TEST:-0}" != 1 ] || { echo "Paper-batch profile requires contextgraph normal training" >&2; exit 2; }
     ;;
   *) echo "Unknown BCP_TRAIN_PROFILE: $BCP_TRAIN_PROFILE" >&2; exit 2 ;;
@@ -142,6 +142,10 @@ fi
 if [[ "$BCP_TRAIN_PROFILE" = *_32k_three_rank_batch ]]; then
   # 9 prompts x 4 rollouts = 36 sequence slots, evenly split over 3 trainer ranks.
   export TRAIN_BATCH_SIZE=9 ROLLOUT_N=4 PPO_MINI_BATCH_SIZE=9
+fi
+if [ "$BCP_TRAIN_PROFILE" = contextgraph_32k_4x4_batch ]; then
+  # 4 prompts x 4 rollouts = 16 sequence slots, evenly split over 4 trainer ranks.
+  export TRAIN_BATCH_SIZE=4 ROLLOUT_N=4 PPO_MINI_BATCH_SIZE=4
 fi
 if [ "$BCP_TRAIN_PROFILE" = contextgraph_64k_paper_batch ]; then
   export RESPONSE_LENGTH=57344 CONTEXT_LENGTH=65536 PPO_MINI_BATCH_SIZE=128

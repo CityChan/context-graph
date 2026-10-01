@@ -1,5 +1,20 @@
 # Qwen3.5-9B BC-P RL, 50 steps
 
+## Five-node ContextGraph 32K, batch 4 x rollout 4
+
+Submit from a Vista login node:
+
+```bash
+cd /work/09281/chc_1996/vista/context-graph && git pull --ff-only origin master && mkdir -p logs && sbatch scripts/train_bcp_qwen35_9b_contextgraph_32k_4x4_5node.sbatch
+```
+
+This profile uses one search node and four trainer nodes, with 4 prompts x 4
+rollouts = 16 global sequence slots and PPO minibatch setting 4 (four slots per
+trainer rank after rollout expansion). It retains the shared 32K context,
+50 steps, validation, and checkpoint schedule. Slurm requests 48 hours; logs
+are `logs/bcp-9b-cg-4x4.JOBID.out` and `.err`. This is a smaller training batch
+than the prior 4-node FoldAgent 9 x 4 run, so it is not a batch-matched comparison.
+
 ## Four active nodes in idev (optional 9 x 4 profile)
 
 To use the entire four-node allocation, the first node serves retrieval and the

@@ -239,6 +239,7 @@ done
     ('foldagent_32k_small_batch', 3, 32768, 8, 'idev4_dp2'),
     ('contextgraph_32k_three_rank_batch', 4, 32768, 9, 'idev4_dp3'),
     ('contextgraph_32k_three_rank_batch', 3, 32768, 9, 'idev4_dp3'),
+    ('contextgraph_32k_4x4_batch', 5, 32768, 4, 'full'),
     ('foldagent_32k_three_rank_batch', 4, 32768, 9, 'idev4_dp3'),
     ('foldagent_32k_three_rank_batch', 5, 32768, 9, 'idev4_dp3'),
     ('foldagent_32k_paper_batch', 5, 32768, 128, 'full'),
@@ -302,8 +303,9 @@ def test_training_profile_reaches_base_launcher(tmp_path, profile, nodes, contex
     assert captured['SLURM_JOB_NODELIST'] == 'fixture'
     small_batch = profile.endswith('_small_batch')
     three_rank_batch = profile.endswith('_three_rank_batch')
-    for key, value in dict(EXPECTED_NUM_NODES=str(active_nodes), TOTAL_TRAINING_STEPS='50', TRAIN_BATCH_SIZE='8' if small_batch else '9' if three_rank_batch else '32',
-                           ROLLOUT_N='4' if small_batch or three_rank_batch else '8', PPO_MINI_BATCH_SIZE=str(mini), PROMPT_LENGTH='8192',
+    four_by_four_batch = profile.endswith('_4x4_batch')
+    for key, value in dict(EXPECTED_NUM_NODES=str(active_nodes), TOTAL_TRAINING_STEPS='50', TRAIN_BATCH_SIZE='4' if four_by_four_batch else '8' if small_batch else '9' if three_rank_batch else '32',
+                           ROLLOUT_N='4' if small_batch or three_rank_batch or four_by_four_batch else '8', PPO_MINI_BATCH_SIZE=str(mini), PROMPT_LENGTH='8192',
                            RESPONSE_LENGTH=str(context - 8192), CONTEXT_LENGTH=str(context),
                            BC_APPLY_YARN='0', VAL_BEFORE_TRAIN='True').items():
         assert captured[key] == value
@@ -323,6 +325,22 @@ def test_training_profile_reaches_base_launcher(tmp_path, profile, nodes, contex
         assert captured['EXPERIMENT_NAME'].startswith('train64k_')
     elif '_32k_' in profile:
         assert captured['EXPERIMENT_NAME'].startswith(f'train32k_qwen35_9b_bcp_{method}_')
+
+
+@pytest.mark.skipif(not shutil.which('bash'), reason='Bash unavailable')
+def test_contextgraph_4x4_sbatch_selects_profile(tmp_path):
+    (tmp_path / 'scripts').mkdir()
+    (tmp_path / 'scripts/train_bcp_qwen35_9b_50step.sh').write_text(
+        'printf "%s\\n" "$BCP_TRAIN_PROFILE:$BCP_TRAIN_TOPOLOGY:$SMOKE_TEST:$PREFLIGHT_ONLY:$1"\n',
+        encoding='utf8')
+    script = ROOT / 'scripts/train_bcp_qwen35_9b_contextgraph_32k_4x4_5node.sbatch'
+    result = subprocess.run([shutil.which('bash'), script.as_posix()], cwd=tmp_path,
+                            env=dict(os.environ, SMOKE_TEST='1', PREFLIGHT_ONLY='1'),
+                            capture_output=True, text=True, timeout=30,
+                            creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == 'contextgraph_32k_4x4_batch:full:0:0:contextgraph'
+    assert '#SBATCH --nodes=5' in script.read_text(encoding='utf8')
 
 
 @pytest.mark.skipif(not shutil.which('bash'), reason='Bash unavailable')
