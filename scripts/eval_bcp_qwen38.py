@@ -18,6 +18,8 @@ import traceback
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from scripts.evaluation_records import read_evaluation
+
 
 def select_indices(size, samples, seed):
     if samples == -1:
@@ -146,28 +148,7 @@ def tokenizer_preflight(tokenizer, config):
 
 
 def summarize(root):
-    manifests = [json.loads((root / f"manifest-{rank}.json").read_text()) for rank in range(3)]
-    fields = ("source_sha256", "indices", "commit", "model_path", "method", "config", "seed", "judge_model")
-    for manifest in manifests[1:]:
-        if manifest.get("benchmark", "bcp") != manifests[0].get("benchmark", "bcp"):
-            raise ValueError("Shard benchmark mismatch")
-        if manifest.get("model") != manifests[0].get("model"):
-            raise ValueError("Shard model mismatch")
-        if any(manifest[key] != manifests[0][key] for key in fields):
-            raise ValueError("Shard provenance mismatch")
-    results = []
-    for rank in range(3):
-        results.extend(json.loads(line) for line in (root / f"results-{rank}.jsonl").read_text().splitlines())
-    actual = [row["source_index"] for row in results]
-    if sorted(actual) != manifests[0]["indices"]:
-        raise ValueError("Missing or duplicated evaluation rows; inspect per-shard logs")
-    count = len(results)
-    summary = {"method": manifests[0]["method"], "benchmark": manifests[0].get("benchmark", "bcp"), "count": count,
-        "task_successes": sum(row["task_reward"] for row in results),
-        "task_accuracy": sum(row["task_reward"] for row in results) / count,
-        "finished": sum(row["is_finish"] for row in results),
-        "execution_errors": sum(row["status"] != "ok" for row in results),
-        "judge_parse_failures": sum(row.get("env_stats", {}).get("judge_parse_failure", 0) for row in results)}
+    _, _, summary = read_evaluation(root)
     (root / "summary.json").write_text(json.dumps(summary, indent=2))
     print(json.dumps(summary, indent=2))
     if summary["execution_errors"] or summary["judge_parse_failures"]:

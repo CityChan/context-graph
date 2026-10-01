@@ -1,5 +1,11 @@
 # SWE-bench Verified evaluation
 
+Saved evidence: the [published ARM pilot record](../results/audited/README.md#swe-bench-verified-arm-compatibility-pilot)
+reconciles prediction hashes, an empty patch and a completed grading summary
+for one Verified instance (0/1). It is not an official x86 score or a full
+500-task evaluation. Later Lite console-only runs are not promoted to the
+artifact-audited result set.
+
 ## SWE-bench Lite evaluation on an x86 Docker host
 
 The same agent and pinned official harness now support the 300-instance Lite

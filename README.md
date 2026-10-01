@@ -1,254 +1,103 @@
 # ContextGraph
 
-ContextGraph extends FoldAgent by managing an agent's working context as a graph instead of a tree. Search results, branches, summaries, and selected focus nodes become explicit graph state that can be merged, linked, selected, and pruned during long-horizon agent rollouts.
+ContextGraph studies graph-structured working memory for long-horizon agents.
+This repository contains ReAct, FoldAgent and ContextGraph executors, benchmark
+environments, evaluation audits, and a modified `verl` training stack.
 
-The repo currently includes these benchmark tracks:
+**Current status:** saved BC-P and local-GAIA evaluations are available with
+audited provenance. SWE-bench has a one-task ARM compatibility record, not a
+full official score. The five-node Qwen3.5-9B RL launcher is implemented;
+successful 32K training updates and memory fit on that topology remain unverified.
 
-| Track | Role | Status |
-| --- | --- | --- |
-| BrowseComp-Plus | Main search/research QA benchmark | Primary track |
-| GAIA | General assistant/search benchmark | Active text-only integration |
-| ScienceAgentBench (SAB) | Code-execution benchmark | Active evaluation track |
-| ALFWorld | Stateful embodied-text benchmark | Experimental/diagnostic |
-| SWE-bench Verified | Repository issue fixing with official test grading | Adapter implemented; real Docker/model smoke run pending |
+## Start here
 
-Multi-hop QA wrappers for HotpotQA, MuSiQue, and 2WikiMultiHopQA were removed from the active codebase. Shared search infrastructure remains because BrowseComp-Plus still uses it.
-
-## Core Files
-
-See [the codebase map](docs/codebase_map.md) for method entry points, shared
-modules, experimental variants, and cleanup boundaries.
-
-For ReAct / FoldAgent / ContextGraph on SWE-bench Verified, see the
-[evaluation guide](docs/swebench_verified_eval.md). It separates Vista model
-serving from x86 Docker repository containers and official patch grading.
-
-| Path | Purpose |
+| Task | Entry point / guide |
 | --- | --- |
-| `agents/context_graph.py` | In-memory graph state, graph ops, and graph reward accounting |
-| `agents/graph_agent.py` | Global ContextGraph agent loop |
-| `agents/graph_agent_isolated.py` | Isolated per-branch ContextGraph agent loop |
-| `agents/fold_agent.py` | FoldAgent baseline |
-| `agents/react_agent.py` | ReAct baseline for search-style tasks |
-| `agents/react_agent_code.py` | ReAct baseline for SAB code-execution tasks |
-| `agents/prompts.py` | Search and ALFWorld prompts/tool instructions |
-| `agents/prompts_code.py` | SAB code-agent prompts |
-| `envs/search_server.py` | BrowseComp-Plus embedding search service |
-| `envs/local_search.py` | Local search client used by search agents |
-| `envs/scienceagent_env.py` | SAB environment wrapper |
-| `envs/scienceagent_sandbox.py` | Stateful restricted Python sandbox for SAB |
-| `envs/alfworld_env.py` | ALFWorld TextWorld wrapper |
-| `scripts/train_graph.py` | ContextGraph training entry point |
-| `scripts/train_fold.py` | FoldAgent training entry point |
-| `scripts/train_baseline.py` | ReAct/baseline training entry point |
-| `scripts/eval_bc.py` | BrowseComp-Plus evaluation entry point |
-| `scripts/make_gaia_data.py` | GAIA parquet builder |
-| `scripts/eval_gaia.py` | GAIA API-based evaluation entry point |
-| `scripts/train_sab.py` | SAB evaluation/training entry point |
+| Understand the modules and experiment variants | [Codebase map](docs/codebase_map.md) |
+| Review confirmed fixes and remaining risks | [October 1 review](docs/project_review_20261001.md) |
+| Train Qwen3.5-9B on Vista | [RL setup, preflight, smoke and submission](docs/bcp_qwen35_9b_rl.md) |
+| Evaluate BC-P / text-only local GAIA | [BC-P guide](docs/bcp_qwen35_9b_eval.md), [GAIA guide](docs/gaia_qwen35_9b_eval.md) |
+| Evaluate SWE-bench Verified or Lite | [Container, model and grading guide](docs/swebench_verified_eval.md) |
+| Run SAB, ALFWorld or teacher-data workflows | [Additional workflows](docs/workflows.md) |
+| Find other runnable scripts | [Script index](scripts/README.md) |
+| Inspect saved results | [Result index](results/README.md) |
 
-## Setup
+## Results and evidence
 
-```bash
-conda create -n cxtgraph python=3.10 -y
-conda activate cxtgraph
-pip install torch
-pip install -r requirements.txt
-bash scripts/setup_env.sh
-```
+The following historical Qwen3.5-9B runs use a 32,768-token working-context
+limit. Counts were recalculated from per-instance records and checked against
+the saved shard manifests and summaries. The [audit bundle](results/audited/README.md)
+contains exact run IDs, commits, checkpoint revision, selected indices, settings,
+source hashes, per-instance outcomes and excluded runs.
 
-On TACC Vista/GH200, use the cluster CUDA/vLLM environment already configured in the sbatch scripts. The scripts assume the `cxtgraph` conda env and project path `/work/09281/chc_1996/vista/context-graph` unless overridden.
+| Benchmark | ReAct | FoldAgent | ContextGraph |
+| --- | ---: | ---: | ---: |
+| BrowseComp-Plus, 150 questions | 65/150 (43.33%) | 68/150 (45.33%) | 74/150 (49.33%) |
+| GAIA text-only, local BC-P retrieval, 127 questions | 9/127 (7.09%) | 12/127 (9.45%) | 9/127 (7.09%) |
 
-## BrowseComp-Plus
+These are **historical observations, not a controlled causal comparison**.
+ReAct and the branching methods use different commits; the runs also predate
+the October 1 finalizer/reward fixes. GAIA uses a local corpus rather than the
+official tool setting. An artifact audit does not independently rejudge answers.
 
-Start the embedding search server:
+The saved **SWE-bench Verified** ARM pilot evaluated only `sympy__sympy-20590`:
+FoldAgent produced an empty patch and resolved **0/1**. Prediction hashes,
+patch bytes and grading metadata reconcile locally. The dataset's 500-task
+catalog size is not the evaluated count, and `official_x86_result=false`.
+See the [ARM evidence section](results/audited/README.md#swe-bench-verified-arm-compatibility-pilot).
 
-```bash
-cd envs && python search_server.py --model Qwen/Qwen3-Embedding-8B --corpus Tevatron/browsecomp-plus-corpus --corpus-embedding-dataset miaolu3/browsecomp-plus --host 0.0.0.0 --port 8010
-```
+## Current Vista RL profile
 
-Point agents at the server:
+From a Vista login node, after the environment/preflight in the
+[RL guide](docs/bcp_qwen35_9b_rl.md):
 
 ```bash
-export LOCAL_SEARCH_URL="http://<search-server-host>:8010"
+cd /work/09281/chc_1996/vista/context-graph
+git pull --ff-only origin master
+mkdir -p logs
+sbatch scripts/train_bcp_qwen35_9b_contextgraph_32k_4x4_5node.sbatch
 ```
 
-Representative zero-shot/eval scripts:
+This requests five nodes: one retrieval node and four trainers. Configuration:
+32K context, four prompts with four rollouts each, PPO minibatch setting four,
+50 updates, 48-hour allocation. Branches can produce additional training
+trajectories; 16 main rollouts does not imply 16 independent fixed-cost requests.
+Pre-training validation can take substantial time before the first update.
+Submission, dependency preflight and rollout progress do not prove a completed
+optimizer step. Preserve the run's commit and do not update its shared checkout
+while it is running.
+
+## Runtime and code layout
+
+| Directory | Responsibility |
+| --- | --- |
+| `agents/` | Executors, prompts, graph memory, controller and finalization |
+| `envs/` | Search clients/server, benchmark tools, containers and task rewards |
+| `scripts/` | Data preparation, launchers, evaluation and evidence audits |
+| `verl/` | Vendored distributed training implementation and compatibility changes |
+| `tests/` | CPU regressions, protocol checks and optional runtime integrations |
+| `docs/` | Architecture, protocols, cluster instructions and review findings |
+| `results/` | Published evidence summaries and sanitized audited records |
+
+Global and isolated ContextGraph are distinct variants. The isolated executor's
+`legacy`, `repaired` and `foldagent` memory modes are experimental controls.
+Training keeps generated history immutable; graph pruning is not a guarantee
+that the policy's entire training context shrinks. Branch-return summaries and
+graph merge summaries remain supported. The broken legacy session-restart
+option `enable_summary=True` now fails explicitly; keep it false.
+
+## Validation and reproducibility
+
+Install the dependencies appropriate to the selected workflow. The full test
+suite requires training dependencies such as Ray, cloudpickle and TensorDict;
+GPU/runtime checks additionally require the actual Vista environment.
 
 ```bash
-bash scripts/eval_bc_baseline_8b_4node_zeroshot.sh
-bash scripts/eval_bc_ctxgraph_30b_8node_zeroshot.sh
-bash scripts/eval_bc_foldagent_30b_8node_zeroshot.sh
+python -m pytest -q tests
+python scripts/export_audited_results.py --source outputs --destination results/audited --arm-source logs/swe-foldagent-1035199-hgEsOA
 ```
 
-## GAIA
-
-GAIA is gated on HuggingFace. Login before building data:
-
-```bash
-huggingface-cli login
-```
-
-Build text-only validation parquets:
-
-```bash
-python scripts/make_gaia_data.py --split validation --out-dir data
-```
-
-This writes:
-
-```text
-data/gaia_validation.parquet
-data/gaia_validation_branch.parquet
-data/gaia_validation_graph.parquet
-```
-
-The first integration skips rows with file attachments by default because the current GAIA agent path exposes search/open-page tools, not image/OCR/spreadsheet/file tools. Use `--include-files` only for debugging metadata flow.
-
-Run a small API-based smoke eval:
-
-```bash
-python scripts/eval_gaia.py --data-path data/gaia_validation_graph.parquet --workflow search_graph --max-samples 8 --num-workers 2 --local-search-url http://localhost:8010
-```
-
-## ScienceAgentBench
-
-Build SAB parquets after downloading the upstream CSV and benchmark package:
-
-```bash
-python scripts/make_sab_data.py --csv data/ScienceAgentBench.csv --benchmark-dir data/sab_benchmark --out-dir data
-```
-
-Run the 8B ReAct smoke eval:
-
-```bash
-SAB_VAL_MAX_SAMPLES=8 SAB_DEBUG_IO=1 SAB_DUMP_VALIDATION=1 SAB_NO_OUTPUT_HINT_AFTER=2 SAB_RESPONSE_LENGTH=12288 SAB_TURN_MAX_NEW_TOKENS=512 bash scripts/eval_sab_react_8b_4node_smoke.sh
-```
-
-The same hardened 4-node harness can run all three SAB methods by setting
-`SAB_METHOD` to `react`, `fold`, or `ctxgraph`. It selects the matching agent
-loop, workflow parquet, and process-reward configuration automatically:
-
-```bash
-SAB_METHOD=fold SAB_REAL_EVAL=1 SAB_VAL_MAX_SAMPLES=1 bash scripts/eval_sab_react_8b_4node_smoke.sh
-SAB_METHOD=ctxgraph SAB_REAL_EVAL=1 SAB_VAL_MAX_SAMPLES=1 bash scripts/eval_sab_react_8b_4node_smoke.sh
-```
-
-Other SAB entry points live under `scripts/eval_sab_*.sh`.
-
-## ALFWorld
-
-Install game dependencies and download game files:
-
-```bash
-pip install textworld alfworld
-alfworld-download
-```
-
-Build real/hard parquets:
-
-```bash
-python scripts/make_alfworld_data.py --mode real --n_train 300 --n_val 80
-python scripts/make_alfworld_data.py --mode hard --n_train 300 --n_val 80
-```
-
-Current 8B diagnostic script:
-
-```bash
-bash scripts/train_alfworld_ctxgraph_8b_4node_30step.sh
-```
-
-For an action-only ReAct diagnostic on the same script:
-
-```bash
-ALFWORLD_TRAIN_MODULE=scripts.train_baseline ALFWORLD_AGENT_LOOP=react_agent ALFWORLD_WORKFLOW=alfworld ALFWORLD_PROCESS_REWARD='[flat]' ALFWORLD_VAL_ONLY=True ALFWORLD_VAL_MAX_SAMPLES=8 ALFWORLD_MAX_TURN=40 ALFWORLD_VAL_MAX_TURN=40 ALFWORLD_TURN_MAX_NEW_TOKENS=128 bash scripts/train_alfworld_ctxgraph_8b_4node_30step.sh
-```
-
-## Tests
-
-Local smoke checks:
-
-```bash
-python -m tests.smoke_sab_sandbox
-python -m tests.smoke_gaia_data
-python -m py_compile envs/alfworld_env.py
-bash -n scripts/eval_sab_react_8b_4node_smoke.sh
-bash -n scripts/train_alfworld_ctxgraph_8b_4node_30step.sh
-```
-
-## ContextGraph SFT data
-
-The open-source teacher pipeline uses `deepseek-ai/DeepSeek-V4-Flash-0731`.
-It requires the model under `$SCRATCH` (either a direct directory or the normal
-Hugging Face cache layout), eight GH200 nodes for a TP=8 vLLM server, and one
-additional node for BrowseComp-Plus retrieval. The DeepSeek server runs in a
-dedicated `deepseek_v4` conda environment with vLLM 0.25 or newer; the agent
-runner remains in `cxtgraph`.
-
-DeepSeek teacher scripts default `HF_HOME` and `HF_HUB_CACHE` to `$SCRATCH`
-even when the login shell has stale `/work` cache variables. They pin Vista's
-CUDA 12.8 compiler with GCC/G++ host compilers, add Vista's CUDA math headers
-(including cuRAND), and give each node local DeepGEMM, FlashInfer, and vLLM
-JIT caches under `/tmp`. Safetensors use single-threaded prefetching by default
-to reduce long-lived random mmap reads on the shared checkpoint filesystem
-while preserving DeepSeek's `F8_E8M0` tensor support. Override these defaults with the
-dedicated `DEEPSEEK_HF_HOME`, `DEEPSEEK_HF_HUB_CACHE`,
-`DEEPSEEK_CUDA_HOME`, `DEEPSEEK_CC`, `DEEPSEEK_CXX`, and
-`DEEPSEEK_CUDAHOSTCXX` variables. Model and student-tokenizer paths outside
-`$SCRATCH` are still rejected.
-
-Submit a 25-sample pilot:
-
-```bash
-PREFLIGHT_ONLY=1 bash scripts/generate_ctxgraph_sft_deepseek_v4_flash_0731_9node.sh
-sbatch scripts/generate_ctxgraph_sft_deepseek_v4_flash_0731_9node.sh
-```
-
-Override an explicit checkpoint directory or increase the deterministic shard:
-
-```bash
-MODEL_PATH=$SCRATCH/models/DeepSeek-V4-Flash-0731 START_INDEX=0 MAX_SAMPLES=100 sbatch scripts/generate_ctxgraph_sft_deepseek_v4_flash_0731_9node.sh
-```
-
-Only correct, finished, non-overlong trajectories with no invalid graph calls
-and at least one successful structural graph operation are retained. New
-trajectories also carry a `contextgraph.trace.v1` event log with hashed
-before/after states. The curator verifies event continuity, executor effects,
-counter agreement, redundant operations, and task-grouped train/validation
-splits before writing Parquet.
-
-ALFWorld and ScienceWorld use the eight-node interactive DeepSeek pipeline
-(no retrieval node). Array index 0 runs ALFWorld and index 1 runs ScienceWorld:
-
-```bash
-sbatch scripts/generate_ctxgraph_sft_deepseek_v4_interactive_8node.sh
-```
-
-Use `DOMAIN=alfworld` or `DOMAIN=scienceworld` when running a single array
-task manually. Raw JSON retains messages, the final rendered graph, graph
-rewards, and the replay-auditable structured trace; curated rows retain the
-canonical trace and final graph as JSON metadata alongside `messages`.
-
-Inside an existing four-GH200 `idev`, use the conservative TP=4 wrapper and
-run the two interactive domains sequentially:
-
-```bash
-DOMAIN=alfworld bash scripts/smoke_interactive_ctxgraph_deepseek_v4_4node_idev.sh
-DOMAIN=scienceworld bash scripts/smoke_interactive_ctxgraph_deepseek_v4_4node_idev.sh
-```
-
-For a quick smoke inside an existing 4-node Vista `idev` allocation, use the
-single-GPU `Qwen/Qwen3.6-27B` teacher. The smoke uses one node for vLLM and one
-for retrieval; the other two allocated nodes remain idle. It evaluates two
-BrowseComp train questions by default:
-
-```bash
-MAX_SAMPLES=2 bash scripts/smoke_generate_ctxgraph_sft_qwen3_6_27b_4node_idev.sh
-```
-
-The output is written below
-`$SCRATCH/contextgraph_sft/qwen3_6_27b_smoke/$SLURM_JOB_ID`. The server requires
-vLLM 0.19 or newer; by default it reuses the `deepseek_v4` server environment.
-
-## Documentation
-
-Architecture and reward design are documented in `docs/contextgraph_architecture.md`. SAB-specific design notes are in `docs/design_scienceagentbench_ctxgraph.md`.
+The export command requires the original synced artifacts. Raw trajectories,
+model weights, credentials and generated logs are not published. See the
+[review report](docs/project_review_20261001.md) for exact validation boundaries
+and the [architecture](docs/contextgraph_architecture.md) for research design.

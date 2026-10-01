@@ -31,6 +31,10 @@ official StructMem executor. GraphRPO is training credit assignment.
 | `agents/finalizer.py` | Protected final-answer budget and forced completion |
 | `agents/structured_memory.py` | Fact memory and knowledge-gap analysis |
 | `scripts/audit_records.py` | Shared JSON/JSONL discovery and loading for audit tools |
+| `scripts/evaluation_records.py` | Three-shard provenance and outcome validation |
+| `scripts/export_audited_results.py` | Sanitized publication of reconciled saved results |
+| `envs/judge_client.py` | Judge request retries and HTTP-client lifetime |
+| `envs/async_results.py` | Search-result delivery on the owning event loop |
 
 Existing helper import paths on executor and audit modules remain available
 through imports. Global graph handlers remain separate where validation order or
@@ -47,7 +51,7 @@ would change the evaluation protocol.
   cached tokenizers or external benchmark environments.
 - `verl/`: vendored training framework with project changes; do not replace it
   with an upstream package as part of duplicate-code cleanup.
-- `logs/`, `results/`, `memory_data/`, `tmp/`: run evidence and local artifacts;
+- `logs/`, `outputs/`, `results/`, `memory_data/`: run evidence and local artifacts;
   they are not cleanup targets for source refactoring.
 
 The obsolete `external/verl` submodule declaration was removed: there is no
@@ -56,16 +60,16 @@ file `0.11.0` was also removed.
 
 ## Validation and deployment
 
-This cleanup keeps prompts, budgets, reward semantics, workflow names and model
-launch settings unchanged. It lives on `refactor/codebase-dedup`, leaving the
-ongoing Vista evaluation's `master` untouched. Do not switch the shared Vista
-checkout while jobs are running.
+The October 1 review removes the unused proxy-judge duplicate and the five
+broken session-restart blocks. `enable_summary=True` now raises before opening
+an environment; it is not a supported memory-compression feature. Branch-return
+and graph-merge summaries are separate and retained.
 
-Cleanup validation: 63 original top-level function ASTs match the baseline,
-including helpers relocated into shared modules. Targeted checks: 112 passed,
-2 skipped. Full local suite: 458 passed, 8 skipped, 21 failed; 20 failures are
-imports blocked by missing Ray, and one existing source-string assertion expects
-an older `inject_graph_state_after_action` default (also absent on the baseline).
-Both audit scripts' direct CLI entry points and the judge audit's module entry
-point pass `--help`; Python compilation and `git diff --check` pass.
-GPU execution has not been validated for this branch.
+Global/isolated variants, the code/search environment parsers, launch wrappers,
+and `verl` remain separate where behavior or configuration differs. Similar
+filenames alone are not evidence of redundant code.
+
+See the [review report](project_review_20261001.md) for final test results,
+known limitations and behavior changes. In particular, answer acceptance and
+scope-judge failure handling changed; this is not a protocol-neutral refactor.
+Do not update a shared Vista checkout while its jobs are running.

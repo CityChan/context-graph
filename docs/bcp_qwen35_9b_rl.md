@@ -15,6 +15,18 @@ trainer rank after rollout expansion). It retains the shared 32K context,
 are `logs/bcp-9b-cg-4x4.JOBID.out` and `.err`. This is a smaller training batch
 than the prior 4-node FoldAgent 9 x 4 run, so it is not a batch-matched comparison.
 
+**Validation boundary:** launcher/profile tests establish argument wiring only.
+The 32K, 4 x 4, five-node topology has not yet demonstrated a completed GPU
+optimizer step or checkpoint reload in the locally available evidence. Run the
+short smoke below first. Pre-training validation and multi-turn rollouts can
+leave the update progress bar at zero while generation is active.
+
+The October 1 review fixes final-answer acceptance, judge cleanup and search
+result delivery; old scores retain the earlier protocol. `enable_summary=True`
+is rejected because legacy session restart did not switch the active trajectory.
+See the [review and open decisions](project_review_20261001.md), including the
+success-gated graph cost and inherited branch-budget semantics.
+
 ## Four active nodes in idev (optional 9 x 4 profile)
 
 To use the entire four-node allocation, the first node serves retrieval and the

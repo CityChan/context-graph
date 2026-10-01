@@ -2,6 +2,34 @@
 
 This directory keeps runnable entry points for the active benchmark tracks.
 
+## Current Qwen3.5-9B workflows
+
+- `train_bcp_qwen35_9b_contextgraph_32k_4x4_5node.sbatch`: five nodes,
+  one search + four trainers, 32K, batch 4 x rollout 4, 50 updates.
+- `train_bcp_qwen35_9b_50step.sh`: shared profile implementation; wrappers
+  carry method/topology/batch choices and are intentionally retained.
+- `smoke_bcp_qwen35_9b_4node_idev.sh`: short distributed update smoke.
+- `eval_bcp_qwen38.py`: shared token-ID evaluator despite the historical filename;
+  supports the current BC-P and local-GAIA Qwen3.5 launchers.
+- `evaluation_records.py`: shared shard/provenance/row validation.
+- `export_audited_results.py`: reproducible, sanitized publication of saved evidence.
+
+See [RL setup and validation limits](../docs/bcp_qwen35_9b_rl.md) and
+[published results](../results/README.md). Do not interpret a launcher or
+dependency preflight as successful GPU training.
+
+## SWE-bench Verified and Lite
+
+- `eval_swebench_verified.py`: pinned dataset preparation, patch generation and audits.
+- `run_swe_lite_docker.sh`: Lite generation and official-harness grading on x86 Docker.
+- `run_swe_arm_pilot_idev.sh`: one supported SymPy task on Vista ARM/Apptainer;
+  requires a compute allocation, including for calibration.
+- `grade_swe_arm_pilot.py`: separate ARM calibration and grading.
+- `serve_swe_qwen35_9b_vista.sbatch`: model serving on a GH compute node.
+
+The [SWE guide](../docs/swebench_verified_eval.md) explains runtime boundaries.
+The ARM pilot is not a full Verified/Lite result.
+
 ## BrowseComp-Plus
 
 - `eval_bc.py`: direct evaluation entry point.
@@ -89,4 +117,6 @@ one-GH200 trainer nodes.
 
 ## Removed Surface
 
-HotpotQA, MuSiQue, and 2WikiMultiHopQA wrappers were removed from the active script surface. Shared search code remains for BrowseComp-Plus.
+Older standalone HotpotQA, MuSiQue and 2WikiMultiHopQA wrappers were removed.
+The separately maintained Search-R1 reference diagnostics above still include
+multi-hop datasets. Shared search code remains for BrowseComp-Plus.
