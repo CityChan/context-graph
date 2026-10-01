@@ -237,6 +237,10 @@ done
     ('contextgraph_32k_small_batch', 5, 32768, 8, 'idev4_dp2'),
     ('foldagent_32k_small_batch', 4, 32768, 8, 'idev4_dp2'),
     ('foldagent_32k_small_batch', 3, 32768, 8, 'idev4_dp2'),
+    ('contextgraph_32k_three_rank_batch', 4, 32768, 9, 'idev4_dp3'),
+    ('contextgraph_32k_three_rank_batch', 3, 32768, 9, 'idev4_dp3'),
+    ('foldagent_32k_three_rank_batch', 4, 32768, 9, 'idev4_dp3'),
+    ('foldagent_32k_three_rank_batch', 5, 32768, 9, 'idev4_dp3'),
     ('foldagent_32k_paper_batch', 5, 32768, 128, 'full'),
 ])
 def test_training_profile_reaches_base_launcher(tmp_path, profile, nodes, context, mini, topology):
@@ -262,6 +266,7 @@ def test_training_profile_reaches_base_launcher(tmp_path, profile, nodes, contex
                     encoding='utf8', newline='\n')
     setup = tmp_path / 'run.sh'
     launcher = (f'scripts/train_bcp_qwen35_9b_{method}_32k_4node_idev.sh' if topology == 'idev4_dp2'
+                else f'scripts/train_bcp_qwen35_9b_{method}_32k_9x4_4node_idev.sh' if topology == 'idev4_dp3'
                 else 'scripts/train_bcp_qwen35_9b_50step.sh')
     node_list = ' '.join(f'node{i}' for i in range(nodes))
     setup.write_text('\n'.join([
@@ -279,7 +284,7 @@ def test_training_profile_reaches_base_launcher(tmp_path, profile, nodes, contex
     result = subprocess.run([shutil.which('bash'), setup.as_posix()], cwd=ROOT, env=env,
                             capture_output=True, text=True, timeout=30,
                             creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
-    if topology == 'idev4_dp2' and nodes != 4:
+    if topology in ('idev4_dp2', 'idev4_dp3') and nodes != 4:
         assert result.returncode == 2
         assert 'requires exactly 4 allocated nodes' in result.stderr
         assert not (tmp_path / 'outputs').exists()
@@ -291,13 +296,14 @@ def test_training_profile_reaches_base_launcher(tmp_path, profile, nodes, contex
         return
     assert result.returncode == 0, result.stdout + result.stderr
     captured = dict(line.split('=', 1) for line in (tmp_path / 'captured.env').read_text().splitlines() if '=' in line)
-    active_nodes = 3 if topology == 'idev4_dp2' else 5
+    active_nodes = 3 if topology == 'idev4_dp2' else 4 if topology == 'idev4_dp3' else 5
     assert (tmp_path / 'active-nodes').read_text().splitlines() == [f'node{i}' for i in range(active_nodes)]
     # Selection must not overwrite Slurm's description of the allocation.
     assert captured['SLURM_JOB_NODELIST'] == 'fixture'
     small_batch = profile.endswith('_small_batch')
-    for key, value in dict(EXPECTED_NUM_NODES=str(active_nodes), TOTAL_TRAINING_STEPS='50', TRAIN_BATCH_SIZE='8' if small_batch else '32',
-                           ROLLOUT_N='4' if small_batch else '8', PPO_MINI_BATCH_SIZE=str(mini), PROMPT_LENGTH='8192',
+    three_rank_batch = profile.endswith('_three_rank_batch')
+    for key, value in dict(EXPECTED_NUM_NODES=str(active_nodes), TOTAL_TRAINING_STEPS='50', TRAIN_BATCH_SIZE='8' if small_batch else '9' if three_rank_batch else '32',
+                           ROLLOUT_N='4' if small_batch or three_rank_batch else '8', PPO_MINI_BATCH_SIZE=str(mini), PROMPT_LENGTH='8192',
                            RESPONSE_LENGTH=str(context - 8192), CONTEXT_LENGTH=str(context),
                            BC_APPLY_YARN='0', VAL_BEFORE_TRAIN='True').items():
         assert captured[key] == value

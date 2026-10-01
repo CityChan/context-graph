@@ -6,10 +6,10 @@ case "$METHOD" in contextgraph|foldagent) ;; *) echo "Invalid method: $METHOD" >
 export BCP_TRAIN_PROFILE=${BCP_TRAIN_PROFILE:-default}
 case "$BCP_TRAIN_PROFILE" in
   default) ;;
-  foldagent_32k_paper_batch|foldagent_32k_small_batch)
+  foldagent_32k_paper_batch|foldagent_32k_small_batch|foldagent_32k_three_rank_batch)
     [ "$METHOD" = foldagent ] && [ "${SMOKE_TEST:-0}" != 1 ] || { echo "FoldAgent paper-batch profile requires foldagent normal training" >&2; exit 2; }
     ;;
-  contextgraph_32k_paper_batch|contextgraph_32k_small_batch|contextgraph_64k_paper_batch)
+  contextgraph_32k_paper_batch|contextgraph_32k_small_batch|contextgraph_32k_three_rank_batch|contextgraph_64k_paper_batch)
     [ "$METHOD" = contextgraph ] && [ "${SMOKE_TEST:-0}" != 1 ] || { echo "Paper-batch profile requires contextgraph normal training" >&2; exit 2; }
     ;;
   *) echo "Unknown BCP_TRAIN_PROFILE: $BCP_TRAIN_PROFILE" >&2; exit 2 ;;
@@ -40,6 +40,11 @@ case "${BCP_TRAIN_TOPOLOGY:-full}" in
     UNUSED_NODES=("${NODES[@]:3}")
     NODES=("${NODES[@]:0:3}")
     export BC_ACTIVE_NODE_COUNT=3 EXPECTED_NUM_NODES=3
+    ;;
+  idev4_dp3)
+    [[ "$BCP_TRAIN_PROFILE" = *_32k_three_rank_batch ]] && [ "${SMOKE_TEST:-0}" != 1 ] || { echo "idev4_dp3 requires a 32K three-rank training profile" >&2; exit 2; }
+    [ "$ALLOCATED_NODE_COUNT" -eq 4 ] || { echo "idev4_dp3 requires exactly 4 allocated nodes" >&2; exit 2; }
+    export BC_ACTIVE_NODE_COUNT=4 EXPECTED_NUM_NODES=4
     ;;
   *) echo "Unknown BCP_TRAIN_TOPOLOGY: $BCP_TRAIN_TOPOLOGY" >&2; exit 2 ;;
 esac
@@ -133,6 +138,10 @@ fi
 if [[ "$BCP_TRAIN_PROFILE" = *_32k_small_batch ]]; then
   # 8 prompts x 4 rollouts; PPO expands prompt units to 32 global slots.
   export TRAIN_BATCH_SIZE=8 ROLLOUT_N=4 PPO_MINI_BATCH_SIZE=8
+fi
+if [[ "$BCP_TRAIN_PROFILE" = *_32k_three_rank_batch ]]; then
+  # 9 prompts x 4 rollouts = 36 sequence slots, evenly split over 3 trainer ranks.
+  export TRAIN_BATCH_SIZE=9 ROLLOUT_N=4 PPO_MINI_BATCH_SIZE=9
 fi
 if [ "$BCP_TRAIN_PROFILE" = contextgraph_64k_paper_batch ]; then
   export RESPONSE_LENGTH=57344 CONTEXT_LENGTH=65536 PPO_MINI_BATCH_SIZE=128

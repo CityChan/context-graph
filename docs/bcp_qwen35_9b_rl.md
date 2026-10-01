@@ -1,5 +1,26 @@
 # Qwen3.5-9B BC-P RL, 50 steps
 
+## Four active nodes in idev (optional 9 x 4 profile)
+
+To use the entire four-node allocation, the first node serves retrieval and the
+remaining three train. Batch 9 x rollout 4 gives 36 main trajectories and 36
+PPO sequence slots, or 12 per trainer rank. This changes the batch from the
+8 x 4 profile below; both methods still use 32K context and 50 steps.
+
+Run one method at a time in the existing idev allocation:
+
+```bash
+cd /work/09281/chc_1996/vista/context-graph && bash scripts/train_bcp_qwen35_9b_foldagent_32k_9x4_4node_idev.sh
+```
+
+```bash
+cd /work/09281/chc_1996/vista/context-graph && bash scripts/train_bcp_qwen35_9b_contextgraph_32k_9x4_4node_idev.sh
+```
+
+These entry points do not submit Slurm jobs or extend the idev walltime. The
+existing 8 x 4 entry points remain available below. A 32K training step on
+this three-rank topology has not yet been verified on Vista.
+
 ## FoldAgent in the existing four-node idev
 
 Use the same 32K, 50-step optimization configuration and node layout as the
