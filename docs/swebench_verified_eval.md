@@ -6,6 +6,44 @@ for one Verified instance (0/1). It is not an official x86 score or a full
 500-task evaluation. Later Lite console-only runs are not promoted to the
 artifact-audited result set.
 
+## SWE-bench Lite ARM subset in an existing two-node allocation
+
+The registry inventory in `configs/swe_lite_arm_images.json` pins **252 Linux
+ARM64 image manifests** for Lite revision `6ec7bb89b9342f664a54a6e0a6ea6501d3437cc2`.
+The other 48 registry requests returned HTTP 403; they are recorded as unavailable
+to the audit, not proven missing. This is image metadata coverage, not 252 validated
+environments or a full Lite score.
+
+Keep the already-running Qwen3.5-9B server on one allocated node. From the existing
+Vista idev shell, run (replace the server hostname if the allocation changes):
+
+```bash
+cd /work/09281/chc_1996/vista/context-graph && git pull --ff-only origin master && SWE_SERVER_NODE=c608-082 SWE_AGENT_ENV=/scratch/09281/chc_1996/context-graph-swe/envs/agent-direct-Rs4ngP SWE_CONTEXT_LENGTH=65536 bash scripts/run_swe_lite_arm_subset_idev.sh
+```
+
+The launcher reuses that server and selects the other allocated node for sequential
+Apptainer execution and grading. It requests no additional allocation. For each
+candidate it builds the digest-pinned image, requires baseline unresolved and gold
+patch resolved in fresh grading sandboxes, generates a ContextGraph patch in a
+separate public-only sandbox, then grades it. An import from the checked-out
+repository is required before tests. Setup, calibration and generation errors stay
+separate from model failures. The gold/test patches are never mounted in generation.
+Images are removed after each task to bound disk usage; logs, patches, checksums and
+test reports are retained. The 32K/64K context and seed defaults match the pilot.
+
+The console prints `artifacts=...`; that folder contains `suite.log`, `summary.json`,
+the selected task list and image inventory, and per-task attempt directories. Use
+`SWE_SAMPLES=5` for the first five sorted candidates; the default attempts all 252.
+Add `SWE_RUN_DIR=/scratch/.../lite-arm-contextgraph-JOB-XXXXXX` to resume the same
+run after an interruption, using the same code commit, model and budget. Completed
+tasks are skipped; add `SWE_RETRY_ERRORS=1` to retry recorded infrastructure errors.
+Allocation walltime still applies, and finishing the subset in one idev session is
+not guaranteed. An interrupted task restarts in a fresh attempt directory.
+
+Local tests cover selection, calibration gates, grading error boundaries, task
+identity, and resume behavior using simulated containers. Real multi-project ARM
+execution must be validated on Vista. The original single-task pilot remains available.
+
 ## SWE-bench Lite evaluation on an x86 Docker host
 
 The same agent and pinned official harness now support the 300-instance Lite
@@ -36,7 +74,8 @@ cd /work/09281/chc_1996/vista/context-graph && SWE_BENCHMARK=lite SWE_AGENT_ENV=
 Run `contextgraph` separately for the paired task. The ARM pilot prepares a
 separate Lite manifest and checks that its SymPy task matches the pinned image
 before calibration and grading. It is one task and is **not** an official x86
-Lite score. The 300-task Lite job requires x86 Docker; a 5-task Docker run is a
+Lite score. The complete 300-task Lite job requires x86 Docker; the ARM subset
+launcher above attempts the image-available candidates. A 5-task Docker run is a
 smoke test, not a 300-task benchmark result.
 
 This adapter generates repository patches with ReAct, FoldAgent, or isolated
@@ -48,8 +87,9 @@ No training is performed. Default model: `Qwen/Qwen3.5-9B`.
 
 ### Single-task ARM pilot after a successful container preflight
 
-An Apptainer adapter now supports **only `sympy__sympy-20590`** with the pinned
-image used by the preflight. This is an ARM compatibility evaluation, not the
+The single-task Apptainer pilot supports **only `sympy__sympy-20590`** with the pinned
+image used by the preflight; the subset launcher supplies its own explicit image
+registry. This is an ARM compatibility evaluation, not the
 official x86 Docker environment or a full 500-instance Verified score.
 
 The pilot now defaults to 65,536 total context tokens for both FoldAgent and

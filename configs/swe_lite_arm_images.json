@@ -1,0 +1,2268 @@
+{
+  "source": "https://github.com/epoch-research/SWE-bench",
+  "verification": "Registry manifest and config metadata only; Linux arm64. No container tests performed in this inventory audit. HTTP 403 entries are unavailable to this audit, not proven absent.",
+  "dataset_revision": "6ec7bb89b9342f664a54a6e0a6ea6501d3437cc2",
+  "count": 300,
+  "counts": {
+    "available": 252,
+    "registry_error": 48
+  },
+  "instances": [
+    {
+      "instance_id": "astropy__astropy-12907",
+      "tag_digest": "sha256:fbbd240e3fee2881c98d74895bd614e5252e714bd6ab741c1c440c048304f750",
+      "manifest_digest": "sha256:fbbd240e3fee2881c98d74895bd614e5252e714bd6ab741c1c440c048304f750",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "astropy__astropy-14182",
+      "tag_digest": "sha256:b6a31391df76247aa621653ad99b091c4d2181e74cbfe42dd2113a9682c2454d",
+      "manifest_digest": "sha256:b6a31391df76247aa621653ad99b091c4d2181e74cbfe42dd2113a9682c2454d",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "astropy__astropy-14365",
+      "tag_digest": "sha256:6b176cdfc30cfb77bbb3a155955ffb3fe73a2963e341ad3f9a07d021c0e1a199",
+      "manifest_digest": "sha256:6b176cdfc30cfb77bbb3a155955ffb3fe73a2963e341ad3f9a07d021c0e1a199",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "astropy__astropy-14995",
+      "tag_digest": "sha256:5985c3930206f116f7d5828561d068de93e66ceb392597ac5d67ef090ea695e3",
+      "manifest_digest": "sha256:5985c3930206f116f7d5828561d068de93e66ceb392597ac5d67ef090ea695e3",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "astropy__astropy-6938",
+      "status": "registry_error",
+      "http_status": 403
+    },
+    {
+      "instance_id": "astropy__astropy-7746",
+      "status": "registry_error",
+      "http_status": 403
+    },
+    {
+      "instance_id": "django__django-10914",
+      "tag_digest": "sha256:521ba65060082907d211e975c29270189cedfeb8024df9ea63dc7c4ac1fc0995",
+      "manifest_digest": "sha256:521ba65060082907d211e975c29270189cedfeb8024df9ea63dc7c4ac1fc0995",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-10924",
+      "tag_digest": "sha256:acc380a1b5cc28a389cbac2d184968abf34c238bb94a33618dbc8c8f0977c58c",
+      "manifest_digest": "sha256:acc380a1b5cc28a389cbac2d184968abf34c238bb94a33618dbc8c8f0977c58c",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-11001",
+      "tag_digest": "sha256:0c86c6762ab0071476073f6ab6c35c782544df3a20bf5e31294f8036fa2dec9c",
+      "manifest_digest": "sha256:0c86c6762ab0071476073f6ab6c35c782544df3a20bf5e31294f8036fa2dec9c",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-11019",
+      "tag_digest": "sha256:593f6b7e80c0fa0a9592554b61edda76945e59cbbc46f30eef1462cb8110de43",
+      "manifest_digest": "sha256:593f6b7e80c0fa0a9592554b61edda76945e59cbbc46f30eef1462cb8110de43",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-11039",
+      "tag_digest": "sha256:38e3e1a32b490e0e8cf3e972a5811aac059f526e460aac95b3d8a6e2cb37ec4e",
+      "manifest_digest": "sha256:38e3e1a32b490e0e8cf3e972a5811aac059f526e460aac95b3d8a6e2cb37ec4e",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-11049",
+      "tag_digest": "sha256:00e9014ba0a157f42836f33b7cdffb5de911b27cedab59e1a40cd5bd7c2d4f91",
+      "manifest_digest": "sha256:00e9014ba0a157f42836f33b7cdffb5de911b27cedab59e1a40cd5bd7c2d4f91",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-11099",
+      "tag_digest": "sha256:9312a779b863a5c97cf7c473987bab8293bc702dbe44e637e983604d21f82717",
+      "manifest_digest": "sha256:9312a779b863a5c97cf7c473987bab8293bc702dbe44e637e983604d21f82717",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-11133",
+      "tag_digest": "sha256:6b912b7e9265ff231c2dcb90252c2bf665e121fb1c078b3918758c7636da57b8",
+      "manifest_digest": "sha256:6b912b7e9265ff231c2dcb90252c2bf665e121fb1c078b3918758c7636da57b8",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-11179",
+      "tag_digest": "sha256:6f2841a902973344652cd6bdebf207690de940be2fe3397cad16eae8776e2dda",
+      "manifest_digest": "sha256:6f2841a902973344652cd6bdebf207690de940be2fe3397cad16eae8776e2dda",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-11283",
+      "tag_digest": "sha256:21f4f93b031bd20ca50d420aed60dc4f0fbc0d3eea3739915023f2bc4c31e89f",
+      "manifest_digest": "sha256:21f4f93b031bd20ca50d420aed60dc4f0fbc0d3eea3739915023f2bc4c31e89f",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-11422",
+      "tag_digest": "sha256:1086bc52b1710db8a1b0b683e3d5f2eb61154a85de23f5f54af0a7c00e58fb4e",
+      "manifest_digest": "sha256:1086bc52b1710db8a1b0b683e3d5f2eb61154a85de23f5f54af0a7c00e58fb4e",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-11564",
+      "tag_digest": "sha256:2beb68f2314880533b0cc92e83d37fd11962a3eb3b04e5e0ce86331be671e9f6",
+      "manifest_digest": "sha256:2beb68f2314880533b0cc92e83d37fd11962a3eb3b04e5e0ce86331be671e9f6",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-11583",
+      "tag_digest": "sha256:67fbb63a7792c814e85b0881c230a5f0fe2655ae2556068c29d51ffcce61e1e3",
+      "manifest_digest": "sha256:67fbb63a7792c814e85b0881c230a5f0fe2655ae2556068c29d51ffcce61e1e3",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-11620",
+      "tag_digest": "sha256:70d02560ba033ca9b6ee8bc9f288c854143d504dc08e1887a7d961c6a9336771",
+      "manifest_digest": "sha256:70d02560ba033ca9b6ee8bc9f288c854143d504dc08e1887a7d961c6a9336771",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-11630",
+      "tag_digest": "sha256:4357c829477395c896b0c276e739b4a9a74649d2de455c070e696fb779bdcffc",
+      "manifest_digest": "sha256:4357c829477395c896b0c276e739b4a9a74649d2de455c070e696fb779bdcffc",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-11742",
+      "tag_digest": "sha256:68d954a18ebe57fbf17d64d699d05b7e20f4a15fa6035644d683c8be0424ef90",
+      "manifest_digest": "sha256:68d954a18ebe57fbf17d64d699d05b7e20f4a15fa6035644d683c8be0424ef90",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-11797",
+      "tag_digest": "sha256:1635139edaddb4534307942550cf31f209fd73c50f845f123a0695d6dd1206d6",
+      "manifest_digest": "sha256:1635139edaddb4534307942550cf31f209fd73c50f845f123a0695d6dd1206d6",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-11815",
+      "tag_digest": "sha256:2167b3b7bd34e365dd7a6998e44e2fd0c6489746a449ee6208ae667fc3448971",
+      "manifest_digest": "sha256:2167b3b7bd34e365dd7a6998e44e2fd0c6489746a449ee6208ae667fc3448971",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-11848",
+      "tag_digest": "sha256:cac26d2c9d4453165c62423c857c05481671044feed87c2b7593544ee3ad45f5",
+      "manifest_digest": "sha256:cac26d2c9d4453165c62423c857c05481671044feed87c2b7593544ee3ad45f5",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-11905",
+      "tag_digest": "sha256:b8ebf6067c3538bf037d09324cc94107fef02a38419a5da90e4c25edc73d5671",
+      "manifest_digest": "sha256:b8ebf6067c3538bf037d09324cc94107fef02a38419a5da90e4c25edc73d5671",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-11910",
+      "tag_digest": "sha256:7e568d051bd954c404d45034ab8a0d323bef3370d7b38913f2f334bc3bf4ff24",
+      "manifest_digest": "sha256:7e568d051bd954c404d45034ab8a0d323bef3370d7b38913f2f334bc3bf4ff24",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-11964",
+      "tag_digest": "sha256:0840edc9961d062a5ecd6f8d32bc2d4002333db199232eff322c49af57d82c49",
+      "manifest_digest": "sha256:0840edc9961d062a5ecd6f8d32bc2d4002333db199232eff322c49af57d82c49",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-11999",
+      "tag_digest": "sha256:b2cfe8c9cb44cde7cee332a42558c8a7321e71c25a6611900595f287ee0479ca",
+      "manifest_digest": "sha256:b2cfe8c9cb44cde7cee332a42558c8a7321e71c25a6611900595f287ee0479ca",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-12113",
+      "tag_digest": "sha256:9efe28f3323395661d172491d6e21151e6870720298e7936090fdc23dacbada4",
+      "manifest_digest": "sha256:9efe28f3323395661d172491d6e21151e6870720298e7936090fdc23dacbada4",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-12125",
+      "tag_digest": "sha256:bb4452d8aeaf0c8e4f60514d579ab2b202f5d3f13a36f2c5a6f9461bc442277e",
+      "manifest_digest": "sha256:bb4452d8aeaf0c8e4f60514d579ab2b202f5d3f13a36f2c5a6f9461bc442277e",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-12184",
+      "tag_digest": "sha256:9b890c7e06f748e1f5e0cfa383aff735f8df21060994fc79cf86a64e88635b8c",
+      "manifest_digest": "sha256:9b890c7e06f748e1f5e0cfa383aff735f8df21060994fc79cf86a64e88635b8c",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-12284",
+      "tag_digest": "sha256:5936945e56ef559d882683bdb267faeee82413cac771d261b601c807c42833d5",
+      "manifest_digest": "sha256:5936945e56ef559d882683bdb267faeee82413cac771d261b601c807c42833d5",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-12286",
+      "tag_digest": "sha256:61e95e5c402af90861987a07cfe1e2ab4d7a3c6ee683e430581be54e7524cf1f",
+      "manifest_digest": "sha256:61e95e5c402af90861987a07cfe1e2ab4d7a3c6ee683e430581be54e7524cf1f",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-12308",
+      "tag_digest": "sha256:e491d60d9df291537ba13a312d6426bab27f6603f035a9177a3952ddaed135f9",
+      "manifest_digest": "sha256:e491d60d9df291537ba13a312d6426bab27f6603f035a9177a3952ddaed135f9",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-12453",
+      "tag_digest": "sha256:38c2ce811c151c1183e06f5a0e448fb790dd79f3bfa56a8f839678508abfb41f",
+      "manifest_digest": "sha256:38c2ce811c151c1183e06f5a0e448fb790dd79f3bfa56a8f839678508abfb41f",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-12470",
+      "tag_digest": "sha256:11cff4e3cb5ed5b32c51994e7ce32fd0510df2768949aca80c8eaf3cdb8c9623",
+      "manifest_digest": "sha256:11cff4e3cb5ed5b32c51994e7ce32fd0510df2768949aca80c8eaf3cdb8c9623",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-12497",
+      "tag_digest": "sha256:948bd319cedc2ea07b2e9e6e630a10af4cf76065fd24d6e708062c9f6272ab72",
+      "manifest_digest": "sha256:948bd319cedc2ea07b2e9e6e630a10af4cf76065fd24d6e708062c9f6272ab72",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-12589",
+      "tag_digest": "sha256:5885b9115c8431fc94977011d3218bcaf972eb591c41af52e9842a8ac91ef9e3",
+      "manifest_digest": "sha256:5885b9115c8431fc94977011d3218bcaf972eb591c41af52e9842a8ac91ef9e3",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-12700",
+      "tag_digest": "sha256:6e0de1773ba1eed378c7b767f578007ad338942d8950685c51b2f6ab09dc4c42",
+      "manifest_digest": "sha256:6e0de1773ba1eed378c7b767f578007ad338942d8950685c51b2f6ab09dc4c42",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-12708",
+      "tag_digest": "sha256:f1b59cf86bbb822fa8331153edeba251ceb8d0d59dc33935db24d85323f0eb17",
+      "manifest_digest": "sha256:f1b59cf86bbb822fa8331153edeba251ceb8d0d59dc33935db24d85323f0eb17",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-12747",
+      "tag_digest": "sha256:d2e234394a9d36c97be7f2520e4d73ec9200a1c52b1f1614588e5ebd32503ace",
+      "manifest_digest": "sha256:d2e234394a9d36c97be7f2520e4d73ec9200a1c52b1f1614588e5ebd32503ace",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-12856",
+      "tag_digest": "sha256:3465410df3103949b257a1dc850e7926c21011b2af1b159bbabf7647cf4575a3",
+      "manifest_digest": "sha256:3465410df3103949b257a1dc850e7926c21011b2af1b159bbabf7647cf4575a3",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-12908",
+      "tag_digest": "sha256:bc6da1585277f6b3d0229810b1c89afbb899d6a682de98b25e44d8067d57802a",
+      "manifest_digest": "sha256:bc6da1585277f6b3d0229810b1c89afbb899d6a682de98b25e44d8067d57802a",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-12915",
+      "tag_digest": "sha256:332e088056fc5f38547fce1522873e56fb7572786474a396ce348894402cab4e",
+      "manifest_digest": "sha256:332e088056fc5f38547fce1522873e56fb7572786474a396ce348894402cab4e",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-12983",
+      "tag_digest": "sha256:48da3a60c0eb79e5fc49990ccb909da6304771f883f4dc0564bbb98c9dcad150",
+      "manifest_digest": "sha256:48da3a60c0eb79e5fc49990ccb909da6304771f883f4dc0564bbb98c9dcad150",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-13028",
+      "tag_digest": "sha256:f84f74e9f02bcfb5c7bcd6882abf39fab55a258fa9067001dea2d79e62b705e8",
+      "manifest_digest": "sha256:f84f74e9f02bcfb5c7bcd6882abf39fab55a258fa9067001dea2d79e62b705e8",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-13033",
+      "tag_digest": "sha256:17a05a4f7818d181788bc542dba9ee8943fa4410fcdf45de7a0531bf03e24646",
+      "manifest_digest": "sha256:17a05a4f7818d181788bc542dba9ee8943fa4410fcdf45de7a0531bf03e24646",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-13158",
+      "tag_digest": "sha256:dd81965c86e40dd980f06bc61a9131554b76f5ad09f9f16d329b60b07f970a16",
+      "manifest_digest": "sha256:dd81965c86e40dd980f06bc61a9131554b76f5ad09f9f16d329b60b07f970a16",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-13220",
+      "tag_digest": "sha256:b6894e4dc4244c7306c82791582a49610905d602983d5de0727bd50cf179e1ca",
+      "manifest_digest": "sha256:b6894e4dc4244c7306c82791582a49610905d602983d5de0727bd50cf179e1ca",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-13230",
+      "tag_digest": "sha256:ffd6d9fc58024e46f9fa996e1ec917983345f9c47a5460baad89f46aa88fb06b",
+      "manifest_digest": "sha256:ffd6d9fc58024e46f9fa996e1ec917983345f9c47a5460baad89f46aa88fb06b",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-13265",
+      "tag_digest": "sha256:c749ffef8867735e766781541acc2983db7f31b033858a47d6fa1d645fe95f40",
+      "manifest_digest": "sha256:c749ffef8867735e766781541acc2983db7f31b033858a47d6fa1d645fe95f40",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-13315",
+      "tag_digest": "sha256:ae28a724e8c6f1c5fc86fbb0c597659e84f4f0122cac9fdeb5dfd9488dee6d0e",
+      "manifest_digest": "sha256:ae28a724e8c6f1c5fc86fbb0c597659e84f4f0122cac9fdeb5dfd9488dee6d0e",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-13321",
+      "tag_digest": "sha256:b2a072defc0deacec0efad5435378c9ffdc7ffb3944925978d23f1e196f40f25",
+      "manifest_digest": "sha256:b2a072defc0deacec0efad5435378c9ffdc7ffb3944925978d23f1e196f40f25",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-13401",
+      "tag_digest": "sha256:26307abc1ba36b062ecfd8ba0357e3bbfcfb0e1264b9f7ef776bd10c75650608",
+      "manifest_digest": "sha256:26307abc1ba36b062ecfd8ba0357e3bbfcfb0e1264b9f7ef776bd10c75650608",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-13447",
+      "tag_digest": "sha256:9b53a82ff56f3e3c530b4f8eac37a70d46d7aae9f8556c89f62c767fcebe8ab4",
+      "manifest_digest": "sha256:9b53a82ff56f3e3c530b4f8eac37a70d46d7aae9f8556c89f62c767fcebe8ab4",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-13448",
+      "tag_digest": "sha256:a1d2b17af5b10ab5adb723efa8460a7b6f29734243ef4a8f273adbad183e1bf4",
+      "manifest_digest": "sha256:a1d2b17af5b10ab5adb723efa8460a7b6f29734243ef4a8f273adbad183e1bf4",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-13551",
+      "tag_digest": "sha256:19383e2bdd13b73717065fbe50779f92c2faf164fbaddf4d248b88ac975f4cfb",
+      "manifest_digest": "sha256:19383e2bdd13b73717065fbe50779f92c2faf164fbaddf4d248b88ac975f4cfb",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-13590",
+      "tag_digest": "sha256:9defea5028b67c277ea023b26b761c50f2783f02729344912b6d35fc57e29a9d",
+      "manifest_digest": "sha256:9defea5028b67c277ea023b26b761c50f2783f02729344912b6d35fc57e29a9d",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-13658",
+      "tag_digest": "sha256:407018cf53c3f94fff981fa35078c2486014b44d295f1e045821ed846692f52a",
+      "manifest_digest": "sha256:407018cf53c3f94fff981fa35078c2486014b44d295f1e045821ed846692f52a",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-13660",
+      "tag_digest": "sha256:c19587dbcccb796181745aeef321eb539adbbdb18eaf6747f299c5b9ef45040d",
+      "manifest_digest": "sha256:c19587dbcccb796181745aeef321eb539adbbdb18eaf6747f299c5b9ef45040d",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-13710",
+      "tag_digest": "sha256:d712581add45a767c5d43b7c9cb8c5840bb115846b2117a9003faa7d26a8227e",
+      "manifest_digest": "sha256:d712581add45a767c5d43b7c9cb8c5840bb115846b2117a9003faa7d26a8227e",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-13757",
+      "tag_digest": "sha256:1210975e3210969ba39aa4ea9dce15f229fe23909a6fd0ec8ec5063bd1d28d99",
+      "manifest_digest": "sha256:1210975e3210969ba39aa4ea9dce15f229fe23909a6fd0ec8ec5063bd1d28d99",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-13768",
+      "tag_digest": "sha256:ff243937012a9fb61d0dab7763f7cca627b46a419e0cc7d1fd4824ce3427530b",
+      "manifest_digest": "sha256:ff243937012a9fb61d0dab7763f7cca627b46a419e0cc7d1fd4824ce3427530b",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-13925",
+      "tag_digest": "sha256:8d223353a1542e377f4bf5695c42fcd2a2fe7bb7e78c8c88eab191bc297a9598",
+      "manifest_digest": "sha256:8d223353a1542e377f4bf5695c42fcd2a2fe7bb7e78c8c88eab191bc297a9598",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-13933",
+      "tag_digest": "sha256:db14d6c9e66280f4289e7dbf1e69760740a8317ec5198088dfdcc3f480b986d1",
+      "manifest_digest": "sha256:db14d6c9e66280f4289e7dbf1e69760740a8317ec5198088dfdcc3f480b986d1",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-13964",
+      "tag_digest": "sha256:1393049e466cc41b6771992d98b7efac3be5d270e34d8339bc0b87791f53a949",
+      "manifest_digest": "sha256:1393049e466cc41b6771992d98b7efac3be5d270e34d8339bc0b87791f53a949",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-14016",
+      "tag_digest": "sha256:71417ada4f51c56f1e2d17e18d8502f00f658f9529db44e1202a4db158d31a3b",
+      "manifest_digest": "sha256:71417ada4f51c56f1e2d17e18d8502f00f658f9529db44e1202a4db158d31a3b",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-14017",
+      "tag_digest": "sha256:7c0feea59df5c8227fde5f606a4d81762e850cafa3248ea8d16ba67de98668b8",
+      "manifest_digest": "sha256:7c0feea59df5c8227fde5f606a4d81762e850cafa3248ea8d16ba67de98668b8",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-14155",
+      "tag_digest": "sha256:0ee777b7656034afa0856416b5d314909683faefa12ab8bc4767ff2bd319b9ed",
+      "manifest_digest": "sha256:0ee777b7656034afa0856416b5d314909683faefa12ab8bc4767ff2bd319b9ed",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-14238",
+      "tag_digest": "sha256:bb0679bd38c79c17cebfe35ba67245400c5929362ddd25298d4d93bc491bf6c3",
+      "manifest_digest": "sha256:bb0679bd38c79c17cebfe35ba67245400c5929362ddd25298d4d93bc491bf6c3",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-14382",
+      "tag_digest": "sha256:5db24fc677fc98cf2825422e9feb3b5b15b3468565f5b74c7c1bcd859cff6dbb",
+      "manifest_digest": "sha256:5db24fc677fc98cf2825422e9feb3b5b15b3468565f5b74c7c1bcd859cff6dbb",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-14411",
+      "tag_digest": "sha256:117e73634dd1d892d3e2b2f9de7cb32e670e3028ac79c5f639ff9f769003ceb4",
+      "manifest_digest": "sha256:117e73634dd1d892d3e2b2f9de7cb32e670e3028ac79c5f639ff9f769003ceb4",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-14534",
+      "tag_digest": "sha256:0a9abe8bd0663ff2eafbc612421baaa0d02d9d6ece0f895d20e1e444b00ef3eb",
+      "manifest_digest": "sha256:0a9abe8bd0663ff2eafbc612421baaa0d02d9d6ece0f895d20e1e444b00ef3eb",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-14580",
+      "tag_digest": "sha256:6193b1b6cccf5454b3223b945b3dc8e7244d17725e8c072f3456e2ed506c9d95",
+      "manifest_digest": "sha256:6193b1b6cccf5454b3223b945b3dc8e7244d17725e8c072f3456e2ed506c9d95",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-14608",
+      "tag_digest": "sha256:c6b4735b8fceea8f1b6d3ca6661e129f1c935639726c1a70bb2588a19b19791f",
+      "manifest_digest": "sha256:c6b4735b8fceea8f1b6d3ca6661e129f1c935639726c1a70bb2588a19b19791f",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-14667",
+      "tag_digest": "sha256:3ebed9cf620be4e406286372808fe017cbf8601946ace00057b1c810d997c186",
+      "manifest_digest": "sha256:3ebed9cf620be4e406286372808fe017cbf8601946ace00057b1c810d997c186",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-14672",
+      "tag_digest": "sha256:dd761ca35524f54f48a2c6ef8d634625f95eb8af40ed46c8bf97e99b3107495b",
+      "manifest_digest": "sha256:dd761ca35524f54f48a2c6ef8d634625f95eb8af40ed46c8bf97e99b3107495b",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-14730",
+      "tag_digest": "sha256:7737a590c1b50b03a8866cf03d32061600083d5a908db4009d32dbcf06e688e4",
+      "manifest_digest": "sha256:7737a590c1b50b03a8866cf03d32061600083d5a908db4009d32dbcf06e688e4",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-14752",
+      "tag_digest": "sha256:1384abcd950fbf01cbcf69c598f6cfb41fe5091492bd7000481bfe83af9e53b7",
+      "manifest_digest": "sha256:1384abcd950fbf01cbcf69c598f6cfb41fe5091492bd7000481bfe83af9e53b7",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-14787",
+      "tag_digest": "sha256:630509d6d9b7a31df71c7df058874b29216da63ba29bdf27035827c714258896",
+      "manifest_digest": "sha256:630509d6d9b7a31df71c7df058874b29216da63ba29bdf27035827c714258896",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-14855",
+      "tag_digest": "sha256:f54268d66c066d2abacb5b243fa17d90db23fdcca6c9e58e6392a3705660febe",
+      "manifest_digest": "sha256:f54268d66c066d2abacb5b243fa17d90db23fdcca6c9e58e6392a3705660febe",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-14915",
+      "tag_digest": "sha256:75cbaca159053250f7ebe18c2a4e8e6f26c8c6676329785db86b8bbaad7986db",
+      "manifest_digest": "sha256:75cbaca159053250f7ebe18c2a4e8e6f26c8c6676329785db86b8bbaad7986db",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-14997",
+      "tag_digest": "sha256:2c48fa7b296f204cea22e128a2817285c00fd911fdc0e38f4efc12636bca5b5e",
+      "manifest_digest": "sha256:2c48fa7b296f204cea22e128a2817285c00fd911fdc0e38f4efc12636bca5b5e",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-14999",
+      "tag_digest": "sha256:a7a237031ab1a2fdf56c57eb890192140c9c9d91e34b51b712ed3e219b09a664",
+      "manifest_digest": "sha256:a7a237031ab1a2fdf56c57eb890192140c9c9d91e34b51b712ed3e219b09a664",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-15061",
+      "tag_digest": "sha256:9b4efa6781f3e3eb5b71346562179f0a0916a6827fe22bdb639ce516d277e1da",
+      "manifest_digest": "sha256:9b4efa6781f3e3eb5b71346562179f0a0916a6827fe22bdb639ce516d277e1da",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-15202",
+      "tag_digest": "sha256:36232e7b0d01220a51e5890f3a481771beab218f8298a4735edf88b63c371827",
+      "manifest_digest": "sha256:36232e7b0d01220a51e5890f3a481771beab218f8298a4735edf88b63c371827",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-15213",
+      "tag_digest": "sha256:4544ef97e2f9b47086a970f2861f0f00f24c5555ef20300bd26e145b2259643b",
+      "manifest_digest": "sha256:4544ef97e2f9b47086a970f2861f0f00f24c5555ef20300bd26e145b2259643b",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-15252",
+      "tag_digest": "sha256:c5ee584ecbd2469d2111646a2a1bb188239965fce3ad592af01735a454624f68",
+      "manifest_digest": "sha256:c5ee584ecbd2469d2111646a2a1bb188239965fce3ad592af01735a454624f68",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-15320",
+      "tag_digest": "sha256:6bc9a618b5ccb80cfae52f9322084348186985ae4129b1136b500783b7a7c86e",
+      "manifest_digest": "sha256:6bc9a618b5ccb80cfae52f9322084348186985ae4129b1136b500783b7a7c86e",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-15347",
+      "tag_digest": "sha256:6640019bdf73c82ccd3ac2b01aee6985c25bb5fd62d3be0bccc2332577228787",
+      "manifest_digest": "sha256:6640019bdf73c82ccd3ac2b01aee6985c25bb5fd62d3be0bccc2332577228787",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-15388",
+      "tag_digest": "sha256:8631860529fc81667c7aadefc67a9f09054a3dfc3adbd17d1a28035ded75d98c",
+      "manifest_digest": "sha256:8631860529fc81667c7aadefc67a9f09054a3dfc3adbd17d1a28035ded75d98c",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-15400",
+      "tag_digest": "sha256:96189d2a1ec9056d4917b230b2b28f8722e583305eeb0d01aabdb07073374ec1",
+      "manifest_digest": "sha256:96189d2a1ec9056d4917b230b2b28f8722e583305eeb0d01aabdb07073374ec1",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-15498",
+      "tag_digest": "sha256:39084caf812b9d1d4ebac9eefd49c45148cd15abc99104389873259c72a4393c",
+      "manifest_digest": "sha256:39084caf812b9d1d4ebac9eefd49c45148cd15abc99104389873259c72a4393c",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-15695",
+      "tag_digest": "sha256:8c02c256a1cdc53f89a111770ec6089996bcd308060dfcf98d0763fadcbe4ab6",
+      "manifest_digest": "sha256:8c02c256a1cdc53f89a111770ec6089996bcd308060dfcf98d0763fadcbe4ab6",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-15738",
+      "tag_digest": "sha256:9c5b97f35ffc957640430dc43316fb5ba7a6b22042b07ec7e7d46105a67cd6da",
+      "manifest_digest": "sha256:9c5b97f35ffc957640430dc43316fb5ba7a6b22042b07ec7e7d46105a67cd6da",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-15781",
+      "tag_digest": "sha256:c13f3abf494973df37835835594e571c8619ebbbf767a0dfd6c839f55a7aeab4",
+      "manifest_digest": "sha256:c13f3abf494973df37835835594e571c8619ebbbf767a0dfd6c839f55a7aeab4",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-15789",
+      "tag_digest": "sha256:9380f16240c7e40243fd4032f966e5913d23393f50997580c499a9c37a428226",
+      "manifest_digest": "sha256:9380f16240c7e40243fd4032f966e5913d23393f50997580c499a9c37a428226",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-15790",
+      "tag_digest": "sha256:5ba3175faf3361ec158387423d3ecbf306c2fa1d74f9c4b69cbd59304b6e4246",
+      "manifest_digest": "sha256:5ba3175faf3361ec158387423d3ecbf306c2fa1d74f9c4b69cbd59304b6e4246",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-15814",
+      "tag_digest": "sha256:3335c68c3c21a019198ec4fab7525820e9eafbc23f3737d9070d226b9a94334c",
+      "manifest_digest": "sha256:3335c68c3c21a019198ec4fab7525820e9eafbc23f3737d9070d226b9a94334c",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-15819",
+      "tag_digest": "sha256:e11d6122dcf36902c925d5b1e55bfdc14e703bd840928666fe4088e73123dd78",
+      "manifest_digest": "sha256:e11d6122dcf36902c925d5b1e55bfdc14e703bd840928666fe4088e73123dd78",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-15851",
+      "tag_digest": "sha256:02c17a1d7e4fc73b79954d5f510d39f7ea561544181ab1001e2d7201febd0250",
+      "manifest_digest": "sha256:02c17a1d7e4fc73b79954d5f510d39f7ea561544181ab1001e2d7201febd0250",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-15902",
+      "tag_digest": "sha256:74f04b7aa76e8f14db1e1bba2cdbea384a62ed21bec6a7e3fbebf1fc20888b21",
+      "manifest_digest": "sha256:74f04b7aa76e8f14db1e1bba2cdbea384a62ed21bec6a7e3fbebf1fc20888b21",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-15996",
+      "tag_digest": "sha256:c0ef46743c21718cc47701c8b05b81139c6587734dbfa6b260c1e0f7fa21ea99",
+      "manifest_digest": "sha256:c0ef46743c21718cc47701c8b05b81139c6587734dbfa6b260c1e0f7fa21ea99",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-16041",
+      "tag_digest": "sha256:35322f95e1bb7aadfe75a7a8e3d3aa2e9745f83871c6ee70ec0aac826534ec4c",
+      "manifest_digest": "sha256:35322f95e1bb7aadfe75a7a8e3d3aa2e9745f83871c6ee70ec0aac826534ec4c",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-16046",
+      "tag_digest": "sha256:2ed29129b8fb8e78d6513dc23418af3211cd77a25f9084f74d82c57345730e8a",
+      "manifest_digest": "sha256:2ed29129b8fb8e78d6513dc23418af3211cd77a25f9084f74d82c57345730e8a",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-16139",
+      "tag_digest": "sha256:a4e9994ec3d734f2eed9ee62d96797822380e155dc6162c6956a8bc67e1129e3",
+      "manifest_digest": "sha256:a4e9994ec3d734f2eed9ee62d96797822380e155dc6162c6956a8bc67e1129e3",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-16229",
+      "tag_digest": "sha256:d3c211f4cea0fdb394aab0fa64057d08172be59e7b48f2583a88fd85aae06ebb",
+      "manifest_digest": "sha256:d3c211f4cea0fdb394aab0fa64057d08172be59e7b48f2583a88fd85aae06ebb",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-16255",
+      "tag_digest": "sha256:a60f1209e9f862b98e9c92960d448fc458e52737418ff3611f003abb5a2eabf8",
+      "manifest_digest": "sha256:a60f1209e9f862b98e9c92960d448fc458e52737418ff3611f003abb5a2eabf8",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-16379",
+      "tag_digest": "sha256:0db05dab63c1ef21f135870d2cf70718cb7c12e5a615d08f0af6385793265983",
+      "manifest_digest": "sha256:0db05dab63c1ef21f135870d2cf70718cb7c12e5a615d08f0af6385793265983",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-16400",
+      "tag_digest": "sha256:ac6787c7be1d2d580828590f1f6c5b53e5a6c96287457c669c13e86630aaf487",
+      "manifest_digest": "sha256:ac6787c7be1d2d580828590f1f6c5b53e5a6c96287457c669c13e86630aaf487",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-16408",
+      "tag_digest": "sha256:b10f69c36c678dd19a8f2424cef14a26bd38ecdb4724dfed0b34868a6f191468",
+      "manifest_digest": "sha256:b10f69c36c678dd19a8f2424cef14a26bd38ecdb4724dfed0b34868a6f191468",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-16527",
+      "tag_digest": "sha256:0ce87910727f836cf2376685a7ecc03263df9eec297a9d92b97f2453be0dc11e",
+      "manifest_digest": "sha256:0ce87910727f836cf2376685a7ecc03263df9eec297a9d92b97f2453be0dc11e",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-16595",
+      "tag_digest": "sha256:1caac4019a176119084aab1ea7fb3eb021a979dd0fc76ce7182719a48badd72a",
+      "manifest_digest": "sha256:1caac4019a176119084aab1ea7fb3eb021a979dd0fc76ce7182719a48badd72a",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-16816",
+      "tag_digest": "sha256:95b39bd5608fbb7db5832dfce8d0bdcdc9c0c56c6180a89a87eee54522b47000",
+      "manifest_digest": "sha256:95b39bd5608fbb7db5832dfce8d0bdcdc9c0c56c6180a89a87eee54522b47000",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-16820",
+      "tag_digest": "sha256:a338a62788ebe744c2e5eb5ba1d9f42387b8d8222dbe9cf0e1e6ba1c6b3222fb",
+      "manifest_digest": "sha256:a338a62788ebe744c2e5eb5ba1d9f42387b8d8222dbe9cf0e1e6ba1c6b3222fb",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-16873",
+      "tag_digest": "sha256:340563921d58ef30684067c46b8b42eb5ce3024b44b5ff10ca9d6404297bd1c8",
+      "manifest_digest": "sha256:340563921d58ef30684067c46b8b42eb5ce3024b44b5ff10ca9d6404297bd1c8",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-16910",
+      "tag_digest": "sha256:8ebafe3ec04f1560a796584f65a4cc07d0535d314d5174512236ed3bc5e3486e",
+      "manifest_digest": "sha256:8ebafe3ec04f1560a796584f65a4cc07d0535d314d5174512236ed3bc5e3486e",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-17051",
+      "tag_digest": "sha256:bf60d3fa0d99289cdd7f1fb3a5b0bcc8fb304346b2621ee4c26de5db65777a13",
+      "manifest_digest": "sha256:bf60d3fa0d99289cdd7f1fb3a5b0bcc8fb304346b2621ee4c26de5db65777a13",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "django__django-17087",
+      "tag_digest": "sha256:fff74928d5e9295cbdb7e9c98a5f52b2229747765cdd1c9612d0af66137a3677",
+      "manifest_digest": "sha256:fff74928d5e9295cbdb7e9c98a5f52b2229747765cdd1c9612d0af66137a3677",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "matplotlib__matplotlib-18869",
+      "tag_digest": "sha256:834baafac9594ce3609b3eb569a0172c6fae0dc37c121bdbafb5d587911d4580",
+      "manifest_digest": "sha256:834baafac9594ce3609b3eb569a0172c6fae0dc37c121bdbafb5d587911d4580",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "matplotlib__matplotlib-22711",
+      "status": "registry_error",
+      "http_status": 403
+    },
+    {
+      "instance_id": "matplotlib__matplotlib-22835",
+      "status": "registry_error",
+      "http_status": 403
+    },
+    {
+      "instance_id": "matplotlib__matplotlib-23299",
+      "status": "registry_error",
+      "http_status": 403
+    },
+    {
+      "instance_id": "matplotlib__matplotlib-23314",
+      "status": "registry_error",
+      "http_status": 403
+    },
+    {
+      "instance_id": "matplotlib__matplotlib-23476",
+      "status": "registry_error",
+      "http_status": 403
+    },
+    {
+      "instance_id": "matplotlib__matplotlib-23562",
+      "status": "registry_error",
+      "http_status": 403
+    },
+    {
+      "instance_id": "matplotlib__matplotlib-23563",
+      "status": "registry_error",
+      "http_status": 403
+    },
+    {
+      "instance_id": "matplotlib__matplotlib-23913",
+      "status": "registry_error",
+      "http_status": 403
+    },
+    {
+      "instance_id": "matplotlib__matplotlib-23964",
+      "status": "registry_error",
+      "http_status": 403
+    },
+    {
+      "instance_id": "matplotlib__matplotlib-23987",
+      "status": "registry_error",
+      "http_status": 403
+    },
+    {
+      "instance_id": "matplotlib__matplotlib-24149",
+      "status": "registry_error",
+      "http_status": 403
+    },
+    {
+      "instance_id": "matplotlib__matplotlib-24265",
+      "status": "registry_error",
+      "http_status": 403
+    },
+    {
+      "instance_id": "matplotlib__matplotlib-24334",
+      "status": "registry_error",
+      "http_status": 403
+    },
+    {
+      "instance_id": "matplotlib__matplotlib-24970",
+      "status": "registry_error",
+      "http_status": 403
+    },
+    {
+      "instance_id": "matplotlib__matplotlib-25079",
+      "status": "registry_error",
+      "http_status": 403
+    },
+    {
+      "instance_id": "matplotlib__matplotlib-25311",
+      "status": "registry_error",
+      "http_status": 403
+    },
+    {
+      "instance_id": "matplotlib__matplotlib-25332",
+      "status": "registry_error",
+      "http_status": 403
+    },
+    {
+      "instance_id": "matplotlib__matplotlib-25433",
+      "status": "registry_error",
+      "http_status": 403
+    },
+    {
+      "instance_id": "matplotlib__matplotlib-25442",
+      "status": "registry_error",
+      "http_status": 403
+    },
+    {
+      "instance_id": "matplotlib__matplotlib-25498",
+      "status": "registry_error",
+      "http_status": 403
+    },
+    {
+      "instance_id": "matplotlib__matplotlib-26011",
+      "status": "registry_error",
+      "http_status": 403
+    },
+    {
+      "instance_id": "matplotlib__matplotlib-26020",
+      "status": "registry_error",
+      "http_status": 403
+    },
+    {
+      "instance_id": "mwaskom__seaborn-2848",
+      "tag_digest": "sha256:3c9d47f6af908ccfcfd40e7234164a85a4858a1531e4ef486d903ed08f00c797",
+      "manifest_digest": "sha256:3c9d47f6af908ccfcfd40e7234164a85a4858a1531e4ef486d903ed08f00c797",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "mwaskom__seaborn-3010",
+      "tag_digest": "sha256:0a0af06e63dc76bc9bae94a8d24a516e245cab5729a496236ca8533fb60c1881",
+      "manifest_digest": "sha256:0a0af06e63dc76bc9bae94a8d24a516e245cab5729a496236ca8533fb60c1881",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "mwaskom__seaborn-3190",
+      "tag_digest": "sha256:024a34fc5e3e33f40b48c64333ba0038605672e8c006ea08734d64287fe509ac",
+      "manifest_digest": "sha256:024a34fc5e3e33f40b48c64333ba0038605672e8c006ea08734d64287fe509ac",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "mwaskom__seaborn-3407",
+      "tag_digest": "sha256:d64b1eed990f28d31f8a4a588427e32e20bb9d5d67f7c74c621e9c21a13716d8",
+      "manifest_digest": "sha256:d64b1eed990f28d31f8a4a588427e32e20bb9d5d67f7c74c621e9c21a13716d8",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "pallets__flask-4045",
+      "tag_digest": "sha256:fd8514b989f6c209952fa71f2a2e6e6bcdeac917b448d977cf62780b869b939f",
+      "manifest_digest": "sha256:fd8514b989f6c209952fa71f2a2e6e6bcdeac917b448d977cf62780b869b939f",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "pallets__flask-4992",
+      "tag_digest": "sha256:37067f107f7842773be16390b4ec921ab2d8555af521aff9592f53ec8c58088b",
+      "manifest_digest": "sha256:37067f107f7842773be16390b4ec921ab2d8555af521aff9592f53ec8c58088b",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "pallets__flask-5063",
+      "tag_digest": "sha256:e4a99d8aeaabd56c8b998edec9bfa82589a2acad6b59d8a95f8bf5050fef5e72",
+      "manifest_digest": "sha256:e4a99d8aeaabd56c8b998edec9bfa82589a2acad6b59d8a95f8bf5050fef5e72",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "psf__requests-1963",
+      "tag_digest": "sha256:c64570b4167725102cbec3a4c01cdbe8f9b2177ac64dbff88e2ad6de2e406895",
+      "manifest_digest": "sha256:c64570b4167725102cbec3a4c01cdbe8f9b2177ac64dbff88e2ad6de2e406895",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "psf__requests-2148",
+      "tag_digest": "sha256:e4dcaa6658735b50c4ffd9dcd35a9fd7815f18cc742a2b05198569ca4c614490",
+      "manifest_digest": "sha256:e4dcaa6658735b50c4ffd9dcd35a9fd7815f18cc742a2b05198569ca4c614490",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "psf__requests-2317",
+      "tag_digest": "sha256:dacf1300f00c585d18f5cbcd331777825b5437f682c1a846b2fd90606e1b570b",
+      "manifest_digest": "sha256:dacf1300f00c585d18f5cbcd331777825b5437f682c1a846b2fd90606e1b570b",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "psf__requests-2674",
+      "tag_digest": "sha256:f07e74907b4b8b2ebd8072e41eb903873a6ade56934e23524b815dcc0cefd281",
+      "manifest_digest": "sha256:f07e74907b4b8b2ebd8072e41eb903873a6ade56934e23524b815dcc0cefd281",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "psf__requests-3362",
+      "tag_digest": "sha256:c00a617f7b1744bc35ae5505f18364f0087b7c8c71a0be83870f4d5b6a02cbeb",
+      "manifest_digest": "sha256:c00a617f7b1744bc35ae5505f18364f0087b7c8c71a0be83870f4d5b6a02cbeb",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "psf__requests-863",
+      "tag_digest": "sha256:abf020d79e0e55de2b8e629379d0d1023840487251908d1e5f8c1d05fc18c6ba",
+      "manifest_digest": "sha256:abf020d79e0e55de2b8e629379d0d1023840487251908d1e5f8c1d05fc18c6ba",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "pydata__xarray-3364",
+      "status": "registry_error",
+      "http_status": 403
+    },
+    {
+      "instance_id": "pydata__xarray-4094",
+      "status": "registry_error",
+      "http_status": 403
+    },
+    {
+      "instance_id": "pydata__xarray-4248",
+      "status": "registry_error",
+      "http_status": 403
+    },
+    {
+      "instance_id": "pydata__xarray-4493",
+      "status": "registry_error",
+      "http_status": 403
+    },
+    {
+      "instance_id": "pydata__xarray-5131",
+      "status": "registry_error",
+      "http_status": 403
+    },
+    {
+      "instance_id": "pylint-dev__pylint-5859",
+      "tag_digest": "sha256:fe094320d2e05dce01f700b15b9775af3204eede1c889d72d8235e1fa9e7ccf4",
+      "manifest_digest": "sha256:fe094320d2e05dce01f700b15b9775af3204eede1c889d72d8235e1fa9e7ccf4",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "pylint-dev__pylint-6506",
+      "tag_digest": "sha256:8b7b924bbf048dc80beeb477709f0ce069d446db3fdd2d9a11306fdc366de97b",
+      "manifest_digest": "sha256:8b7b924bbf048dc80beeb477709f0ce069d446db3fdd2d9a11306fdc366de97b",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "pylint-dev__pylint-7080",
+      "tag_digest": "sha256:a953de0a577f860c32ab4c544ee357c9b008bb6bd31b08207f54077b0b8d385f",
+      "manifest_digest": "sha256:a953de0a577f860c32ab4c544ee357c9b008bb6bd31b08207f54077b0b8d385f",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "pylint-dev__pylint-7114",
+      "tag_digest": "sha256:25977a56de2c774bdd9c424ece2924ec6b739c45343cd51dd3c4703859f0a865",
+      "manifest_digest": "sha256:25977a56de2c774bdd9c424ece2924ec6b739c45343cd51dd3c4703859f0a865",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "pylint-dev__pylint-7228",
+      "tag_digest": "sha256:eb5c0e04a5913f44100f480d2bca24cedbb59cce48246eabc921d65cccb38c34",
+      "manifest_digest": "sha256:eb5c0e04a5913f44100f480d2bca24cedbb59cce48246eabc921d65cccb38c34",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "pylint-dev__pylint-7993",
+      "tag_digest": "sha256:9fd34cf8bec466ed22b6f3571e96111859bb95ca1a537c30ff0f67e7df67a1c1",
+      "manifest_digest": "sha256:9fd34cf8bec466ed22b6f3571e96111859bb95ca1a537c30ff0f67e7df67a1c1",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "pytest-dev__pytest-11143",
+      "tag_digest": "sha256:be67598cd095c1208e6828e43571a8f376ab379cda7a19abcc03840de3f13d11",
+      "manifest_digest": "sha256:be67598cd095c1208e6828e43571a8f376ab379cda7a19abcc03840de3f13d11",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "pytest-dev__pytest-11148",
+      "tag_digest": "sha256:dd24b080ec1bdf1c11b33fed461f99e7cf4380f8f4ecd8ac4e28f187cc8e1104",
+      "manifest_digest": "sha256:dd24b080ec1bdf1c11b33fed461f99e7cf4380f8f4ecd8ac4e28f187cc8e1104",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "pytest-dev__pytest-5103",
+      "tag_digest": "sha256:a4240ed7a73586b0b10b51c6f05ba4db877ad4c1bb637c9601653932968352ad",
+      "manifest_digest": "sha256:a4240ed7a73586b0b10b51c6f05ba4db877ad4c1bb637c9601653932968352ad",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "pytest-dev__pytest-5221",
+      "tag_digest": "sha256:88897fc1de52c708877c9b64e806aa90de6e6ff09937e942449bf8cde58e3e64",
+      "manifest_digest": "sha256:88897fc1de52c708877c9b64e806aa90de6e6ff09937e942449bf8cde58e3e64",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "pytest-dev__pytest-5227",
+      "tag_digest": "sha256:21acee6d7c130da43e0e71eebe3808e0fbab135c0819f77abb65bfa9592e19b8",
+      "manifest_digest": "sha256:21acee6d7c130da43e0e71eebe3808e0fbab135c0819f77abb65bfa9592e19b8",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "pytest-dev__pytest-5413",
+      "tag_digest": "sha256:79b413f0f3a8819f8f86960df526fbcc9aae0dfe96b335e10240e690f0b53935",
+      "manifest_digest": "sha256:79b413f0f3a8819f8f86960df526fbcc9aae0dfe96b335e10240e690f0b53935",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "pytest-dev__pytest-5495",
+      "tag_digest": "sha256:cb7672143e833ad9027364ff5b491377563e40dc7f7cc3b178c9ac241eb83cd8",
+      "manifest_digest": "sha256:cb7672143e833ad9027364ff5b491377563e40dc7f7cc3b178c9ac241eb83cd8",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "pytest-dev__pytest-5692",
+      "tag_digest": "sha256:5e55428a5e981a2f369b1a60e2144da592b96c898c3dbb04b4a8077ee3b1a276",
+      "manifest_digest": "sha256:5e55428a5e981a2f369b1a60e2144da592b96c898c3dbb04b4a8077ee3b1a276",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "pytest-dev__pytest-6116",
+      "tag_digest": "sha256:8949c9a8421988531e9032898c420b3ced1a784fc329c162925419c06d0d5255",
+      "manifest_digest": "sha256:8949c9a8421988531e9032898c420b3ced1a784fc329c162925419c06d0d5255",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "pytest-dev__pytest-7168",
+      "tag_digest": "sha256:b8b5abaaa5405033ad168d72b9b29188e7d59e45c194c32aa1536e010e79a63b",
+      "manifest_digest": "sha256:b8b5abaaa5405033ad168d72b9b29188e7d59e45c194c32aa1536e010e79a63b",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "pytest-dev__pytest-7220",
+      "tag_digest": "sha256:334fbdf5bfb36d29cd40a7d5b24883e8a2259772d7fb8c0093b8c48cdfc2119d",
+      "manifest_digest": "sha256:334fbdf5bfb36d29cd40a7d5b24883e8a2259772d7fb8c0093b8c48cdfc2119d",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "pytest-dev__pytest-7373",
+      "tag_digest": "sha256:ebcb22c77fb593c95e1d6f365584ca76716306712d703d822343fd0923e1d9c9",
+      "manifest_digest": "sha256:ebcb22c77fb593c95e1d6f365584ca76716306712d703d822343fd0923e1d9c9",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "pytest-dev__pytest-7432",
+      "tag_digest": "sha256:959306446976bf315a2e13f461b559e94682566c5f46fd18fe8158e6c81305dd",
+      "manifest_digest": "sha256:959306446976bf315a2e13f461b559e94682566c5f46fd18fe8158e6c81305dd",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "pytest-dev__pytest-7490",
+      "tag_digest": "sha256:f049336c9c8201e8c61280685655078ee5fdd2c8e087c9830816af9e54e92fe9",
+      "manifest_digest": "sha256:f049336c9c8201e8c61280685655078ee5fdd2c8e087c9830816af9e54e92fe9",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "pytest-dev__pytest-8365",
+      "tag_digest": "sha256:120b99faef5b0af1d45453f219fa30dec2da486f89012860d7ea5429ec06d61e",
+      "manifest_digest": "sha256:120b99faef5b0af1d45453f219fa30dec2da486f89012860d7ea5429ec06d61e",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "pytest-dev__pytest-8906",
+      "tag_digest": "sha256:bd005e72cf25eb46123f0f020b8e475ca96cbb2dc62f2094c6b8e8e4b1b1c916",
+      "manifest_digest": "sha256:bd005e72cf25eb46123f0f020b8e475ca96cbb2dc62f2094c6b8e8e4b1b1c916",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "pytest-dev__pytest-9359",
+      "tag_digest": "sha256:11636fddee25f7f60e016d17912ac1d0b68b62231682fa9a7a62c443b9a7d81e",
+      "manifest_digest": "sha256:11636fddee25f7f60e016d17912ac1d0b68b62231682fa9a7a62c443b9a7d81e",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "scikit-learn__scikit-learn-10297",
+      "status": "registry_error",
+      "http_status": 403
+    },
+    {
+      "instance_id": "scikit-learn__scikit-learn-10508",
+      "status": "registry_error",
+      "http_status": 403
+    },
+    {
+      "instance_id": "scikit-learn__scikit-learn-10949",
+      "status": "registry_error",
+      "http_status": 403
+    },
+    {
+      "instance_id": "scikit-learn__scikit-learn-11040",
+      "status": "registry_error",
+      "http_status": 403
+    },
+    {
+      "instance_id": "scikit-learn__scikit-learn-11281",
+      "status": "registry_error",
+      "http_status": 403
+    },
+    {
+      "instance_id": "scikit-learn__scikit-learn-12471",
+      "status": "registry_error",
+      "http_status": 403
+    },
+    {
+      "instance_id": "scikit-learn__scikit-learn-13142",
+      "status": "registry_error",
+      "http_status": 403
+    },
+    {
+      "instance_id": "scikit-learn__scikit-learn-13241",
+      "status": "registry_error",
+      "http_status": 403
+    },
+    {
+      "instance_id": "scikit-learn__scikit-learn-13439",
+      "status": "registry_error",
+      "http_status": 403
+    },
+    {
+      "instance_id": "scikit-learn__scikit-learn-13496",
+      "status": "registry_error",
+      "http_status": 403
+    },
+    {
+      "instance_id": "scikit-learn__scikit-learn-13497",
+      "status": "registry_error",
+      "http_status": 403
+    },
+    {
+      "instance_id": "scikit-learn__scikit-learn-13584",
+      "status": "registry_error",
+      "http_status": 403
+    },
+    {
+      "instance_id": "scikit-learn__scikit-learn-13779",
+      "status": "registry_error",
+      "http_status": 403
+    },
+    {
+      "instance_id": "scikit-learn__scikit-learn-14087",
+      "status": "registry_error",
+      "http_status": 403
+    },
+    {
+      "instance_id": "scikit-learn__scikit-learn-14092",
+      "status": "registry_error",
+      "http_status": 403
+    },
+    {
+      "instance_id": "scikit-learn__scikit-learn-14894",
+      "status": "registry_error",
+      "http_status": 403
+    },
+    {
+      "instance_id": "scikit-learn__scikit-learn-14983",
+      "status": "registry_error",
+      "http_status": 403
+    },
+    {
+      "instance_id": "scikit-learn__scikit-learn-15512",
+      "status": "registry_error",
+      "http_status": 403
+    },
+    {
+      "instance_id": "scikit-learn__scikit-learn-15535",
+      "status": "registry_error",
+      "http_status": 403
+    },
+    {
+      "instance_id": "scikit-learn__scikit-learn-25500",
+      "tag_digest": "sha256:f30c66e99dc91b97cb487359dadbc7e9ef4ae7bdd669b8e6af0f8c499524bbc6",
+      "manifest_digest": "sha256:f30c66e99dc91b97cb487359dadbc7e9ef4ae7bdd669b8e6af0f8c499524bbc6",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "scikit-learn__scikit-learn-25570",
+      "tag_digest": "sha256:89df5d0a1e7b6946a2416f58ef1a4259fb6dce8b7eb602212a4dabad7efe90f9",
+      "manifest_digest": "sha256:89df5d0a1e7b6946a2416f58ef1a4259fb6dce8b7eb602212a4dabad7efe90f9",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "scikit-learn__scikit-learn-25638",
+      "tag_digest": "sha256:2b7cf0367e238a03eb8d034e87fbae8bcf9144b2fb74c527c04e94cfb6a7330b",
+      "manifest_digest": "sha256:2b7cf0367e238a03eb8d034e87fbae8bcf9144b2fb74c527c04e94cfb6a7330b",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "scikit-learn__scikit-learn-25747",
+      "tag_digest": "sha256:fe5d0609acc4ce88ccd6365a16fb13fd057576eb28191e5b2974827c98bef5a1",
+      "manifest_digest": "sha256:fe5d0609acc4ce88ccd6365a16fb13fd057576eb28191e5b2974827c98bef5a1",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sphinx-doc__sphinx-10325",
+      "tag_digest": "sha256:0005cbb6ec0d9bc9f9799ee5ebb0f178bf91f73d8ebc0021750ff5128a148fa4",
+      "manifest_digest": "sha256:0005cbb6ec0d9bc9f9799ee5ebb0f178bf91f73d8ebc0021750ff5128a148fa4",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sphinx-doc__sphinx-10451",
+      "tag_digest": "sha256:6a8bbff871462dffddd890c038375dfaa32654784023d53bd82169e76abff6b0",
+      "manifest_digest": "sha256:6a8bbff871462dffddd890c038375dfaa32654784023d53bd82169e76abff6b0",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sphinx-doc__sphinx-11445",
+      "tag_digest": "sha256:31ec591da2829f872d74b88b75694085c69daabccab7cdee722e01e90415a457",
+      "manifest_digest": "sha256:31ec591da2829f872d74b88b75694085c69daabccab7cdee722e01e90415a457",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sphinx-doc__sphinx-7686",
+      "tag_digest": "sha256:413295e686c82264522d40666725ce236f510499d13f5dd49919046a3365fc85",
+      "manifest_digest": "sha256:413295e686c82264522d40666725ce236f510499d13f5dd49919046a3365fc85",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sphinx-doc__sphinx-7738",
+      "tag_digest": "sha256:db1d1d6ed723439ccd8790ac254eda7babfd00261d98cc1c144fb77465028ee8",
+      "manifest_digest": "sha256:db1d1d6ed723439ccd8790ac254eda7babfd00261d98cc1c144fb77465028ee8",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sphinx-doc__sphinx-7975",
+      "tag_digest": "sha256:631767a3461d2d8b0dd36d79c03d43aa2570e55f5e077ac6a75fd4a18b3e3315",
+      "manifest_digest": "sha256:631767a3461d2d8b0dd36d79c03d43aa2570e55f5e077ac6a75fd4a18b3e3315",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sphinx-doc__sphinx-8273",
+      "tag_digest": "sha256:2b18ec9feb230cf1309b7d03832a83237dcd2b3a48b0ac39fab9538ed50e87b8",
+      "manifest_digest": "sha256:2b18ec9feb230cf1309b7d03832a83237dcd2b3a48b0ac39fab9538ed50e87b8",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sphinx-doc__sphinx-8282",
+      "tag_digest": "sha256:12248be5c28464b09519cd44d1acd68de5b62d1d9a70fd0514ac0615e96a651f",
+      "manifest_digest": "sha256:12248be5c28464b09519cd44d1acd68de5b62d1d9a70fd0514ac0615e96a651f",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sphinx-doc__sphinx-8435",
+      "tag_digest": "sha256:dc9570389bdfb1c999f4dd68a91714c6f0cc41581706b88196daf4b2cb0c8619",
+      "manifest_digest": "sha256:dc9570389bdfb1c999f4dd68a91714c6f0cc41581706b88196daf4b2cb0c8619",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sphinx-doc__sphinx-8474",
+      "tag_digest": "sha256:b09fd5ace4b1a1aa85838f62986239e1a73552303ed1a4008e570a2c4055a468",
+      "manifest_digest": "sha256:b09fd5ace4b1a1aa85838f62986239e1a73552303ed1a4008e570a2c4055a468",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sphinx-doc__sphinx-8506",
+      "tag_digest": "sha256:f82cbea5113a954b5eead12fb6c8ea0d4b4761a4ddc03acd3ef1af07c1aedc5f",
+      "manifest_digest": "sha256:f82cbea5113a954b5eead12fb6c8ea0d4b4761a4ddc03acd3ef1af07c1aedc5f",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sphinx-doc__sphinx-8595",
+      "tag_digest": "sha256:ba728cf951f3042aa4ee785aeaf9ce93b589d1de0f46bc691d4bf5198fa09d3c",
+      "manifest_digest": "sha256:ba728cf951f3042aa4ee785aeaf9ce93b589d1de0f46bc691d4bf5198fa09d3c",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sphinx-doc__sphinx-8627",
+      "tag_digest": "sha256:82a61528886c420e1146d7fc232034242058269d680fd557387b580ad9ff7060",
+      "manifest_digest": "sha256:82a61528886c420e1146d7fc232034242058269d680fd557387b580ad9ff7060",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sphinx-doc__sphinx-8713",
+      "tag_digest": "sha256:6e32b9820b24c3ff149bb71a156e586d3b19fbca6c9431483dca864f3c8fd33e",
+      "manifest_digest": "sha256:6e32b9820b24c3ff149bb71a156e586d3b19fbca6c9431483dca864f3c8fd33e",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sphinx-doc__sphinx-8721",
+      "tag_digest": "sha256:feeabf77435db718c5734cfa3e41bdfc919e8b2fc06f0823ed51481ab9012b92",
+      "manifest_digest": "sha256:feeabf77435db718c5734cfa3e41bdfc919e8b2fc06f0823ed51481ab9012b92",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sphinx-doc__sphinx-8801",
+      "tag_digest": "sha256:ff1bd40e4adc59e69908a1a3eb2f37dce070e174520a01130d2d5d0cfed8055a",
+      "manifest_digest": "sha256:ff1bd40e4adc59e69908a1a3eb2f37dce070e174520a01130d2d5d0cfed8055a",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-11400",
+      "tag_digest": "sha256:174189fbabe00d1821e3943a6205a7752ed9b9e38a0758bbb2f0b305be43e203",
+      "manifest_digest": "sha256:174189fbabe00d1821e3943a6205a7752ed9b9e38a0758bbb2f0b305be43e203",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-11870",
+      "tag_digest": "sha256:545b8889f0de041de91d72c25f65cebb88cbd57caff41be0cafb66036b8e05ad",
+      "manifest_digest": "sha256:545b8889f0de041de91d72c25f65cebb88cbd57caff41be0cafb66036b8e05ad",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-11897",
+      "tag_digest": "sha256:1abe8ec63a78aaca020a94a9f99b7dd8c128d934bcb95debadea802f3de94341",
+      "manifest_digest": "sha256:1abe8ec63a78aaca020a94a9f99b7dd8c128d934bcb95debadea802f3de94341",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-12171",
+      "tag_digest": "sha256:8ec36a0a18ea81cea3de2820f0cd66c48a37d73441c2974441fe9104daaa3aff",
+      "manifest_digest": "sha256:8ec36a0a18ea81cea3de2820f0cd66c48a37d73441c2974441fe9104daaa3aff",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-12236",
+      "tag_digest": "sha256:69076ca3e6dc4f9e979018dc52745cb1ab9fb4670851c97de9fb581ba4d6fc94",
+      "manifest_digest": "sha256:69076ca3e6dc4f9e979018dc52745cb1ab9fb4670851c97de9fb581ba4d6fc94",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-12419",
+      "tag_digest": "sha256:689e4726e77a31559196eec8b1ebe25d6304551a32b5305943e349fa80a64888",
+      "manifest_digest": "sha256:689e4726e77a31559196eec8b1ebe25d6304551a32b5305943e349fa80a64888",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-12454",
+      "tag_digest": "sha256:fdadf275dcafeb1548a73862c3e3ad6a553968fba06f9e92f20e22df37298709",
+      "manifest_digest": "sha256:fdadf275dcafeb1548a73862c3e3ad6a553968fba06f9e92f20e22df37298709",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-12481",
+      "tag_digest": "sha256:348e4c5def8c8f2782b95cc9d6412e75224df0434827d5c468472b6b81d7ebfc",
+      "manifest_digest": "sha256:348e4c5def8c8f2782b95cc9d6412e75224df0434827d5c468472b6b81d7ebfc",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-13031",
+      "tag_digest": "sha256:62b9003c0297529ee26425638af9ae8c406514d1c409f415cb9d51f71d680edb",
+      "manifest_digest": "sha256:62b9003c0297529ee26425638af9ae8c406514d1c409f415cb9d51f71d680edb",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-13043",
+      "tag_digest": "sha256:6d933e8934af37e00e6b134dde81e53bc584b4e1a76340e3fa1ae9fb46c49ffc",
+      "manifest_digest": "sha256:6d933e8934af37e00e6b134dde81e53bc584b4e1a76340e3fa1ae9fb46c49ffc",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-13146",
+      "tag_digest": "sha256:53edc3e7de63b85d0e139abe52a40eb33d54b7479cb688f99b22efcdd0664dfa",
+      "manifest_digest": "sha256:53edc3e7de63b85d0e139abe52a40eb33d54b7479cb688f99b22efcdd0664dfa",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-13177",
+      "tag_digest": "sha256:ddf941fca816e1664f9d788b3f495aaf0f1503edc6381570c9dd8a5bc888cb5b",
+      "manifest_digest": "sha256:ddf941fca816e1664f9d788b3f495aaf0f1503edc6381570c9dd8a5bc888cb5b",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-13437",
+      "tag_digest": "sha256:d3d5934c8edd5386e8ec725cfd2d818d8cc32ea3504dc6170b84c59b00939dd8",
+      "manifest_digest": "sha256:d3d5934c8edd5386e8ec725cfd2d818d8cc32ea3504dc6170b84c59b00939dd8",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-13471",
+      "tag_digest": "sha256:5c80e3f49d314e3e994bf86b6886c3303375afd88f0a02e97708bd7c005e657a",
+      "manifest_digest": "sha256:5c80e3f49d314e3e994bf86b6886c3303375afd88f0a02e97708bd7c005e657a",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-13480",
+      "tag_digest": "sha256:3a7148aae89b568a2b50644ecc2ec068f9bf8078db968ac8a833040f78e01473",
+      "manifest_digest": "sha256:3a7148aae89b568a2b50644ecc2ec068f9bf8078db968ac8a833040f78e01473",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-13647",
+      "tag_digest": "sha256:f85f5931ace912e173914eb6131bd5aa1ed7b94f30d1995efcf95bf2e1ab5882",
+      "manifest_digest": "sha256:f85f5931ace912e173914eb6131bd5aa1ed7b94f30d1995efcf95bf2e1ab5882",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-13773",
+      "tag_digest": "sha256:cf038af0d8dcfff2be309da5c330a25864a8b4847aa914b139520c3995bb5e2d",
+      "manifest_digest": "sha256:cf038af0d8dcfff2be309da5c330a25864a8b4847aa914b139520c3995bb5e2d",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-13895",
+      "tag_digest": "sha256:9e900b2c3c84f96e6921e8ae31d576c3db03bc89266ed0e1365ef4c4b546e603",
+      "manifest_digest": "sha256:9e900b2c3c84f96e6921e8ae31d576c3db03bc89266ed0e1365ef4c4b546e603",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-13915",
+      "tag_digest": "sha256:67bfbd63e78b77496cb72c0ba5469db32f5f29a638cd69a474865c81398fb6ba",
+      "manifest_digest": "sha256:67bfbd63e78b77496cb72c0ba5469db32f5f29a638cd69a474865c81398fb6ba",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-13971",
+      "tag_digest": "sha256:a9961ece98fb5a2379511f1df1fd520bdc8840a18e366ffb00de744b12a613d4",
+      "manifest_digest": "sha256:a9961ece98fb5a2379511f1df1fd520bdc8840a18e366ffb00de744b12a613d4",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-14024",
+      "tag_digest": "sha256:decd015e9c640f1e1470085a07ae7cdef9fb49acebbcc9a05fd7573d8a59d95b",
+      "manifest_digest": "sha256:decd015e9c640f1e1470085a07ae7cdef9fb49acebbcc9a05fd7573d8a59d95b",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-14308",
+      "tag_digest": "sha256:9e02586e4bfcb8ddacc944a04530b3a0b93454ae4f82f004eca7807283d553cf",
+      "manifest_digest": "sha256:9e02586e4bfcb8ddacc944a04530b3a0b93454ae4f82f004eca7807283d553cf",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-14317",
+      "tag_digest": "sha256:34a17a0655d006619d6a283b148d97cd573e6056ad5b88c2801830de4ea4e399",
+      "manifest_digest": "sha256:34a17a0655d006619d6a283b148d97cd573e6056ad5b88c2801830de4ea4e399",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-14396",
+      "tag_digest": "sha256:64d9b82e506b3989920b40b97b77f2a5eb15807c2786f048d7aad4b8ea2c212b",
+      "manifest_digest": "sha256:64d9b82e506b3989920b40b97b77f2a5eb15807c2786f048d7aad4b8ea2c212b",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-14774",
+      "tag_digest": "sha256:b0f295701f3a2efca2b691061e95e3c83415aebfecfa06542f93a5e6b731669c",
+      "manifest_digest": "sha256:b0f295701f3a2efca2b691061e95e3c83415aebfecfa06542f93a5e6b731669c",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-14817",
+      "tag_digest": "sha256:957ce0d5347e4f642278bc43309fe7a93e1e266731ee7f781f50620d7f1c6903",
+      "manifest_digest": "sha256:957ce0d5347e4f642278bc43309fe7a93e1e266731ee7f781f50620d7f1c6903",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-15011",
+      "tag_digest": "sha256:e991b859a38fb1ededb987f6de2ed8c519c0dc52f5f534aad59c08f692d67c40",
+      "manifest_digest": "sha256:e991b859a38fb1ededb987f6de2ed8c519c0dc52f5f534aad59c08f692d67c40",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-15308",
+      "tag_digest": "sha256:db353e535fc7c73bded24d9490d28cbf56486986745be0411994d59320635ee7",
+      "manifest_digest": "sha256:db353e535fc7c73bded24d9490d28cbf56486986745be0411994d59320635ee7",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-15345",
+      "tag_digest": "sha256:61997ed9654b8a9b2c00c30526f4c981dc0c0a54251319d8507931a4a7e0801d",
+      "manifest_digest": "sha256:61997ed9654b8a9b2c00c30526f4c981dc0c0a54251319d8507931a4a7e0801d",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-15346",
+      "tag_digest": "sha256:53e1d961bc1fbd11981bb6e2bafe0df421f0c8165f99cddef4cc33e2541f2ad2",
+      "manifest_digest": "sha256:53e1d961bc1fbd11981bb6e2bafe0df421f0c8165f99cddef4cc33e2541f2ad2",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-15609",
+      "tag_digest": "sha256:8fa0d011425b1a26db33c1d0ccb2f2f03362f3d3a50471f618aaecc0ecffe485",
+      "manifest_digest": "sha256:8fa0d011425b1a26db33c1d0ccb2f2f03362f3d3a50471f618aaecc0ecffe485",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-15678",
+      "tag_digest": "sha256:be6755c66eefc1aec83ffbe83dbc0f04bb613c7aafe2024114912641bb6ed0a9",
+      "manifest_digest": "sha256:be6755c66eefc1aec83ffbe83dbc0f04bb613c7aafe2024114912641bb6ed0a9",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-16106",
+      "tag_digest": "sha256:6dc2594ff8980628aae7fc74273bcb52282eee012ec136f38d5e6ee31afca33d",
+      "manifest_digest": "sha256:6dc2594ff8980628aae7fc74273bcb52282eee012ec136f38d5e6ee31afca33d",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-16281",
+      "tag_digest": "sha256:156ce162fd1688b1564a7b99ab681b81d29709f8f1aa6d4a86331ce042163c7e",
+      "manifest_digest": "sha256:156ce162fd1688b1564a7b99ab681b81d29709f8f1aa6d4a86331ce042163c7e",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-16503",
+      "tag_digest": "sha256:b9df5497dd28c8686658e26dd550f2280a6d0c382449d2fca01913df61356be1",
+      "manifest_digest": "sha256:b9df5497dd28c8686658e26dd550f2280a6d0c382449d2fca01913df61356be1",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-16792",
+      "tag_digest": "sha256:46b7649fe821044f2e04bfc1775f2c5390ed384477c5c7fdecae1ecf51e4741b",
+      "manifest_digest": "sha256:46b7649fe821044f2e04bfc1775f2c5390ed384477c5c7fdecae1ecf51e4741b",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-16988",
+      "tag_digest": "sha256:b5faa716b55528874c6daafc4d91d4f79a75d3eaa21801b2422623c3fd5b9d1c",
+      "manifest_digest": "sha256:b5faa716b55528874c6daafc4d91d4f79a75d3eaa21801b2422623c3fd5b9d1c",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-17022",
+      "tag_digest": "sha256:1bb28b52a4241cb6349f55cb8c69207aa08f7742e1b0a6e03f3706e03ad1ff59",
+      "manifest_digest": "sha256:1bb28b52a4241cb6349f55cb8c69207aa08f7742e1b0a6e03f3706e03ad1ff59",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-17139",
+      "tag_digest": "sha256:6ef3d014308a079e16d60401d82cb9ba8836dd1ac632579527079ee82145fd7a",
+      "manifest_digest": "sha256:6ef3d014308a079e16d60401d82cb9ba8836dd1ac632579527079ee82145fd7a",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-17630",
+      "tag_digest": "sha256:8a73a34820b271dea84bccdc0874709b180b08d040fed7be938c32db92cfb650",
+      "manifest_digest": "sha256:8a73a34820b271dea84bccdc0874709b180b08d040fed7be938c32db92cfb650",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-17655",
+      "tag_digest": "sha256:d0d4e7312256d70ddf55f62104f4672b44d7542e82ef165ea0de58206d56cf8c",
+      "manifest_digest": "sha256:d0d4e7312256d70ddf55f62104f4672b44d7542e82ef165ea0de58206d56cf8c",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-18057",
+      "tag_digest": "sha256:edbe05d8804ca4b84aa500f39d63bd9afb7255106582d9b2bc5a7e6a813253d6",
+      "manifest_digest": "sha256:edbe05d8804ca4b84aa500f39d63bd9afb7255106582d9b2bc5a7e6a813253d6",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-18087",
+      "tag_digest": "sha256:73670dee06f234a1886c997ed6cc366499e0130346d2a538c003b94687324c7e",
+      "manifest_digest": "sha256:73670dee06f234a1886c997ed6cc366499e0130346d2a538c003b94687324c7e",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-18189",
+      "tag_digest": "sha256:b696008f6312bd1633d4cd01cadcb7063a22aa80e332745ba6d6807beebcbb32",
+      "manifest_digest": "sha256:b696008f6312bd1633d4cd01cadcb7063a22aa80e332745ba6d6807beebcbb32",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-18199",
+      "tag_digest": "sha256:c2c748ae1a41677c3efe25e675b643e9685fed648e3d9431d988554883e0a486",
+      "manifest_digest": "sha256:c2c748ae1a41677c3efe25e675b643e9685fed648e3d9431d988554883e0a486",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-18532",
+      "tag_digest": "sha256:5afd52d60a366d46341aca8ac23997edfb73439a76fe4de716602c966144c8f2",
+      "manifest_digest": "sha256:5afd52d60a366d46341aca8ac23997edfb73439a76fe4de716602c966144c8f2",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-18621",
+      "tag_digest": "sha256:6c99bd01fc6c16e415cc2e3c607a9d6a3565e5d02603ba213b9df6e44b6a49d0",
+      "manifest_digest": "sha256:6c99bd01fc6c16e415cc2e3c607a9d6a3565e5d02603ba213b9df6e44b6a49d0",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-18698",
+      "tag_digest": "sha256:c85038064cd8ac3fe7c6fa91ce2e3915bba4844092dd402424977239e800d8c2",
+      "manifest_digest": "sha256:c85038064cd8ac3fe7c6fa91ce2e3915bba4844092dd402424977239e800d8c2",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-18835",
+      "tag_digest": "sha256:22dd5a060bfa5fd3874353b364323f8b0a92c37632ee70b60e4bc7c9dbe17900",
+      "manifest_digest": "sha256:22dd5a060bfa5fd3874353b364323f8b0a92c37632ee70b60e4bc7c9dbe17900",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-19007",
+      "tag_digest": "sha256:8a6677e2c09799c20de0964c7191dce0c4fd13427253dbc75f3e4551d77911ce",
+      "manifest_digest": "sha256:8a6677e2c09799c20de0964c7191dce0c4fd13427253dbc75f3e4551d77911ce",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-19254",
+      "tag_digest": "sha256:ae8575f44a0078f10a329135f2129c84a5bb52dbc9099aadd83a6106bb166f88",
+      "manifest_digest": "sha256:ae8575f44a0078f10a329135f2129c84a5bb52dbc9099aadd83a6106bb166f88",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-19487",
+      "tag_digest": "sha256:3abc29d40384ea9a977eaef07cb543965446c164866f855b5b437b61ca6e6bf5",
+      "manifest_digest": "sha256:3abc29d40384ea9a977eaef07cb543965446c164866f855b5b437b61ca6e6bf5",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-20049",
+      "tag_digest": "sha256:f5e0544db7cceb4963beeb3ecf421174070c1a5016705055b1f40173a851dc44",
+      "manifest_digest": "sha256:f5e0544db7cceb4963beeb3ecf421174070c1a5016705055b1f40173a851dc44",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-20154",
+      "tag_digest": "sha256:dd869d59abd4b19988f2ef07e485c3918fda469d687cbb0a4c25bc6fd038d004",
+      "manifest_digest": "sha256:dd869d59abd4b19988f2ef07e485c3918fda469d687cbb0a4c25bc6fd038d004",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-20212",
+      "tag_digest": "sha256:3cca53c170564ae5e673251076c21884e10890d77d6fbb01358a246041be928d",
+      "manifest_digest": "sha256:3cca53c170564ae5e673251076c21884e10890d77d6fbb01358a246041be928d",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-20322",
+      "tag_digest": "sha256:bfad908fad2d39e7bcb20e48f01d6ad71e66bca1d5fa0dba0a378bf609c27e38",
+      "manifest_digest": "sha256:bfad908fad2d39e7bcb20e48f01d6ad71e66bca1d5fa0dba0a378bf609c27e38",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-20442",
+      "tag_digest": "sha256:34b2c1dddcfe28d6d7bad903013b5c2d66c305c06f815eca587365a9cfa17926",
+      "manifest_digest": "sha256:34b2c1dddcfe28d6d7bad903013b5c2d66c305c06f815eca587365a9cfa17926",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-20590",
+      "tag_digest": "sha256:a8b2a5265717391b168a5d7aa884b466e80fa748d074373a56d328cc48d887b9",
+      "manifest_digest": "sha256:a8b2a5265717391b168a5d7aa884b466e80fa748d074373a56d328cc48d887b9",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-20639",
+      "tag_digest": "sha256:9d5af4d45848686f618604d84ad028cd26cde986c2fa0009d2eea4cdef5e6a2f",
+      "manifest_digest": "sha256:9d5af4d45848686f618604d84ad028cd26cde986c2fa0009d2eea4cdef5e6a2f",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-21055",
+      "tag_digest": "sha256:19c71e18b8c0a72e7c1c21f3ae7bcad3960dd10793e694dfc12c5883f9407c41",
+      "manifest_digest": "sha256:19c71e18b8c0a72e7c1c21f3ae7bcad3960dd10793e694dfc12c5883f9407c41",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-21171",
+      "tag_digest": "sha256:427b16bdab957e81a1ba1106d8714617cddc699611b4d4cd5ea98a9c8c61ea7a",
+      "manifest_digest": "sha256:427b16bdab957e81a1ba1106d8714617cddc699611b4d4cd5ea98a9c8c61ea7a",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-21379",
+      "tag_digest": "sha256:3e3157c08af0cd0ce8102fafab431830340f021fbec762c82991538255ae3fe4",
+      "manifest_digest": "sha256:3e3157c08af0cd0ce8102fafab431830340f021fbec762c82991538255ae3fe4",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-21612",
+      "tag_digest": "sha256:23515232f03ef5f7a7ed8d45567040875501268fc4d001b003c03d5982e33317",
+      "manifest_digest": "sha256:23515232f03ef5f7a7ed8d45567040875501268fc4d001b003c03d5982e33317",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-21614",
+      "tag_digest": "sha256:569fb401601c0f460a6cbf27e3c44158d103a7f64bdaa02d2c09bed52b410a20",
+      "manifest_digest": "sha256:569fb401601c0f460a6cbf27e3c44158d103a7f64bdaa02d2c09bed52b410a20",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-21627",
+      "tag_digest": "sha256:0c2d978952f946b3f874e89e2f4130e13a8b5b127a17ae376f9ff73fccd5fcb4",
+      "manifest_digest": "sha256:0c2d978952f946b3f874e89e2f4130e13a8b5b127a17ae376f9ff73fccd5fcb4",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-21847",
+      "tag_digest": "sha256:00eb52102216acef8c3312627596ea5e9602d1cfee25a67aaab0f350485aa170",
+      "manifest_digest": "sha256:00eb52102216acef8c3312627596ea5e9602d1cfee25a67aaab0f350485aa170",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-22005",
+      "tag_digest": "sha256:5b641120be36e37d4365bc0352e31120246ab157e621051a3f4935c8549de779",
+      "manifest_digest": "sha256:5b641120be36e37d4365bc0352e31120246ab157e621051a3f4935c8549de779",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-22714",
+      "tag_digest": "sha256:d3357fd4c12f727d1c4b2867254489b7995db07e1756d94fa5ecc0b94b4f0c7c",
+      "manifest_digest": "sha256:d3357fd4c12f727d1c4b2867254489b7995db07e1756d94fa5ecc0b94b4f0c7c",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-22840",
+      "tag_digest": "sha256:3e8aad7ea25f5045f2519e7d7b7b658f148116cf9699be5a077b4ccf6c341b01",
+      "manifest_digest": "sha256:3e8aad7ea25f5045f2519e7d7b7b658f148116cf9699be5a077b4ccf6c341b01",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-23117",
+      "tag_digest": "sha256:a5114363509c7912803470ca4dea3aa678c21bfd0701a6a209178572d163f11c",
+      "manifest_digest": "sha256:a5114363509c7912803470ca4dea3aa678c21bfd0701a6a209178572d163f11c",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-23191",
+      "tag_digest": "sha256:754a7ee1f062dff1200698836574d63685dac82c62cd7818659b0c6aa48a30c3",
+      "manifest_digest": "sha256:754a7ee1f062dff1200698836574d63685dac82c62cd7818659b0c6aa48a30c3",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-23262",
+      "tag_digest": "sha256:445fc42cba7606e41c9d248e13d1a3fa929a126a4d881128375f95a7203b8a3e",
+      "manifest_digest": "sha256:445fc42cba7606e41c9d248e13d1a3fa929a126a4d881128375f95a7203b8a3e",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-24066",
+      "tag_digest": "sha256:286d79a00737ccd812a5eff3aab56127578a1b00e17c0a4a8fa28752a9e02183",
+      "manifest_digest": "sha256:286d79a00737ccd812a5eff3aab56127578a1b00e17c0a4a8fa28752a9e02183",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-24102",
+      "tag_digest": "sha256:3982199382a7977ba984ffd52f155f3bfaad77153bd54604d3daf3ac317058df",
+      "manifest_digest": "sha256:3982199382a7977ba984ffd52f155f3bfaad77153bd54604d3daf3ac317058df",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-24152",
+      "tag_digest": "sha256:811adc3ae39fdca6b4792269016f023513f6affcd1dcd1880cd8bddea71244b3",
+      "manifest_digest": "sha256:811adc3ae39fdca6b4792269016f023513f6affcd1dcd1880cd8bddea71244b3",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-24213",
+      "tag_digest": "sha256:a4410e73fef6d298ac5956531c6b07eb75fb9553e108b7c34eaea75e5e17842f",
+      "manifest_digest": "sha256:a4410e73fef6d298ac5956531c6b07eb75fb9553e108b7c34eaea75e5e17842f",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    },
+    {
+      "instance_id": "sympy__sympy-24909",
+      "tag_digest": "sha256:ecfe4285c81994a3ebc725a8f6091af89efadef930cc20d3e56e100ec4596f46",
+      "manifest_digest": "sha256:ecfe4285c81994a3ebc725a8f6091af89efadef930cc20d3e56e100ec4596f46",
+      "architecture": "arm64",
+      "os": "linux",
+      "status": "available"
+    }
+  ]
+}

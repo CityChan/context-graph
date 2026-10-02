@@ -1,8 +1,10 @@
-"""Pinned single-instance ARM sandbox. Not the official x86 Docker runtime."""
+"""Pinned ARM sandbox: default pilot or explicit subset image registry; not official x86."""
 from __future__ import annotations
 
 import hashlib
+import json
 import os
+import re
 from pathlib import Path
 import platform
 import shlex
@@ -18,13 +20,28 @@ DIGEST = "a8b2a5265717391b168a5d7aa884b466e80fa748d074373a56d328cc48d887b9"
 IMAGE_NAME = f"{INSTANCE}-arm64-{DIGEST}.sif"
 
 
-def checked_image(root, task):
+def image_record(root, task):
     task = public_instance(task)
+    registry = Path(root) / "arm-images.json"
+    if registry.exists():
+        records = json.loads(registry.read_text(encoding="utf8"))
+        record = records[task["instance_id"]]
+        if record["base_commit"] != task["base_commit"] or record["repo"] != task["repo"]:
+            raise ValueError("ARM image task identity mismatch")
+        digest = record["oci_digest"]
+        if not re.fullmatch(r"[0-9a-f]{64}", digest):
+            raise ValueError("Expected pinned ARM image digest")
+        return f'{task["instance_id"]}-arm64-{digest}.sif', digest
     if task["instance_id"] != INSTANCE or task["base_commit"] != BASE or task["repo"] != "sympy/sympy":
         raise ValueError("ARM pilot supports only the pinned sympy__sympy-20590 instance")
-    image = Path(root).resolve() / "images" / IMAGE_NAME
+    return IMAGE_NAME, DIGEST
+
+
+def checked_image(root, task):
+    name, _ = image_record(root, task)
+    image = Path(root).resolve() / "images" / name
     checksum = Path(str(image) + ".sha256").read_text().split()
-    if len(checksum) != 2 or checksum[1].lstrip("*") != IMAGE_NAME:
+    if len(checksum) != 2 or checksum[1].lstrip("*") != name:
         raise ValueError("Invalid image checksum record; run the Apptainer preflight")
     digest = hashlib.sha256()
     with image.open("rb") as handle:
@@ -55,13 +72,13 @@ class ApptainerSandbox:
         work_root.mkdir(parents=True, exist_ok=True)
         self.work = Path(tempfile.mkdtemp(prefix="sympy-", dir=work_root))
         self.provenance = {"backend": "apptainer-arm-pilot", "image": str(self.image),
-                           "sif_sha256": sha, "oci_digest": DIGEST,
+                           "sif_sha256": sha, "oci_digest": image_record(self.root, self.task)[1],
                            "resource_limits": "allocation limits; one numerical thread; no per-task RAM cgroup"}
         # Only this fixed initialization command sees the original image /testbed.
         status, output = self._exec(
             "set -e; test ! -e /eval.sh; test ! -e /patch.diff; "
             "test ! -e /tmp/patch.diff; cp -a --no-preserve=ownership /testbed/. /workspace/; "
-            "cd /workspace; " + repository_reset_command(BASE).replace("git gc", "git -c pack.threads=1 gc"),
+            "cd /workspace; " + repository_reset_command(self.task["base_commit"]).replace("git gc", "git -c pack.threads=1 gc"),
             initializing=True, timeout=600)
         if status:
             raise RuntimeError(f"ARM sandbox initialization failed: {output}")
@@ -118,7 +135,7 @@ class ApptainerSandbox:
                           preserve_tail=True)
 
     def patch(self):
-        status, patch = self._exec("git add -N -- . && git -c core.quotePath=false diff --no-ext-diff --binary " + BASE + " --", limit=8 * 1024 * 1024, stdout_only=True)
+        status, patch = self._exec("git add -N -- . && git -c core.quotePath=false diff --no-ext-diff --binary " + self.task["base_commit"] + " --", limit=8 * 1024 * 1024, stdout_only=True)
         if status or patch.endswith("\n[output truncated]"):
             raise RuntimeError("ARM patch extraction failed or exceeded 8 MiB")
         return patch

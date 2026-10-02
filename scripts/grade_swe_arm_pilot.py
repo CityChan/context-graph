@@ -33,15 +33,20 @@ def require_harness():
         raise RuntimeError("Install requirements_swebench_eval.txt in the grading venv")
 
 
-def checked_eval_script(script):
+def checked_eval_script(script, repo=None):
     """Fail on setup errors, but retain upstream handling of failed tests."""
     header = "set -uxo pipefail\n"
     install = "python -m pip install -e .\n"
     marker = ": '>>>>> Start Test Output'\n"
-    if any(script.count(part) != 1 for part in (header, install, marker)):
+    if any(script.count(part) != 1 for part in ((header, marker) if repo else (header, install, marker))):
         raise RuntimeError("Pinned SymPy evaluation script changed; review setup boundaries")
-    check = ('python -c "import pathlib,sys,sympy; '
-             'p=pathlib.Path(sympy.__file__).resolve(); '
+    modules = {"astropy/astropy": "astropy", "django/django": "django", "matplotlib/matplotlib": "matplotlib",
+               "mwaskom/seaborn": "seaborn", "pallets/flask": "flask", "psf/requests": "requests",
+               "pylint-dev/pylint": "pylint", "pytest-dev/pytest": "pytest", "scikit-learn/scikit-learn": "sklearn",
+               "sphinx-doc/sphinx": "sphinx", "sympy/sympy": "sympy"}
+    module = modules[repo] if repo else "sympy"
+    check = (f'python -c "import pathlib,sys,{module}; '
+             f'p=pathlib.Path({module}.__file__).resolve(); '
              "assert p.is_relative_to(pathlib.Path('/testbed')), str(p); "
              "assert sys.prefix == '/opt/miniconda3/envs/testbed', sys.prefix; "
              "print('SWE_ARM_IMPORT_OK', p)" + '"\n')
@@ -52,12 +57,17 @@ def checked_eval_script(script):
              'export HOME\n'
              'export XDG_CONFIG_HOME="$HOME/.config"\n'
              'mkdir -p "$XDG_CONFIG_HOME"\n')
+    if repo:
+        # Some Lite images use Python < 3.9 (Path.is_relative_to is unavailable).
+        check = check.replace("import pathlib,sys,", "import os,pathlib,sys,").replace(
+            "p.is_relative_to(pathlib.Path('/testbed'))", "os.path.commonpath([str(p), '/testbed']) == '/testbed'")
+        return script.replace(header, setup).replace(marker, check + "set +e\n" + marker)
     return (script.replace(header, setup)
             .replace(install, install + check)
             .replace(marker, "set +e\n" + marker))
 
 
-def evaluate(task, patch, folder, root, timeout):
+def evaluate(task, patch, folder, root, timeout, *, subset=False):
     from swebench.harness.test_spec.test_spec import make_test_spec
     from swebench.harness.grading import get_eval_report, get_logs_eval
     folder.mkdir(parents=True, exist_ok=False)
@@ -65,9 +75,10 @@ def evaluate(task, patch, folder, root, timeout):
     inputs.mkdir()
     spec = make_test_spec(task)
     (folder / "upstream_eval.sh").write_text(spec.eval_script, encoding="utf8", newline="\n")
-    (inputs / "eval.sh").write_text(checked_eval_script(spec.eval_script), encoding="utf8", newline="\n")
+    (inputs / "eval.sh").write_text(checked_eval_script(spec.eval_script, task["repo"] if subset else None), encoding="utf8", newline="\n")
     (inputs / "model.patch").write_text(patch, encoding="utf8", newline="\n")
-    prediction = {"instance_id": INSTANCE, "model_name_or_path": "arm-pilot", "model_patch": patch}
+    instance = task["instance_id"]
+    prediction = {"instance_id": instance, "model_name_or_path": "arm-subset" if subset else "arm-pilot", "model_patch": patch}
     sandbox = ApptainerSandbox(task, root=root)
     try:
         sandbox.start()
@@ -81,7 +92,7 @@ def evaluate(task, patch, folder, root, timeout):
             if "SWE_ARM_APPLY_STARTED" not in text:
                 raise RuntimeError("Container did not reach patch application")
             if status:
-                report = {INSTANCE: {"resolved": False, "patch_successfully_applied": False}}
+                report = {instance: {"resolved": False, "patch_successfully_applied": False}}
                 write_json(folder / "report.json", report)
                 return report
         status, text = sandbox._exec("/bin/bash /grading-input/eval.sh", inputs=inputs,
