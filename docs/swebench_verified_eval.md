@@ -338,11 +338,30 @@ Run the methods sequentially unless you provisioned enough inference capacity.
 For a chosen task use, for example, `--instance-ids django__django-10097`.
 For the full split add `--samples -1` and choose a new output directory.
 
-Files stream per task into `instances/INSTANCE_ID/`: `requests.jsonl`,
-`trajectory.json`, `model.patch`, `prediction.json`, `result.json`, and on
+Files are saved per task into `instances/INSTANCE_ID/`: `requests.jsonl`,
+`trajectory.json`, `tool_trace.jsonl`, `model.patch`, `prediction.json`, `result.json`, and on
 failure `error.txt`. Aggregate `results.jsonl` and official-format
 `predictions.jsonl` are appended immediately after each task. The latter has
 `instance_id`, `model_name_or_path`, and `model_patch`.
+
+`tool_trace.jsonl` is written after task cleanup, including on handled generation
+errors that prevent trajectory export. It records each attempted `python_exec`'s
+code, status, exit code and captured output (or infrastructure exception).
+It is not a live log and may be absent after a hard interruption. Long tool output
+retains the first and last 12000 bytes, with explicit omission markers; patch
+export and grading logs retain their separate limits. A Python wrapper's exit
+code does not reveal the status of subprocesses it deliberately ignores: the
+prompt therefore asks the agent to print subprocess return codes and both streams.
+Stats include `python_exec_errors` and `output_truncations`.
+
+Both Docker and Apptainer patch extraction isolate stdout from stderr. A successful
+Git warning cannot become a fake patch; failed exports retain stderr diagnostics.
+These adapter repairs do not establish a resolved SWE instance. In the locally
+saved 32K run `swe-foldagent-1035199-hgEsOA`, the six executed calls inspected
+files/history without editing, and three observations hit the output limit before
+the token budget was exhausted. The later 64K Lite runs require their own saved
+trajectory and grading report for diagnosis. The console's `gocryptfs` notice
+alone is not evidence that repository commands failed.
 
 `generation_summary.json` reports generated/error/empty-patch counts and says
 `grading_status: pending`. **It is not an accuracy report.** Legacy code-loop

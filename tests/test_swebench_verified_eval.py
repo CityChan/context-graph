@@ -8,7 +8,7 @@ import pytest
 
 from agents.prompts_code import create_chat_code
 from envs.swebench_env import (
-    DockerSandbox, SWEVerifiedEnv, capture_environments, image_name, public_instance, repository_reset_command,
+    BoundedOutput, DockerSandbox, SWEVerifiedEnv, capture_environments, image_name, public_instance, repository_reset_command,
 )
 from scripts.eval_swebench_verified import (
     DATASETS, config_for, file_hash, grading_summary, load_public, prepare,
@@ -197,6 +197,60 @@ def test_patch_extraction_rejects_truncation(monkeypatch):
     monkeypatch.setattr(sandbox, "_exec", lambda *a, **kw: (0, "diff\n[output truncated]"))
     with pytest.raises(RuntimeError):
         sandbox.patch()
+
+
+@pytest.mark.parametrize("chunk_size", [1, 7, 100])
+@pytest.mark.parametrize("payload", [b"", b"short", b"1234567890", b"HEAD" + b"x" * 40 + b"FAIL"])
+def test_tool_output_retains_both_ends_with_bounded_memory(chunk_size, payload):
+    output = BoundedOutput(10, preserve_tail=True)
+    for start in range(0, len(payload), chunk_size):
+        output.append(payload[start:start + chunk_size])
+        assert len(output.head) + len(output.tail) <= 10
+    text = output.text()
+    if len(payload) <= 10:
+        assert text == payload.decode()
+    else:
+        assert text.startswith("HEADx\n")
+        assert "xFAIL\n[output truncated]" in text
+
+
+@pytest.mark.parametrize("patch", [b"", b"diff --git a/x b/x\n--- a/x\n+++ b/x\n"])
+def test_docker_patch_separates_git_warnings_from_patch(patch):
+    from unittest.mock import MagicMock
+    sandbox = DockerSandbox(task())
+    sandbox.client = MagicMock()
+    sandbox.container = SimpleNamespace(id="container")
+    api = sandbox.client.api
+    api.exec_create.return_value = {"Id": "exec"}
+    api.exec_start.return_value = iter([(None, b"warning: line endings\n"), (patch, None)])
+    api.exec_inspect.return_value = {"ExitCode": 0}
+    assert sandbox.patch() == patch.decode()
+    api.exec_start.assert_called_once_with("exec", stream=True, demux=True)
+
+
+def test_docker_failed_patch_reports_stderr():
+    from unittest.mock import MagicMock
+    sandbox = DockerSandbox(task())
+    sandbox.client = MagicMock()
+    sandbox.container = SimpleNamespace(id="container")
+    api = sandbox.client.api
+    api.exec_start.return_value = iter([(None, b"fatal: bad revision")])
+    api.exec_inspect.return_value = {"ExitCode": 128}
+    with pytest.raises(RuntimeError, match="fatal: bad revision"):
+        sandbox.patch()
+
+
+def test_docker_python_execution_preserves_final_test_diagnostics():
+    from unittest.mock import MagicMock
+    sandbox = DockerSandbox(task())
+    sandbox.client = MagicMock()
+    sandbox.container = SimpleNamespace(id="container")
+    api = sandbox.client.api
+    api.exec_start.return_value = iter([b"test header\n" + b"x" * 30000, b"\nFAILED test_regression"])
+    api.exec_inspect.return_value = {"ExitCode": 1}
+    status, output = sandbox.execute("print('test')")
+    assert status == 1 and output.startswith("test header")
+    assert output.endswith("FAILED test_regression\n[output truncated]")
 
 
 def test_git_patch_includes_committed_staged_unstaged_new_and_deleted_files(tmp_path, monkeypatch):

@@ -128,6 +128,21 @@ def test_patch_preserves_failed_command_diagnostics(tmp_path, monkeypatch):
         sandbox.patch()
 
 
+def test_python_exec_keeps_test_summary_after_long_output(tmp_path, monkeypatch):
+    sandbox = ApptainerSandbox(task(), root=tmp_path)
+    sandbox.image = cached(tmp_path)
+    sandbox.work = tmp_path
+
+    def run(argv, **kwargs):
+        kwargs["stdout"].write(b"test header\n" + b"x" * 30000 + b"\nFAILED test_regression")
+        return SimpleNamespace(returncode=1)
+
+    monkeypatch.setattr(subprocess, "run", run)
+    status, output = sandbox.execute("print('test')")
+    assert status == 1 and output.startswith("test header")
+    assert output.endswith("FAILED test_regression\n[output truncated]")
+
+
 def test_private_grading_environment_mount_and_cleanup(tmp_path, monkeypatch):
     sandbox = ApptainerSandbox(task(), root=tmp_path)
     sandbox.image = cached(tmp_path)

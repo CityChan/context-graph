@@ -20,6 +20,30 @@ _environments = ContextVar("swe_environments", default=None)
 PUBLIC_FIELDS = ("instance_id", "repo", "base_commit", "problem_statement")
 
 
+class BoundedOutput:
+    """Drain a stream with bounded memory, optionally retaining diagnostic tails."""
+
+    def __init__(self, limit, preserve_tail=False):
+        self.limit = limit
+        self.head_limit = (limit + 1) // 2 if preserve_tail else limit
+        self.tail_limit = limit - self.head_limit
+        self.head = self.tail = b""
+        self.size = 0
+
+    def append(self, chunk):
+        self.size += len(chunk)
+        take = min(len(chunk), self.head_limit - len(self.head))
+        self.head += chunk[:take]
+        if self.tail_limit:
+            self.tail = (self.tail + chunk[take:])[-self.tail_limit:]
+
+    def text(self):
+        truncated = self.size > self.limit
+        middle = b"\n[... middle output omitted ...]\n" if truncated and self.tail_limit else b""
+        text = (self.head + middle + self.tail).decode("utf-8", errors="replace")
+        return text + ("\n[output truncated]" if truncated else "")
+
+
 def public_instance(row):
     result = {key: row[key] for key in PUBLIC_FIELDS}
     if not all(isinstance(value, str) and value.strip() for value in result.values()):
@@ -113,7 +137,7 @@ class DockerSandbox:
         if status:
             raise RuntimeError(f"Unclean/misconfigured generation image: {output}")
 
-    def _exec(self, command, *, limit=24000):
+    def _exec(self, command, *, limit=24000, stdout_only=False, preserve_tail=False):
         if self.container is None:
             raise RuntimeError("Sandbox has not started")
         # GNU timeout bounds the entire process group, including child tests.
@@ -121,32 +145,36 @@ class DockerSandbox:
         execution = api.exec_create(self.container.id,
             ["timeout", "--signal=TERM", "--kill-after=5", str(self.tool_timeout),
              "/bin/bash", "-c", command], workdir="/testbed")
-        output, size, truncated = [], 0, False
-        for chunk in api.exec_start(execution["Id"], stream=True):
-            remaining = max(0, limit - size)
-            if remaining:
-                output.append(chunk[:remaining])
-            size += min(len(chunk), remaining)
-            truncated |= len(chunk) > remaining
+        output = BoundedOutput(limit, preserve_tail)
+        diagnostics = BoundedOutput(limit, preserve_tail=True)
+        options = {"stream": True}
+        if stdout_only:
+            options["demux"] = True
+        for chunk in api.exec_start(execution["Id"], **options):
+            if stdout_only:
+                stdout, stderr = chunk
+                output.append(stdout or b"")
+                diagnostics.append(stderr or b"")
+            else:
+                output.append(chunk)
         status = api.exec_inspect(execution["Id"])["ExitCode"]
         if status is None:
             raise RuntimeError("Docker exec exited without an exit code")
-        text = b"".join(output).decode("utf-8", errors="replace")
-        if truncated:
-            text += "\n[output truncated]"
-        return status, text
+        if stdout_only and status:
+            raise RuntimeError(f"Docker patch extraction failed (exit {status}): {diagnostics.text()}")
+        return status, output.text()
 
     def execute(self, code):
         command = ("source /opt/miniconda3/etc/profile.d/conda.sh && conda activate testbed && "
                    "python -c " + shlex.quote(code))
-        return self._exec(command)
+        return self._exec(command, preserve_tail=True)
 
     def patch(self):
         # Includes staged, unstaged, new, deleted, and model-committed files,
         # always relative to the dataset base commit (not mutable HEAD).
         status, patch = self._exec(
             "git add -N -- . && git -c core.quotePath=false diff --no-ext-diff --binary "
-            + self.task["base_commit"] + " --", limit=8 * 1024 * 1024)
+            + self.task["base_commit"] + " --", limit=8 * 1024 * 1024, stdout_only=True)
         if status or patch.endswith("\n[output truncated]"):
             raise RuntimeError("Patch extraction failed or exceeded 8 MiB")
         return patch
@@ -171,6 +199,7 @@ class SWEVerifiedEnv:
         self.model_patch = None
         self.sandbox = None
         self.close_error = None
+        self.tool_trace = []
         owned = _environments.get()
         if owned is None:
             raise RuntimeError("SWEVerifiedEnv requires the eval_swebench_verified runner lifecycle")
@@ -207,12 +236,18 @@ class SWEVerifiedEnv:
         if self.env_fail:
             return {"observation": "Container infrastructure failed; this rollout will be marked error."}
         self.stats["python_exec"] += 1
+        trace = {"call": self.stats["python_exec"], "code": args["code"], "status": "running"}
+        self.tool_trace.append(trace)
         try:
             status, output = await blocking_call(self.sandbox.execute, args["code"])
-        except Exception:
+        except BaseException as exc:
+            trace.update(status="error", error=repr(exc))
             self.env_fail = True
             raise
+        trace.update(status="completed", exit_code=status, output=output)
         self.stats["command_timeouts"] += int(status in (124, 137))
+        self.stats["python_exec_errors"] += int(status != 0)
+        self.stats["output_truncations"] += int(output.endswith("\n[output truncated]"))
         return {"observation": f"[python_exec exit_code={status}]\n{output}"}
 
     async def get_reward(self, item, messages, context):

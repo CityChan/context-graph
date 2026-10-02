@@ -186,6 +186,11 @@ async def generate_one(task, args, config, tokenizer, root, process_item):
                 except Exception as exc:
                     result.update(status="error", cleanup_error=repr(exc))
             await client.client.aclose()
+    # Write after cleanup: a disk error must not leave containers running.
+    with (output / "tool_trace.jsonl").open("w", encoding="utf-8") as handle:
+        for env in owned:
+            for trace in getattr(env, "tool_trace", []):
+                handle.write(json.dumps(trace) + "\n")
     if result["status"] == "error":
         # Never silently submit a partial patch after an infrastructure failure.
         prediction["model_patch"] = ""

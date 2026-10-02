@@ -8,7 +8,8 @@ def create_chat_swe(problem_statement, workflow, *, expose_graph_tools=True):
          "description": "Execute a fresh Python process in /testbed. Files persist; Python variables do not. "
             "Use pathlib to inspect/edit files and subprocess.run to run shell commands or tests. "
             "The testbed conda environment is active. Network is disabled. Commands time out after 90 seconds; "
-            "output is truncated to 24000 bytes. Print results explicitly.",
+            "output retains the beginning and end within 24000 captured bytes. Print results explicitly. "
+            "For subprocess.run, print the returncode, stdout and stderr so failures are visible.",
          "parameters": {"type": "object", "properties": {"code": {"type": "string"}}, "required": ["code"]}}},
         {"type": "function", "function": {"name": "finish",
          "description": "Submit repository changes. The evaluator extracts a Git patch; this message is not scored.",
@@ -28,7 +29,8 @@ def create_chat_swe(problem_statement, workflow, *, expose_graph_tools=True):
         "Only your patch will be evaluated by separate tests.\n\n"
         + convert_tools_to_description(tools)
         + "\nExample inspection:\n<function=python_exec><parameter=code>"
-          "import subprocess\nprint(subprocess.run(['ls'], capture_output=True, text=True).stdout)"
+          "import subprocess\nr = subprocess.run(['ls'], capture_output=True, text=True)\n"
+          "print('exit_code:', r.returncode)\nprint(r.stdout)\nprint(r.stderr)"
           "</parameter></function>"
     )
     if workflow in ("code_branch", "code_graph"):

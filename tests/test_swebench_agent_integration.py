@@ -95,6 +95,9 @@ def test_real_code_loop_exports_patch_and_cleans_container(method, tmp_path, mon
     trajectory = json.loads(next(tmp_path.rglob("trajectory.json")).read_text(encoding="utf-8"))
     assert trajectory["num_branches"] == (0 if method == "react" else 1)
     assert not responses
+    tool_trace = [json.loads(line) for line in next(tmp_path.rglob("tool_trace.jsonl")).read_text().splitlines()]
+    assert tool_trace == [{"call": 1, "code": "print('test')", "status": "completed",
+                           "exit_code": 0, "output": "Focused test passed"}]
 
 
 def test_agent_exception_cleans_owned_container_and_submits_no_partial_patch(tmp_path, monkeypatch):
@@ -122,3 +125,37 @@ def test_agent_exception_cleans_owned_container_and_submits_no_partial_patch(tmp
     result, prediction = asyncio.run(generate_one(task, args, config_for(args), CharacterTokenizer(), tmp_path, broken))
     assert result["status"] == "error" and prediction["model_patch"] == ""
     assert Sandbox.instances[-1].closed
+
+
+def test_failed_tool_is_saved_without_trajectory_and_container_is_cleaned(tmp_path, monkeypatch):
+    from envs.swebench_env import SWEVerifiedEnv
+
+    class BrokenSandbox(Sandbox):
+        def execute(self, code):
+            raise RuntimeError("container transport failed")
+
+    class Client:
+        def __init__(self, *a, **kw):
+            self.client = self
+        async def aclose(self):
+            pass
+
+    async def broken(item, context):
+        env = SWEVerifiedEnv(context.config.actor_rollout_ref.rollout, None,
+                             item.non_tensor_batch["ability"][0])
+        await env.init_env(item)
+        await env.run_action("<function=python_exec><parameter=code>print(1)</parameter></function>")
+
+    monkeypatch.setattr("envs.swebench_env.DockerSandbox", BrokenSandbox)
+    monkeypatch.setattr("scripts.eval_bcp_qwen38.TokenClient", Client)
+    task = {"instance_id": "django__django-1", "repo": "django/django", "base_commit": "a" * 40,
+            "problem_statement": "Fix a bug"}
+    args = SimpleNamespace(method="react", max_turn=100, task_timeout=60, memory="8g", cpus=4,
+                           seed=42, endpoint="http://unused", model="test")
+    result, prediction = asyncio.run(generate_one(task, args, config_for(args), CharacterTokenizer(), tmp_path, broken))
+    assert result["status"] == "error" and prediction["model_patch"] == ""
+    assert Sandbox.instances[-1].closed
+    assert not list(tmp_path.rglob("trajectory.json"))
+    trace = json.loads(next(tmp_path.rglob("tool_trace.jsonl")).read_text())
+    assert trace["status"] == "error" and trace["code"] == "print(1)"
+    assert "container transport failed" in trace["error"]

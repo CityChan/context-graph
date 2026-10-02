@@ -10,7 +10,7 @@ import shutil
 import subprocess
 import tempfile
 
-from envs.swebench_env import public_instance, repository_reset_command
+from envs.swebench_env import BoundedOutput, public_instance, repository_reset_command
 
 INSTANCE = "sympy__sympy-20590"
 BASE = "cffd4e0f86fefd4802349a9f9b19ed70934ea354"
@@ -80,7 +80,7 @@ class ApptainerSandbox:
         self.provenance["grading_environment"] = "private writable copy at original testbed prefix"
 
     def _exec(self, command, *, limit=24000, initializing=False, timeout=None, inputs=None,
-              stdout_only=False):
+              stdout_only=False, preserve_tail=False):
         if self.work is None:
             raise RuntimeError("Sandbox has not started")
         target = "/workspace" if initializing else "/testbed"
@@ -104,18 +104,18 @@ class ApptainerSandbox:
             result = subprocess.run(argv, env=env, cwd=self.work, stdout=output,
                                     stderr=diagnostics if stdout_only else subprocess.STDOUT)
             output.seek(0)
-            content = output.read(limit + 1)
+            content = BoundedOutput(limit, preserve_tail)
+            for block in iter(lambda: output.read(65536), b""):
+                content.append(block)
             if stdout_only and result.returncode:
                 diagnostics.seek(0)
                 detail = diagnostics.read(limit).decode("utf-8", errors="replace")
                 raise RuntimeError(f"ARM patch extraction failed (exit {result.returncode}): {detail}")
-        text = content[:limit].decode("utf-8", errors="replace")
-        if len(content) > limit:
-            text += "\n[output truncated]"
-        return result.returncode, text
+        return result.returncode, content.text()
 
     def execute(self, code):
-        return self._exec("source /opt/miniconda3/etc/profile.d/conda.sh && conda activate testbed && python -c " + shlex.quote(code))
+        return self._exec("source /opt/miniconda3/etc/profile.d/conda.sh && conda activate testbed && python -c " + shlex.quote(code),
+                          preserve_tail=True)
 
     def patch(self):
         status, patch = self._exec("git add -N -- . && git -c core.quotePath=false diff --no-ext-diff --binary " + BASE + " --", limit=8 * 1024 * 1024, stdout_only=True)
