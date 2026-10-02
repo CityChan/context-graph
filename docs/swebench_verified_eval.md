@@ -28,6 +28,12 @@ patch resolved in fresh grading sandboxes, generates a ContextGraph patch in a
 separate public-only sandbox, then grades it. An import from the checked-out
 repository is required before tests. Setup, calibration and generation errors stay
 separate from model failures. The gold/test patches are never mounted in generation.
+Subset grading reinstalls the local checkout using the image's existing dependencies,
+with pip build isolation and dependency resolution disabled and package indexes off.
+This prevents offline containers from attempting to fetch PEP 517 build dependencies.
+Missing or incompatible image dependencies still fail calibration; tests and source
+import checks are not skipped. A change to this grading policy requires a fresh run
+directory because resume requires the original code commit.
 Images are removed after each task to bound disk usage; logs, patches, checksums and
 test reports are retained. The 32K/64K context and seed defaults match the pilot.
 

@@ -58,6 +58,13 @@ def checked_eval_script(script, repo=None):
              'export XDG_CONFIG_HOME="$HOME/.config"\n'
              'mkdir -p "$XDG_CONFIG_HOME"\n')
     if repo:
+        # Images already contain their build/runtime dependencies. PEP 517's
+        # default isolated build instead tries to fetch them inside our offline
+        # sandbox. pip's store_false option uses 0 (not 1) to disable isolation.
+        # Keep the upstream install/test commands and rebuild the local checkout;
+        # missing image dependencies must still fail calibration, never be hidden.
+        setup += ('export PIP_NO_BUILD_ISOLATION=0 PIP_NO_DEPS=1 PIP_NO_INDEX=1\n'
+                  'export PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_RETRIES=0\n')
         # Some Lite images use Python < 3.9 (Path.is_relative_to is unavailable).
         check = check.replace("import pathlib,sys,", "import os,pathlib,sys,").replace(
             "p.is_relative_to(pathlib.Path('/testbed'))", "os.path.commonpath([str(p), '/testbed']) == '/testbed'")

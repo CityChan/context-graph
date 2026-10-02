@@ -138,3 +138,45 @@ def test_subset_launcher_syntax():
     script = Path(__file__).resolve().parents[1] / "scripts/run_swe_lite_arm_subset_idev.sh"
     subprocess.run([shutil.which("bash"), "-n", script.as_posix()], check=True,
                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+
+
+def test_offline_editable_build_reuses_image_dependencies(tmp_path):
+    """Exercise real pip: default isolation fails, generated policy builds locally.
+
+    A self-contained PEP 517 backend avoids depending on host setuptools/wheel.
+    The unavailable build dependency stands in for Astropy's offline bootstrap.
+    """
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "pyproject.toml").write_text(
+        '[build-system]\nrequires = ["swe-offline-missing-build-dependency==0.0.0"]\n'
+        'build-backend = "fixture_backend"\nbackend-path = ["."]\n')
+    (project / "fixture_backend.py").write_text(
+        'import pathlib, zipfile\n'
+        'def build_editable(wheel_directory, config_settings=None, metadata_directory=None):\n'
+        '    name = "swe_offline_fixture-1.0-py3-none-any.whl"\n'
+        '    with zipfile.ZipFile(pathlib.Path(wheel_directory) / name, "w") as wheel:\n'
+        '        wheel.writestr("swe_offline_fixture.py", "VALUE = 42\\n")\n'
+        '        wheel.writestr("swe_offline_fixture-1.0.dist-info/METADATA", '
+        '"Metadata-Version: 2.1\\nName: swe-offline-fixture\\nVersion: 1.0\\n")\n'
+        '        wheel.writestr("swe_offline_fixture-1.0.dist-info/WHEEL", '
+        '"Wheel-Version: 1.0\\nGenerator: fixture\\nRoot-Is-Purelib: true\\nTag: py3-none-any\\n")\n'
+        '        wheel.writestr("swe_offline_fixture-1.0.dist-info/RECORD", "")\n'
+        '    return name\n')
+    source = "set -uxo pipefail\npython -m pip install -e '.[test]' --verbose\n: '>>>>> Start Test Output'\ntrue\n"
+    rendered = checked_eval_script(source, "astropy/astropy")
+    assert "python -m pip install -e '.[test]' --verbose" in rendered
+    env = {k: v for k, v in os.environ.items() if not k.startswith("PIP_")}
+    env.update(PIP_CONFIG_FILE=os.devnull, PIP_NO_INDEX="1", PIP_DISABLE_PIP_VERSION_CHECK="1", PIP_RETRIES="0")
+    argv = [sys.executable, "-m", "pip", "install", "--no-cache-dir", "--target", str(tmp_path / "installed"), "-e", ".[test]"]
+    options = dict(cwd=project, env=env, capture_output=True, timeout=60,
+                   creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+    failed = subprocess.run(argv, **options)
+    assert failed.returncode != 0
+    assert b"swe-offline-missing-build-dependency" in failed.stdout + failed.stderr
+    for line in rendered.splitlines():
+        if line.startswith("export PIP_"):
+            env.update(item.split("=", 1) for item in line.removeprefix("export ").split())
+    success = subprocess.run(argv, **options)
+    assert success.returncode == 0, (success.stdout + success.stderr).decode(errors="replace")
+    assert (tmp_path / "installed/swe_offline_fixture.py").read_text() == "VALUE = 42\n"
