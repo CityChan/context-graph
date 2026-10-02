@@ -83,11 +83,18 @@ class ApptainerSandbox:
         if status:
             raise RuntimeError(f"ARM sandbox initialization failed: {output}")
 
-    def prepare_grading_environment(self):
+    def prepare_grading_environment(self, template=None):
         """Own a fresh writable copy at the original prefix; never mutate the SIF."""
         if self.work is None or self.runtime is not None:
             raise RuntimeError("Expected a started sandbox without a grading environment")
         self.runtime = Path(tempfile.mkdtemp(prefix="runtime-", dir=self.root / "sandboxes"))
+        if template is not None:
+            # Each grade owns its copy; no package install can mutate calibration's
+            # prepared template or another task's runtime. Preserve conda symlinks.
+            shutil.copytree(template, self.runtime, symlinks=True, dirs_exist_ok=True)
+            self.runtime_ready = True
+            self.provenance["grading_environment"] = "private copy of prepared build environment"
+            return
         status, output = self._exec(
             "set -e; cp -a --no-preserve=ownership /opt/miniconda3/envs/testbed/. /runtime-copy/; "
             "chmod -R u+rwX /runtime-copy", timeout=600)
@@ -97,13 +104,15 @@ class ApptainerSandbox:
         self.provenance["grading_environment"] = "private writable copy at original testbed prefix"
 
     def _exec(self, command, *, limit=24000, initializing=False, timeout=None, inputs=None,
-              stdout_only=False, preserve_tail=False):
+              stdout_only=False, preserve_tail=False, trusted_setup_network=False):
         if self.work is None:
             raise RuntimeError("Sandbox has not started")
         target = "/workspace" if initializing else "/testbed"
         argv = ["apptainer", "exec", "--cleanenv", "--containall", "--no-home",
-                "--no-mount", "hostfs,bind-paths,cwd", "--net", "--network", "none",
+                "--no-mount", "hostfs,bind-paths,cwd",
                 "--bind", f"{self.work}:{target}", "--pwd", target]
+        if not trusted_setup_network:
+            argv += ["--net", "--network", "none"]
         if inputs is not None:
             argv += ["--bind", f"{Path(inputs).resolve()}:/grading-input:ro"]
         if self.runtime is not None:

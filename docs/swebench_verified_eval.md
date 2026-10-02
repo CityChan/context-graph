@@ -23,17 +23,26 @@ cd /work/09281/chc_1996/vista/context-graph && git pull --ff-only origin master 
 
 The launcher reuses that server and selects the other allocated node for sequential
 Apptainer execution and grading. It requests no additional allocation. For each
-candidate it builds the digest-pinned image, requires baseline unresolved and gold
+candidate it builds the digest-pinned image, prepares declared build dependencies,
+requires baseline unresolved and gold
 patch resolved in fresh grading sandboxes, generates a ContextGraph patch in a
 separate public-only sandbox, then grades it. An import from the checked-out
 repository is required before tests. Setup, calibration and generation errors stay
 separate from model failures. The gold/test patches are never mounted in generation.
-Subset grading reinstalls the local checkout using the image's existing dependencies,
-with pip build isolation and dependency resolution disabled and package indexes off.
-This prevents offline containers from attempting to fetch PEP 517 build dependencies.
-Missing or incompatible image dependencies still fail calibration; tests and source
-import checks are not skipped. A change to this grading policy requires a fresh run
-directory because resume requires the original code commit.
+The image may omit PEP 517 build dependencies (for example, Astropy's
+`extension-helpers`). Before applying any patch, a fresh setup sandbox reads the
+base checkout's `build-system.requires` and installs these requirements with network
+access into a private copy of the image environment. It records requirements, package
+versions before/after, and image identity under `build-environment/`. This prepared
+environment is cloned independently for baseline, reference and model-patch grading;
+no grading installation can mutate the template. All three grades reinstall the
+local checkout offline, with build isolation/dependency resolution disabled. Agent
+tool execution and tests remain network-disabled. The single-task pilot is unchanged.
+Missing build tools, dependency conflicts, and failed calibration remain infrastructure
+errors; tests and source import checks are not skipped. The temporary environment is
+removed after the task, retaining its preparation log and metadata. A change to this
+grading policy requires a fresh run directory because resume requires the original
+code commit.
 Images are removed after each task to bound disk usage; logs, patches, checksums and
 test reports are retained. The 32K/64K context and seed defaults match the pilot.
 

@@ -100,9 +100,18 @@ def test_batch_calibrates_before_generation_and_resumes_without_repeating(tmp_pa
 
     def evaluate(task, patch, folder, root, timeout, **kwargs):
         events.append((task["instance_id"], folder.name))
+        assert kwargs["runtime_template"] == folder.parent / "build-environment/runtime"
+        assert kwargs["runtime_template"].is_dir()
         folder.mkdir()
         resolved = bool(patch) and not (calibration_fails and task["instance_id"] == rows[0]["instance_id"])
         return {task["instance_id"]: {"resolved": resolved}}
+
+    def prepare_build(task, folder, root, timeout):
+        events.append((task["instance_id"], "build_dependencies"))
+        template = folder / "runtime"
+        template.mkdir(parents=True)
+        runner.save(folder / "environment.json", {"prepared": True})
+        return template
 
     def generate(argv, log, **kwargs):
         instance = argv[argv.index("--instance-ids") + 1]
@@ -117,6 +126,7 @@ def test_batch_calibrates_before_generation_and_resumes_without_repeating(tmp_pa
         runner.save(gen / "generation_summary.json", {"predictions_sha256": runner.file_hash(gen / "predictions.jsonl")})
 
     monkeypatch.setattr(runner, "build_image", build)
+    monkeypatch.setattr(runner, "prepare_build_environment", prepare_build)
     monkeypatch.setattr(runner, "evaluate", evaluate)
     monkeypatch.setattr(runner, "run_command", generate)
     monkeypatch.setattr(runner, "checked_image", lambda *a: (Path("image"), "sha"))
@@ -126,8 +136,9 @@ def test_batch_calibrates_before_generation_and_resumes_without_repeating(tmp_pa
     assert result["graded"] == (1 if calibration_fails else 2)
     assert result["official_x86_result"] is False
     first = [stage for instance, stage in events if instance == rows[0]["instance_id"]]
-    assert first == (["build", "baseline", "reference"] if calibration_fails else
-                     ["build", "baseline", "reference", "generation", "grading"])
+    assert first == (["build", "build_dependencies", "baseline", "reference"] if calibration_fails else
+                     ["build", "build_dependencies", "baseline", "reference", "generation", "grading"])
+    assert not list(output.glob("instances/*/attempt-*/build-environment/runtime"))
     before = list(events)
     runner.main()
     assert events == before

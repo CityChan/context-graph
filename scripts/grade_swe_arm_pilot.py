@@ -5,6 +5,7 @@ import argparse
 import importlib.metadata
 import json
 from pathlib import Path
+import shutil
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -74,7 +75,38 @@ def checked_eval_script(script, repo=None):
             .replace(marker, "set +e\n" + marker))
 
 
-def evaluate(task, patch, folder, root, timeout, *, subset=False):
+def prepare_build_environment(task, folder, root, timeout):
+    """Prepare once from pristine public source, then clone for all three grades."""
+    folder.mkdir(parents=True, exist_ok=False)
+    inputs = folder / "inputs"
+    inputs.mkdir()
+    shutil.copyfile(Path(__file__).with_name("prepare_swe_arm_build_deps.py"), inputs / "prepare.py")
+    sandbox = ApptainerSandbox(task, root=root)
+    try:
+        sandbox.start()
+        sandbox.prepare_grading_environment()
+        command = ('set -e; export HOME=$(mktemp -d /tmp/swe-build-home-XXXXXX); '
+                   'source /opt/miniconda3/etc/profile.d/conda.sh; conda activate testbed; '
+                   'python /grading-input/prepare.py')
+        status, output = sandbox._exec(command, inputs=inputs, trusted_setup_network=True,
+                                       timeout=timeout, limit=8 * 1024 * 1024)
+        (folder / "prepare.log").write_text(output, encoding="utf8")
+        if status or "SWE_ARM_BUILD_ENV_READY" not in output.splitlines() or "[output truncated]" in output:
+            raise RuntimeError(f"Build dependency preparation failed (exit {status}); log={folder / 'prepare.log'}\n{output[-4000:]}")
+        write_json(folder / "environment.json", {"instance_id": task["instance_id"],
+                   "base_commit": task["base_commit"], "image": sandbox.provenance,
+                   "preparation_log_sha256": file_hash(folder / "prepare.log"),
+                   "policy": "base-source build-system.requires; network during preparation only; clone for each grade"})
+        template = folder / "runtime"
+        sandbox.runtime.rename(template)
+        sandbox.runtime = None  # Ownership transferred to the batch runner.
+        sandbox.runtime_ready = False
+        return template
+    finally:
+        sandbox.close()
+
+
+def evaluate(task, patch, folder, root, timeout, *, subset=False, runtime_template=None):
     from swebench.harness.test_spec.test_spec import make_test_spec
     from swebench.harness.grading import get_eval_report, get_logs_eval
     folder.mkdir(parents=True, exist_ok=False)
@@ -89,7 +121,11 @@ def evaluate(task, patch, folder, root, timeout, *, subset=False):
     sandbox = ApptainerSandbox(task, root=root)
     try:
         sandbox.start()
-        sandbox.prepare_grading_environment()
+        if runtime_template is None:
+            sandbox.prepare_grading_environment()
+        else:
+            sandbox.prepare_grading_environment(runtime_template)
+            sandbox.provenance["build_environment_record_sha256"] = file_hash(runtime_template.parent / "environment.json")
         write_json(folder / "image.json", sandbox.provenance)
         if patch.strip():
             status, text = sandbox._exec("echo SWE_ARM_APPLY_STARTED; git apply --verbose /grading-input/model.patch", inputs=inputs)

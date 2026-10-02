@@ -19,7 +19,7 @@ import urllib.request
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from envs.swebench_apptainer import checked_image, image_record
 from scripts.eval_swebench_verified import file_hash, load_public, read_json, read_jsonl, validate_predictions
-from scripts.grade_swe_arm_pilot import evaluate, require_harness
+from scripts.grade_swe_arm_pilot import evaluate, prepare_build_environment, require_harness
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -185,13 +185,18 @@ def main():
             stage = "image"
             print(f"SWE_ARM_SUBSET_TASK {index}/{len(ids)} {instance} artifacts={attempt}", flush=True)
             result = {"instance_id": instance, "attempt": str(attempt), "status": "infrastructure_error"}
+            runtime_template = None
             try:
                 _, sha = build_image(task, root, attempt)
                 result["sif_sha256"] = sha
+                stage = "build_dependencies"
+                print(f"SWE_ARM_SUBSET_STAGE {instance} build_dependencies", flush=True)
+                runtime_template = prepare_build_environment(task, attempt / "build-environment", root, args.test_timeout)
+                result["build_environment_record_sha256"] = file_hash(runtime_template.parent / "environment.json")
                 stage = "calibration"
                 print(f"SWE_ARM_SUBSET_STAGE {instance} calibration", flush=True)
-                baseline = evaluate(task, "", attempt / "baseline", root, args.test_timeout, subset=True)
-                reference = evaluate(task, task["patch"], attempt / "reference", root, args.test_timeout, subset=True)
+                baseline = evaluate(task, "", attempt / "baseline", root, args.test_timeout, subset=True, runtime_template=runtime_template)
+                reference = evaluate(task, task["patch"], attempt / "reference", root, args.test_timeout, subset=True, runtime_template=runtime_template)
                 if baseline[instance]["resolved"] or not reference[instance]["resolved"]:
                     raise RuntimeError("Require baseline unresolved and reference resolved")
                 save(attempt / "calibration.json", {"passed": True, "sif_sha256": sha})
@@ -220,7 +225,7 @@ def main():
                 stage = "grading"
                 print(f"SWE_ARM_SUBSET_STAGE {instance} grading", flush=True)
                 patch = predictions[0]["model_patch"]
-                report = evaluate(task, patch, attempt / "grading", root, args.test_timeout, subset=True)
+                report = evaluate(task, patch, attempt / "grading", root, args.test_timeout, subset=True, runtime_template=runtime_template)
                 result.update(status="graded", resolved=bool(report[instance]["resolved"]),
                               empty_patch=not patch.strip(), predictions_sha256=file_hash(generation / "predictions.jsonl"))
             except Exception as exc:
@@ -232,6 +237,8 @@ def main():
                 raise
             finally:
                 # Bound disk use to one image. Preserve every log, patch and digest.
+                if runtime_template is not None:
+                    shutil.rmtree(runtime_template)
                 name, _ = image_record(root, task)
                 image = root / "images" / name
                 image.unlink(missing_ok=True)
