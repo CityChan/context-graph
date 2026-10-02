@@ -12,8 +12,24 @@
 
 # Inference only. Repository containers and official tests run on an x86 Docker host.
 set -euo pipefail
-: "${SLURM_JOB_ID:?Submit with sbatch}"
+: "${SLURM_JOB_ID:?Run inside idev or submit with sbatch}"
 : "${SCRATCH:?SCRATCH must be set}"
+# Vista GH nodes have one GPU. Lock before loading weights or profiling KV cache;
+# two concurrent launches can both pass the free-memory check and then OOM.
+# Keep the descriptor across both execs for the lifetime of the API server.
+server_lock="/tmp/contextgraph-swe-server-${UID}.lock"
+exec 9>"$server_lock"
+if ! flock -n 9; then
+  echo "SWE_SERVER_ALREADY_RUNNING node=$(hostname -s) lock=$server_lock; inspect the existing server log" >&2
+  exit 2
+fi
+# Older launchers do not hold the lock. Refuse to compete with their live engines
+# (or another GPU workload); never kill a process from this launcher.
+gpu_processes=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader)
+if [[ -n "${gpu_processes//[[:space:]]/}" ]]; then
+  echo "SWE_SERVER_GPU_BUSY node=$(hostname -s) compute_pids=$gpu_processes; inspect nvidia-smi before retrying" >&2
+  exit 2
+fi
 export PROJECT_ROOT=${PROJECT_ROOT:-/work/09281/chc_1996/vista/context-graph}
 export CONDA_SH=${CONDA_SH:-/work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh}
 export SERVER_CONDA_ENV=${SERVER_CONDA_ENV:-deepseek_v4}

@@ -95,6 +95,36 @@ def test_setup_shell_syntax():
 
 
 @pytest.mark.skipif(not shutil.which("bash"), reason="Bash required")
+@pytest.mark.parametrize("lock_status,gpu_pids,gpu_status,expected", [
+    (1, "", 0, "SWE_SERVER_ALREADY_RUNNING"),
+    (0, "571393\n571401", 0, "SWE_SERVER_GPU_BUSY"),
+    (0, "", 1, ""),
+    (0, "", 0, ""),
+])
+def test_swe_server_checks_lock_and_gpu_before_model_setup(tmp_path, lock_status, gpu_pids, gpu_status, expected):
+    root = Path(__file__).resolve().parents[1]
+    source = (root / "scripts/serve_swe_qwen35_9b_vista.sbatch").read_text()
+    script = tmp_path / "server.sh"
+    script.write_text(source.replace('/tmp/contextgraph-swe-server-${UID}.lock',
+                                     (tmp_path / "server.lock").as_posix()), newline="\n")
+    mocks = tmp_path / "mocks.sh"
+    mocks.write_text('flock() { return "$TEST_LOCK_STATUS"; }\n'
+                     'nvidia-smi() { printf "%s" "$TEST_GPU_PIDS"; return "$TEST_GPU_STATUS"; }\n', newline="\n")
+    conda = tmp_path / "conda.sh"
+    conda.write_text('touch "$PROJECT_ROOT/model-setup-reached"\nexit 0\n', newline="\n")
+    env = dict(os.environ, PROJECT_ROOT=tmp_path.as_posix(), SCRATCH=tmp_path.as_posix(),
+               SLURM_JOB_ID="123", CONDA_SH=conda.as_posix(), BASH_ENV=mocks.as_posix(),
+               TEST_LOCK_STATUS=str(lock_status), TEST_GPU_PIDS=gpu_pids, TEST_GPU_STATUS=str(gpu_status))
+    result = subprocess.run([shutil.which("bash"), script.as_posix()], env=env, text=True,
+                            capture_output=True, timeout=10,
+                            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+    allowed = lock_status == gpu_status == 0 and not gpu_pids
+    assert (result.returncode == 0) == allowed, result.stdout + result.stderr
+    assert (tmp_path / "model-setup-reached").exists() == allowed
+    assert expected in result.stderr
+
+
+@pytest.mark.skipif(not shutil.which("bash"), reason="Bash required")
 @pytest.mark.parametrize("allocated", [False, True])
 @pytest.mark.parametrize("reuse", [False, True])
 def test_direct_setup_marks_image_pending_and_allocation_runs_probe(tmp_path, allocated, reuse):

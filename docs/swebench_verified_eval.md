@@ -59,6 +59,13 @@ model server on a GH compute node with
 The previously running 32K server cannot serve this pilot; stop it before
 reusing its GPU and port, or use a free GPU and a different `MODEL_PORT`.
 The server uses one GPU; additional allocated nodes do not combine GPU memory.
+The SWE launcher holds a per-user, node-local lock before model setup and refuses
+to start if `nvidia-smi` reports an existing compute process. This guards against
+duplicate launches racing to allocate KV cache, including older servers without
+the lock. It does not terminate existing processes. Repeated launches report
+`SWE_SERVER_ALREADY_RUNNING` or `SWE_SERVER_GPU_BUSY`; inspect the existing
+processes instead of submitting another server. Give each attempt a unique log
+filename so concurrent shells cannot overwrite/interleave the same server log.
 Check `/v1/models` for `max_model_len: 65536` before evaluation. Once it
 responds, run the following in another shell on a compute node in the
 allocation (set `SWE_ENDPOINT=http://SERVER-NODE:18000` if the server is on
