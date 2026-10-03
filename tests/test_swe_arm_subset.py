@@ -81,12 +81,13 @@ def test_generic_grading_setup_gate_before_tests(tmp_path, setup_exit):
 
 
 @pytest.mark.parametrize("calibration_fails", [False, True])
-def test_batch_calibrates_before_generation_and_resumes_without_repeating(tmp_path, monkeypatch, calibration_fails):
+@pytest.mark.parametrize("method", ["contextgraph", "foldagent"])
+def test_batch_calibrates_before_generation_and_resumes_without_repeating(tmp_path, monkeypatch, calibration_fails, method):
     rows, _, _, data, inventory = dataset_fixture(tmp_path)
     output = tmp_path / "run"
     monkeypatch.setattr(sys, "argv", ["runner", "--data-dir", str(data), "--output", str(output),
         "--inventory", str(inventory), "--agent-python", "agent-python", "--model-path", str(tmp_path),
-        "--endpoint", "http://test"])
+        "--endpoint", "http://test", "--method", method])
     monkeypatch.setattr(runner, "require_harness", lambda: None)
     monkeypatch.setitem(sys.modules, "fcntl", SimpleNamespace(LOCK_EX=1, LOCK_NB=2, flock=lambda *a: None))
     monkeypatch.setattr(runner.subprocess, "check_output", lambda *a, **k: "commit")
@@ -114,6 +115,7 @@ def test_batch_calibrates_before_generation_and_resumes_without_repeating(tmp_pa
         return template
 
     def generate(argv, log, **kwargs):
+        assert argv[argv.index("--method") + 1] == method
         instance = argv[argv.index("--instance-ids") + 1]
         events.append((instance, "generation"))
         gen = Path(argv[argv.index("--output") + 1])
@@ -132,6 +134,7 @@ def test_batch_calibrates_before_generation_and_resumes_without_repeating(tmp_pa
     monkeypatch.setattr(runner, "checked_image", lambda *a: (Path("image"), "sha"))
     assert runner.main() == (2 if calibration_fails else 0)
     result = runner.read_json(output / "summary.json")
+    assert runner.read_json(output / "manifest.json")["method"] == method
     assert result["selected"] == result["completed"] == 2
     assert result["graded"] == (1 if calibration_fails else 2)
     assert result["official_x86_result"] is False
@@ -142,6 +145,9 @@ def test_batch_calibrates_before_generation_and_resumes_without_repeating(tmp_pa
     before = list(events)
     runner.main()
     assert events == before
+    sys.argv[sys.argv.index("--method") + 1] = "react"
+    with pytest.raises(ValueError, match="Resume protocol"):
+        runner.main()
 
 
 @pytest.mark.skipif(not shutil.which("bash"), reason="Bash required")
@@ -149,6 +155,28 @@ def test_subset_launcher_syntax():
     script = Path(__file__).resolve().parents[1] / "scripts/run_swe_lite_arm_subset_idev.sh"
     subprocess.run([shutil.which("bash"), "-n", script.as_posix()], check=True,
                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+
+
+def test_real_inventory_shards_cover_252_without_overlap(tmp_path):
+    inventory = runner.read_json(runner.REPO / "configs/swe_lite_arm_images.json")
+    rows = [dict(instance_id=e["instance_id"], repo="unused", base_commit="a" * 40) for e in inventory["instances"]]
+    dataset = dict(dataset="princeton-nlp/SWE-bench_Lite", revision=inventory["dataset_revision"])
+    first, _ = runner.selection(rows, dataset, inventory, -1, 0, 2)
+    second, _ = runner.selection(rows, dataset, inventory, -1, 1, 2)
+    all_ids, _ = runner.selection(rows, dataset, inventory, -1)
+    assert len(first) == len(second) == 126
+    assert not set(first).intersection(second)
+    assert sorted(first + second) == all_ids
+    limited = [runner.selection(rows, dataset, inventory, 5, i, 2)[0] for i in range(2)]
+    assert sorted(limited[0] + limited[1]) == all_ids[:5]
+    with pytest.raises(ValueError, match="shard"):
+        runner.selection(rows, dataset, inventory, -1, 2, 2)
+
+
+@pytest.mark.skipif(not shutil.which("bash"), reason="Bash required")
+def test_four_node_launcher_syntax():
+    subprocess.run([shutil.which("bash"), "-n", (runner.REPO / "scripts/run_swe_lite_arm_4node_idev.sh").as_posix()],
+                   check=True, creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
 
 
 def test_offline_editable_build_reuses_image_dependencies(tmp_path):

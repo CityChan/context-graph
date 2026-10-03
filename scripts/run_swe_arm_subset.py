@@ -31,7 +31,7 @@ def save(path, value):
     temp.replace(path)
 
 
-def selection(rows, dataset, inventory, limit):
+def selection(rows, dataset, inventory, limit, shard_index=0, shard_count=1):
     if dataset["dataset"] != "princeton-nlp/SWE-bench_Lite" or dataset["revision"] != inventory["dataset_revision"]:
         raise ValueError("ARM inventory requires the pinned Lite dataset revision")
     entries = inventory["instances"]
@@ -55,6 +55,9 @@ def selection(rows, dataset, inventory, limit):
         if not 1 <= limit <= len(ids):
             raise ValueError("--limit must be -1 or within the available subset size")
         ids = ids[:limit]
+    if shard_count < 1 or not 0 <= shard_index < shard_count:
+        raise ValueError("Invalid shard index/count")
+    ids = ids[shard_index::shard_count]
     return ids, {key: records[key] for key in ids}
 
 
@@ -130,6 +133,9 @@ def main():
     p.add_argument("--endpoint", required=True)
     p.add_argument("--inventory", type=Path, default=REPO / "configs/swe_lite_arm_images.json")
     p.add_argument("--context-length", type=int, default=65536)
+    p.add_argument("--method", choices=("contextgraph", "foldagent", "react"), default="contextgraph")
+    p.add_argument("--shard-index", type=int, default=0)
+    p.add_argument("--shard-count", type=int, default=1)
     p.add_argument("--limit", type=int, default=-1)
     p.add_argument("--test-timeout", type=int, default=1800)
     p.add_argument("--retry-errors", action="store_true")
@@ -139,7 +145,7 @@ def main():
     require_harness()
     rows, dataset = load_public(args.data_dir)
     inventory = read_json(args.inventory)
-    ids, records = selection(rows, dataset, inventory, args.limit)
+    ids, records = selection(rows, dataset, inventory, args.limit, args.shard_index, args.shard_count)
     gold_path = args.data_dir / "grading/instances.json"
     if file_hash(gold_path) != dataset["grading_sha256"]:
         raise ValueError("Grading dataset checksum mismatch")
@@ -153,10 +159,12 @@ def main():
     if not any(m["id"] == "Qwen/Qwen3.5-9B" and m.get("max_model_len", 0) >= args.context_length for m in models):
         raise ValueError("Expected live Qwen/Qwen3.5-9B server with requested context length")
     protocol = {"dataset": dataset, "instance_ids": ids, "inventory_sha256": file_hash(args.inventory),
-                "context_length": args.context_length, "method": "contextgraph", "seed": 42,
+                "context_length": args.context_length, "method": args.method, "seed": 42,
                 "test_timeout": args.test_timeout, "model_path": str(Path(args.model_path).resolve()),
                 "commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=REPO, text=True).strip(),
                 "official_x86_result": False}
+    if args.shard_count != 1:
+        protocol["shard"] = {"index": args.shard_index, "count": args.shard_count, "limit_before_sharding": args.limit}
     run = args.output.resolve()
     run.mkdir(parents=True, exist_ok=True)
     # One owner per run; concurrent resume must not delete another owner's image.
@@ -211,7 +219,7 @@ def main():
                 run_command([args.agent_python, "-u", "scripts/eval_swebench_verified.py", "generate",
                              "--dataset", "lite", "--backend", "apptainer", "--apptainer-root", str(root),
                              "--data-dir", str(args.data_dir.resolve()), "--output", str(generation),
-                             "--method", "contextgraph", "--model-path", args.model_path, "--endpoint", args.endpoint,
+                             "--method", args.method, "--model-path", args.model_path, "--endpoint", args.endpoint,
                              "--context-length", str(args.context_length), "--instance-ids", instance,
                              "--samples", "1", "--workers", "1", "--seed", "42"],
                             attempt / "generation.log", timeout=7200, env=env)

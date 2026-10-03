@@ -59,6 +59,34 @@ Local tests cover selection, calibration gates, grading error boundaries, task
 identity, and resume behavior using simulated containers. Real multi-project ARM
 execution must be validated on Vista. The original single-task pilot remains available.
 
+### FoldAgent on a separate four-node idev allocation
+
+From that allocation's compute shell, the four-node launcher starts two independent
+Qwen3.5-9B servers (nodes 0 and 2, 64K, one sequence each) and two evaluators (nodes
+1 and 3). It partitions the same sorted ARM candidate list into disjoint even/odd
+indices: 126 tasks per pair by default. The task seeds, context budget, dependency
+preparation and calibration/grading match the ContextGraph subset; only the agent
+method changes. No extra allocation or SSH tunnel is needed.
+
+```bash
+cd /work/09281/chc_1996/vista/context-graph && git pull --ff-only origin master && env -u SWE_RUN_DIR SWE_AGENT_ENV=/scratch/09281/chc_1996/context-graph-swe/envs/agent-direct-Rs4ngP SWE_CONTEXT_LENGTH=65536 SWE_SAMPLES=-1 bash scripts/run_swe_lite_arm_4node_idev.sh foldagent
+```
+
+Use an allocation without existing servers on these nodes: the launcher refuses
+occupied server endpoints and the server script refuses occupied GPUs. Startup,
+server and evaluator logs appear in the printed artifact directory; `pair-0/` and
+`pair-1/` each contain their task manifests and summary. The two selected sets must
+be disjoint before combining counts; this is still an ARM subset, not a full Lite
+or official x86 score. `SWE_SAMPLES=2` is a smoke run with one task per pair.
+The launcher stops its own server steps after both evaluators finish and leaves
+the idev allocation intact. Keep its foreground shell alive; walltime applies.
+For resume, set `SWE_RUN_DIR` to the top-level four-node run directory and use the
+same method, sample limit, context and code commit.
+
+For an already-running server and a single evaluator, use the existing subset
+launcher with `SWE_METHOD=foldagent`. `SWE_EVAL_NODE` can select a specific evaluator;
+otherwise the first allocated node other than `SWE_SERVER_NODE` is used.
+
 ## SWE-bench Lite evaluation on an x86 Docker host
 
 The same agent and pinned official harness now support the 300-instance Lite
