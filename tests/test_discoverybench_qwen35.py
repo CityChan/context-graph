@@ -33,9 +33,24 @@ def test_selection_validates_full_split_before_smoke_sampling(monkeypatch):
     monkeypatch.setattr(pd, "read_parquet", lambda _: pd.DataFrame(tasks))
     selected = runner.load_tasks("fixture", 2)
     assert [t["task_id"] for t in selected] == ["real:t:000", "real:t:001"]
+    full = runner.load_tasks("fixture", -1)
+    left, right = (runner.shard_tasks(full, i, 2) for i in range(2))
+    assert (len(left), len(right)) == (120, 119)
+    assert not {t["task_id"] for t in left} & {t["task_id"] for t in right}
+    assert sorted(left + right, key=lambda t: t["task_id"]) == full
+    assert runner.shard_tasks(selected, 0, 2) == selected[:1]
+    assert runner.shard_tasks(selected, 1, 2) == selected[1:]
     tasks[0]["extra_info"]["dataset_split"] = "train"
     with pytest.raises(ValueError, match="real-test"):
         runner.load_tasks("fixture", 2)
+
+
+def test_empty_smoke_shard_and_invalid_layout(tmp_path):
+    assert runner.shard_tasks([{}], 1, 2) == []
+    assert runner.summary(tmp_path, [])["mean_hms"] is None
+    for index, count in ((0, 0), (-1, 2), (2, 2)):
+        with pytest.raises(ValueError, match="shard-count"):
+            runner.shard_tasks([], index, count)
 
 
 def test_summary_never_treats_judge_failure_as_zero(tmp_path):
@@ -126,7 +141,8 @@ def test_resume_skips_finished_retries_interrupted_and_rejects_drift(tmp_path, m
     data = tmp_path / "data"
     data.write_text("fixture")
     args = SimpleNamespace(output=tmp_path / "run", data=data, model_path="fixture", context_length=65536,
-                           method="contextgraph", task_timeout=120, endpoint="http://fixture")
+                           method="contextgraph", task_timeout=120, endpoint="http://fixture",
+                           shard_index=0, shard_count=1)
     with pytest.raises(KeyboardInterrupt):
         runner.run(args)
     assert len(calls) == 2
@@ -136,10 +152,15 @@ def test_resume_skips_finished_retries_interrupted_and_rejects_drift(tmp_path, m
     args.context_length = 32768
     with pytest.raises(ValueError, match="protocol mismatch"):
         runner.run(args)
+    args.context_length = 65536
+    args.shard_count = 2
+    with pytest.raises(ValueError, match="protocol mismatch"):
+        runner.run(args)
 
 
 @pytest.mark.skipif(not shutil.which("bash"), reason="Bash required")
-def test_paired_batch_dispatches_both_methods_on_separate_nodes(tmp_path):
+@pytest.mark.parametrize("mode", ["both", "contextgraph", "foldagent"])
+def test_paired_batch_dispatches_methods_and_shards_on_separate_nodes(tmp_path, mode):
     agent = tmp_path / "env"
     (agent / "bin").mkdir(parents=True)
     (agent / ".ready").touch()
@@ -169,7 +190,7 @@ srun() {
         shift
     done
     if [[ -n "$method" ]]; then
-        printf '%s' "$node" > "$PROJECT_ROOT/evaluated-$method"
+        printf '%s %s %s %s' "$node" "$method" "$5" "$6" > "$PROJECT_ROOT/evaluated-$4"
     else
         touch "$PROJECT_ROOT/started-$node"
         trap 'exit 0' TERM
@@ -181,10 +202,15 @@ srun() {
                DB_AGENT_ENV=agent.as_posix(), DB_DATA=data.as_posix(),
                DB_RUN_DIR=(tmp_path / "run").as_posix(), SLURM_JOB_ID="fixture", SLURM_JOB_NODELIST="fixture",
                BASH_ENV=mocks.as_posix(), TEST_LIBRARY=library.as_posix(), OPENAI_API_KEY="fixture")
-    result = subprocess.run([shutil.which("bash"), (runner.REPO / "scripts/eval_discoverybench_qwen35_9b_4node.sbatch").as_posix()],
+    result = subprocess.run([shutil.which("bash"), (runner.REPO / "scripts/eval_discoverybench_qwen35_9b_4node.sbatch").as_posix(), mode],
                             env=env, capture_output=True, text=True, timeout=20,
                             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
     assert result.returncode == 0, result.stdout + result.stderr
-    assert (tmp_path / "evaluated-contextgraph").read_text() == "node1"
-    assert (tmp_path / "evaluated-foldagent").read_text() == "node3"
+    labels = ["contextgraph", "foldagent"] if mode == "both" else [f"{mode}-0", f"{mode}-1"]
+    for pair, label in enumerate(labels):
+        method = label if mode == "both" else mode
+        index, count = (0, 1) if mode == "both" else (pair, 2)
+        assert (tmp_path / f"evaluated-{label}").read_text() == f"node{pair * 2 + 1} {method} {index} {count}"
+        assert (tmp_path / f"run/evaluator-{label}.log").exists()
+        assert (tmp_path / f"run/server-{label}.log").exists()
     assert (tmp_path / "started-node0").exists() and (tmp_path / "started-node2").exists()

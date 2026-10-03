@@ -90,6 +90,12 @@ def load_tasks(data, samples):
     return tasks if samples == -1 else tasks[:samples]
 
 
+def shard_tasks(tasks, index, count):
+    if count < 1 or not 0 <= index < count:
+        raise ValueError("Expected shard-count >= 1 and 0 <= shard-index < shard-count")
+    return tasks[index::count]
+
+
 def summary(root, ids):
     records = [json.loads(p.read_text()) for i in ids if (p := root / "instances" / task_key(i) / "result.json").exists()]
     graded = [r for r in records if r["status"] == "graded"]
@@ -98,7 +104,7 @@ def summary(root, ids):
              "graded": len(graded), "infrastructure_errors": errors,
              "valid_predictions": sum(r.get("valid_prediction", False) for r in graded),
              "mean_hms_graded": sum(r["hms"] for r in graded) / len(graded) if graded else None,
-             "mean_hms": sum(r["hms"] for r in graded) / len(ids) if len(graded) == len(ids) else None}
+             "mean_hms": sum(r["hms"] for r in graded) / len(ids) if ids and len(graded) == len(ids) else None}
     save(root / "summary.json", value)
     print("DISCOVERY_PROGRESS " + json.dumps(value), flush=True)
     return value
@@ -202,10 +208,14 @@ def run(args):
     with (root / "run.lock").open("w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         tasks, files, judge = preflight(args)
+        global_ids = [t["task_id"] for t in tasks]
+        shard_index, shard_count = args.shard_index, args.shard_count
+        tasks = shard_tasks(tasks, shard_index, shard_count)
         versions = {name: importlib.metadata.version(name) for name in (
             "transformers", "torch", "pandas", "numpy", "scipy", "scikit-learn", "statsmodels", "xgboost", "openai")}
         manifest = {"benchmark": "DiscoveryBench", "split": "real/test", "data_sha256": digest(args.data),
                     "inputs_sha256": files, "task_ids": [t["task_id"] for t in tasks], "method": args.method,
+                    "global_task_ids": global_ids, "shard_index": shard_index, "shard_count": shard_count,
                     "model": MODEL, "model_revision": REVISION, "model_path": str(Path(args.model_path).resolve()),
                     "seed": 42, "judge": judge, "versions": versions, "task_timeout": args.task_timeout,
                     "config": OmegaConf.to_container(config_for(args.method, args.context_length)),
@@ -252,6 +262,8 @@ def main():
     parser.add_argument("--endpoint")
     parser.add_argument("--context-length", type=int, choices=(32768, 65536), default=65536)
     parser.add_argument("--samples", type=int, default=-1)
+    parser.add_argument("--shard-index", type=int, default=0)
+    parser.add_argument("--shard-count", type=int, default=1)
     parser.add_argument("--task-timeout", type=int, default=7200)
     parser.add_argument("--task", type=Path)
     parser.add_argument("--preflight", action="store_true")

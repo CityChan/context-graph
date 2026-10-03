@@ -16,6 +16,42 @@ The request is four GH nodes for 48 hours; completion within the allocation is
 not guaranteed. To validate first, prefix the submission with `DB_SAMPLES=2`.
 The runner requires all 239 unique real-test rows before selecting smoke samples.
 
+## Two existing four-node idev allocations
+
+Run one command in each allocation's compute-node shell. The launcher starts
+two model servers and two evaluators per allocation automatically. Each method
+covers all 239 real-test questions, split into disjoint shards of 120 and 119.
+Both methods use the same sorted task list and task-derived seeds.
+
+ContextGraph allocation:
+
+```bash
+cd /work/09281/chc_1996/vista/context-graph && git pull --ff-only origin master && env -u DB_RUN_DIR DB_CONTEXT_LENGTH=65536 DB_SAMPLES=-1 bash scripts/eval_discoverybench_qwen35_9b_4node.sbatch contextgraph
+```
+
+FoldAgent allocation:
+
+```bash
+cd /work/09281/chc_1996/vista/context-graph && git pull --ff-only origin master && env -u DB_RUN_DIR DB_CONTEXT_LENGTH=65536 DB_SAMPLES=-1 bash scripts/eval_discoverybench_qwen35_9b_4node.sbatch foldagent
+```
+
+These commands use the existing allocations; `bash` ignores the `#SBATCH`
+48-hour request, so the original idev time limits still apply. Keep both runs
+on the same checkout commit. `DB_SAMPLES` limits the global task list before
+sharding; use 2 to smoke-test one task per evaluator.
+
+The printed run directory contains `suite.log`,
+`evaluator-contextgraph-{0,1}.log`, `server-contextgraph-{0,1}.log`, and
+`contextgraph-{0,1}/summary.json` (replace `contextgraph` with `foldagent`
+for that allocation). Each shard has the same per-task artifact layout below.
+Add completed/graded counts across shards; combine HMS using graded task counts
+as weights, not an unweighted average. The method-wide final HMS requires both
+shards to be fully graded. For resume, retain the same method and run directory;
+the manifest checks shard identity and the global selection as well as protocol.
+
+The submit helper also accepts `contextgraph` or `foldagent` for a separate
+four-node batch job. Omitting the method retains the original two-method layout.
+
 The launcher reuses the cached Qwen3.5-9B revision
 `c202236235762e1c871ad0ccb60c8ee5ba337b9a` and `deepseek_v4` server runtime used
 by the SWE evaluations. It creates a private scientific-Python overlay under
