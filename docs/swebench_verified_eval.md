@@ -87,6 +87,23 @@ For an already-running server and a single evaluator, use the existing subset
 launcher with `SWE_METHOD=foldagent`. `SWE_EVAL_NODE` can select a specific evaluator;
 otherwise the first allocated node other than `SWE_SERVER_NODE` is used.
 
+### FoldAgent four-node batch submission
+
+The batch wrapper uses the same two-pair workflow: four GH nodes, 64K context,
+252 candidates, with a requested 48-hour limit. It starts and cleans up its own
+servers, so neither a separate server job nor a persistent terminal is needed.
+From the Vista login node:
+
+```bash
+cd /work/09281/chc_1996/vista/context-graph && git pull --ff-only origin master && mkdir -p logs && env -u SWE_RUN_DIR sbatch scripts/eval_swe_lite_foldagent_4node.sbatch
+```
+
+Slurm writes `logs/swe-lite-foldagent.JOBID.out` and `.err`; detailed logs and
+per-pair results remain in the printed scratch artifact directory. Override
+walltime with `sbatch --time=HH:MM:SS ...`, subject to the account/partition limits.
+This submits a fresh run; an existing idev evaluation is not automatically stopped.
+The batch wrapper does not change the ARM compatibility or calibration requirements.
+
 ## SWE-bench Lite evaluation on an x86 Docker host
 
 The same agent and pinned official harness now support the 300-instance Lite
