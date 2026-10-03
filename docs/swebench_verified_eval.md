@@ -87,7 +87,47 @@ For an already-running server and a single evaluator, use the existing subset
 launcher with `SWE_METHOD=foldagent`. `SWE_EVAL_NODE` can select a specific evaluator;
 otherwise the first allocated node other than `SWE_SERVER_NODE` is used.
 
-### FoldAgent four-node batch submission
+### All-in-one four-node batch submission
+
+The batch entry starts two Qwen3.5-9B servers, waits for their health endpoints,
+then runs two disjoint 126-task evaluator shards. Each evaluator handles image
+preparation, build dependencies, baseline/reference calibration, generation and
+grading. Containers use **Apptainer on ARM**, with no Docker daemon or SSH tunnel.
+The previously prepared agent/grading/preparation environments and cached model
+are prerequisites; the launcher checks the environment executables before startup.
+
+From the Vista login node, submit ContextGraph:
+
+```bash
+cd /work/09281/chc_1996/vista/context-graph && git pull --ff-only origin master && mkdir -p logs && env -u SWE_RUN_DIR sbatch scripts/eval_swe_lite_arm_4node.sbatch contextgraph
+```
+
+Or submit FoldAgent:
+
+```bash
+cd /work/09281/chc_1996/vista/context-graph && git pull --ff-only origin master && mkdir -p logs && env -u SWE_RUN_DIR sbatch scripts/eval_swe_lite_arm_4node.sbatch foldagent
+```
+
+Each command requests four GH nodes for 48 hours, defaults to 65,536 context
+tokens and all 252 candidates, and continues after the login terminal disconnects.
+Submitting both requests eight nodes total. This is an allocation request, not a
+guarantee of queue acceptance or completion within 48 hours. Use `SWE_SAMPLES=2`
+before `sbatch` for a two-task smoke run. The launcher stops its owned model
+server steps when evaluation finishes or it receives a termination signal.
+
+Slurm startup logs are `logs/swe-lite-arm.JOBID.out` and `.err`. The printed
+artifact directory contains `suite.log`, `server-{0,1}.log`,
+`evaluator-{0,1}.log`, and `pair-{0,1}/summary.json`. Add the two summaries for
+total progress; infrastructure errors remain separate from graded failures.
+
+These commands create **fresh runs**. To resume a run created by this entry,
+set `SWE_RUN_DIR` to its four-node root, keeping the original checkout commit,
+method, model, context, sample selection and two-shard layout. Do not run
+`git pull` before resuming. A previous two-node ContextGraph directory cannot
+be used as a four-node root; a previous commit also cannot be silently changed.
+Keep old idev artifacts intact rather than bypassing the manifest checks.
+
+### Legacy FoldAgent four-node batch submission
 
 The batch wrapper uses the same two-pair workflow: four GH nodes, 64K context,
 252 candidates, with a requested 48-hour limit. It starts and cleans up its own
