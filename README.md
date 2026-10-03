@@ -19,6 +19,7 @@ successful 32K training updates and memory fit on that topology remain unverifie
 | Evaluate BC-P / text-only local GAIA | [BC-P guide](docs/bcp_qwen35_9b_eval.md), [GAIA guide](docs/gaia_qwen35_9b_eval.md) |
 | Evaluate SWE-bench Verified or Lite | [Container, model and grading guide](docs/swebench_verified_eval.md) |
 | Submit Lite ARM containers + inference + grading in one job | [Four-node batch entry](docs/swebench_verified_eval.md#all-in-one-four-node-batch-submission) |
+| Re-evaluate DiscoveryBench with Qwen3.5-9B | [Paired ContextGraph/FoldAgent batch job](docs/discoverybench_qwen35_9b_eval.md) |
 | Run SAB, ALFWorld or teacher-data workflows | [Additional workflows](docs/workflows.md) |
 | Find other runnable scripts | [Script index](scripts/README.md) |
 | Inspect saved results | [Result index](results/README.md) |
