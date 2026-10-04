@@ -23,7 +23,7 @@ import ray
 from omegaconf import OmegaConf
 
 from verl.experimental.dataset.sampler import AbstractSampler
-from verl.trainer.constants_ppo import get_ppo_ray_runtime_env
+from verl.trainer.constants_ppo import build_ppo_ray_init_kwargs
 from verl.trainer.ppo.ray_trainer import RayPPOTrainer
 from verl.trainer.ppo.reward import load_reward_manager
 from verl.trainer.ppo.utils import need_critic, need_reference_policy
@@ -59,21 +59,10 @@ def run_ppo(config, task_runner_class=None) -> None:
         # Set environment variables in the runtime environment to control tokenizer parallelism,
         # NCCL debug level, VLLM logging level, and allow runtime LoRA updating
         # `num_cpus` specifies the number of CPU cores Ray can use, obtained from the configuration
-        default_runtime_env = get_ppo_ray_runtime_env()
-        ray_init_kwargs = config.ray_kwargs.get("ray_init", {})
-        runtime_env_kwargs = ray_init_kwargs.get("runtime_env", {})
-
-        runtime_env_vars = runtime_env_kwargs.get("env_vars", {})
-        runtime_env_kwargs["env_vars"] = runtime_env_vars
-        runtime_env_kwargs["env_vars"]["VLLM_USE_V1"] = "1"
-        if config.transfer_queue.enable:
-            # Add runtime environment variables for transfer queue
-            runtime_env_vars["TRANSFER_QUEUE_ENABLE"] = "1"
-        runtime_env = OmegaConf.merge(default_runtime_env, runtime_env_kwargs)
-        ray_init_kwargs = OmegaConf.create({**ray_init_kwargs, "runtime_env": runtime_env})
+        ray_init_kwargs = build_ppo_ray_init_kwargs(config)
         if os.environ.get("VERL_VERBOSE_DIAGNOSTICS") == "1":
             print(f"ray init kwargs: {_redact_ray_init_kwargs(ray_init_kwargs)}")
-        ray.init(**OmegaConf.to_container(ray_init_kwargs))
+        ray.init(**ray_init_kwargs)
 
     if task_runner_class is None:
         task_runner_class = ray.remote(num_cpus=1)(TaskRunner)  # please make sure main_task is not scheduled on head

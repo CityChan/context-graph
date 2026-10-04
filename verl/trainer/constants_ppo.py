@@ -15,6 +15,7 @@
 import json
 import os
 
+from omegaconf import OmegaConf
 from ray._private.runtime_env.constants import RAY_JOB_CONFIG_JSON_ENV_VAR
 
 PPO_RAY_RUNTIME_ENV = {
@@ -33,6 +34,27 @@ PPO_RAY_RUNTIME_ENV = {
         "NCCL_CUMEM_ENABLE": "0",
     },
 }
+
+
+def build_ppo_ray_init_kwargs(config):
+    """Resolve a detached Ray config before adding runtime-only environment keys.
+
+    Hydra's composed env_vars may be in struct mode. Mutating that subtree
+    rejects keys introduced by PPO, and also alters the recorded user config.
+    """
+    ray_config = config.ray_kwargs.get("ray_init", {})
+    if not OmegaConf.is_config(ray_config):
+        ray_config = OmegaConf.create(ray_config)
+    kwargs = OmegaConf.to_container(ray_config, resolve=True)
+    runtime_env = kwargs.setdefault("runtime_env", {})
+    env_vars = runtime_env.setdefault("env_vars", {})
+    env_vars["VLLM_USE_V1"] = "1"
+    if config.transfer_queue.enable:
+        env_vars["TRANSFER_QUEUE_ENABLE"] = "1"
+    kwargs["runtime_env"] = OmegaConf.to_container(
+        OmegaConf.merge(get_ppo_ray_runtime_env(), runtime_env), resolve=True
+    )
+    return kwargs
 
 
 def get_ppo_ray_runtime_env():
