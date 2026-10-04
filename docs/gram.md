@@ -457,13 +457,13 @@ The helper now requests vLLM `structured_outputs.json` for all three operations:
 entities are an array of nonempty strings, relations are an array of exactly
 three-string arrays, and maintenance is an object with only required `add` and
 `remove` arrays of triples. Empty arrays remain valid when there is no evidence.
-The schema does not add facts or choose entities. Local shape validation,
+The schema does not add facts. Local shape validation,
 entity membership checks, removal validation and atomic graph updates remain
 authoritative. No malformed rows are silently dropped or repaired. Truncation,
 invalid content or an unsupported schema server still fails visibly.
 
 Every helper audit records its requested schema, original response, finish reason
-and usage. Evaluation manifests record `gram-memory-json-schema-v1`; RL traces
+and usage. Evaluation manifests record `gram-memory-json-schema-v2-entity-enum`; RL traces
 record the schema per call. This changes helper decoding, so use a new run and
 retain the prior artifacts. Both evaluation and RL use the shared helper.
 
@@ -477,6 +477,19 @@ the synthetic probe is not benchmark evidence. Failures abort launch and retain
 the response audit. Local tests cover schemas, request forwarding, unchanged
 graphs on failures and probe failure propagation. Live grammar enforcement and
 successful RL updates remain Vista checks.
+
+The `38f1513` RL rerun exposed another schema gap: three-string triples could
+still contain endpoints absent from the extracted entity list. Relation requests
+now use positional `prefixItems` with an enum of that request's extracted names
+for subject and object; the middle relation remains a nonempty string. Empty
+relation lists remain valid. Local membership validation still fails atomically
+if a server violates this constraint, and errors include the unexpected names.
+The synthetic preflight and saved-request probe exercise this schema before any
+training restart. Maintenance can add new source-supported entities and therefore
+retains its separate shape schema; existing graph/removal checks still apply.
+See the [JSON Schema array specification](https://json-schema.org/understanding-json-schema/reference/array)
+for positional tuple constraints. Actual Vista backend compilation remains a
+live preflight check, not a result established by CPU schema validation.
 
 ### Empty entity extraction diagnosis
 

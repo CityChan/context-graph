@@ -85,7 +85,7 @@ async def evaluate(args):
                 "data": data_manifest, "config": asdict(config), "task_ids": [t["task_id"] for t in tasks],
                 "actor": {"model": args.model, "declared_revision": args.model_revision},
                 "memory": {"model": args.memory_model, "declared_revision": args.memory_revision,
-                           "output_protocol": "gram-memory-json-schema-v1"},
+                           "output_protocol": "gram-memory-json-schema-v2-entity-enum"},
                 "entity_matching": "cosine" if args.embedding_model else "normalized-exact-plus-helper-canonicalization",
                 "embedding_model": args.embedding_model, "embedding_revision": args.embedding_revision,
                 "context_length": args.context_length, "seed": args.seed, "temperature": 0.0,

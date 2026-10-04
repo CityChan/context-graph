@@ -9,6 +9,20 @@ from agents.gram_agent import MemoryBackend, MemoryBackendError
 from agents.gram_memory import GraphMemory, memory_output_schema
 
 
+def test_relation_schema_binds_only_endpoints_to_actual_extracted_entities():
+    names = ['Alice "A"', "Paris", "北京"]
+    schema = memory_output_schema("relations", entities=names)
+    Draft202012Validator.check_schema(schema)
+    check = Draft202012Validator(schema)
+    assert check.is_valid([])
+    assert check.is_valid([['Alice "A"', "born_in", "Paris"], ["Paris", "linked_to", "北京"]])
+    for invalid in ([['Alice', "born_in", "Paris"]], [['Alice "A"', "born_in", "London"]],
+                    [['Alice "A"', "Paris"]], [['Alice "A"', "born_in", "Paris", "extra"]]):
+        assert not check.is_valid(invalid)
+    empty = Draft202012Validator(memory_output_schema("relations", entities=[]))
+    assert empty.is_valid([]) and not empty.is_valid([["A", "r", "B"]])
+
+
 @pytest.mark.parametrize("stage", ["explicit_skip", "no_entities", "no_relations"])
 def test_empty_helper_edits_report_stage_without_fabricating_facts(stage):
     async def run():
@@ -62,7 +76,8 @@ def test_helper_http_schema_audit_and_atomic_failure(bad):
             body = json.loads(request.content)
             requests.append(body)
             operation = "entities" if len(requests) == 1 else "relations"
-            assert body["structured_outputs"]["json"] == memory_output_schema(operation)
+            assert body["structured_outputs"]["json"] == memory_output_schema(operation,
+                entities=["Alice", "Paris"] if operation == "relations" else None)
             assert body["chat_template_kwargs"] == {"enable_thinking": False}
             if bad == "http":
                 return httpx.Response(400, json={"error": "unsupported schema"})
@@ -124,7 +139,8 @@ def test_live_probe_checks_all_operations_or_leaves_failure_audit(tmp_path, monk
         index = len(requests)
         body = json.loads(request.content)
         requests.append(body)
-        assert body["structured_outputs"]["json"] == memory_output_schema(operations[index])
+        assert body["structured_outputs"]["json"] == memory_output_schema(operations[index],
+            entities=["Alice", "Paris"] if operations[index] == "relations" else None)
         value = [["Alice", "born_in"]] if bad and index == 1 else values[index]
         return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(value)}, "finish_reason": "stop"}]})
     real_client = httpx.AsyncClient

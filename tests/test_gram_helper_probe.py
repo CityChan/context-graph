@@ -83,13 +83,18 @@ def test_probe_replays_saved_requests_and_rejects_empty_or_hallucinating_helper(
         asyncio.run(probe(tmp_path / "old", output, "http://helper", "frozen"))
 
 
-def test_rl_preflight_rejects_valid_but_empty_entity_json(tmp_path, monkeypatch):
+@pytest.mark.parametrize("failure", ["empty_entities", "unknown_endpoint"])
+def test_rl_preflight_rejects_valid_but_bad_helper_output(tmp_path, monkeypatch, failure):
     from scripts.gram_rl_smoke import check_memory_schema
     real_client = httpx.AsyncClient
+    count = 0
     def reply(request):
-        return httpx.Response(200, json={"choices": [{"message": {"content": "[]"}, "finish_reason": "stop"}]})
+        nonlocal count
+        count += 1
+        value = [] if failure == "empty_entities" else ["Alice", "Paris"] if count == 1 else [["Alice", "born_in", "Paris"], ["Alice", "knows", "Unknown"]]
+        return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(value)}, "finish_reason": "stop"}]})
     monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: real_client(transport=httpx.MockTransport(reply), **kwargs))
     with pytest.raises(ValueError, match="semantic preflight"):
         asyncio.run(check_memory_schema(tmp_path, "http://helper", "frozen"))
     assert not (tmp_path / "memory-schema-preflight.json").exists()
-    assert '"response": "[]"' in (tmp_path / "memory-schema-preflight.jsonl").read_text()
+    assert (tmp_path / "memory-schema-preflight.jsonl").is_file()

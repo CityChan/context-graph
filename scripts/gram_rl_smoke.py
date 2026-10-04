@@ -28,10 +28,12 @@ async def check_memory_schema(root, endpoint, model):
                 raise ValueError("Helper semantic preflight failed: explicit Alice/Paris entities were not extracted")
             if operation == "relations" and not any(row[0] == "Alice" and row[2] == "Paris" for row in value):
                 raise ValueError("Helper semantic preflight failed: explicit Alice-to-Paris fact was not extracted")
+            if operation == "relations" and any(row[0] not in payload["entities"] or row[2] not in payload["entities"] for row in value):
+                raise ValueError("Helper semantic preflight failed: relation endpoint escaped its entity enum")
             checked.append(operation)
     finally:
         await helper.aclose()
-    report = {"output_protocol": "gram-memory-json-schema-v1", "checked": checked,
+    report = {"output_protocol": "gram-memory-json-schema-v2-entity-enum", "checked": checked,
               "model": model, "purpose": "synthetic format and nonempty extraction probe; not benchmark accuracy"}
     write_json(root / "memory-schema-preflight.json", report)
     print("GRAM_MEMORY_SCHEMA_OK " + json.dumps(report), flush=True)

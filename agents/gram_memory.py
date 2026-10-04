@@ -65,7 +65,7 @@ def triples(value) -> list[tuple[str, str, str]]:
     return out
 
 
-def memory_output_schema(operation):
+def memory_output_schema(operation, *, entities=None):
     """Constrain helper structure without choosing or inventing any facts."""
     string = {"type": "string", "minLength": 1}
     triple = {"type": "array", "items": string, "minItems": 3, "maxItems": 3}
@@ -73,6 +73,14 @@ def memory_output_schema(operation):
     if operation == "entities":
         return {"type": "array", "items": string}
     if operation == "relations":
+        if entities is not None:
+            if not isinstance(entities, list) or any(not isinstance(e, str) or not e.strip() for e in entities):
+                raise ValueError("Relation schema requires nonempty entity strings")
+            if not entities:
+                return {"type": "array", "maxItems": 0}
+            endpoint = {"type": "string", "enum": list(dict.fromkeys(entities))}
+            return {"type": "array", "items": {"type": "array", "minItems": 3, "maxItems": 3,
+                    "prefixItems": [endpoint, string, endpoint], "items": False}}
         return rows
     if operation == "maintenance":
         return {"type": "object", "properties": {"add": rows, "remove": rows},

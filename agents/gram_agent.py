@@ -66,7 +66,8 @@ class MemoryBackend:
         await self.client.aclose()
 
     async def json_call(self, operation, system, payload):
-        structured_outputs = {"json": memory_output_schema(operation)}
+        structured_outputs = {"json": memory_output_schema(operation,
+            entities=payload["entities"] if operation == "relations" else None)}
         messages = [{"role": "system", "content": system},
                     {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}]
         started = time.monotonic()
@@ -138,8 +139,9 @@ class MemoryBackend:
                     raise ValueError("Entity extraction must return a list of nonempty strings")
                 entities = list(dict.fromkeys(e.strip() for e in entities))
                 add = triples(await self.json_call("relations", RELATIONS, {**payload, "entities": entities})) if entities else []
-                if any(s not in entities or o not in entities for s, _, o in add):
-                    raise ValueError("Relation extraction used an unverified entity")
+                unverified = sorted({name for s, _, o in add for name in (s, o) if name not in entities})
+                if unverified:
+                    raise ValueError(f"Relation extraction used an unverified entity: {unverified!r}")
                 remove = []
                 extraction_status = "triples_extracted" if add else "no_relations" if entities else "no_entities"
             else:
