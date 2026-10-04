@@ -125,6 +125,37 @@ def test_swe_server_checks_lock_and_gpu_before_model_setup(tmp_path, lock_status
 
 
 @pytest.mark.skipif(not shutil.which("bash"), reason="Bash required")
+@pytest.mark.parametrize("benchmark", ["scienceworld", "discoverybench", "swebench"])
+def test_model_server_does_not_inherit_evaluator_benchmark(tmp_path, benchmark):
+    root = Path(__file__).resolve().parents[1]
+    source = (root / "scripts/serve_swe_qwen35_9b_vista.sbatch").read_text()
+    script = tmp_path / "server.sh"
+    script.write_text(source.replace('/tmp/contextgraph-swe-server-${UID}.lock',
+                                     (tmp_path / "server.lock").as_posix()), newline="\n")
+    (tmp_path / "scripts").mkdir()
+    shutil.copy2(root / "scripts/eval_bcp_qwen38_4node_idev.sh", tmp_path / "scripts")
+    mocks = tmp_path / "mocks.sh"
+    mocks.write_text('flock() { :; }\nnvidia-smi() { :; }\n'
+                     'python() { printf "%s\\n" "$MODEL_PATH"; }\n', newline="\n")
+    conda = tmp_path / "conda.sh"
+    conda.write_text('conda() { :; }\n', newline="\n")
+    env = dict(os.environ, PROJECT_ROOT=tmp_path.as_posix(), SCRATCH=tmp_path.as_posix(),
+               SLURM_JOB_ID="123", CONDA_SH=conda.as_posix(), BASH_ENV=mocks.as_posix(),
+               BENCHMARK=benchmark, MODEL_PATH=(tmp_path / "checkpoint").as_posix(),
+               SWE_MODEL_MAX_LEN="65536", SERVER_CUDA_HOME=(tmp_path / "missing-cuda").as_posix())
+    result = subprocess.run([shutil.which("bash"), script.as_posix()], env=env, text=True,
+                            capture_output=True, timeout=10,
+                            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+    # Execute both real shell scripts, stopping at the first hardware check.
+    # Before the fix this never reached CUDA setup: the dataset selector rejected it.
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "Unsupported BENCHMARK" not in result.stdout + result.stderr
+    assert "Missing CUDA compiler:" in result.stdout
+    assert "Model=Qwen/Qwen3.5-9B" in result.stdout
+    assert "SWE server max_model_len=65536" in result.stdout
+
+
+@pytest.mark.skipif(not shutil.which("bash"), reason="Bash required")
 @pytest.mark.parametrize("allocated", [False, True])
 @pytest.mark.parametrize("reuse", [False, True])
 def test_direct_setup_marks_image_pending_and_allocation_runs_probe(tmp_path, allocated, reuse):

@@ -53,4 +53,6 @@ echo "Model=$MODEL_ID checkpoint=$MODEL_PATH"
 echo "SWE model server node=$(hostname -f) port=$MODEL_PORT job=$SLURM_JOB_ID"
 echo "Reach this endpoint from the Docker host through an SSH tunnel; allocation time limit applies."
 # Reuse the CUDA/compiler/TLS/node-local-cache setup already used by the 9B evaluations.
-exec bash scripts/eval_bcp_qwen38_4node_idev.sh _server
+# Its BC-P/GAIA dataset selector is irrelevant to inference. Keep the caller's
+# benchmark in the evaluator, but do not pass it into the reused server launcher.
+exec env -u BENCHMARK bash scripts/eval_bcp_qwen38_4node_idev.sh _server
