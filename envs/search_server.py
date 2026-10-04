@@ -22,8 +22,10 @@ from collections import deque, defaultdict
 
 if __package__:
     from .async_results import deliver_result
+    from .cached_corpus import load_cached_corpus
 else:  # Also support python envs/search_server.py.
     from async_results import deliver_result
+    from cached_corpus import load_cached_corpus
 
 import torch
 import torch.nn.functional as F
@@ -172,7 +174,11 @@ def load_corpus():
         return docid_to_text, url_to_docid
 
     print(f"Loading corpus dataset from {CORPUS_DATASET}...")
-    ds = load_dataset(CORPUS_DATASET, split='train')
+    if os.environ.get("SEARCH_CORPUS_CACHE_READ_ONLY") == "1":
+        ds = load_cached_corpus(CORPUS_DATASET,
+                                snapshot=os.environ.get("SEARCH_CORPUS_CACHE_DIR") or None)
+    else:
+        ds = load_dataset(CORPUS_DATASET, split='train')
     docid_to_text = {row["docid"]: {
         'raw': keep_first_n_words(row["text"], 15000),
         'content': keep_first_n_words(row["text"], 1000),

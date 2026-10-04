@@ -528,6 +528,33 @@ the probe refuses an occupied helper endpoint or an existing output audit.
 Prompt causality and the behavior of the revised helper require these live
 comparisons; CPU tests only verify request isolation, audits and failure gates.
 
+### Offline search cache on a full `/work` volume
+
+The `foAhRI` evaluation stopped before helper requests: `load_dataset` found the
+prepared corpus but failed creating its builder lock with `OSError: [Errno 28]`.
+This is a cache-write failure, not evidence about the revised helper's behavior.
+
+The shared Vista `_search` launcher (used by GRAM evaluation and BC-P RL) now sets
+`SEARCH_CORPUS_CACHE_READ_ONLY=1`. It reads the latest prepared default corpus
+snapshot under `HF_DATASETS_CACHE` (normally `$SEARCH_HF_HOME/datasets`) using
+[`Dataset.from_file`](https://huggingface.co/docs/datasets/loading#arrow), without
+constructing a dataset builder. Model and embedding Hub cache locations stay the
+same. It neither copies the corpus nor deletes caches. `SEARCH_CORPUS_CACHE_DIR`
+can pin a specific directory containing `dataset_info.json` and its Arrow shards;
+`SEARCH_CORPUS_CACHE_READ_ONLY=0` restores the regular builder path.
+
+Snapshot identity, required columns, shard lengths and total train rows are
+checked before use. `SEARCH_CORPUS_CACHE_READ_ONLY` in `search.log` records the
+resolved snapshot and ordered shards. Missing/incomplete caches fail explicitly;
+there is no download or partial-corpus fallback. The server retains its existing
+docid, URL and snippet conversion, including no extra title prepending for this
+HF corpus path. Local parquet mode still takes precedence when explicitly set.
+
+CPU tests compare real single/sharded Arrow fixtures against the normal HF cache
+builder, simulate `ENOSPC` on lock acquisition, and verify identical corpus indexes
+and unchanged source cache files. They do not establish Vista service startup,
+helper quality or successful RL updates.
+
 ### Existing verification
 
 `python -m pytest tests/test_gram.py` exercises document advancement, invalid

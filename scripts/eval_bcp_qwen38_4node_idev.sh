@@ -89,6 +89,10 @@ case "${1:-}" in
     activate "$AGENT_CONDA_ENV"
     export HF_HOME="$SEARCH_HF_HOME" HF_HUB_CACHE="$SEARCH_HF_HUB_CACHE"
     export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 NUM_GPUS=1 MAX_BATCH_SIZE=64
+    # The prepared corpus is already cached on /work. DatasetBuilder would
+    # create a lock there even in offline mode, failing when /work is full.
+    # Read the same Arrow shards directly; keep model/embedding hub paths.
+    export SEARCH_CORPUS_CACHE_READ_ONLY=${SEARCH_CORPUS_CACHE_READ_ONLY:-1}
     exec python -u envs/search_server.py --model Qwen/Qwen3-Embedding-8B --host 0.0.0.0 --port "$SEARCH_PORT" --corpus Tevatron/browsecomp-plus-corpus --corpus-embedding-dataset miaolu3/browsecomp-plus
     ;;
   _eval)
