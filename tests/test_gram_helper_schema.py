@@ -133,15 +133,23 @@ def test_maintenance_schema_reaches_helper_and_preserves_provenance():
 def test_live_probe_checks_all_operations_or_leaves_failure_audit(tmp_path, monkeypatch, bad):
     from scripts.gram_rl_smoke import check_memory_schema
     operations = ["entities", "relations", "maintenance"]
-    values = [["Alice", "Paris"], [["Alice", "born_in", "Paris"]], {"add": [], "remove": []}]
     requests, clients = [], []
     def reply(request):
-        index = len(requests)
         body = json.loads(request.content)
         requests.append(body)
-        assert body["structured_outputs"]["json"] == memory_output_schema(operations[index],
-            entities=["Alice", "Paris"] if operations[index] == "relations" else None)
-        value = [["Alice", "born_in"]] if bad and index == 1 else values[index]
+        payload = json.loads(body["messages"][-1]["content"])
+        assert "question" not in payload
+        operation = "maintenance" if "graph" in payload else "relations" if "entities" in payload else "entities"
+        assert body["structured_outputs"]["json"] == memory_output_schema(operation,
+            entities=["Alice", "Paris"] if operation == "relations" else None)
+        if operation == "maintenance":
+            value = {"add": [], "remove": []}
+        elif payload["document"]["text"] == "...":
+            value = []
+        elif operation == "entities":
+            value = ["Alice", "Paris"]
+        else:
+            value = [["Alice", "born_in"]] if bad else [["Alice", "born_in", "Paris"]]
         return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(value)}, "finish_reason": "stop"}]})
     real_client = httpx.AsyncClient
     def client(**kwargs):
@@ -150,7 +158,7 @@ def test_live_probe_checks_all_operations_or_leaves_failure_audit(tmp_path, monk
         return result
     monkeypatch.setattr(httpx, "AsyncClient", client)
     if bad:
-        with pytest.raises(MemoryBackendError, match="three strings"):
+        with pytest.raises(ValueError, match="semantic preflight.*three strings"):
             asyncio.run(check_memory_schema(tmp_path, "http://helper", "frozen"))
         assert not (tmp_path / "memory-schema-preflight.json").exists()
     else:
@@ -158,5 +166,39 @@ def test_live_probe_checks_all_operations_or_leaves_failure_audit(tmp_path, monk
         assert json.loads((tmp_path / "memory-schema-preflight.json").read_text())["checked"] == operations
     assert clients[0].is_closed
     rows = [json.loads(row) for row in (tmp_path / "memory-schema-preflight.jsonl").read_text().splitlines()]
-    assert len(rows) == (2 if bad else 3)
-    assert all(row["response"] and row["structured_outputs"] for row in rows)
+    calls = [row for row in rows if row["kind"] == "memory_call"]
+    assert len(calls) == (3 if bad else 4)
+    assert all(row["response"] and row["structured_outputs"] for row in calls)
+    assert (tmp_path / "memory-semantic-preflight.json").is_file()
+
+
+@pytest.mark.parametrize("operation", ["memory_insert", "memory_update"])
+def test_research_question_cannot_change_any_production_helper_request(operation):
+    async def run():
+        requests = []
+        backend = MemoryBackend("http://memory", "frozen")
+        await backend.client.aclose()
+        def reply(request):
+            body = json.loads(request.content)
+            requests.append(body)
+            payload = json.loads(body["messages"][-1]["content"])
+            assert "question" not in payload
+            assert payload["requested_facts"] == "birthplace"
+            assert payload["document"]["text"] == "Alice was born in Paris."
+            if operation == "memory_update":
+                value = {"add": [["Alice", "born_in", "Paris"]], "remove": []}
+            else:
+                value = [["Alice", "born_in", "Paris"]] if "entities" in payload else ["Alice", "Paris"]
+            return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(value)}, "finish_reason": "stop"}]})
+        backend.client = httpx.AsyncClient(transport=httpx.MockTransport(reply))
+        try:
+            for question in ("Where was Alice born?", "Which UNKNOWN_PRIZE did Alice win?"):
+                graph = GraphMemory()
+                await backend.edit(operation, "birthplace", {"id": "source", "title": "Source", "text": "Alice was born in Paris."},
+                                   question, graph, .9)
+                assert ("Alice", "born_in", "Paris") in graph.edges
+            half = len(requests) // 2
+            assert requests[:half] == requests[half:]
+        finally:
+            await backend.aclose()
+    asyncio.run(run())

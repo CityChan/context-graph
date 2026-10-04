@@ -10,31 +10,28 @@ from scripts.prepare_gram_data import prepare, sha256, write_json
 
 
 async def check_memory_schema(root, endpoint, model):
-    """Probe helper grammars and a simple positive extraction before loading the RL model."""
+    """Exercise production extraction, including an unanswerable-question control."""
     from agents.gram_agent import MemoryBackend
-    from agents.gram_prompts import ENTITIES, RELATIONS, MAINTENANCE
+    from agents.gram_prompts import MAINTENANCE
     from scripts.eval_gram import jsonl_writer
+    from scripts.gram_helper_checks import check_helper_controls
     root = Path(root)
-    helper = MemoryBackend(endpoint, model, max_tokens=256,
-                           audit=jsonl_writer(root / "memory-schema-preflight.jsonl"))
-    payload = {"question": "Where was Alice born?", "requested_facts": "Alice was born in Paris.",
+    helper = MemoryBackend(endpoint, model, audit=jsonl_writer(root / "memory-schema-preflight.jsonl"))
+    payload = {"requested_facts": "Alice was born in Paris.",
                "document": {"id": "schema-probe", "title": "Synthetic probe", "text": "Alice was born in Paris."},
-               "existing_entities": [], "entities": ["Alice", "Paris"], "graph": []}
-    checked = []
+               "graph": []}
     try:
-        for operation, prompt in (("entities", ENTITIES), ("relations", RELATIONS), ("maintenance", MAINTENANCE)):
-            value = await helper.json_call(operation, prompt, payload)
-            if operation == "entities" and not {"Alice", "Paris"}.issubset(value):
-                raise ValueError("Helper semantic preflight failed: explicit Alice/Paris entities were not extracted")
-            if operation == "relations" and not any(row[0] == "Alice" and row[2] == "Paris" for row in value):
-                raise ValueError("Helper semantic preflight failed: explicit Alice-to-Paris fact was not extracted")
-            if operation == "relations" and any(row[0] not in payload["entities"] or row[2] not in payload["entities"] for row in value):
-                raise ValueError("Helper semantic preflight failed: relation endpoint escaped its entity enum")
-            checked.append(operation)
+        controls = await check_helper_controls(helper)
+        write_json(root / "memory-semantic-preflight.json", {"controls": controls})
+        if not all(control["passed"] for control in controls):
+            raise ValueError("Helper semantic preflight failed: " + json.dumps(controls))
+        await helper.json_call("maintenance", MAINTENANCE, payload)
     finally:
         await helper.aclose()
-    report = {"output_protocol": "gram-memory-json-schema-v2-entity-enum", "checked": checked,
-              "model": model, "purpose": "synthetic format and nonempty extraction probe; not benchmark accuracy"}
+    report = {"output_protocol": "gram-memory-json-schema-v2-entity-enum",
+              "input_protocol": "gram-memory-source-facts-v1",
+              "checked": ["entities", "relations", "maintenance"], "controls": controls,
+              "model": model, "purpose": "production extraction with positive/negative controls; not benchmark accuracy"}
     write_json(root / "memory-schema-preflight.json", report)
     print("GRAM_MEMORY_SCHEMA_OK " + json.dumps(report), flush=True)
 

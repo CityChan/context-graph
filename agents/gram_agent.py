@@ -128,7 +128,11 @@ class MemoryBackend:
         return result
 
     async def edit(self, operation, content, document, question, graph, threshold):
-        payload = {"question": question, "requested_facts": content, "document": document}
+        # The actor selects useful facts. Supplying its research question here
+        # made the frozen extractor discard intermediate evidence when it could
+        # not answer that question (saved-request ablation: qhLVNF).
+        # Keep the public edit signature; never forward question to any stage.
+        payload = {"requested_facts": content, "document": document}
         try:
             if operation == "memory_insert":
                 if content.strip().casefold() in {"none", "no relevant facts"}:

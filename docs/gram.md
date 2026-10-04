@@ -525,8 +525,42 @@ and `probe.log` show the comparisons. Exit 0 requires nonempty graph edits on
 the saved cases and passing synthetic controls; this is not a benchmark score
 or a grounding audit of every extracted triple. The old run is read-only, and
 the probe refuses an occupied helper endpoint or an existing output audit.
-Prompt causality and the behavior of the revised helper require these live
-comparisons; CPU tests only verify request isolation, audits and failure gates.
+The live `helper-probe-1047279-qhLVNF` run then reproduced `[]` for both original
+requests. Removing only `question` produced 44 and 67 entities; removing only
+`existing_entities` or the tool footer did not. Applying a schema to the original
+prompt also left both outputs empty. This isolates the independent question field
+as a cause of empty entity extraction for these two saved requests under the tested
+model/decoding setup. It does not establish the same mechanism for every document
+or for relation extraction.
+
+The longer revised prompt was insufficient: the first case extracted 24 entities
+but produced no relations, the second hit the completion budget, and the synthetic
+positive control produced an empty graph. These results are failed extraction
+checks, not evidence of a working memory graph or successful evaluation.
+
+The production edit payload now omits the independent research `question` for
+entity, relation and maintenance calls. The actor still sees the question and
+selects `requested_facts`; the helper receives those proposals and the unmodified
+source document, validating facts rather than solving the research question.
+The relation instruction now selects from requested facts without asking it to
+filter by question. No minimum number of entities/triples is forced, and no
+truncated output is accepted. Manifests identify this input contract as
+`gram-memory-source-facts-v1` separately from the JSON output protocol.
+
+The updated probe retains all seven earlier variants and adds the current prompt
+without the question, both with and without schema. It also tests relations with
+and without the question while holding the prompt, document and extracted entity
+enum fixed. `production_calls` and `control_calls` expose raw stage responses and
+finish reasons in the report, including failures. The positive control verifies a
+birthplace relation, not merely any edge between Alice and Paris.
+
+RL preflight now runs the same production edit pipeline and positive/negative
+controls instead of supplying a prefilled entity list to independent schema calls.
+`memory-semantic-preflight.json` records both results even on failure; failed
+controls prevent training startup. Maintenance still has a separate format probe.
+CPU tests establish request isolation and failure gates. The new payload's live
+extraction quality, truncation behavior and end-to-end eval/RL remain unverified
+until the updated one-GPU probe passes and subsequent jobs complete.
 
 ### Offline search cache on a full `/work` volume
 

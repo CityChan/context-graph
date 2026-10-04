@@ -48,7 +48,7 @@ Do not copy the example's entities unless they occur in the actual source."""
 
 RELATIONS = """Extract explicitly supported atomic facts as directed [subject, relation, object] triples.
 Use ONLY names from the supplied entities list for subject/object. Relations are lowercase concise labels.
-Use the supplied question and requested facts to select relevant information from the document.
+Use requested_facts to select information to store from the document; it is not verified evidence.
 Retain supported intermediate clues even when the final question is not yet answerable.
 Actor proposals may contain mistakes: omit unsupported claims individually, retaining supported facts.
 Document header dates describe page metadata; do not convert them into dates of life events.
