@@ -1,0 +1,18 @@
+{
+  "dataset": "hotpotqa/hotpot_qa",
+  "config": "distractor",
+  "split": "validation",
+  "row_indices": [
+    0,
+    1
+  ],
+  "task_ids": [
+    "5a8b57f25542995d1e6f1371",
+    "5a8c7595554299585d9e36b6"
+  ],
+  "source_url": "https://datasets-server.huggingface.co/rows?dataset=hotpotqa/hotpot_qa&config=distractor&split=validation&offset=0&length=2",
+  "source_response_sha256": "5248bd089c494b873e0350e532651c272b9bebb748b01cf68e3d8d30b6d87d79",
+  "fixture_sha256": "4898201dae4245547f86ede5788e916f8644b2f77343afa4874808171466a676",
+  "license": "CC-BY-SA-4.0",
+  "modifications": "First two rows; retain question, answer, all context documents in source order; convert HF columnar context to HotpotQA native pairs; omit type, level, supporting_facts"
+}

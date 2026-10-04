@@ -104,6 +104,29 @@ For small local smoke data, `--benchmark canonical` accepts rows of
 
 ## Evaluate an already served model
 
+For a **four-node Vista idev zero-shot smoke**, run this from the allocation:
+
+```bash
+cd /work/09281/chc_1996/vista/context-graph && git pull --ff-only origin master && bash scripts/smoke_gram_qwen35_9b_4node_idev.sh
+```
+
+The script uses two server/evaluator pairs, the pinned Qwen3.5-9B checkpoint,
+64K context, and two bundled real HotpotQA validation questions (one per pair).
+Actor and memory helper share each pair's fixed server. No embedding service is
+started; this smoke exercises the documented exact-name/canonicalization variant.
+No model training, dataset download, or environment installation is performed.
+`GRAM_PYTHON` defaults to the existing SWE agent environment; override it with an
+equivalent evaluator Python if that path is unavailable. It refuses occupied model
+nodes and terminates only its own launched job steps on exit, leaving the idev
+allocation intact. Its default output is printed as `artifacts=...` under
+`$SCRATCH/context-graph-gram/runs/gram-smoke-9b-JOBID-...`.
+
+`suite.log` captures the launcher, `preparation.log` captures preflight, and
+`server-{0,1}.log` / `evaluator-{0,1}.log` capture the two pairs. Results and
+trajectories are under `pair-{0,1}/`; each `summary.json` should report one
+completed/graded row with zero infrastructure errors. Answer F1 may still be zero:
+successful smoke execution does not establish benchmark performance.
+
 Run from the repository root with its evaluation dependencies installed. The actor
 endpoint must support vLLM token-ID completions; the helper uses chat completions.
 For inference, both endpoints may point to the same fixed model, but total helper

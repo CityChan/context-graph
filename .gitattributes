@@ -5,3 +5,4 @@
 *.yml text eol=lf
 *.md text eol=lf
 results/audited/*.json text eol=lf
+examples/gram/*.json text eol=lf
