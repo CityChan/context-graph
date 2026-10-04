@@ -10,7 +10,7 @@ from scripts.prepare_gram_data import prepare, sha256, write_json
 
 
 async def check_memory_schema(root, endpoint, model):
-    """Probe all three helper grammars before loading the RL model; no benchmark data."""
+    """Probe helper grammars and a simple positive extraction before loading the RL model."""
     from agents.gram_agent import MemoryBackend
     from agents.gram_prompts import ENTITIES, RELATIONS, MAINTENANCE
     from scripts.eval_gram import jsonl_writer
@@ -23,12 +23,16 @@ async def check_memory_schema(root, endpoint, model):
     checked = []
     try:
         for operation, prompt in (("entities", ENTITIES), ("relations", RELATIONS), ("maintenance", MAINTENANCE)):
-            await helper.json_call(operation, prompt, payload)
+            value = await helper.json_call(operation, prompt, payload)
+            if operation == "entities" and not {"Alice", "Paris"}.issubset(value):
+                raise ValueError("Helper semantic preflight failed: explicit Alice/Paris entities were not extracted")
+            if operation == "relations" and not any(row[0] == "Alice" and row[2] == "Paris" for row in value):
+                raise ValueError("Helper semantic preflight failed: explicit Alice-to-Paris fact was not extracted")
             checked.append(operation)
     finally:
         await helper.aclose()
     report = {"output_protocol": "gram-memory-json-schema-v1", "checked": checked,
-              "model": model, "purpose": "synthetic format probe only"}
+              "model": model, "purpose": "synthetic format and nonempty extraction probe; not benchmark accuracy"}
     write_json(root / "memory-schema-preflight.json", report)
     print("GRAM_MEMORY_SCHEMA_OK " + json.dumps(report), flush=True)
 

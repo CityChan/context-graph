@@ -469,12 +469,51 @@ retain the prior artifacts. Both evaluation and RL use the shared helper.
 
 RL launchers run a three-request synthetic helper format probe after helper
 startup but before loading the training models. It emits `GRAM_MEMORY_SCHEMA_OK`
-only after all operations return valid shapes. Responses are saved separately
+only after all operations return valid shapes and the synthetic entities and
+relation preserve the explicit Alice/Paris fact. Valid but empty entity JSON
+now fails this positive control. Responses are saved separately
 in `memory-schema-preflight.jsonl` and are excluded from training trace counts;
 the synthetic probe is not benchmark evidence. Failures abort launch and retain
 the response audit. Local tests cover schemas, request forwarding, unchanged
 graphs on failures and probe failure propagation. Live grammar enforcement and
 successful RL updates remain Vista checks.
+
+### Empty entity extraction diagnosis
+
+The saved `IivxVy` run contains 97 helper calls, all `entities`, all returning
+`[]` with two completion tokens and `finish_reason=stop`. The supplied source
+snippets contain named entities and supported intermediate clues; no relation
+request was made. This localizes the failure to entity generation before graph
+construction, rather than token truncation or dropping triples. It does not
+alone distinguish empty-list copying, over-filtering for final answerability,
+or following the retrieval tool's appended instructions.
+
+The revised extraction prompt explicitly distinguishes the naming reference
+`existing_entities` from the output, preserves intermediate clues without
+requiring an answer to the full question, and separates source-supported facts
+from fallible actor proposals. Unsupported proposals must not suppress valid
+facts in the same document. Relation extraction also distinguishes document
+metadata dates from dates of life events. Empty outputs remain allowed; schemas
+do not force invented entities or relations.
+
+`scripts/probe_gram_helper_idev.sh` uses one idle allocated GPU for a frozen
+helper, replaying the first saved entities request per attempt from
+`GRAM_HELPER_SOURCE`. It starts no actor, corpus server, judge, or trainer.
+`scripts/probe_gram_helper.py` compares the exact saved messages with three
+single-field ablations (existing names, question, exact tool footer), revised
+prompt alone, original prompt plus schema, and revised prompt plus schema.
+It then exercises the production entity-to-relation graph edit and synthetic
+positive/negative controls. The positive source has a useful fact despite an
+unanswerable question and an unsupported actor proposal; the negative source
+has no evidence for the actor's proposed fact.
+
+`helper-probe.jsonl` preserves requests and raw responses; `helper-probe.json`
+and `probe.log` show the comparisons. Exit 0 requires nonempty graph edits on
+the saved cases and passing synthetic controls; this is not a benchmark score
+or a grounding audit of every extracted triple. The old run is read-only, and
+the probe refuses an occupied helper endpoint or an existing output audit.
+Prompt causality and the behavior of the revised helper require these live
+comparisons; CPU tests only verify request isolation, audits and failure gates.
 
 ### Existing verification
 
