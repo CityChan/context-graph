@@ -29,14 +29,26 @@ export GRAM_PYTHON=${GRAM_PYTHON:-$SCRATCH/context-graph-swe/envs/agent-direct-R
 export GRAM_CONTEXT_LENGTH=${GRAM_CONTEXT_LENGTH:-65536}
 export GRAM_SAMPLES=${GRAM_SAMPLES:-2} GRAM_SEED=${GRAM_SEED:-42}
 export GRAM_EPISODE_TOKENS=${GRAM_EPISODE_TOKENS:-24576} GRAM_MAX_STEPS=${GRAM_MAX_STEPS:-100}
-export DATA_PATH=${DATA_PATH:-$PROJECT_ROOT/data/bc_test.parquet}
+# Linked worktrees contain tracked code, not the primary checkout's local data.
+# Honor explicit DATA_PATH even when missing; never silently replace that choice.
+if [[ -z ${DATA_PATH:-} ]]; then
+    DATA_PATH="$PROJECT_ROOT/data/bc_test.parquet"
+    if [[ ! -s "$DATA_PATH" ]]; then
+        common_dir=$(git rev-parse --path-format=absolute --git-common-dir)
+        if [[ -n "$common_dir" && -s "$common_dir/../data/bc_test.parquet" ]]; then
+            DATA_PATH=$(realpath -e "$common_dir/../data/bc_test.parquet")
+        fi
+    fi
+fi
+export DATA_PATH
 export MODEL_ID=Qwen/Qwen3.5-9B MODEL_REVISION=c202236235762e1c871ad0ccb60c8ee5ba337b9a
 export MODEL_PATH=$SCRATCH/hf_cache/hub/models--Qwen--Qwen3.5-9B/snapshots/$MODEL_REVISION
 export BENCHMARK=bcp JUDGE_MODEL=${JUDGE_MODEL:-gpt-5-nano}
 export PYTHONPATH="$PROJECT_ROOT" PYTHONNOUSERSITE=1 PYTHONUNBUFFERED=1
 export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1
 unset QWEN_ENABLE_THINKING
-[[ -x "$GRAM_PYTHON" && -s "$DATA_PATH" ]] || { echo 'Missing evaluator Python or BC-P parquet' >&2; exit 2; }
+[[ -x "$GRAM_PYTHON" ]] || { echo "Missing evaluator Python: $GRAM_PYTHON; set GRAM_PYTHON to an existing compatible interpreter" >&2; exit 2; }
+[[ -s "$DATA_PATH" ]] || { echo "Missing or empty BC-P parquet: $DATA_PATH; set DATA_PATH to the existing BC-P test parquet" >&2; exit 2; }
 case "$GRAM_CONTEXT_LENGTH" in 32768|65536) ;; *) echo 'Expected 32768 or 65536 context'; exit 2;; esac
 preload_torch() {
     local library
@@ -70,6 +82,7 @@ export GRAM_ACTOR_URL="http://${nodes[1]}:18000" GRAM_HELPER_URL="http://${nodes
 export NO_PROXY="${NO_PROXY:+$NO_PROXY,}localhost,127.0.0.1,${nodes[0]},${nodes[1]},${nodes[2]}"
 export no_proxy="$NO_PROXY"
 echo "GRAM_BCP_START samples=$GRAM_SAMPLES context=$GRAM_CONTEXT_LENGTH artifacts=$GRAM_RUN_DIR"
+echo "Evaluator=$GRAM_PYTHON data=$DATA_PATH"
 echo "Nodes: search=${nodes[0]} actor=${nodes[1]} memory=${nodes[2]} evaluator=${nodes[3]}"
 echo 'Protocol: zero-shot BC-P adaptation; actor thinking disabled; helper tokens additional; exact-name entity matching.'
 (

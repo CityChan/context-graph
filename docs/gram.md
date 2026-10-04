@@ -26,7 +26,12 @@ It reuses the cached corpus/embedding service in `cxtgraph` and existing vLLM
 server setup. No Docker, new allocation, package installation, or training.
 The default evaluator Python is the existing `agent-direct-Rs4ngP` environment;
 override `GRAM_PYTHON` with another compatible interpreter if necessary.
-`DATA_PATH` defaults to `data/bc_test.parquet` and must already exist.
+`DATA_PATH` defaults to `data/bc_test.parquet` and must already exist. In a linked
+worktree without that local file, the launcher resolves the primary checkout's
+`data/bc_test.parquet` through Git's common directory. An explicit `DATA_PATH`
+always takes precedence; a missing explicit path fails rather than selecting
+another dataset. Missing evaluator Python and missing data have separate errors
+that print the exact path. The resolved interpreter/data paths are logged.
 The two rows are selected by the existing BC-P seeded sampling function (seed 42).
 Use `GRAM_SAMPLES=8` for a larger pilot or `-1` for all rows; tasks run serially
 and still obey the allocation's wall-clock limit.

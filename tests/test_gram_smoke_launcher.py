@@ -12,6 +12,56 @@ from scripts.prepare_gram_data import prepare, sha256
 ROOT = Path(__file__).resolve().parents[1]
 
 
+@pytest.mark.skipif(not shutil.which("bash"), reason="Bash required")
+@pytest.mark.parametrize("mode", ["shared", "local", "explicit", "missing-data", "missing-python"])
+def test_bcp_worktree_data_resolution_and_specific_errors(tmp_path, mode):
+    primary, worktree = tmp_path / "primary", tmp_path / "worktree"
+    (primary / ".git").mkdir(parents=True)
+    (primary / "data").mkdir()
+    worktree.mkdir()
+    shared = primary / "data/bc_test.parquet"
+    shared.write_bytes(b"shared-data")
+    selected = shared
+    if mode == "local":
+        (worktree / "data").mkdir()
+        selected = worktree / "data/bc_test.parquet"
+        selected.write_bytes(b"local-data")
+    elif mode in {"explicit", "missing-data"}:
+        selected = tmp_path / "explicit.parquet"
+        if mode == "explicit":
+            selected.write_bytes(b"explicit-data")
+    library = tmp_path / "libtorch_global_deps.so"
+    library.write_bytes(b"fixture")
+    interpreter = tmp_path / "python"
+    interpreter.write_text('#!/usr/bin/env bash\nif [[ "$1" == -c ]]; then printf "%s\\n" "$TEST_LIBRARY"; else printf "SELECTED_DATA=%s\\n" "$DATA_PATH"; fi\n', encoding="utf-8", newline="\n")
+    interpreter.chmod(0o755)
+    mocks = tmp_path / "mocks.sh"
+    mocks.write_text('git() { printf "%s\\n" "$TEST_COMMON_DIR"; }\nexport() { [[ "${1:-}" == LD_PRELOAD=* ]] || builtin export "$@"; }\n', encoding="utf-8", newline="\n")
+    env = dict(os.environ, PROJECT_ROOT=worktree.as_posix(), SCRATCH=tmp_path.as_posix(),
+               SLURM_JOB_ID="123", OPENAI_API_KEY="test-placeholder", BASH_ENV=mocks.as_posix(),
+               GRAM_PYTHON=interpreter.as_posix(), TEST_LIBRARY=library.as_posix(),
+               TEST_COMMON_DIR=(primary / ".git").as_posix(), GRAM_RUN_DIR=tmp_path.as_posix(),
+               GRAM_ACTOR_URL="http://actor", GRAM_HELPER_URL="http://helper")
+    env.pop("DATA_PATH", None)
+    if mode in {"explicit", "missing-data"}:
+        env["DATA_PATH"] = selected.as_posix()
+    if mode == "missing-python":
+        env["GRAM_PYTHON"] = (tmp_path / "missing-python").as_posix()
+    result = subprocess.run([shutil.which("bash"), (ROOT / "scripts/smoke_gram_bcp_qwen35_9b_4node_idev.sh").as_posix(), "_eval"],
+                            env=env, capture_output=True, text=True, timeout=15,
+                            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+    if mode.startswith("missing"):
+        assert result.returncode == 2
+        expected = "Missing evaluator Python:" if mode == "missing-python" else "Missing or empty BC-P parquet:"
+        assert expected in result.stderr
+        assert str(selected.name if mode == "missing-data" else "missing-python") in result.stderr
+    else:
+        assert result.returncode == 0, result.stdout + result.stderr
+        # Git Bash realpath may spell C:/... as /c/... on Windows.
+        actual = result.stdout.split("SELECTED_DATA=", 1)[1].strip().replace("\\", "/")
+        assert actual.endswith(selected.as_posix().split(":", 1)[-1])
+
+
 def test_bundled_smoke_is_two_real_rows_with_all_context_and_private_labels(tmp_path):
     source = ROOT / "examples/gram/hotpotqa_dev_first2.json"
     provenance = json.loads((source.parent / "source.json").read_text(encoding="utf-8"))
