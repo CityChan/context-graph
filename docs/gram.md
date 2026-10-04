@@ -213,6 +213,49 @@ placeholders from the evaluation client; **do not train from those files**.
 
 ## Train inside an existing allocation / Ray cluster
 
+### Four-node Qwen3.5-9B RL mechanics smoke
+
+`scripts/smoke_gram_rl_qwen35_9b_4node.sbatch` provisions a separate frozen
+memory helper on node 0 and a private three-GPU Ray training cluster on nodes
+1--3. Submit it with `sbatch`, or execute it with `bash` inside an **idle**
+four-node idev allocation. It never stops an existing Ray cluster or allocation;
+occupied GPUs/Ray nodes are rejected. It reuses the current Qwen3.5 training
+environment (`deepseek_v4`, overridable with `TRAIN_CONDA_ENV`) without installing
+packages or changing `cxtgraph`.
+
+Because other jobs may be using the main checkout, launch from a detached
+worktree. From a Vista login node:
+
+```bash
+cd /work/09281/chc_1996/vista/context-graph && git fetch origin && GRAM_CODE=$(mktemp -d "$SCRATCH/gram-rl-code-XXXXXX") && git worktree add --detach "$GRAM_CODE" origin/master && mkdir -p "$GRAM_CODE/logs" && PROJECT_ROOT="$GRAM_CODE" sbatch --chdir="$GRAM_CODE" "$GRAM_CODE/scripts/smoke_gram_rl_qwen35_9b_4node.sbatch"
+```
+
+For an existing idle allocation, replace the final `sbatch --chdir=...` invocation
+with `PROJECT_ROOT="$GRAM_CODE" bash "$GRAM_CODE/scripts/smoke_gram_rl_qwen35_9b_4node.sbatch"`.
+The batch request is four GH nodes for two hours; idev keeps its existing limit.
+Do not run it within either occupied SWE allocation.
+
+The smoke performs **two full-parameter optimizer updates**, with 12K context,
+one question per batch, three sampled episodes, actor KL `0.001`, and a maximum
+of 16 actions/8192 actor output tokens per episode. These reduced settings are
+for mechanics, not the paper's training protocol. All ten context documents are
+retained. The two bundled HotpotQA **validation** questions are assigned separate
+smoke roles: row 0 for optimization, row 1 for validation. Their source split,
+IDs and hashes are recorded; this is not a proper training dataset or benchmark
+performance measurement. No dataset download or external judge is needed.
+
+Artifacts are in `$SCRATCH/context-graph-gram/runs/gram-rl-smoke-JOBID-XXXXXX/`:
+`preparation.log`, `memory-server.log`, `ray-{1,2,3}.log`, `trainer.log`,
+`traces/`, `checkpoints/`, and `smoke-audit.json`. The completion marker requires
+step-1/2 finite optimizer and KL metrics, at least one nonzero gradient norm,
+nonempty model/optimizer/extra-state shards for all three ranks at step 2, and
+actual actor/helper trace events. Zero-gradient runs fail this gate rather than
+claim useful learning. Checkpoint reload, GPU memory fit and live Vista success
+are not established by local tests; the audit explicitly does not certify reload
+or performance. Watch `suite.log` and `trainer.log` for the actual result.
+
+### General training entry
+
 Prepare distinct train and validation Parquet files with the command above.
 The preflight checks hashes, declared splits and task/question overlap. Serve a
 **separate frozen memory checkpoint** first. Activate the established `cxtgraph`
