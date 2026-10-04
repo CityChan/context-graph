@@ -8,7 +8,7 @@ import os
 import time
 
 from .gram_memory import DocumentStream, GraphMemory, cosine, entity_key, parse_action, token_f1, triples
-from .gram_prompts import ACTOR, ENTITIES, RELATIONS, MAINTENANCE
+from .gram_prompts import ACTOR, BCP_ACTOR, ENTITIES, RELATIONS, MAINTENANCE
 
 
 class MemoryBackendError(RuntimeError):
@@ -136,7 +136,7 @@ class MemoryBackend:
             raise MemoryBackendError(str(exc)) from exc
 
 
-async def run_episode(task, policy, memory, config: GramConfig, audit=None):
+async def run_episode(task, policy, memory, config: GramConfig, audit=None, *, retrieval=None):
     """policy(messages, token_limit) -> (text, exact sampled training segment).
 
     This function deliberately accepts no reference answers. Only the returned prediction
@@ -144,14 +144,15 @@ async def run_episode(task, policy, memory, config: GramConfig, audit=None):
     """
     if set(task) != {"task_id", "question", "documents"}:
         raise ValueError("Public GRAM tasks contain only task_id/question/documents")
-    stream = DocumentStream(task["question"], task["documents"])
+    stream = DocumentStream(task["question"], list(task["documents"]), allow_empty=retrieval is not None)
     graph = GraphMemory()
     audit = audit or (lambda event: None)
     segments, valid, used, answer, search, feedback = [], [], 0, "", [], ""
     reason = "max_steps"
+    external_searches = 0
     started = time.monotonic()
     async def execute():
-        nonlocal used, answer, search, feedback, reason
+        nonlocal used, answer, search, feedback, reason, external_searches
         for step in range(config.max_steps):
             budget = min(config.max_step_tokens, config.max_episode_tokens-used)
             if budget < 10:
@@ -161,7 +162,10 @@ async def run_episode(task, policy, memory, config: GramConfig, audit=None):
                 "graph": graph.observation(), "search_paths": search, "feedback": feedback,
                 "documents_consumed": stream.cursor, "documents_total": len(stream.documents)},
                 "document_obs": stream.current}
-            messages = [{"role": "system", "content": ACTOR},
+            if retrieval is not None:
+                state["budget"] = {"step": step, "max_steps": config.max_steps,
+                                   "remaining_actor_tokens": config.max_episode_tokens-used}
+            messages = [{"role": "system", "content": BCP_ACTOR if retrieval is not None else ACTOR},
                         {"role": "user", "content": json.dumps(state, ensure_ascii=False)}]
             text, segment = await policy(messages, budget)
             if not segment.get("response_ids"):
@@ -171,7 +175,7 @@ async def run_episode(task, policy, memory, config: GramConfig, audit=None):
             event = {"kind": "action", "step": step, "document_index": stream.cursor,
                      "messages": messages, "response": text, "sampled_tokens": sum(segment["response_mask"])}
             try:
-                operation, content = parse_action(text)
+                operation, content = parse_action(text, external_search=retrieval is not None)
             except ValueError as exc:
                 valid.append(0)
                 feedback = str(exc)
@@ -179,8 +183,19 @@ async def run_episode(task, policy, memory, config: GramConfig, audit=None):
                 continue
             valid.append(1)
             feedback = ""
-            if operation == "answer":
+            if operation == "answer" and retrieval is not None and not external_searches:
+                feedback = "Perform an external corpus search before answering."
+            elif operation == "answer":
                 answer, reason = content, "answer"
+            elif operation in {"search", "open_page"}:
+                if stream.current is not None:
+                    feedback = "Consume the current observation with Insert or Update first."
+                else:
+                    observation = await retrieval(operation, content)
+                    document = {"id": f"retrieval-{len(stream.documents)}", "title": f"{operation}: {content}", "text": observation}
+                    stream.documents.append(document)
+                    external_searches += int(operation == "search")
+                    event["retrieved_document"] = document
             elif operation == "memory_search":
                 search = graph.search(content, config.search_hops, config.search_top_k)
             elif stream.current is None:
@@ -203,6 +218,7 @@ async def run_episode(task, policy, memory, config: GramConfig, audit=None):
     return {"task_id": task["task_id"], "prediction": answer, "termination_reason": reason,
             "format_reward": sum(valid)/len(valid) if valid else 0.0,
             "steps": len(segments), "policy_tokens": used, "documents_consumed": stream.cursor,
+            "external_searches": external_searches,
             "graph": graph.snapshot(), "elapsed_seconds": time.monotonic()-started,
             "config": asdict(config), "segments": segments}
 

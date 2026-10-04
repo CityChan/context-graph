@@ -234,7 +234,8 @@ def test_grpo_deduplicates_segments_and_keeps_reward_above_one():
     assert advantage[0, 0] == advantage[1, 0]
 
 
-def test_evaluator_http_end_to_end_and_resume(tmp_path, monkeypatch):
+@pytest.mark.parametrize("bcp", [False, True])
+def test_evaluator_http_end_to_end_and_resume(tmp_path, monkeypatch, bcp):
     import httpx
     from transformers import AutoTokenizer
     from tests.test_session_restart import Tokenizer
@@ -246,13 +247,22 @@ def test_evaluator_http_end_to_end_and_resume(tmp_path, monkeypatch):
     raw.write_text(json.dumps([{**TASK, "answers": ["Paris"]}]), encoding="utf-8")
     data = tmp_path / "data"
     prepare(raw, data, "canonical", "validation")
+    if bcp:
+        import pandas as pd
+        data = tmp_path / "bcp.parquet"
+        pd.DataFrame([{"extra_info": {"query": TASK["question"], "answer": "Paris"}}]).to_parquet(data)
+        monkeypatch.setenv("OPENAI_API_KEY", "test-placeholder-not-a-real-key")
+        monkeypatch.setenv("LOCAL_SEARCH_URL", "http://corpus")
     output = tmp_path / "run"
     output.mkdir()
     model_path = tmp_path / "model"
     model_path.mkdir()
     (model_path / "tokenizer_config.json").write_text("{}", encoding="utf-8")
-    responses = iter(["<memory_insert>Book by Alice</memory_insert>",
-                      "<memory_insert>Alice born Paris</memory_insert>", "<answer>Paris</answer>"])
+    responses = iter((["<search>Book</search>", "<memory_insert>Book by Alice</memory_insert>",
+                       "<open_page>d2</open_page>", "<memory_insert>Alice born Paris</memory_insert>",
+                       "<answer>Paris</answer>"] if bcp else
+                      ["<memory_insert>Book by Alice</memory_insert>",
+                       "<memory_insert>Alice born Paris</memory_insert>", "<answer>Paris</answer>"]))
     helpers = iter([["Book", "Alice"], [["Book", "author", "Alice"]],
                     ["Alice", "Paris"], [["Alice", "born_in", "Paris"]]])
     calls = []
@@ -260,6 +270,9 @@ def test_evaluator_http_end_to_end_and_resume(tmp_path, monkeypatch):
         calls.append(request.url.path)
         if request.url.path == "/v1/models":
             return httpx.Response(200, json={"data": [{"id": "model", "max_model_len": 20000}]})
+        if request.url.path in {"/search", "/open"}:
+            doc = TASK["documents"][int(request.url.path == "/open")]
+            return httpx.Response(200, json={"results": [{"docid": doc["id"], "url": "http://example.org", "text": doc["text"]}]})
         if request.url.path == "/v1/completions":
             content = next(responses)
             body = json.loads(request.content)
@@ -270,7 +283,7 @@ def test_evaluator_http_end_to_end_and_resume(tmp_path, monkeypatch):
     real_client = httpx.AsyncClient
     monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: real_client(**kw, transport=httpx.MockTransport(reply)))
     monkeypatch.setattr(AutoTokenizer, "from_pretrained", lambda *a, **kw: APITokenizer())
-    args = SimpleNamespace(data=data, output=output, model_path=model_path, samples=-1, shard_index=0, shard_count=1,
+    args = SimpleNamespace(benchmark="bcp" if bcp else "document-stream", data=data, output=output, model_path=model_path, samples=-1, shard_index=0, shard_count=1,
                            max_steps=10, episode_tokens=10000, step_tokens=512, timeout=30, search_hops=2,
                            search_top_k=12, entity_threshold=.9, model="model", model_revision="fixed",
                            memory_model="model", memory_revision="fixed", embedding_model=None,
@@ -278,10 +291,10 @@ def test_evaluator_http_end_to_end_and_resume(tmp_path, monkeypatch):
                            endpoint="http://actor", memory_endpoint="http://memory", retry_errors=False)
     assert asyncio.run(evaluate(args)) == 0
     summary = json.loads((output / "summary.json").read_text())
-    assert summary["mean_answer_f1"] == 1 and summary["graded"] == 1
+    assert summary["accuracy" if bcp else "mean_answer_f1"] == 1 and summary["graded"] == 1
     assert len(list(output.glob("instances/*/attempt-*/segments.json"))) == 1
     assert asyncio.run(evaluate(args)) == 0  # No actor/helper calls on resume.
-    assert calls.count("/v1/completions") == 3
+    assert calls.count("/v1/completions") == (5 if bcp else 3)
     args.seed = 43
     with pytest.raises(ValueError, match="protocol mismatch"):
         asyncio.run(evaluate(args))

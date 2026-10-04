@@ -1,4 +1,4 @@
-# GRAM document-stream baseline
+# GRAM baseline and BC-P adaptation
 
 This is an independent, paper-guided implementation of **GRAM: Empowering Agent
 with Actively Managed Graph-Structured Memory via Reinforcement Learning** (the
@@ -6,6 +6,58 @@ anonymous 16-page PDF supplied by the user). It does not change ContextGraph,
 FoldAgent, their saved results, or the ScienceWorld protocol. GRAM's task here is
 document-stream question answering, not a replacement ScienceWorld environment.
 Source PDF SHA-256: `fc4843b1d5fa8680752e3944d4554e7eec3f0826be83cbdff1cd80e8b9846c3a`.
+
+## BC-P zero-shot smoke on four Vista idev nodes
+
+The BC-P entrypoint is an **adaptation**, not the paper's document-stream benchmark.
+In an idle four-node allocation, with the existing `OPENAI_API_KEY` exported for
+the BC-P judge, run:
+
+```bash
+cd /work/09281/chc_1996/vista/context-graph && git pull --ff-only origin master && GRAM_SAMPLES=2 bash scripts/smoke_gram_bcp_qwen35_9b_4node_idev.sh
+```
+
+The script starts local BC-P corpus retrieval, a pinned Qwen3.5-9B actor, a
+separate fixed Qwen3.5-9B memory helper, and an evaluator on one node each.
+It reuses the cached corpus/embedding service in `cxtgraph` and existing vLLM
+server setup. No Docker, new allocation, package installation, or training.
+The default evaluator Python is the existing `agent-direct-Rs4ngP` environment;
+override `GRAM_PYTHON` with another compatible interpreter if necessary.
+`DATA_PATH` defaults to `data/bc_test.parquet` and must already exist.
+The two rows are selected by the existing BC-P seeded sampling function (seed 42).
+Use `GRAM_SAMPLES=8` for a larger pilot or `-1` for all rows; tasks run serially
+and still obey the allocation's wall-clock limit.
+
+External `<search>` / `<open_page>` reuse `LocalSearch` ranking, repeat-snippet
+handling, top-k cap 5, 128-word/2000-character snippets, and
+4096-word/48000-character opened pages. `<memory_search>` only searches the
+stored graph. The actor must consume each returned tool observation through
+Insert/Update before requesting another; provenance retains an observation ID,
+with its corpus docids in the trajectory. A corpus search is required before
+Answer. Reference labels never enter actor/helper requests.
+
+Defaults: 65,536 context, 24,576 **actor output** tokens per episode, 2,048 per
+step, 100 policy actions, 3,600 seconds per episode, temperature 0, thinking
+disabled, exact-name entity matching plus helper canonicalization. These are
+**not a cost-matched comparison** to the existing thinking-enabled
+ContextGraph/FoldAgent runs. Each memory action costs a policy step and helper
+inference is additional; helper usage is logged in `trajectory.jsonl`.
+Override `GRAM_CONTEXT_LENGTH`, `GRAM_EPISODE_TOKENS`, `GRAM_MAX_STEPS`, or
+`GRAM_SEED` explicitly and preserve the resulting manifest.
+
+Scoring reuses BC-P strict matching followed by the configured judge
+(`JUDGE_MODEL`, default `gpt-5-nano`). Missing/failed judge or retrieval calls
+are infrastructure errors, not incorrect answers. This entrypoint reports
+`accuracy`, not document-stream F1 or GRAM training reward.
+
+Artifacts are under `$SCRATCH/context-graph-gram/runs/gram-bcp-9b-JOBID-XXXXXX/`:
+`suite.log`, `preparation.log`, `search.log`, `server-actor.log`,
+`server-memory.log`, `evaluator.log`, and `evaluation/summary.json`.
+`evaluation/instances/*/attempt-*/` contains trajectories, sampled actor
+requests, segments, and pre-judge episode records. The launcher records code
+commit/diff and cleans up only its own Slurm steps, never the idev allocation.
+CPU tests cover the mocked HTTP round trip and launcher lifecycle; a live
+Vista BC-P smoke is still required to establish deployment success.
 
 ## Implemented contract
 

@@ -30,7 +30,8 @@ def test_bundled_smoke_is_two_real_rows_with_all_context_and_private_labels(tmp_
 @pytest.mark.skipif(not shutil.which("bash"), reason="Bash required")
 @pytest.mark.parametrize("occupied", [False, True])
 @pytest.mark.parametrize("preflight_failure", [False, True])
-def test_smoke_pairs_busy_guard_and_output_paths(tmp_path, occupied, preflight_failure):
+@pytest.mark.parametrize("bcp", [False, True])
+def test_smoke_pairs_busy_guard_and_output_paths(tmp_path, occupied, preflight_failure, bcp):
     mock_python = tmp_path / "python"
     library = tmp_path / "libtorch_global_deps.so"
     library.write_bytes(b"mock-library")
@@ -63,10 +64,14 @@ srun() {
     while :; do command sleep 0.05; done
 }
 ''', encoding="utf-8", newline="\n")
+    data = tmp_path / "bc_test.parquet"
+    data.write_bytes(b"fixture")
     env = dict(os.environ, PROJECT_ROOT=tmp_path.as_posix(), SCRATCH=tmp_path.as_posix(),
                GRAM_PYTHON=mock_python.as_posix(), SLURM_JOB_ID="smoke123", SLURM_JOB_NODELIST="fixture",
+               DATA_PATH=data.as_posix(), OPENAI_API_KEY="test-placeholder-not-a-real-key",
                BASH_ENV=mocks.as_posix(), TEST_OCCUPIED=str(int(occupied)), TEST_FAIL_PREFLIGHT=str(int(preflight_failure)))
-    result = subprocess.run([shutil.which("bash"), (ROOT / "scripts/smoke_gram_qwen35_9b_4node_idev.sh").as_posix()],
+    script = "scripts/smoke_gram_bcp_qwen35_9b_4node_idev.sh" if bcp else "scripts/smoke_gram_qwen35_9b_4node_idev.sh"
+    result = subprocess.run([shutil.which("bash"), (ROOT / script).as_posix()],
                             env=env, capture_output=True, text=True, timeout=30,
                             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
     assert result.returncode == (2 if occupied or preflight_failure else 0), result.stdout + result.stderr
@@ -75,8 +80,13 @@ srun() {
         assert not list(tmp_path.glob("started-*"))
         assert not list(tmp_path.glob("eval-*"))
     else:
-        assert "_eval 0 http://node0:18000" in (tmp_path / "eval-node1.txt").read_text()
-        assert "_eval 1 http://node2:18000" in (tmp_path / "eval-node3.txt").read_text()
+        if bcp:
+            assert not (tmp_path / "eval-node1.txt").exists()
+            assert "_eval" in (tmp_path / "eval-node3.txt").read_text()
+        else:
+            assert "_eval 0 http://node0:18000" in (tmp_path / "eval-node1.txt").read_text()
+            assert "_eval 1 http://node2:18000" in (tmp_path / "eval-node3.txt").read_text()
         run = next((tmp_path / "context-graph-gram/runs").iterdir())
-        for name in ("suite.log", "preparation.log", "server-0.log", "server-1.log", "evaluator-0.log", "evaluator-1.log"):
+        names = ("suite.log", "preparation.log", "search.log", "server-actor.log", "server-memory.log", "evaluator.log") if bcp else ("suite.log", "preparation.log", "server-0.log", "server-1.log", "evaluator-0.log", "evaluator-1.log")
+        for name in names:
             assert (run / name).is_file()

@@ -14,7 +14,7 @@ def entity_key(text: str) -> str:
     return " ".join(unicodedata.normalize("NFKC", text).casefold().split())
 
 
-def parse_action(text: str) -> tuple[str, str]:
+def parse_action(text: str, *, external_search: bool = False) -> tuple[str, str]:
     """Exactly one action; optional preceding think, no stray text/nested tags."""
     try:
         root = ET.fromstring("<root>" + text.strip() + "</root>")
@@ -27,9 +27,10 @@ def parse_action(text: str) -> tuple[str, str]:
         raise ValueError("Attributes, nested tags or trailing text are not actions")
     if children and children[0].tag == "think":
         children = children[1:]
-    if len(children) != 1 or children[0].tag not in {
-        "memory_insert", "memory_update", "memory_search", "answer"
-    }:
+    allowed = {"memory_insert", "memory_update", "memory_search", "answer"}
+    if external_search:
+        allowed.update({"search", "open_page"})
+    if len(children) != 1 or children[0].tag not in allowed:
         raise ValueError("Exactly one Insert, Update, Search or Answer is required")
     content = (children[0].text or "").strip()
     if not content:
@@ -144,9 +145,10 @@ class DocumentStream:
     question: str
     documents: list[dict]
     cursor: int = 0
+    allow_empty: bool = False
 
     def __post_init__(self):
-        if not isinstance(self.question, str) or not self.question.strip() or not self.documents:
+        if not isinstance(self.question, str) or not self.question.strip() or (not self.documents and not self.allow_empty):
             raise ValueError("A question and at least one document are required")
         ids = []
         for doc in self.documents:

@@ -3,6 +3,7 @@ import argparse
 import asyncio
 from dataclasses import asdict
 import json
+import os
 from pathlib import Path
 
 from agents.gram_agent import GramConfig, MemoryBackend, make_policy, run_episode, score_episode
@@ -18,6 +19,13 @@ def jsonl_writer(path):
 
 def summarize(results, selected):
     graded = [r for r in results if r["status"] == "graded"]
+    if results and any("benchmark" in r and r["benchmark"] == "bcp" for r in results):
+        return {"benchmark": "bcp", "selected": selected, "completed": len(results),
+                "pending": selected-len(results), "graded": len(graded),
+                "infrastructure_errors": len(results)-len(graded),
+                "resolved": sum(r["score"] for r in graded),
+                "accuracy_graded": sum(r["score"] for r in graded)/len(graded) if graded else None,
+                "accuracy": sum(r["score"] for r in graded)/selected if len(graded) == selected else None}
     return {"selected": selected, "completed": len(results), "pending": selected-len(results),
             "graded": len(graded), "infrastructure_errors": len(results)-len(graded),
             "mean_answer_f1_graded": sum(r["answer_f1"] for r in graded)/len(graded) if graded else None,
@@ -31,16 +39,28 @@ async def evaluate(args):
     from transformers import AutoTokenizer
     from scripts.eval_bcp_qwen38 import TokenClient
 
-    tasks_path, refs_path = args.data / "tasks.json", args.data / "references.json"
-    data_manifest = json.loads((args.data / "manifest.json").read_text(encoding="utf-8"))
-    for name, digest in data_manifest["files"].items():
-        if sha256(args.data / name) != digest:
-            raise ValueError(f"Prepared data changed: {name}")
-    tasks = json.loads(tasks_path.read_text(encoding="utf-8"))
-    refs = json.loads(refs_path.read_text(encoding="utf-8"))
-    if args.samples > 0:
-        tasks = tasks[:args.samples]
-    tasks = tasks[args.shard_index::args.shard_count]
+    bcp = getattr(args, "benchmark", "document-stream") == "bcp"
+    if bcp:
+        from agents.gram_bcp import BcpRetrieval, RETRIEVAL_LIMITS, load_tasks, score_bcp
+        if os.getenv("OPENAI_API_KEY", "") in {"", "dummy"}:
+            raise ValueError("BC-P requires a real OPENAI_API_KEY for the existing answer judge")
+        if not os.getenv("LOCAL_SEARCH_URL"):
+            raise ValueError("BC-P requires LOCAL_SEARCH_URL")
+        tasks, refs, indices = load_tasks(args.data, args.samples, args.seed, args.shard_index, args.shard_count)
+        data_manifest = {"benchmark": "bcp", "parquet_sha256": sha256(args.data), "indices": indices,
+                         "retrieval": "local_bcp_corpus", "limits": RETRIEVAL_LIMITS,
+                         "judge_model": os.getenv("JUDGE_MODEL", "gpt-5-nano")}
+    else:
+        tasks_path, refs_path = args.data / "tasks.json", args.data / "references.json"
+        data_manifest = json.loads((args.data / "manifest.json").read_text(encoding="utf-8"))
+        for name, digest in data_manifest["files"].items():
+            if sha256(args.data / name) != digest:
+                raise ValueError(f"Prepared data changed: {name}")
+        tasks = json.loads(tasks_path.read_text(encoding="utf-8"))
+        refs = json.loads(refs_path.read_text(encoding="utf-8"))
+        if args.samples > 0:
+            tasks = tasks[:args.samples]
+        tasks = tasks[args.shard_index::args.shard_count]
     if not tasks:
         raise ValueError("Empty evaluation shard")
     config = GramConfig(max_steps=args.max_steps, max_episode_tokens=args.episode_tokens,
@@ -51,7 +71,9 @@ async def evaluate(args):
     sources = ["agents/gram_agent.py", "agents/gram_memory.py", "agents/gram_prompts.py",
                "agents/utils.py", "scripts/eval_gram.py", "scripts/eval_bcp_qwen38.py",
                "scripts/prepare_gram_data.py"]
-    manifest = {"protocol": "gram-document-stream-v1", "paper_exact_reproduction": False,
+    if bcp:
+        sources += ["agents/gram_bcp.py", "envs/local_search.py", "envs/judge_client.py"]
+    manifest = {"protocol": "gram-bcp-adaptation-v1" if bcp else "gram-document-stream-v1", "paper_exact_reproduction": False,
                 "data": data_manifest, "config": asdict(config), "task_ids": [t["task_id"] for t in tasks],
                 "actor": {"model": args.model, "declared_revision": args.model_revision},
                 "memory": {"model": args.memory_model, "declared_revision": args.memory_revision},
@@ -105,20 +127,32 @@ async def evaluate(args):
         import tempfile
         attempt = Path(tempfile.mkdtemp(prefix="attempt-", dir=directory))
         audit = jsonl_writer(attempt / "trajectory.jsonl")
-        client = TokenClient(args.endpoint, args.model, tokenizer, rollout, args.seed, attempt / "actor_requests.jsonl")
+        client = TokenClient(args.endpoint, args.model, tokenizer, rollout,
+                             args.seed + int(task["task_id"].split("-")[-1]) if bcp else args.seed,
+                             attempt / "actor_requests.jsonl")
         memory = MemoryBackend(args.memory_endpoint, args.memory_model, audit=audit,
                                embedding_endpoint=args.embedding_endpoint, embedding_model=args.embedding_model)
         print(f"GRAM_TASK {len(results)+1}/{len(tasks)} {task['task_id']} artifacts={attempt}", flush=True)
+        retrieval = None
         try:
-            result = await run_episode(task, make_policy(client, tokenizer, rollout), memory, config, audit)
+            retrieval = BcpRetrieval() if bcp else None
+            result = await run_episode(task, make_policy(client, tokenizer, rollout), memory, config, audit, retrieval=retrieval)
             write_json(attempt / "segments.json", result.pop("segments"))
-            result.update(score_episode(result, refs[task["task_id"]], config.process_weight))
+            write_json(attempt / "episode.json", result)
+            if bcp:
+                result.update(await score_bcp(task["question"], refs[task["task_id"]], result["prediction"]))
+                result["retrieval_stats"] = dict(retrieval.env.stats)
+            else:
+                result.update(score_episode(result, refs[task["task_id"]], config.process_weight))
             result["status"] = "graded"
         except Exception as exc:
             result = {"task_id": task["task_id"], "status": "infrastructure_error",
                       "error": f"{type(exc).__name__}: {exc}"}
         finally:
-            await asyncio.gather(client.client.aclose(), memory.aclose())
+            await asyncio.gather(client.client.aclose(), memory.aclose(),
+                                 *([retrieval.aclose()] if retrieval is not None else []))
+        if bcp:
+            result["benchmark"] = "bcp"
         result["attempt"] = str(attempt.resolve())
         write_json(path, result)
         results.append(result)
@@ -132,6 +166,7 @@ async def evaluate(args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--benchmark", choices=["document-stream", "bcp"], default="document-stream")
     for key in ("data", "output", "model-path"):
         parser.add_argument("--"+key, required=True, type=Path)
     for key in ("endpoint", "model", "model-revision", "memory-endpoint", "memory-model", "memory-revision"):
