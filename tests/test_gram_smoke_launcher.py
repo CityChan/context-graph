@@ -30,7 +30,7 @@ def test_bundled_smoke_is_two_real_rows_with_all_context_and_private_labels(tmp_
 @pytest.mark.skipif(not shutil.which("bash"), reason="Bash required")
 @pytest.mark.parametrize("occupied", [False, True])
 @pytest.mark.parametrize("preflight_failure", [False, True])
-@pytest.mark.parametrize("bcp", [False, True])
+@pytest.mark.parametrize("bcp", [False, True, "file", "missing"])
 def test_smoke_pairs_busy_guard_and_output_paths(tmp_path, occupied, preflight_failure, bcp):
     mock_python = tmp_path / "python"
     library = tmp_path / "libtorch_global_deps.so"
@@ -70,10 +70,29 @@ srun() {
                GRAM_PYTHON=mock_python.as_posix(), SLURM_JOB_ID="smoke123", SLURM_JOB_NODELIST="fixture",
                DATA_PATH=data.as_posix(), OPENAI_API_KEY="test-placeholder-not-a-real-key",
                BASH_ENV=mocks.as_posix(), TEST_OCCUPIED=str(int(occupied)), TEST_FAIL_PREFLIGHT=str(int(preflight_failure)))
+    if bcp in {"file", "missing"}:
+        env.pop("OPENAI_API_KEY", None)
+        env["WORK"] = env["HOME"] = tmp_path.as_posix()
+        if bcp == "file":
+            (tmp_path / ".openai_env").write_text('OPENAI_API_KEY=test-file-placeholder\nJUDGE_BASE_URL=https://judge.example/v1\n', encoding="utf-8")
+    # Inspect inherited routing in an actual child process without printing its key.
+    if bcp:
+        env["OPENAI_BASE_URL"] = "http://stale-actor:18000/v1"
+        env.pop("JUDGE_BASE_URL", None)
+        env["TEST_CREDENTIAL_SOURCE"] = str(bcp)
+        with mock_python.open("a", encoding="utf-8") as handle:
+            handle.write('if [[ "$TEST_CREDENTIAL_SOURCE" == file ]]; then [[ "$OPENAI_API_KEY" == test-file-placeholder && "$OPENAI_BASE_URL" == https://judge.example/v1 && "$JUDGE_BASE_URL" == https://judge.example/v1 ]] || exit 3; else [[ -n "$OPENAI_API_KEY" && -z "${OPENAI_BASE_URL:-}" ]] || exit 3; fi\n')
     script = "scripts/smoke_gram_bcp_qwen35_9b_4node_idev.sh" if bcp else "scripts/smoke_gram_qwen35_9b_4node_idev.sh"
     result = subprocess.run([shutil.which("bash"), (ROOT / script).as_posix()],
                             env=env, capture_output=True, text=True, timeout=30,
                             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+    assert "test-file-placeholder" not in result.stdout + result.stderr
+    assert "test-placeholder-not-a-real-key" not in result.stdout + result.stderr
+    if bcp == "missing":
+        assert result.returncode != 0
+        assert 'No judge key found' in result.stderr
+        assert not list(tmp_path.glob("started-*"))
+        return
     assert result.returncode == (2 if occupied or preflight_failure else 0), result.stdout + result.stderr
     if occupied or preflight_failure:
         assert ("mock import failure" if preflight_failure else "already responds") in result.stdout

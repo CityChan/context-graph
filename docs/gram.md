@@ -10,8 +10,7 @@ Source PDF SHA-256: `fc4843b1d5fa8680752e3944d4554e7eec3f0826be83cbdff1cd80e8b98
 ## BC-P zero-shot smoke on four Vista idev nodes
 
 The BC-P entrypoint is an **adaptation**, not the paper's document-stream benchmark.
-In an idle four-node allocation, with the existing `OPENAI_API_KEY` exported for
-the BC-P judge, run:
+In an idle four-node allocation, run:
 
 ```bash
 cd /work/09281/chc_1996/vista/context-graph && git pull --ff-only origin master && GRAM_SAMPLES=2 bash scripts/smoke_gram_bcp_qwen35_9b_4node_idev.sh
@@ -19,6 +18,10 @@ cd /work/09281/chc_1996/vista/context-graph && git pull --ff-only origin master 
 
 The script starts local BC-P corpus retrieval, a pinned Qwen3.5-9B actor, a
 separate fixed Qwen3.5-9B memory helper, and an evaluator on one node each.
+It reuses an exported `OPENAI_API_KEY`, or loads the existing `.openai_env`
+from `$WORK`, `/work/09281/chc_1996/vista`, or `$HOME`. No key re-entry is needed.
+As in the BC-P launcher, `JUDGE_BASE_URL` explicitly overrides the judge endpoint;
+otherwise a stale actor `OPENAI_BASE_URL` is cleared. Credentials are not logged.
 It reuses the cached corpus/embedding service in `cxtgraph` and existing vLLM
 server setup. No Docker, new allocation, package installation, or training.
 The default evaluator Python is the existing `agent-direct-Rs4ngP` environment;

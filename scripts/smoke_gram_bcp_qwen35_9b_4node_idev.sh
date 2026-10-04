@@ -5,8 +5,26 @@ export PROJECT_ROOT=${PROJECT_ROOT:-/work/09281/chc_1996/vista/context-graph}
 cd "$PROJECT_ROOT"
 : "${SLURM_JOB_ID:?Run inside a four-node idev allocation}"
 : "${SCRATCH:?SCRATCH must be set}"
-: "${OPENAI_API_KEY:?Export the existing BC-P judge key before launching}"
+# Match the existing BC-P/DiscoveryBench credential-file workflow. Never log keys.
+if [[ -z ${OPENAI_API_KEY:-} || ${OPENAI_API_KEY:-} == dummy ]]; then
+    for credentials in "${WORK:-/work/09281/chc_1996/vista}/.openai_env" /work/09281/chc_1996/vista/.openai_env "$HOME/.openai_env"; do
+        if [[ -f "$credentials" ]]; then
+            source "$credentials"
+            if [[ -n ${OPENAI_API_KEY:-} && ${OPENAI_API_KEY:-} != dummy ]]; then break; fi
+        fi
+    done
+fi
+: "${OPENAI_API_KEY:?No judge key found in environment or existing .openai_env files}"
 [[ "$OPENAI_API_KEY" != dummy ]] || { echo 'A real judge key is required' >&2; exit 2; }
+export OPENAI_API_KEY
+# The judge must not inherit a local actor's OPENAI_BASE_URL.
+if [[ -n ${JUDGE_BASE_URL:-} ]]; then
+    export JUDGE_BASE_URL
+    export OPENAI_BASE_URL="$JUDGE_BASE_URL"
+else
+    unset OPENAI_BASE_URL
+fi
+unset OPENAI_URL
 export GRAM_PYTHON=${GRAM_PYTHON:-$SCRATCH/context-graph-swe/envs/agent-direct-Rs4ngP/bin/python}
 export GRAM_CONTEXT_LENGTH=${GRAM_CONTEXT_LENGTH:-65536}
 export GRAM_SAMPLES=${GRAM_SAMPLES:-2} GRAM_SEED=${GRAM_SEED:-42}
