@@ -300,9 +300,11 @@ class DataParallelPPOActor(BasePPOActor):
                     log_probs = logprobs_from_logits(logits, micro_batch["responses"])
                     if calculate_entropy:
                         if not self.config.entropy_checkpointing:
-                            entropy = verl_F.entropy_from_logits(logits)  # (bsz, response_length)
+                            entropy = self.compute_entropy_from_logits(logits)  # (bsz, response_length)
                         else:
-                            entropy = torch.utils.checkpoint.checkpoint(verl_F.entropy_from_logits, logits)
+                            entropy = torch.utils.checkpoint.checkpoint(
+                                self.compute_entropy_from_logits, logits, use_reentrant=False
+                            )
 
             # Sanitize NaN/Inf from bf16 forward — Qwen3-8B + FSDP + 16K response
             # has ~20% NaN rate in log_prob on specific token patterns, which then

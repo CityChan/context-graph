@@ -32,7 +32,7 @@ def test_foldagent_uses_paper_process_rewards_on_all_outcomes():
     assert "elif is_focus > 0" not in section
     assert "set_cache('reward'" not in section
     assert "for name in agent:" in section
-    assert "'<function=finish>' not in str(turn)" not in section
+    assert "'<function=finish>' not in str(turn)" in section
 
 
 def test_foldagent_training_selects_paper_advantage_formula():

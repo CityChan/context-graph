@@ -1,5 +1,25 @@
 # Qwen3.5-9B BC-P RL, 50 steps
 
+## October 3 RL fixes and verification boundary
+
+The saved ContextGraph job `1039355` exited during actor log-probability
+recomputation: padded-path entropy allocated a full response-by-vocabulary
+temporary and raised CUDA OOM. That path now honors the configured chunked
+entropy implementation, including padded/noncontiguous batches. The shared
+Qwen launcher enables chunking and entropy checkpointing for both methods.
+CPU regressions check entropy values, gradients, bounded chunk sizes and the
+actual padded actor forward path; a Vista optimizer-step smoke is still required
+to establish GPU memory headroom. Chunking does not eliminate the model's full
+logits allocation.
+
+Both FoldAgent and ContextGraph now exempt `finish` from the `unfolded_main`
+process penalty, as they already exempt branching. Other research turns retain
+the existing whole-trajectory penalty; limiting it to a budget-overrun suffix
+would be a separate reward-design experiment. Missing-finish and invalid-tool
+penalties remain in place. Existing run artifacts are not rescored. Batch size,
+rollout count, context budget and KL settings are unchanged, so use a new run
+when comparing the corrected reward protocol with previous results.
+
 ## Five-node ContextGraph 32K, batch 4 x rollout 4
 
 Submit from a Vista login node:

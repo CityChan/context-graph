@@ -312,8 +312,10 @@ async def process_item(
             # to both successful and failed trajectories, while the terminal reward
             # remains the binary task outcome.
             if rollout_status['unfolded_main']:
+                # Submitting the answer must not incur the unfolding penalty.
                 bad_turn = [i for i, turn in enumerate(agent['main'].messages()) if
-                            '<function=branch>' not in str(turn)]
+                            '<function=branch>' not in str(turn)
+                            and '<function=finish>' not in str(turn)]
                 agent['main'].set_process_reward(bad_turn, -1)
 
             # A rollout that never calls finish must always expose at least one

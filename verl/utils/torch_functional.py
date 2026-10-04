@@ -150,7 +150,23 @@ def entropy_from_logits(logits: torch.Tensor):
 
 
 def entropy_from_logits_with_chunking(logits: torch.Tensor, chunk_size: int = 2048):
-    """Memory-efficient entropy calculation with chunking."""
+    """Chunk token rows, retaining all leading dimensions of the input.
+
+    Padded actors supply (batch, tokens, vocabulary), often a noncontiguous
+    response slice. Recurse over batches instead of flattening that slice,
+    which could copy the entire vocabulary-sized tensor before chunking.
+    """
+    if chunk_size <= 0:
+        raise ValueError("chunk_size must be positive")
+    if logits.ndim > 2:
+        if logits.shape[0] == 0:
+            return logits.float().sum(dim=-1)
+        return torch.stack([
+            entropy_from_logits_with_chunking(batch, chunk_size)
+            for batch in logits.unbind(0)
+        ])
+    if logits.ndim == 1:
+        return entropy_from_logits_with_chunking(logits.unsqueeze(0), chunk_size).squeeze(0)
     entropy = torch.zeros(logits.shape[0], device=logits.device)
     for i in range(0, logits.shape[0], chunk_size):
         logits_chunk = logits[i : i + chunk_size].float()

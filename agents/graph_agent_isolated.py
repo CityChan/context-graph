@@ -1946,6 +1946,7 @@ async def process_item(
             if rollout_status['unfolded_main']:
                 bad_turn = [i for i, turn in enumerate(agent['main'].messages()) if
                             '<function=branch>' not in str(turn)
+                            and '<function=finish>' not in str(turn)
                             and not any(m in str(turn) for m in GRAPH_OP_MARKERS)]
                 agent['main'].set_process_reward(bad_turn, -1)
 
