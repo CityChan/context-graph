@@ -257,11 +257,14 @@ def test_training_profile_reaches_base_launcher(tmp_path, profile, nodes, contex
     base_source = (ROOT / 'scripts' / base_name).read_text(encoding='utf8')
     yarn_block = base_source.split('LONG_CONTEXT_ARGS=()', 1)[1].split('\nprobe()', 1)[0]
     node_block = base_source[base_source.index('mapfile -t NODELIST'):base_source.index('NODE0=${NODELIST[0]}')]
+    graph_block = (base_source[base_source.index('GRAPH_RPO_ARGS=()'):base_source.index('# Qwen3-8B advertises')]
+                   if method == 'contextgraph' else 'GRAPH_RPO_ARGS=()\n')
     base = tmp_path / 'scripts' / base_name
     base.write_text('set -eu\nenv > "$PROJECT_ROOT/captured.env"\n'
                     + node_block + '\nprintf "%s\\n" "${NODELIST[@]}" > "$PROJECT_ROOT/active-nodes"\n'
                     +
                     'printf "%s\\n" "$@" > "$PROJECT_ROOT/captured.args"\n'
+                    + graph_block + '\nprintf "%s\\n" "${GRAPH_RPO_ARGS[@]}" > "$PROJECT_ROOT/graph.args"\n' +
                     'LONG_CONTEXT_ARGS=()\n' + yarn_block + '\n'
                     'printf "%s\\n" "${#LONG_CONTEXT_ARGS[@]}" > "$PROJECT_ROOT/yarn-count"\n',
                     encoding='utf8', newline='\n')
@@ -280,7 +283,9 @@ def test_training_profile_reaches_base_launcher(tmp_path, profile, nodes, contex
     ]) + '\n', encoding='utf8', newline='\n')
     env = dict(os.environ, PROJECT_ROOT=tmp_path.as_posix(), SCRATCH=tmp_path.as_posix(),
                CONDA_PREFIX=tmp_path.as_posix(), SLURM_JOB_ID='fixture', SLURM_JOB_NODELIST='fixture',
-               OPENAI_API_KEY='fixture', BCP_TRAIN_PROFILE=profile, BCP_TRAIN_TOPOLOGY=topology,
+               OPENAI_API_KEY='test-only-judge-secret', BCP_TRAIN_PROFILE=profile, BCP_TRAIN_TOPOLOGY=topology,
+               ADV_ESTIMATOR='wrong', POLICY_LOSS_MODE='wrong', USE_KL_LOSS='False',
+               BC_CONTROLLER_ACTION_POLICY='balanced', GRAPH_RPO_CREDIT_BACKEND='external_evaluator',
                SMOKE_TEST='0', PREFLIGHT_ONLY='0')
     result = subprocess.run([shutil.which('bash'), setup.as_posix()], cwd=ROOT, env=env,
                             capture_output=True, text=True, timeout=30,
@@ -312,6 +317,27 @@ def test_training_profile_reaches_base_launcher(tmp_path, profile, nodes, contex
     args = (tmp_path / 'captured.args').read_text().splitlines()
     assert f'actor_rollout_ref.rollout.max_model_len={context}' in args
     assert 'actor_rollout_ref.actor.use_dynamic_bsz=False' in args
+    if method == 'contextgraph':
+        for key, value in {
+            'ADV_ESTIMATOR': 'graphrpo', 'POLICY_LOSS_MODE': 'graphrpo',
+            'BC_CONTROLLER_ACTION_POLICY': 'structural', 'PROCESS_REWARD_SPEC': '[scope]',
+            'USE_KL_LOSS': 'True', 'ACTOR_KL_LOSS_COEF': '0.0005', 'ALGORITHM_KL_COEF': '0.0',
+            'GRAPH_RPO_CREDIT_BACKEND': 'old_policy_counterfactual_qa',
+            'GRAPH_RPO_COUNTERFACTUAL_SAMPLES': '1', 'SAVE_ROLLOUT_DATA': '1',
+        }.items():
+            assert captured[key] == value
+        assert 'models--Qwen--Qwen3.5-9B/snapshots/c202236235762e1c871ad0ccb60c8ee5ba337b9a' in captured['MODEL_PATH']
+        assert 'algorithm.use_kl_in_reward=False' in args
+        assert 'algorithm.graphrpo_require_binary_reward=True' in args
+        assert 'actor_rollout_ref.actor.kl_loss_type=low_var_kl' in args
+        graph_args = (tmp_path / 'graph.args').read_text().splitlines()
+        assert '+actor_rollout_ref.rollout.plugin.graph_rpo_credit_backend=old_policy_counterfactual_qa' in graph_args
+        assert '+actor_rollout_ref.rollout.plugin.graph_rpo_counterfactual_samples=1' in graph_args
+        assert 'algorithm.graphrpo_alpha=0.1' in graph_args
+        assert 'algorithm.graphrpo_beta=0.25' in graph_args
+    else:
+        assert captured['ADV_ESTIMATOR'] == 'foldgrpo'
+        assert captured['USE_KL_LOSS'] == 'False'
     assert (tmp_path / 'yarn-count').read_text().strip() == '0'
     config = next((tmp_path / 'outputs').glob('*/training-config.txt')).read_text()
     assert f'ppo_mini_batch_size={mini}\n' in config
@@ -320,7 +346,7 @@ def test_training_profile_reaches_base_launcher(tmp_path, profile, nodes, contex
     assert f'allocated_nodes={nodes}\n' in config
     if topology == 'idev4_dp2':
         assert 'unused_nodes=node3\n' in config
-    assert 'fixture' not in config  # No judge credential in the manifest.
+    assert 'test-only-judge-secret' not in config  # No judge credential in the manifest.
     if context == 65536:
         assert captured['EXPERIMENT_NAME'].startswith('train64k_')
     elif '_32k_' in profile:
@@ -328,18 +354,19 @@ def test_training_profile_reaches_base_launcher(tmp_path, profile, nodes, contex
 
 
 @pytest.mark.skipif(not shutil.which('bash'), reason='Bash unavailable')
-def test_contextgraph_4x4_sbatch_selects_profile(tmp_path):
+@pytest.mark.parametrize('mode,flag', [('train', '0'), ('smoke', '1')])
+def test_contextgraph_4x4_sbatch_selects_profile(tmp_path, mode, flag):
     (tmp_path / 'scripts').mkdir()
     (tmp_path / 'scripts/train_bcp_qwen35_9b_50step.sh').write_text(
-        'printf "%s\\n" "$BCP_TRAIN_PROFILE:$BCP_TRAIN_TOPOLOGY:$SMOKE_TEST:$PREFLIGHT_ONLY:$1"\n',
+        'printf "%s\\n" "$BCP_TRAIN_PROFILE:$BCP_TRAIN_TOPOLOGY:$SMOKE_TEST:$PREFLIGHT_ONLY:$1:$BCP_GRAPH_RPO_SMOKE"\n',
         encoding='utf8')
     script = ROOT / 'scripts/train_bcp_qwen35_9b_contextgraph_32k_4x4_5node.sbatch'
-    result = subprocess.run([shutil.which('bash'), script.as_posix()], cwd=tmp_path,
+    result = subprocess.run([shutil.which('bash'), script.as_posix(), mode], cwd=tmp_path,
                             env=dict(os.environ, SMOKE_TEST='1', PREFLIGHT_ONLY='1'),
                             capture_output=True, text=True, timeout=30,
                             creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
     assert result.returncode == 0, result.stderr
-    assert result.stdout.strip() == 'contextgraph_32k_4x4_batch:full:0:0:contextgraph'
+    assert result.stdout.strip() == f'contextgraph_32k_4x4_batch:full:0:0:contextgraph:{flag}'
     assert '#SBATCH --nodes=5' in script.read_text(encoding='utf8')
 
 

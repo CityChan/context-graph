@@ -14,6 +14,14 @@ case "$BCP_TRAIN_PROFILE" in
     ;;
   *) echo "Unknown BCP_TRAIN_PROFILE: $BCP_TRAIN_PROFILE" >&2; exit 2 ;;
 esac
+export BCP_GRAPH_RPO_SMOKE=${BCP_GRAPH_RPO_SMOKE:-0}
+case "$BCP_GRAPH_RPO_SMOKE" in
+  0) ;;
+  1)
+    [ "$METHOD" = contextgraph ] && [ "$BCP_TRAIN_PROFILE" = contextgraph_32k_4x4_batch ] && [ "${SMOKE_TEST:-0}" != 1 ] && [ "${BCP_TRAIN_TOPOLOGY:-full}" = full ] || { echo "GraphRPO smoke requires ContextGraph 4x4, full five-node topology, and SMOKE_TEST=0" >&2; exit 2; }
+    ;;
+  *) echo "BCP_GRAPH_RPO_SMOKE must be 0 or 1" >&2; exit 2 ;;
+esac
 : "${SLURM_JOB_ID:?Run inside a Slurm allocation}"
 : "${SCRATCH:?Vista SCRATCH must be set}"
 export PROJECT_ROOT=${PROJECT_ROOT:-/work/09281/chc_1996/vista/context-graph}
@@ -31,6 +39,10 @@ if [ "${SMOKE_TEST:-0}" = 1 ]; then
   export EXPECTED_NUM_NODES=4
   PLANNED_STEPS=1
   RUN_MODE=smoke
+fi
+if [ "$BCP_GRAPH_RPO_SMOKE" = 1 ]; then
+  PLANNED_STEPS=2
+  RUN_MODE=smoke32k_graphrpo
 fi
 case "${BCP_TRAIN_TOPOLOGY:-full}" in
   full) ;;
@@ -105,7 +117,7 @@ export LD_PRELOAD="$TORCH_DEPS${LD_PRELOAD:+:$LD_PRELOAD}"
 if [ -n "${WORK:-}" ] && [ -f "$WORK/.wandb_env" ]; then
   source "$WORK/.wandb_env"
 fi
-if [ "${SMOKE_TEST:-0}" = 1 ]; then export BC_DISABLE_WANDB=1; fi
+if [ "${SMOKE_TEST:-0}" = 1 ] || [ "$BCP_GRAPH_RPO_SMOKE" = 1 ]; then export BC_DISABLE_WANDB=1; fi
 STAGE=logging_preflight
 python scripts/check_bcp_rl_logging.py "$RUN_DIR/logging-preflight.json"
 
@@ -160,6 +172,22 @@ export FINAL_ANSWER_RESERVE=1024 FINAL_ANSWER_SAFETY_MARGIN=64 SESSION_TIMEOUT=3
 export BC_CTXGRAPH_PROTOCOL=controller BC_CONTROLLER_ACTION_POLICY=balanced
 export STRUCTURED_MEMORY_ENABLED=0 STRUCTURED_MEMORY_REQUIRED=0
 export CONSOLIDATION_INTERVAL=5 AUTO_PRUNE_MAX_ACTIVE=12
+# Select the complete objective after common defaults, so inherited shell settings
+# cannot silently leave the 9B ContextGraph run on FoldGRPO or disable KL.
+export ADV_ESTIMATOR=foldgrpo POLICY_LOSS_MODE=vanilla
+if [ "$METHOD" = contextgraph ]; then
+  export ADV_ESTIMATOR=graphrpo POLICY_LOSS_MODE=graphrpo
+  export BC_CONTROLLER_ACTION_POLICY=structural PROCESS_REWARD_SPEC='[scope]'
+  export USE_KL_LOSS=True ACTOR_KL_LOSS_COEF=0.0005 ALGORITHM_KL_COEF=0.0
+  export GRAPH_RPO_CREDIT_BACKEND=old_policy_counterfactual_qa
+  export GRAPH_RPO_COUNTERFACTUAL_SAMPLES=1 GRAPH_RPO_COUNTERFACTUAL_MAX_NEW_TOKENS=512
+  export GRAPH_RPO_COUNTERFACTUAL_TEMPERATURE=1.0 GRAPH_RPO_COUNTERFACTUAL_TOP_P=1.0
+  export GRAPH_RPO_COUNTERFACTUAL_SEED=42 GRAPH_RPO_COUNTERFACTUAL_ENABLE_THINKING=False
+  export GRAPH_RPO_ALPHA=0.1 GRAPH_RPO_BETA=0.25 GRAPH_RPO_EPSILON=1e-6
+  export GRAPH_RPO_DELTA_SCALE=1.0 GRAPH_RPO_DELTA_MAX=0.25
+  export GRAPH_RPO_OPERATION_COSTS='{merge:0.0,prune:0.0,add_edge:0.0,select:0.0}'
+  export SAVE_ROLLOUT_DATA=1 ROLLOUT_DATA_DIR="$RUN_DIR/rollouts"
+fi
 if [ "${SMOKE_TEST:-0}" = 1 ]; then
   export TOTAL_TRAINING_STEPS=1
   export TRAIN_BATCH_SIZE=3 ROLLOUT_N=2 PPO_MINI_BATCH_SIZE=3
@@ -170,6 +198,11 @@ if [ "${SMOKE_TEST:-0}" = 1 ]; then
   export BC_DISABLE_WANDB=1
   echo "Smoke: 3 prompts x 2 rollouts, 3 trainer ranks, 1 step, 12K context; not a performance evaluation."
 fi
+if [ "$BCP_GRAPH_RPO_SMOKE" = 1 ]; then
+  export TOTAL_TRAINING_STEPS=2 TRAIN_MAX_SAMPLES=8 VAL_MAX_SAMPLES=4
+  export VAL_BEFORE_TRAIN=False TEST_FREQ=-1 SAVE_FREQ=2
+  echo "GraphRPO smoke: 4 prompts x 4 rollouts, 4 trainer ranks, 2 steps, 32K context; credit audit required."
+fi
 printf '%s\n' "profile=$BCP_TRAIN_PROFILE" "model_revision=$MODEL_REVISION" \
   "steps=$TOTAL_TRAINING_STEPS" "prompt_length=$PROMPT_LENGTH" \
   "response_length=$RESPONSE_LENGTH" "context_length=$CONTEXT_LENGTH" \
@@ -179,6 +212,19 @@ printf '%s\n' "profile=$BCP_TRAIN_PROFILE" "model_revision=$MODEL_REVISION" \
   "allocated_nodes=$ALLOCATED_NODE_COUNT" "active_nodes=${NODES[*]}" "unused_nodes=${UNUSED_NODES[*]}" \
   "batch_reference=sunnweiwei/FoldAgent@58a2d6964ecebe99940529eace50a0558901b8a5/scripts/train_bc_qwen3_8b.sh" \
   | tee "$RUN_DIR/training-config.txt"
+printf '%s\n' "adv_estimator=$ADV_ESTIMATOR" "policy_loss_mode=$POLICY_LOSS_MODE" \
+  "controller_action_policy=$BC_CONTROLLER_ACTION_POLICY" "use_kl_loss=$USE_KL_LOSS" \
+  "actor_kl_loss_coef=$ACTOR_KL_LOSS_COEF" | tee -a "$RUN_DIR/training-config.txt"
+if [ "$METHOD" = contextgraph ]; then
+  printf '%s\n' "process_reward=$PROCESS_REWARD_SPEC" "credit_backend=$GRAPH_RPO_CREDIT_BACKEND" \
+    "probe_samples=$GRAPH_RPO_COUNTERFACTUAL_SAMPLES" "probe_tokens=$GRAPH_RPO_COUNTERFACTUAL_MAX_NEW_TOKENS" \
+    "probe_temperature=$GRAPH_RPO_COUNTERFACTUAL_TEMPERATURE" "probe_top_p=$GRAPH_RPO_COUNTERFACTUAL_TOP_P" \
+    "probe_seed=$GRAPH_RPO_COUNTERFACTUAL_SEED" "probe_thinking=$GRAPH_RPO_COUNTERFACTUAL_ENABLE_THINKING" \
+    "graph_alpha=$GRAPH_RPO_ALPHA" "graph_beta=$GRAPH_RPO_BETA" "graph_epsilon=$GRAPH_RPO_EPSILON" \
+    "delta_scale=$GRAPH_RPO_DELTA_SCALE" "delta_max=$GRAPH_RPO_DELTA_MAX" \
+    "operation_costs=$GRAPH_RPO_OPERATION_COSTS" "rollout_data_dir=$ROLLOUT_DATA_DIR" \
+    | tee -a "$RUN_DIR/training-config.txt"
+fi
 unset RESUME_CHECKPOINT_PATH RESUME_CHECKPOINT_ROOT QWEN_ENABLE_THINKING
 # Native padded HF forward avoids untested Qwen3.5 sequence-packing patches.
 ARGS=(
@@ -207,7 +253,11 @@ ARGS=(
   +actor_rollout_ref.rollout.plugin.apply_chat_template_kwargs.enable_thinking=True
   +actor_rollout_ref.rollout.plugin.apply_chat_template_kwargs.preserve_thinking=True
 )
-if [ "${SMOKE_TEST:-0}" = 1 ]; then
+if [ "$METHOD" = contextgraph ]; then
+  ARGS+=(algorithm.use_kl_in_reward=False algorithm.graphrpo_require_binary_reward=True
+    actor_rollout_ref.actor.kl_loss_type=low_var_kl)
+fi
+if [ "${SMOKE_TEST:-0}" = 1 ] || [ "$BCP_GRAPH_RPO_SMOKE" = 1 ]; then
   ARGS+=(actor_rollout_ref.actor.checkpoint.save_contents='[model,optimizer,extra]')
 fi
 if [ "$METHOD" = contextgraph ]; then
@@ -222,16 +272,25 @@ bash "$BASE" "${ARGS[@]}"
 RC=$?
 set -e
 echo "BCP_RL_EXIT method=$METHOD exit=$RC checkpoint=$CHECKPOINT_ROOT"
-if [ "$RC" -eq 0 ] && [ "${SMOKE_TEST:-0}" = 1 ]; then
+if [ "$RC" -eq 0 ] && { [ "${SMOKE_TEST:-0}" = 1 ] || [ "$BCP_GRAPH_RPO_SMOKE" = 1 ]; }; then
   STAGE=checkpoint_audit
   LATEST="$CHECKPOINT_ROOT/latest_checkpointed_iteration.txt"
-  [ -s "$LATEST" ] && [ "$(cat "$LATEST")" = 1 ] || { echo "Missing step-1 checkpoint marker"; exit 1; }
-  for rank in 0 1 2; do
+  [ -s "$LATEST" ] && [ "$(cat "$LATEST")" = "$TOTAL_TRAINING_STEPS" ] || { echo "Missing step-$TOTAL_TRAINING_STEPS checkpoint marker"; exit 1; }
+  TRAINER_RANKS=$((${#NODES[@]} - 1))
+  for ((rank=0; rank<TRAINER_RANKS; rank++)); do
     for kind in model optim extra_state; do
-      SHARD="$CHECKPOINT_ROOT/global_step_1/actor/${kind}_world_size_3_rank_${rank}.pt"
+      SHARD="$CHECKPOINT_ROOT/global_step_${TOTAL_TRAINING_STEPS}/actor/${kind}_world_size_${TRAINER_RANKS}_rank_${rank}.pt"
       [ -s "$SHARD" ] || { echo "Missing checkpoint shard: $SHARD"; exit 1; }
     done
   done
-  echo "BCP_RL_SMOKE_COMPLETE method=$METHOD steps=1 checkpoint=$CHECKPOINT_ROOT/global_step_1" | tee "$RUN_DIR/smoke-complete.txt"
+  if [ "$BCP_GRAPH_RPO_SMOKE" = 1 ]; then
+    STAGE=graph_credit_audit
+    shopt -s nullglob
+    ROLLOUT_FILES=("$ROLLOUT_DATA_DIR"/*.jsonl)
+    [ "${#ROLLOUT_FILES[@]}" -eq 2 ] || { echo "Expected two rollout JSONL files"; exit 1; }
+    python scripts/audit_bc_judge_results.py "${ROLLOUT_FILES[@]}" --fail-on-integrity-error
+    python scripts/audit_counterfactual_graph_credit.py "${ROLLOUT_FILES[@]}" --fail-on-integrity-error --min-tag-rate 0.9 --require-nonzero-delta
+  fi
+  echo "BCP_RL_SMOKE_COMPLETE method=$METHOD steps=$TOTAL_TRAINING_STEPS checkpoint=$CHECKPOINT_ROOT/global_step_$TOTAL_TRAINING_STEPS" | tee "$RUN_DIR/smoke-complete.txt"
 fi
 exit "$RC"
