@@ -265,6 +265,23 @@ Vista run is still needed to verify GPU memory fit and successful updates.
 
 ### Four-node document-stream RL mechanics smoke
 
+Both four-node RL smoke modes explicitly set `VLLM_USE_FLASHINFER_SAMPLER=0`
+before starting each trainer's Ray daemon and in the PPO Ray runtime environment.
+This uses vLLM's native sampler to bypass the observed FlashInfer sampling JIT
+failure (`curand.h` absent from the compiler's include search path during model
+profiling). It does not repair the CUDA installation or disable other FlashInfer
+kernels. No conda packages are installed or replaced. Sampling backend changes
+can change seeded token draws; the smoke is an execution check, not a controlled
+performance comparison to earlier runs.
+
+After data/dependency preparation, each trainer runs a small GPU top-k/top-p
+sampling probe before any helper, retriever or Ray service starts. It verifies
+that the installed vLLM honors the switch and selects `forward_native`, then
+checks sampled token IDs and synchronizes CUDA. The launch stops on probe failure
+or a 180-second timeout. `sampler-INDEX.log` and `sampler-HOST.json` record the
+backend, package versions and GPU; expect `GRAM_NATIVE_SAMPLER_OK` on every
+trainer. This does not certify full model initialization or optimizer updates.
+
 `scripts/smoke_gram_rl_qwen35_9b_4node.sbatch` provisions a separate frozen
 memory helper on node 0 and a private three-GPU Ray training cluster on nodes
 1--3. Submit it with `sbatch`, or execute it with `bash` inside an **idle**

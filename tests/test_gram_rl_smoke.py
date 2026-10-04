@@ -8,7 +8,7 @@ import subprocess
 
 import pytest
 
-from scripts.gram_rl_smoke import audit, prepare_smoke
+from scripts.gram_rl_smoke import audit, prepare_smoke, exercise_native_sampler
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -104,6 +104,9 @@ def test_actual_smoke_overrides_compose_with_training_profile(benchmark):
         config = compose(config_name="ppo_trainer", overrides=base_args + shlex.split(extra))
     from scripts.train_gram import validate_training_config
     validate_training_config(config)
+    assert config.ray_kwargs.ray_init.runtime_env.env_vars.VLLM_USE_FLASHINFER_SAMPLER == "0"
+    from verl.trainer.constants_ppo import build_ppo_ray_init_kwargs
+    assert build_ppo_ray_init_kwargs(config)["runtime_env"]["env_vars"]["VLLM_USE_FLASHINFER_SAMPLER"] == "0"
     assert config.actor_rollout_ref.rollout.n == (2 if benchmark == "bcp" else 3)
     assert config.data.train_batch_size == config.actor_rollout_ref.actor.ppo_mini_batch_size == (2 if benchmark == "bcp" else 1)
     if benchmark == "bcp":
@@ -117,7 +120,8 @@ def test_actual_smoke_overrides_compose_with_training_profile(benchmark):
 @pytest.mark.parametrize("busy", [False, True])
 @pytest.mark.parametrize("trainer_fails", [False, True])
 @pytest.mark.parametrize("benchmark", ["document-stream", "bcp"])
-def test_launcher_preserves_busy_nodes_and_propagates_training_failure(tmp_path, busy, trainer_fails, benchmark):
+@pytest.mark.parametrize("sampler_fails", [False, True])
+def test_launcher_preserves_busy_nodes_and_propagates_training_failure(tmp_path, busy, trainer_fails, benchmark, sampler_fails):
     mocks = tmp_path / "mocks.sh"
     mocks.write_text('''scontrol() { printf 'node0\\nnode1\\nnode2\\nnode3\\n'; }
 git() { [[ "$1" != rev-parse ]] || echo test-commit; }
@@ -129,6 +133,7 @@ srun() {
     case "${*: -1}" in
         _idle) [[ "$TEST_BUSY" == 0 ]]; return ;;
         _prepare) return 0 ;;
+        _sampler-check) return "$TEST_SAMPLER_RC" ;;
         _ready) return 0 ;;
         _train) return "$TEST_TRAIN_RC" ;;
     esac
@@ -139,7 +144,8 @@ srun() {
     env = {**os.environ, "BASH_ENV": mocks.as_posix(), "PROJECT_ROOT": ROOT.as_posix(),
            "SCRATCH": tmp_path.as_posix(), "SLURM_JOB_ID": "123", "SLURM_JOB_NODELIST": "mock",
            "TEST_CALLS": calls.as_posix(), "TEST_BUSY": str(int(busy)),
-           "TEST_TRAIN_RC": "7" if trainer_fails else "0"}
+           "TEST_TRAIN_RC": "7" if trainer_fails else "0",
+           "TEST_SAMPLER_RC": "8" if sampler_fails else "0"}
     if benchmark == "bcp":
         for name in ("bc_train.parquet", "bc_test.parquet"):
             (tmp_path / name).write_bytes(b"fixture")
@@ -155,10 +161,36 @@ srun() {
     if busy:
         assert proc.returncode != 0
         assert "_prepare" not in invocations and "_train" not in invocations
+    elif sampler_fails:
+        assert proc.returncode == 2
+        assert "_sampler-check" in invocations
+        assert "_search" not in invocations and "_ray-head" not in invocations and "_train" not in invocations
     else:
+        assert invocations.count("_sampler-check") == (2 if benchmark == "bcp" else 3)
         assert proc.returncode == (7 if trainer_fails else 0), proc.stdout + proc.stderr
         assert "_ray-head" in invocations and invocations.count("_ray-worker") == (1 if benchmark == "bcp" else 2)
         if benchmark == "bcp":
             assert "_search" in invocations and "-w node2" in invocations
         assert "_train" in invocations
     assert "ray stop" not in invocations and "scancel" not in invocations
+
+
+def test_sampler_probe_calls_selected_dispatch_and_rejects_bad_output():
+    import torch
+    class NativeSampler:
+        invalid = False
+        def forward_native(self, logits, *, generators, k, p):
+            assert logits.shape == (2, 128) and generators == {}
+            assert k.tolist() == [10, 20] and torch.all(p < 1)
+            return torch.tensor([0, 128 if self.invalid else 127]), None
+        forward = forward_native
+        def __call__(self, *args, **kwargs):
+            return self.forward(*args, **kwargs)
+    sampler = NativeSampler()
+    assert exercise_native_sampler(sampler, torch, device="cpu")["sampled_tokens"] == 2
+    sampler.invalid = True
+    with pytest.raises(RuntimeError, match="invalid token IDs"):
+        exercise_native_sampler(sampler, torch, device="cpu")
+    sampler.forward = lambda *a, **k: None
+    with pytest.raises(RuntimeError, match="Expected native"):
+        exercise_native_sampler(sampler, torch, device="cpu")

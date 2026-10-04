@@ -1,4 +1,4 @@
-"""Offline smoke preparation and strict artifact checks; never a benchmark score."""
+"""Smoke preparation, GPU sampler preflight and artifact checks; not a benchmark score."""
 import argparse
 import json
 import math
@@ -7,6 +7,41 @@ from pathlib import Path
 import re
 
 from scripts.prepare_gram_data import prepare, sha256, write_json
+
+
+def exercise_native_sampler(sampler, torch, device="cuda"):
+    """Exercise the selected dispatch, not a directly called fallback method."""
+    backend = getattr(sampler.forward, "__name__", "")
+    if backend != "forward_native":
+        raise RuntimeError(f"Expected native vLLM sampler, selected {backend!r}")
+    logits = torch.randn(2, 128, device=device, dtype=torch.float32)
+    k = torch.tensor([10, 20], device=device, dtype=torch.int32)
+    p = torch.tensor([0.9, 0.95], device=device, dtype=torch.float32)
+    tokens, _ = sampler(logits, generators={}, k=k, p=p)
+    if tokens.numel() != 2 or not ((tokens >= 0) & (tokens < 128)).all().item():
+        raise RuntimeError("Native sampler returned invalid token IDs")
+    return {"backend": backend, "sampled_tokens": tokens.numel()}
+
+
+def check_native_sampler(root):
+    # These imports belong after training_env has set the switch, in a fresh
+    # process on each trainer node. This probe does not load model weights.
+    import socket
+    import torch
+    import vllm
+    import vllm.envs as vllm_envs
+    from vllm.v1.sample.ops.topk_topp_sampler import TopKTopPSampler
+    if os.environ.get("VLLM_USE_FLASHINFER_SAMPLER") != "0" or vllm_envs.VLLM_USE_FLASHINFER_SAMPLER:
+        raise RuntimeError("vLLM did not honor VLLM_USE_FLASHINFER_SAMPLER=0")
+    if not torch.cuda.is_available():
+        raise RuntimeError("Sampler preflight requires a trainer GPU")
+    report = exercise_native_sampler(TopKTopPSampler(logprobs_mode="raw_logprobs"), torch)
+    torch.cuda.synchronize()
+    report.update(host=socket.gethostname(), vllm_version=vllm.__version__,
+                  torch_version=torch.__version__, gpu=torch.cuda.get_device_name(0),
+                  VLLM_USE_FLASHINFER_SAMPLER="0")
+    write_json(Path(root) / f"sampler-{report['host']}.json", report)
+    print("GRAM_NATIVE_SAMPLER_OK " + json.dumps(report), flush=True)
 
 
 def prepare_smoke(root, source):
@@ -87,7 +122,7 @@ def audit(root, world_size=3, steps=2, benchmark="document-stream"):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=("prepare", "audit", "ray-ready"))
+    parser.add_argument("mode", choices=("prepare", "audit", "ray-ready", "sampler-check"))
     parser.add_argument("--run", type=Path, required=True)
     parser.add_argument("--world-size", type=int, default=3)
     parser.add_argument("--benchmark", choices=("document-stream", "bcp"), default="document-stream")
@@ -98,6 +133,8 @@ def main():
             prepare_bcp(args.run / "data", os.environ["GRAM_BCP_TRAIN_SOURCE"], os.environ["GRAM_BCP_VAL_SOURCE"])
         else:
             prepare_smoke(args.run / "data", Path("examples/gram/hotpotqa_dev_first2.json"))
+    elif args.mode == "sampler-check":
+        check_native_sampler(args.run)
     elif args.mode == "audit":
         print(json.dumps(audit(args.run, world_size=args.world_size, benchmark=args.benchmark)))
     else:

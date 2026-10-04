@@ -44,6 +44,9 @@ training_env() {
     export LIBRARY_PATH="$CUDA_HOME/targets/sbsa-linux/lib:$CUDA_HOME/lib64:$CUDA_HOME/targets/sbsa-linux/lib/stubs:${LIBRARY_PATH:-}"
     export CC=/usr/bin/gcc CXX=/usr/bin/g++ CUDAHOSTCXX=/usr/bin/g++
     export NCCL_HOSTID="${SLURMD_NODENAME:-$(hostname -s)}" FLASHINFER_WORKSPACE_BASE=/tmp
+    # Vista's CUDA header search path lacks curand.h for FlashInfer sampler JIT.
+    # Set before any vLLM import and before each node starts its Ray daemon.
+    export VLLM_USE_FLASHINFER_SAMPLER=0
     local library
     library=$(find "$CONDA_PREFIX/lib" -path '*/torch/lib/libtorch_global_deps.so' -print -quit)
     [[ -s "$library" ]] || { echo 'Missing Torch global dependencies'; exit 2; }
@@ -62,6 +65,11 @@ gpu_idle() {
 
 case "${1:-}" in
     _idle) gpu_idle; exit 0 ;;
+    _sampler-check)
+        training_env
+        gpu_idle
+        python -m scripts.gram_rl_smoke sampler-check --run "$GRAM_RUN_DIR"
+        exit 0 ;;
     _prepare)
         training_env
         python -u scripts/preflight_bcp_qwen35_rl.py --model-path "$MODEL_PATH" --output "$GRAM_RUN_DIR/preflight.json"
@@ -107,6 +115,7 @@ case "${1:-}" in
             trainer.experiment_name="gram-rl-smoke-$SLURM_JOB_ID"
             actor_rollout_ref.actor.checkpoint.save_contents='[model,optimizer,extra]'
             +ray_kwargs.ray_init.runtime_env.env_vars.GRAM_TRACE_DIR="$GRAM_TRACE_DIR"
+            '+ray_kwargs.ray_init.runtime_env.env_vars.VLLM_USE_FLASHINFER_SAMPLER="0"'
         )
         if [[ "$GRAM_BENCHMARK" == bcp ]]; then
             args+=(data.train_batch_size=2 data.val_batch_size=2
@@ -178,6 +187,11 @@ for node in "${nodes[@]}"; do
     srun --overlap -N 1 -n 1 -w "$node" bash "$SELF" _idle
 done
 srun --overlap -N 1 -n 1 -w "${nodes[$head_index]}" bash "$SELF" _prepare > "$GRAM_RUN_DIR/preparation.log" 2>&1 || { cat "$GRAM_RUN_DIR/preparation.log"; exit 2; }
+for ((index=head_index; index<4; index++)); do
+    echo "Checking native GPU sampler on ${nodes[$index]} (VLLM_USE_FLASHINFER_SAMPLER=0)"
+    srun --overlap -N 1 -n 1 -w "${nodes[$index]}" timeout 180 bash "$SELF" _sampler-check > "$GRAM_RUN_DIR/sampler-$index.log" 2>&1 || { cat "$GRAM_RUN_DIR/sampler-$index.log"; exit 2; }
+    cat "$GRAM_RUN_DIR/sampler-$index.log"
+done
 if [[ "$GRAM_BENCHMARK" == bcp ]]; then
     srun --overlap -N 1 -n 1 -w "${nodes[0]}" env -u LD_PRELOAD SEARCH_PORT=18999 AGENT_CONDA_ENV=cxtgraph bash scripts/eval_bcp_qwen38_4node_idev.sh _search > "$GRAM_RUN_DIR/search.log" 2>&1 &
     search_pid=$!; pids+=("$search_pid")
