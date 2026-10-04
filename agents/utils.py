@@ -30,9 +30,6 @@ def select_env(ability, config, extra_info=None):
     elif 'ScienceWorld' in ability:
         from envs.scienceworld_env import ScienceWorldEnv
         EnvClass = ScienceWorldEnv
-    elif ability == 'WideSearch':
-        from envs.widesearch_env import WideSearchEnv
-        EnvClass = WideSearchEnv
     elif 'LocalSearch' in ability or 'GAIA' in ability:
         EnvClass = LocalSearch
     elif 'ScienceAgentBench' in ability:
@@ -48,7 +45,7 @@ def select_env(ability, config, extra_info=None):
     else:
         raise ValueError(
             f"Unknown ability: {ability}. Supported: ALFWorld@*, LocalSearch, GAIA, "
-            "ScienceWorld@*, WideSearch, ScienceAgentBench, DiscoveryBench, math/GSM8K."
+            "ScienceWorld@*, ScienceAgentBench, DiscoveryBench, math/GSM8K."
         )
     return EnvClass
 

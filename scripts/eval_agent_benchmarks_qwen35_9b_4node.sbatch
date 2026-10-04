@@ -17,11 +17,10 @@ cd "$PROJECT_ROOT"
 : "${SCRATCH:?SCRATCH must be set}"
 export BENCH_CONTEXT_LENGTH=${BENCH_CONTEXT_LENGTH:-65536} BENCH_SAMPLES=${BENCH_SAMPLES:--1}
 export BENCH_MAX_STEPS=${BENCH_MAX_STEPS:-100}
-export BENCH_JUDGE_MODEL=${BENCH_JUDGE_MODEL:-gpt-4.1-2025-04-14}
 export MODEL_REVISION=c202236235762e1c871ad0ccb60c8ee5ba337b9a
 export MODEL_ID=Qwen/Qwen3.5-9B
 export MODEL_PATH=$SCRATCH/hf_cache/hub/models--Qwen--Qwen3.5-9B/snapshots/$MODEL_REVISION
-export BENCH_AGENT_ENV=${BENCH_AGENT_ENV:-$SCRATCH/context-graph-agent-benchmarks/envs/qwen35-api}
+export BENCH_AGENT_ENV=${BENCH_AGENT_ENV:-$SCRATCH/context-graph-agent-benchmarks/envs/scienceworld-api}
 export PYTHONPATH="$PROJECT_ROOT" PYTHONNOUSERSITE=1 PYTHONUNBUFFERED=1
 export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1
 export STRUCTURED_MEMORY_ENABLED=0
@@ -39,14 +38,13 @@ if [[ ${1:-} == _eval ]]; then
     agent_preload
     extra=()
     [[ ${BENCH_RETRY_ERRORS:-0} == 1 ]] && extra+=(--retry-errors)
-    exec "$BENCH_AGENT_ENV/bin/python" -u scripts/eval_agent_benchmarks.py "$BENCHMARK" --method "$2" --endpoint "$3" --output "$BENCH_RUN_DIR/$4" --shard-index "$5" --shard-count "$6" --data "$BENCH_DATA" --model-path "$MODEL_PATH" --context-length "$BENCH_CONTEXT_LENGTH" --samples "$BENCH_SAMPLES" --max-steps "$BENCH_MAX_STEPS" --judge-model "$BENCH_JUDGE_MODEL" "${extra[@]}"
+    exec "$BENCH_AGENT_ENV/bin/python" -u scripts/eval_agent_benchmarks.py "$BENCHMARK" --method "$2" --endpoint "$3" --output "$BENCH_RUN_DIR/$4" --shard-index "$5" --shard-count "$6" --data "$BENCH_DATA" --model-path "$MODEL_PATH" --context-length "$BENCH_CONTEXT_LENGTH" --samples "$BENCH_SAMPLES" --max-steps "$BENCH_MAX_STEPS" "${extra[@]}"
 fi
 
-export BENCHMARK=${1:?Expected scienceworld or widesearch}
+export BENCHMARK=${1:?Expected scienceworld}
 case "$BENCHMARK" in
     scienceworld) command -v java >/dev/null || { echo 'ScienceWorld requires Java on PATH (or set JAVA_HOME)'; exit 2; } ;;
-    widesearch) : "${TAVILY_API_KEY:?Export a Tavily key for live web search}"; : "${OPENAI_API_KEY:?Export a judge API key}" ;;
-    *) echo 'Expected scienceworld or widesearch'; exit 2 ;;
+    *) echo 'Expected scienceworld'; exit 2 ;;
 esac
 mode=${2:-both}
 case "$mode" in

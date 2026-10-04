@@ -20,7 +20,7 @@ successful 32K training updates and memory fit on that topology remain unverifie
 | Evaluate SWE-bench Verified or Lite | [Container, model and grading guide](docs/swebench_verified_eval.md) |
 | Submit Lite ARM containers + inference + grading in one job | [Four-node batch entry](docs/swebench_verified_eval.md#all-in-one-four-node-batch-submission) |
 | Re-evaluate DiscoveryBench with Qwen3.5-9B | [Paired ContextGraph/FoldAgent batch job](docs/discoverybench_qwen35_9b_eval.md) |
-| Evaluate WideSearch or ScienceWorld with Qwen3.5-9B | [Four-node setup, metrics, trajectories and resume](docs/widesearch_scienceworld_eval.md) |
+| Evaluate ScienceWorld with Qwen3.5-9B | [Four-node setup, metrics, trajectories and resume](docs/scienceworld_eval.md) |
 | Run SAB, ALFWorld or teacher-data workflows | [Additional workflows](docs/workflows.md) |
 | Find other runnable scripts | [Script index](scripts/README.md) |
 | Inspect saved results | [Result index](results/README.md) |

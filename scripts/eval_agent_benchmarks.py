@@ -1,7 +1,7 @@
-"""Resumable paired-agent evaluation for ScienceWorld and WideSearch.
+"""Resumable paired-agent evaluation for ScienceWorld.
 
 Each task has a process boundary, durable tool/request logs, a trajectory and an
-atomic result. A provider/JVM/judge failure is an infrastructure error, not zero.
+atomic result. A model/JVM failure is an infrastructure error, not zero.
 """
 from __future__ import annotations
 
@@ -13,7 +13,6 @@ import json
 import os
 from pathlib import Path
 import signal
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -22,26 +21,29 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from scripts.eval_discoverybench_qwen35 import MODEL, REVISION, digest, save, task_key, shard_tasks
-from scripts.prepare_agent_benchmarks import SCIENCEWORLD_VERSION, WIDESEARCH_REVISION, verify_evaluator
+from scripts.prepare_agent_benchmarks import SCIENCEWORLD_VERSION
 
-BENCHMARKS = ("scienceworld", "widesearch")
+BENCHMARKS = ("scienceworld",)
 METHODS = ("contextgraph", "foldagent")
 
 
 def config_for(benchmark, method, context_length, max_steps=100):
+    if benchmark not in BENCHMARKS:
+        raise ValueError("Expected scienceworld")
     from scripts.eval_discoverybench_qwen35 import config_for as base_config
     config = base_config(method, context_length)
     plugin = config.actor_rollout_ref.rollout.plugin
     plugin.workflow = benchmark + ("_graph" if method == "contextgraph" else "_branch")
     plugin.scienceworld_max_steps = max_steps
-    plugin.widesearch_page_chars = 20000
-    plugin.final_answer_reserve = 4096 if benchmark == "widesearch" else 0
+    plugin.final_answer_reserve = 0
     plugin.final_answer_safety_margin = 128
-    plugin.turn_max_new_tokens = 4096 if benchmark == "widesearch" else 2048
+    plugin.turn_max_new_tokens = 2048
     return config
 
 
 def load_tasks(path, benchmark, samples):
+    if benchmark not in BENCHMARKS:
+        raise ValueError("Expected scienceworld")
     bundle = json.loads(Path(path).read_text(encoding="utf8"))
     if bundle["source"]["benchmark"] != benchmark:
         raise ValueError("Benchmark/data mismatch")
@@ -49,10 +51,10 @@ def load_tasks(path, benchmark, samples):
     if not tasks or len({t["task_id"] for t in tasks}) != len(tasks):
         raise ValueError("Empty or duplicate task list")
     for task in tasks:
-        allowed = {"task_id", "query", "language"} if benchmark == "widesearch" else {"task_id", "task_name", "variation_idx", "split"}
+        allowed = {"task_id", "task_name", "variation_idx", "split"}
         if set(task) != allowed:
             raise ValueError("Unexpected task fields; grading references must remain separate")
-        if benchmark == "scienceworld" and task["split"] != "test":
+        if task["split"] != "test":
             raise ValueError("Formal evaluation requires the ScienceWorld test split")
     if samples != -1 and not 1 <= samples <= len(tasks):
         raise ValueError("samples must be -1 or between 1 and the dataset size")
@@ -69,14 +71,8 @@ def summary(root, ids, benchmark):
              "infrastructure_errors": len(records) - len(graded),
              "mean_score_graded": sum(r["score"] for r in graded) / len(graded) if graded else None,
              "mean_score": sum(r["score"] for r in graded) / len(ids) if ids and len(graded) == len(ids) else None}
-    if benchmark == "scienceworld":
-        value["score_scale"] = "0..100; negative terminal scores clipped to 0; raw scores retained per task"
-        value["successes"] = sum(r["success"] for r in graded)
-    else:
-        value["score_scale"] = "0/1 official WideSearch whole-table accuracy"
-        value["valid_predictions"] = sum(r["valid_prediction"] for r in graded)
-        for metric in ("f1_by_row", "f1_by_item", "precision_by_row", "recall_by_row", "precision_by_item", "recall_by_item"):
-            value["mean_" + metric + "_graded"] = sum(r["metrics"][metric] for r in graded) / len(graded) if graded else None
+    value["score_scale"] = "0..100; negative terminal scores clipped to 0; raw scores retained per task"
+    value["successes"] = sum(r["success"] for r in graded)
     save(root / "summary.json", value)
     print("BENCHMARK_PROGRESS " + json.dumps(value), flush=True)
     return value
@@ -124,12 +120,9 @@ async def generate(args, task, directory):
     seed = 42 + int(hashlib.sha256(task["task_id"].encode()).hexdigest()[:8], 16) % 1000000
     client = TokenClient(args.endpoint, MODEL, tokenizer, rollout_config, seed, directory / "requests.jsonl")
     extra = dict(task, workflow=rollout_config.plugin.workflow, tool_log=str(directory / "tools.jsonl"))
-    if args.benchmark == "widesearch":
-        extra["prediction_path"] = str(directory / "prediction.md")
-    else:
-        extra.update(simplification="", problem_statement=f"ScienceWorld {task['task_name']}")
+    extra.update(simplification="", problem_statement=f"ScienceWorld {task['task_name']}")
     item = DataProto()
-    ability = "WideSearch" if args.benchmark == "widesearch" else "ScienceWorld@real"
+    ability = "ScienceWorld@real"
     item.non_tensor_batch = {"ability": np.array([ability], dtype=object), "extra_info": np.array([extra], dtype=object),
                              "uid": np.array([task["task_id"]], dtype=object), "reward_model": np.array([{}], dtype=object)}
     item.meta_info = {"generation_kwargs": {}, "max_turn": 100}
@@ -141,14 +134,13 @@ async def generate(args, task, directory):
         trajectories = [dict(r.extra_fields) for r in output]
         save(directory / "trajectory.json", trajectories)
         stats = trajectories[0]["env_stats"]
-        if client.failed or any(stats.get(k) for k in ("env_init_error", "env_error", "provider_errors")):
+        if client.failed or any(stats.get(k) for k in ("env_init_error", "env_error")):
             raise RuntimeError("Model or environment failure; see trajectory and request logs")
-        if args.benchmark == "scienceworld":
-            score = float(stats["environment_score"])
-            save(directory / "result.json", {"status": "graded", "score": max(0.0, min(100.0, score)),
-                   "raw_score": score, "success": bool(stats.get("completed")), "env_stats": stats,
-                   "termination_reason": trajectories[0].get("termination_reason"),
-                   "protocol": "scienceworld-1.2.3/test/unsimplified/shared-sequential-environment"})
+        score = float(stats["environment_score"])
+        save(directory / "result.json", {"status": "graded", "score": max(0.0, min(100.0, score)),
+               "raw_score": score, "success": bool(stats.get("completed")), "env_stats": stats,
+               "termination_reason": trajectories[0].get("termination_reason"),
+               "protocol": "scienceworld-1.2.3/test/unsimplified/shared-sequential-environment"})
     finally:
         await client.client.aclose()
 
@@ -164,7 +156,7 @@ def preflight(args):
                 "model_path": str(Path(args.model_path).resolve()), "seed": 42,
                 "decoding": {"temperature": 0, "top_p": 1, "thinking": True},
                 "config": OmegaConf.to_container(config_for(args.benchmark, args.method, args.context_length, args.max_steps)),
-                "task_timeout": args.task_timeout, "grade_timeout": args.grade_timeout,
+                "task_timeout": args.task_timeout,
                 "versions": {p: importlib.metadata.version(p) for p in ("torch", "transformers", "httpx", "pandas", "numpy", "omegaconf")},
                 "commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()}
     if Path(args.model_path).name != REVISION:
@@ -176,38 +168,12 @@ def preflight(args):
     if not any(m["id"] == MODEL and m.get("max_model_len", 0) >= args.context_length
                and str(m.get("root", "")).rstrip("/").endswith(REVISION) for m in models):
         raise ValueError("Server model/checkpoint/context mismatch")
-    if args.benchmark == "scienceworld":
-        if importlib.metadata.version("scienceworld") != SCIENCEWORLD_VERSION or source.get("version") != SCIENCEWORLD_VERSION:
-            raise ValueError("ScienceWorld version mismatch")
-        java = subprocess.run(["java", "-version"], check=True, timeout=20, capture_output=True, text=True)
-        protocol["simulator"] = SCIENCEWORLD_VERSION
-        protocol["versions"]["py4j"] = importlib.metadata.version("py4j")
-        protocol["java_version"] = (java.stdout + java.stderr).strip()
-    else:
-        protocol["versions"].update({p: importlib.metadata.version(p) for p in ("openai", "dateparser", "pandarallel", "numpy")})
-        if not os.environ.get("TAVILY_API_KEY") or not os.environ.get("OPENAI_API_KEY"):
-            raise ValueError("Set TAVILY_API_KEY and OPENAI_API_KEY before WideSearch evaluation")
-        if source.get("revision") != WIDESEARCH_REVISION:
-            raise ValueError("WideSearch dataset revision mismatch")
-        if digest(args.data.parent / "references.json") != source["references_sha256"]:
-            raise ValueError("WideSearch reference hash mismatch")
-        verify_evaluator(args.data.parent / "official-evaluator")
-        protocol.update(search={"provider": "tavily", "depth": "basic", "live_web": True},
-                        judge={"model": args.judge_model, "temperature": 0, "max_completion_tokens": 10240,
-                               "base_url": os.environ.get("WIDESEARCH_JUDGE_BASE_URL", "https://api.openai.com/v1")})
-        # Fail before generating tasks if authentication, DNS or the judge model is unavailable.
-        with httpx.Client(timeout=60) as client:
-            probe = client.post("https://api.tavily.com/search", headers={"Authorization": "Bearer " + os.environ["TAVILY_API_KEY"]},
-                                json={"query": "WideSearch benchmark", "max_results": 1, "search_depth": "basic", "include_answer": False})
-            probe.raise_for_status()
-            if not isinstance(probe.json().get("results"), list):
-                raise ValueError("Malformed Tavily preflight response")
-        from openai import OpenAI
-        with OpenAI(api_key=os.environ["OPENAI_API_KEY"], base_url=protocol["judge"]["base_url"], timeout=60, max_retries=1) as judge:
-            probe = judge.chat.completions.create(model=args.judge_model, temperature=0, max_completion_tokens=16,
-                                                  messages=[{"role": "user", "content": "Reply with ready."}])
-            if not probe.choices or not probe.choices[0].message.content:
-                raise ValueError("Empty WideSearch judge preflight response")
+    if importlib.metadata.version("scienceworld") != SCIENCEWORLD_VERSION or source.get("version") != SCIENCEWORLD_VERSION:
+        raise ValueError("ScienceWorld version mismatch")
+    java = subprocess.run(["java", "-version"], check=True, timeout=20, capture_output=True, text=True)
+    protocol["simulator"] = SCIENCEWORLD_VERSION
+    protocol["versions"]["py4j"] = importlib.metadata.version("py4j")
+    protocol["java_version"] = (java.stdout + java.stderr).strip()
     return tasks, protocol
 
 
@@ -229,42 +195,23 @@ def run(args):
             directory = root / "instances" / task_key(task["task_id"])
             directory.mkdir(parents=True, exist_ok=True)
             result_path = directory / "result.json"
-            previous = {}
             if result_path.exists():
                 previous = json.loads(result_path.read_text(encoding="utf8"))
                 if not args.retry_errors or previous["status"] != "infrastructure_error":
                     continue
             attempt = Path(tempfile.mkdtemp(prefix="attempt-", dir=directory))
             save(attempt / "task.json", task)
-            reused = None
-            if args.benchmark == "widesearch" and previous.get("stage") == "grading":
-                previous_attempt = Path(previous["attempt"])
-                if (previous_attempt / "trajectory.json").exists():
-                    for name in ("prediction.md", "trajectory.json", "tools.jsonl", "requests.jsonl", "generation.log"):
-                        if (previous_attempt / name).exists():
-                            shutil.copy2(previous_attempt / name, attempt / name)
-                    reused = str(previous_attempt)
             started, stage = time.monotonic(), "generation"
             print(f"BENCHMARK_TASK {index+1}/{len(tasks)} {task['task_id']} artifacts={attempt}", flush=True)
             try:
-                if reused is None:
-                    run_command([sys.executable, "-u", __file__, args.benchmark, "--task", str(attempt),
-                                 "--method", args.method, "--endpoint", args.endpoint, "--model-path", args.model_path,
-                                 "--context-length", str(args.context_length), "--max-steps", str(args.max_steps)],
-                                attempt / "generation.log", args.task_timeout)
-                if args.benchmark == "widesearch":
-                    stage = "grading"
-                    print(f"BENCHMARK_STAGE {task['task_id']} grading", flush=True)
-                    run_command([sys.executable, "-u", str(ROOT / "scripts/grade_widesearch.py"), "--data", str(args.data),
-                                 "--task", str(attempt / "task.json"), "--prediction", str(attempt / "prediction.md"),
-                                 "--output", str(attempt / "result.json"), "--judge-model", args.judge_model],
-                                attempt / "grading.log", args.grade_timeout)
+                run_command([sys.executable, "-u", __file__, args.benchmark, "--task", str(attempt),
+                             "--method", args.method, "--endpoint", args.endpoint, "--model-path", args.model_path,
+                             "--context-length", str(args.context_length), "--max-steps", str(args.max_steps)],
+                            attempt / "generation.log", args.task_timeout)
                 result = json.loads((attempt / "result.json").read_text(encoding="utf8"))
             except Exception as exc:
                 result = {"status": "infrastructure_error", "stage": stage, "error": str(exc)}
             result.update(task_id=task["task_id"], attempt=str(attempt), elapsed_seconds=time.monotonic() - started)
-            if reused:
-                result["generation_reused_from"] = reused
             save(result_path, result)
             summary(root, ids, args.benchmark)
         final = summary(root, ids, args.benchmark)
@@ -288,12 +235,10 @@ def main():
     parser.add_argument("--shard-index", type=int, default=0)
     parser.add_argument("--shard-count", type=int, default=1)
     parser.add_argument("--task-timeout", type=int, default=3900)
-    parser.add_argument("--grade-timeout", type=int, default=1800)
-    parser.add_argument("--judge-model", default="gpt-4.1-2025-04-14")
     parser.add_argument("--retry-errors", action="store_true")
     parser.add_argument("--task", type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
-    if args.max_steps < 1 or min(args.task_timeout, args.grade_timeout) < 1:
+    if args.max_steps < 1 or args.task_timeout < 1:
         parser.error("step and timeout limits must be positive")
     if args.task:
         asyncio.run(generate(args, json.loads((args.task / "task.json").read_text(encoding="utf8")), args.task))

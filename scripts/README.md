@@ -18,14 +18,13 @@ See [RL setup and validation limits](../docs/bcp_qwen35_9b_rl.md) and
 [published results](../results/README.md). Do not interpret a launcher or
 dependency preflight as successful GPU training.
 
-## WideSearch and ScienceWorld
+## ScienceWorld
 
-For WideSearch and ScienceWorld, use `eval_agent_benchmarks_qwen35_9b_4node.sbatch`
-with a benchmark and `both`, `contextgraph`, or `foldagent`. It prepares data,
+Use `eval_agent_benchmarks_qwen35_9b_4node.sbatch`
+with `scienceworld` and `both`, `contextgraph`, or `foldagent`. It prepares data,
 starts inference, runs resumable per-task evaluation and saves trajectories.
-See [protocol and runnable commands](../docs/widesearch_scienceworld_eval.md).
-The underlying tools are `prepare_agent_benchmarks.py`, `eval_agent_benchmarks.py`
-and the separate `grade_widesearch.py` official-metric wrapper.
+See [protocol and runnable commands](../docs/scienceworld_eval.md).
+The underlying tools are `prepare_agent_benchmarks.py` and `eval_agent_benchmarks.py`.
 
 ## SWE-bench Verified and Lite
 
