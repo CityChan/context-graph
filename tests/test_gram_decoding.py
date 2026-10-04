@@ -21,6 +21,20 @@ def test_constraints_follow_retrieval_and_consumption():
     assert not re.fullmatch(consumed, insert)
 
 
+def test_progress_grammar_excludes_empty_graph_loops_and_pending_answers():
+    for has_memory in (False, True):
+        for count in (0, 1, 2, 98):
+            for pending in (False, True):
+                actions = allowed_actions(has_document=pending, external=True, external_searches=1,
+                    progress_limit=2, has_memory=has_memory, memory_searches=count)
+                regex = action_regex(actions)
+                assert bool(re.fullmatch(regex, "<memory_search>film critic</memory_search>")) == (has_memory and count < 2)
+                assert bool(re.fullmatch(regex, "<answer>Alexander</answer>")) == (not pending)
+                assert bool(re.fullmatch(regex, "<search>new evidence</search>")) == (not pending)
+    assert allowed_actions(has_document=False, external=True, external_searches=0,
+                           progress_limit=2, has_memory=False) == ["search"]
+
+
 @pytest.mark.parametrize("text", [
     "I need to refine the query.\n<search>core</search>",
     "<search>core</search> More reasoning", "<search>x</search><answer>y</answer>",

@@ -56,7 +56,7 @@ def test_bcp_rl_uses_retrieval_judge_private_labels_and_closes_on_failure(monkey
                                            "fix_bad_positive_adv": False, "use_kl_in_reward": False},
         "actor_rollout_ref": {"rollout": {"prompt_length": 12000, "response_length": 1024, "plugin": {
             "enable_summary": False, "gram": {"benchmark": "bcp", "memory_endpoint": "http://frozen", "memory_model": "helper",
-            "memory_revision": "fixed", "frozen_memory_acknowledged": True, "episode": {"max_steps": 4, "max_step_tokens": 512, "action_decoding": "xml_regex"}}}}}})
+            "memory_revision": "fixed", "frozen_memory_acknowledged": True, "episode": {"max_steps": 4, "max_step_tokens": 512, "action_decoding": "xml_regex", "bcp_progress_limit": 2}}}}}})
     client = Client(["<search>Book author</search>", "<memory_insert>Book by Alice</memory_insert>", "<answer>Paris</answer>"])
     context = SimpleNamespace(config=config, tokenizer=Tokenizer(), llm_client=client, is_train=True)
     fields = {"extra_info": {"gram_task_json": json.dumps({"task_id": "train-0", "question": "Where?", "documents": []})},

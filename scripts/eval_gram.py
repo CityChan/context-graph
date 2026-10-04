@@ -71,7 +71,8 @@ async def evaluate(args):
                         max_step_tokens=args.step_tokens, timeout_seconds=args.timeout,
                         search_hops=args.search_hops, search_top_k=args.search_top_k,
                         entity_threshold=args.entity_threshold,
-                        action_decoding=getattr(args, "action_decoding", "unconstrained"))
+                        action_decoding=getattr(args, "action_decoding", "unconstrained"),
+                        bcp_progress_limit=getattr(args, "bcp_progress_limit", 0))
     repository = Path(__file__).resolve().parents[1]
     sources = ["agents/gram_agent.py", "agents/gram_memory.py", "agents/gram_prompts.py",
                "agents/utils.py", "scripts/eval_gram.py", "scripts/eval_bcp_qwen38.py",
@@ -188,6 +189,8 @@ def main():
     parser.add_argument("--step-tokens", type=int, default=2048)
     parser.add_argument("--max-steps", type=int, default=64)
     parser.add_argument("--action-decoding", choices=["unconstrained", "xml_regex"], default="unconstrained")
+    parser.add_argument("--bcp-progress-limit", type=int, default=0,
+                        help="Enable BC-P progress guard; maximum memory searches between retrieval/document consumption (0 disables)")
     parser.add_argument("--search-hops", type=int, default=2)
     parser.add_argument("--search-top-k", type=int, default=12)
     parser.add_argument("--timeout", type=float, default=1800)

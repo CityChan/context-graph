@@ -109,3 +109,56 @@ def test_retrieval_failure_propagates():
     with pytest.raises(ConnectionError):
         asyncio.run(run_episode({'task_id': 'x', 'question': 'Who?', 'documents': []},
                                 policy, None, GramConfig(), retrieval=fail))
+
+
+def test_progress_guard_enforced_and_resets_only_on_progress():
+    responses = ["<search>Book</search>", "<answer>premature</answer>",
+                 "<memory_insert>Book by Alice</memory_insert>",
+                 "<memory_search>missing</memory_search>", "<memory_search>still missing</memory_search>",
+                 "<memory_insert>unclosed", "<memory_search>third attempt</memory_search>",
+                 "<search>Alice</search>", "<memory_insert>Book by Alice</memory_insert>",
+                 "<memory_search>Book</memory_search>", "<answer>Alice</answer>"]
+    states, events, calls = [], [], []
+    async def policy(messages, budget):
+        states.append(json.loads(messages[-1]["content"]))
+        return responses[len(states)-1], {"response_ids": [1], "response_mask": [1]}
+    async def retrieval(operation, content):
+        calls.append((operation, content))
+        return "Book by Alice"
+    class Helper:
+        async def edit(self, operation, content, document, question, graph, threshold):
+            graph.apply([["Book", "author", "Alice"]], [], document["id"])
+            return {}
+    config = GramConfig(max_steps=12, action_decoding="xml_regex", bcp_progress_limit=2)
+    result = asyncio.run(run_episode({"task_id": "x", "question": "Who?", "documents": []},
+                        policy, Helper(), config, events.append, retrieval=retrieval))
+    assert result["prediction"] == "Alice" and result["documents_consumed"] == 2
+    assert result["progress_guard_blocks"] == 2
+    assert result["format_reward"] == pytest.approx(10/11)
+    assert [e["response"] for e in events] == responses  # Keep raw malformed/blocked actions.
+    assert states[0]["allowed_actions"] == ["search"]
+    assert "answer" not in states[1]["allowed_actions"]
+    for index in (5, 6, 7):
+        assert "memory_search" not in states[index]["allowed_actions"]
+        assert states[index]["memory_obs"]["memory_searches_since_progress"] == 2
+        assert states[index]["memory_obs"]["last_memory_search"]["path_count"] == 0
+    assert "memory_search" in states[9]["allowed_actions"]
+    assert calls == [("search", "Book"), ("search", "Alice")]
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_empty_graph_search_can_be_disabled_without_changing_legacy(enabled):
+    states = []
+    async def policy(messages, budget):
+        states.append(json.loads(messages[-1]["content"]))
+        response = ["<search>Book</search>", "<memory_insert>None</memory_insert>", "<answer>unknown</answer>"][len(states)-1]
+        return response, {"response_ids": [1], "response_mask": [1]}
+    class Helper:
+        async def edit(self, *args):
+            return {}  # Empty extraction is valid; graph stays empty.
+    async def retrieval(*args):
+        return "No evidence"
+    result = asyncio.run(run_episode({"task_id": "x", "question": "Who?", "documents": []}, policy, Helper(),
+        GramConfig(action_decoding="xml_regex", bcp_progress_limit=2 if enabled else 0), retrieval=retrieval))
+    assert result["graph"] == []
+    assert ("memory_search" in states[2]["allowed_actions"]) == (not enabled)

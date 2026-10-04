@@ -373,7 +373,7 @@ is not evidence that RL learned formatting or that the original paper was
 reproduced. `config.action_decoding` is saved with evaluation manifests/episodes,
 the grammar source is hashed, and RL overrides/traces record the same setting.
 The shared executor and direct evaluator retain `unconstrained` as their default;
-use `GRAM_ACTION_DECODING=unconstrained` in launchers or
+use `GRAM_ACTION_DECODING=unconstrained GRAM_BCP_PROGRESS_LIMIT=0` in launchers or
 `--action-decoding unconstrained` in the evaluator to opt out. Use a fresh run
 directory; incompatible manifests cannot resume into historical results.
 
@@ -386,6 +386,35 @@ CPU tests cover the request wiring, state constraints, strict parsing, mocked
 end-to-end search/helper/answer flow and preservation of training tokens/logprobs.
 Actual Vista vLLM grammar compilation, model behavior and GPU training remain
 live smoke checks.
+
+### BC-P memory-search loop guard
+
+The two-row XML-decoding rerun exposed a separate policy failure: `bcp-28`
+performed one corpus search, consumed one document, then spent 98 actions on
+internal `memory_search`. `bcp-6` made 73 internal searches and eventually
+answered immediately after requesting fresh external evidence. Format compliance
+alone did not establish useful agent progress.
+
+BC-P smoke launchers now default to `GRAM_BCP_PROGRESS_LIMIT=2`. This opts into
+an additional adaptation rule, shared by evaluation and RL: disable internal
+search on an empty graph; allow at most two internal searches between successful
+external retrieval or document consumption; process a pending document before
+answering; and perform the first corpus search before opening a page. Merely
+changing the query, emitting malformed XML, or attempting a blocked action does
+not reset the counter. The decoder's allowed-action list and executor both
+enforce it. Prompts record the last internal query and returned path count so
+the actor can distinguish missing stored evidence from external search results.
+
+Set `GRAM_BCP_PROGRESS_LIMIT=0` to reproduce the previous XML-only behavior.
+The direct executor/evaluator retain the disabled default; direct evaluation
+opts in with `--action-decoding xml_regex --bcp-progress-limit 2`. The limit is
+saved in manifests/episodes and RL overrides; blocked actions stay in raw traces
+and training segments, with `valid_format=true`, `executed=false` and an error.
+Format reward still measures syntax, not semantic progress. No extra generation
+budget or fabricated final answer is added. External-search loops, poor evidence,
+wrong answers, and token-truncated XML remain possible. The guard is a protocol
+change, not a paper-faithful reproduction or evidence of improved BC-P accuracy.
+Rerun the same two seeded rows in a fresh output directory before scaling up.
 
 ### Existing verification
 

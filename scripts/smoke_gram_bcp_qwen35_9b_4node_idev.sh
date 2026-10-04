@@ -29,6 +29,7 @@ export GRAM_PYTHON=${GRAM_PYTHON:-$SCRATCH/context-graph-swe/envs/agent-direct-R
 export GRAM_CONTEXT_LENGTH=${GRAM_CONTEXT_LENGTH:-65536}
 export GRAM_SAMPLES=${GRAM_SAMPLES:-2} GRAM_SEED=${GRAM_SEED:-42}
 export GRAM_ACTION_DECODING=${GRAM_ACTION_DECODING:-xml_regex}
+export GRAM_BCP_PROGRESS_LIMIT=${GRAM_BCP_PROGRESS_LIMIT:-2}
 export GRAM_EPISODE_TOKENS=${GRAM_EPISODE_TOKENS:-24576} GRAM_MAX_STEPS=${GRAM_MAX_STEPS:-100}
 # Linked worktrees contain tracked code, not the primary checkout's local data.
 # Honor explicit DATA_PATH even when missing; never silently replace that choice.
@@ -65,7 +66,7 @@ if [[ ${1:-} == _eval ]]; then
       --model "$MODEL_ID" --memory-model "$MODEL_ID" --model-path "$MODEL_PATH" \
       --model-revision "$MODEL_REVISION" --memory-revision "$MODEL_REVISION" \
       --context-length "$GRAM_CONTEXT_LENGTH" --samples "$GRAM_SAMPLES" --seed "$GRAM_SEED" --action-decoding "$GRAM_ACTION_DECODING" \
-      --episode-tokens "$GRAM_EPISODE_TOKENS" --max-steps "$GRAM_MAX_STEPS" --timeout 3600
+      --episode-tokens "$GRAM_EPISODE_TOKENS" --max-steps "$GRAM_MAX_STEPS" --timeout 3600 --bcp-progress-limit "$GRAM_BCP_PROGRESS_LIMIT"
 fi
 [[ $# == 0 ]] || { echo 'No positional arguments expected'; exit 2; }
 mapfile -t nodes < <(scontrol show hostnames "${SLURM_JOB_NODELIST:?Missing allocation nodes}")
@@ -84,12 +85,13 @@ export NO_PROXY="${NO_PROXY:+$NO_PROXY,}localhost,127.0.0.1,${nodes[0]},${nodes[
 export no_proxy="$NO_PROXY"
 echo "GRAM_BCP_START samples=$GRAM_SAMPLES context=$GRAM_CONTEXT_LENGTH artifacts=$GRAM_RUN_DIR"
 echo "GRAM_ACTION_DECODING=$GRAM_ACTION_DECODING"
+echo "GRAM_BCP_PROGRESS_LIMIT=$GRAM_BCP_PROGRESS_LIMIT"
 echo "Evaluator=$GRAM_PYTHON data=$DATA_PATH"
 echo "Nodes: search=${nodes[0]} actor=${nodes[1]} memory=${nodes[2]} evaluator=${nodes[3]}"
 echo 'Protocol: zero-shot BC-P adaptation; actor thinking disabled; helper tokens additional; exact-name entity matching.'
 (
     preload_torch
-    "$GRAM_PYTHON" -c 'import os,agents.utils; from agents.gram_bcp import load_tasks; from agents.gram_agent import GramConfig; tasks,_,indices=load_tasks(os.environ["DATA_PATH"],int(os.environ["GRAM_SAMPLES"]),int(os.environ["GRAM_SEED"])); GramConfig(max_steps=int(os.environ["GRAM_MAX_STEPS"]),max_episode_tokens=int(os.environ["GRAM_EPISODE_TOKENS"])); print("GRAM_BCP_PREFLIGHT_OK",len(tasks),indices)' || exit 2
+    "$GRAM_PYTHON" -c 'import os,agents.utils; from agents.gram_bcp import load_tasks; from agents.gram_agent import GramConfig; tasks,_,indices=load_tasks(os.environ["DATA_PATH"],int(os.environ["GRAM_SAMPLES"]),int(os.environ["GRAM_SEED"])); GramConfig(max_steps=int(os.environ["GRAM_MAX_STEPS"]),max_episode_tokens=int(os.environ["GRAM_EPISODE_TOKENS"]),action_decoding=os.environ["GRAM_ACTION_DECODING"],bcp_progress_limit=int(os.environ["GRAM_BCP_PROGRESS_LIMIT"])); print("GRAM_BCP_PREFLIGHT_OK",len(tasks),indices)' || exit 2
 ) > "$GRAM_RUN_DIR/preparation.log" 2>&1 || { cat "$GRAM_RUN_DIR/preparation.log"; exit 2; }
 pids=()
 cleanup() {

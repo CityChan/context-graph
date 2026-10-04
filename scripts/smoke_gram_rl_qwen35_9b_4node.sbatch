@@ -123,6 +123,7 @@ case "${1:-}" in
                 actor_rollout_ref.rollout.agent.num_workers=2
                 +actor_rollout_ref.rollout.plugin.gram.benchmark=bcp
                 +actor_rollout_ref.rollout.plugin.gram.episode.action_decoding="${GRAM_ACTION_DECODING:-xml_regex}"
+                +actor_rollout_ref.rollout.plugin.gram.episode.bcp_progress_limit="${GRAM_BCP_PROGRESS_LIMIT:-2}"
                 +ray_kwargs.ray_init.runtime_env.env_vars.JUDGE_MODEL="$JUDGE_MODEL")
         fi
         printf '%s\n' "${args[@]}" > "$GRAM_RUN_DIR/overrides.txt"

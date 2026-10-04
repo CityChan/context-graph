@@ -295,7 +295,8 @@ def test_evaluator_http_end_to_end_and_resume(tmp_path, monkeypatch, bcp):
                            memory_model="model", memory_revision="fixed", embedding_model=None,
                            embedding_endpoint=None, embedding_revision=None, context_length=20000, seed=42,
                            endpoint="http://actor", memory_endpoint="http://memory", retry_errors=False,
-                           action_decoding="xml_regex" if bcp else "unconstrained")
+                           action_decoding="xml_regex" if bcp else "unconstrained",
+                           bcp_progress_limit=2 if bcp else 0)
     assert asyncio.run(evaluate(args)) == 0
     summary = json.loads((output / "summary.json").read_text())
     assert summary["accuracy" if bcp else "mean_answer_f1"] == 1 and summary["graded"] == 1
@@ -306,9 +307,11 @@ def test_evaluator_http_end_to_end_and_resume(tmp_path, monkeypatch, bcp):
     assert asyncio.run(evaluate(args)) == 0  # No actor/helper calls on resume.
     assert calls.count("/v1/completions") == (5 if bcp else 3)
     args.action_decoding = "unconstrained" if bcp else "xml_regex"
+    args.bcp_progress_limit = 0
     with pytest.raises(ValueError, match="protocol mismatch"):
         asyncio.run(evaluate(args))
     args.action_decoding = "xml_regex" if bcp else "unconstrained"
+    args.bcp_progress_limit = 2 if bcp else 0
     args.seed = 43
     with pytest.raises(ValueError, match="protocol mismatch"):
         asyncio.run(evaluate(args))

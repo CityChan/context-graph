@@ -100,6 +100,7 @@ def test_actual_smoke_overrides_compose_with_training_profile(benchmark):
         extra = extra.replace("$JUDGE_MODEL", "gpt-5-nano")
     extra = extra.replace("$GRAM_RUN_DIR", "/smoke").replace("$GRAM_TRACE_DIR", "/smoke/traces").replace("$SLURM_JOB_ID", "123")
     extra = extra.replace("${GRAM_ACTION_DECODING:-xml_regex}", "xml_regex")
+    extra = extra.replace("${GRAM_BCP_PROGRESS_LIMIT:-2}", "2")
     with initialize_config_dir(config_dir=str(ROOT / "verl/trainer/config"), version_base=None):
         config = compose(config_name="ppo_trainer", overrides=base_args + shlex.split(extra))
     from scripts.train_gram import validate_training_config
@@ -112,6 +113,7 @@ def test_actual_smoke_overrides_compose_with_training_profile(benchmark):
     if benchmark == "bcp":
         assert config.actor_rollout_ref.rollout.plugin.gram.benchmark == "bcp"
         assert config.actor_rollout_ref.rollout.plugin.gram.episode.action_decoding == "xml_regex"
+        assert config.actor_rollout_ref.rollout.plugin.gram.episode.bcp_progress_limit == 2
     assert config.actor_rollout_ref.rollout.max_model_len == 12288
     assert config.trainer.total_epochs == config.trainer.test_freq == 2
 

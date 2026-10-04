@@ -27,10 +27,15 @@ class GramConfig:
     process_weight: float = 0.1
     entity_threshold: float = 0.9
     action_decoding: str = "unconstrained"
+    bcp_progress_limit: int = 0
 
     def __post_init__(self):
         if self.action_decoding not in {"unconstrained", "xml_regex"}:
             raise ValueError("Unknown GRAM action_decoding")
+        if type(self.bcp_progress_limit) is not int or self.bcp_progress_limit < 0:
+            raise ValueError("bcp_progress_limit must be a nonnegative integer")
+        if self.bcp_progress_limit and self.action_decoding != "xml_regex":
+            raise ValueError("BC-P progress guard requires xml_regex decoding")
         if min(self.max_steps, self.max_episode_tokens, self.max_step_tokens,
                self.timeout_seconds, self.search_hops, self.search_top_k) <= 0:
             raise ValueError("GRAM budgets must be positive")
@@ -148,15 +153,20 @@ async def run_episode(task, policy, memory, config: GramConfig, audit=None, *, r
     """
     if set(task) != {"task_id", "question", "documents"}:
         raise ValueError("Public GRAM tasks contain only task_id/question/documents")
+    if config.bcp_progress_limit and retrieval is None:
+        raise ValueError("BC-P progress guard requires external retrieval")
     stream = DocumentStream(task["question"], list(task["documents"]), allow_empty=retrieval is not None)
     graph = GraphMemory()
     audit = audit or (lambda event: None)
     segments, valid, used, answer, search, feedback = [], [], 0, "", [], ""
     reason = "max_steps"
     external_searches = 0
+    memory_searches = guard_blocks = 0
+    last_memory_search = None
     started = time.monotonic()
     async def execute():
         nonlocal used, answer, search, feedback, reason, external_searches
+        nonlocal memory_searches, guard_blocks, last_memory_search
         for step in range(config.max_steps):
             budget = min(config.max_step_tokens, config.max_episode_tokens-used)
             if budget < 10:
@@ -173,8 +183,19 @@ async def run_episode(task, policy, memory, config: GramConfig, audit=None, *, r
             if config.action_decoding == "xml_regex":
                 state["action_decoding"] = config.action_decoding
                 state["allowed_actions"] = allowed_actions(has_document=stream.current is not None,
-                    external=retrieval is not None, external_searches=external_searches)
+                    external=retrieval is not None, external_searches=external_searches,
+                    progress_limit=config.bcp_progress_limit, has_memory=bool(graph.edges),
+                    memory_searches=memory_searches)
                 system += "\nChoose exactly one of allowed_actions. Put any reasoning inside <think>...</think>; never before the tags.\n"
+            if config.bcp_progress_limit:
+                state["memory_obs"].update(last_memory_search=last_memory_search,
+                    memory_searches_since_progress=memory_searches,
+                    memory_search_limit=config.bcp_progress_limit)
+                system += ("\nInternal memory_search only reads stored facts and cannot discover new evidence. "
+                           "It is unavailable for an empty graph or after the memory search limit. "
+                           "Consume a pending document before answering or retrieving more. "
+                           "When stored facts do not suffice and no document is pending, use external search/open_page. "
+                           "Keep actions concise; insert only supported facts, not speculation.\n")
             messages = [{"role": "system", "content": system},
                         {"role": "user", "content": json.dumps(state, ensure_ascii=False)}]
             text, segment = await policy(messages, budget)
@@ -193,6 +214,12 @@ async def run_episode(task, policy, memory, config: GramConfig, audit=None, *, r
                 continue
             valid.append(1)
             feedback = ""
+            if config.bcp_progress_limit and operation not in state["allowed_actions"]:
+                guard_blocks += 1
+                feedback = "Action unavailable under BC-P progress guard; choose from allowed_actions."
+                audit({**event, "operation": operation, "valid_format": True,
+                       "executed": False, "error": feedback, "allowed_actions": state["allowed_actions"]})
+                continue
             if operation == "answer" and retrieval is not None and not external_searches:
                 feedback = "Perform an external corpus search before answering."
             elif operation == "answer":
@@ -205,15 +232,23 @@ async def run_episode(task, policy, memory, config: GramConfig, audit=None, *, r
                     document = {"id": f"retrieval-{len(stream.documents)}", "title": f"{operation}: {content}", "text": observation}
                     stream.documents.append(document)
                     external_searches += int(operation == "search")
+                    memory_searches = 0
+                    last_memory_search = None
                     event["retrieved_document"] = document
             elif operation == "memory_search":
                 search = graph.search(content, config.search_hops, config.search_top_k)
+                memory_searches += 1
+                last_memory_search = {"query": content, "path_count": len(search)}
+                if config.bcp_progress_limit:
+                    feedback = f"Internal memory returned {len(search)} paths; it does not fetch new evidence."
             elif stream.current is None:
                 feedback = "No document remains. Search memory or answer."
             else:
                 edit = await memory.edit(operation, content, stream.current, stream.question, graph,
                                          config.entity_threshold)
                 stream.advance()
+                memory_searches = 0
+                last_memory_search = None
                 search = []  # Invalidate stale paths after every graph mutation.
                 event["edit"] = edit
             audit({**event, "operation": operation, "valid_format": True, "graph": graph.snapshot()})
@@ -229,6 +264,7 @@ async def run_episode(task, policy, memory, config: GramConfig, audit=None, *, r
             "format_reward": sum(valid)/len(valid) if valid else 0.0,
             "steps": len(segments), "policy_tokens": used, "documents_consumed": stream.cursor,
             "external_searches": external_searches,
+            "progress_guard_blocks": guard_blocks,
             "graph": graph.snapshot(), "elapsed_seconds": time.monotonic()-started,
             "config": asdict(config), "segments": segments}
 

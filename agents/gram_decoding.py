@@ -8,8 +8,9 @@ TEXT = r"(?:[^<>&\x00-\x08\x0B\x0C\x0E-\x1F]|&(?:amp|lt|gt|quot|apos);)"
 SPACE = r"[ \t\r\n]*"
 
 
-def allowed_actions(*, has_document, external, external_searches):
-    """Mirror executor guards; do not force evidence selection or final answers."""
+def allowed_actions(*, has_document, external, external_searches,
+                    progress_limit=0, has_memory=True, memory_searches=0):
+    """Base executor guards, plus the explicitly enabled BC-P progress guard."""
     actions = ["memory_search"]
     if has_document:
         actions += ["memory_insert", "memory_update"]
@@ -17,6 +18,13 @@ def allowed_actions(*, has_document, external, external_searches):
         actions.append("answer")
     if external and not has_document:
         actions += ["search", "open_page"]
+    if external and progress_limit:
+        if not has_memory or memory_searches >= progress_limit:
+            actions.remove("memory_search")
+        if has_document and "answer" in actions:
+            actions.remove("answer")
+        if not external_searches and "open_page" in actions:
+            actions.remove("open_page")
     return actions
 
 
