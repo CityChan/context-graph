@@ -1,0 +1,2 @@
+- name: gram_agent
+  _target_: agents.gram_loop.GramAgentLoop
