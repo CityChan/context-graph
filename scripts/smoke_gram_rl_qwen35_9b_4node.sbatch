@@ -70,6 +70,10 @@ case "${1:-}" in
         gpu_idle
         python -m scripts.gram_rl_smoke sampler-check --run "$GRAM_RUN_DIR"
         exit 0 ;;
+    _memory-check)
+        training_env
+        python -m scripts.gram_rl_smoke memory-check --run "$GRAM_RUN_DIR"
+        exit 0 ;;
     _prepare)
         training_env
         python -u scripts/preflight_bcp_qwen35_rl.py --model-path "$MODEL_PATH" --output "$GRAM_RUN_DIR/preflight.json"
@@ -203,7 +207,7 @@ if [[ "$GRAM_BENCHMARK" == bcp ]]; then
         echo 'Waiting for BC-P retriever'; sleep 10
     done
 fi
-export GRAM_MEMORY_ENDPOINT="http://${nodes[$helper_index]}:18000"
+export GRAM_MEMORY_ENDPOINT="http://${nodes[$helper_index]}:18000" GRAM_MEMORY_MODEL=Qwen/Qwen3.5-9B
 srun --overlap -N 1 -n 1 -w "${nodes[$helper_index]}" env -u LD_PRELOAD SWE_MODEL_MAX_LEN=32768 MODEL_PORT=18000 WORKERS=1 SEED=42 bash scripts/serve_swe_qwen35_9b_vista.sbatch > "$GRAM_RUN_DIR/memory-server.log" 2>&1 &
 helper_pid=$!; pids+=("$helper_pid")
 deadline=$((SECONDS + 1200))
@@ -212,6 +216,8 @@ until curl --connect-timeout 3 --max-time 5 -fsS "$GRAM_MEMORY_ENDPOINT/health" 
     (( SECONDS < deadline )) || { echo 'Memory server startup timeout'; exit 2; }
     echo 'Waiting for frozen memory helper'; sleep 10
 done
+srun --overlap -N 1 -n 1 -w "${nodes[$head_index]}" timeout 420 bash "$SELF" _memory-check > "$GRAM_RUN_DIR/memory-schema-preflight.log" 2>&1 || { cat "$GRAM_RUN_DIR/memory-schema-preflight.log"; exit 2; }
+cat "$GRAM_RUN_DIR/memory-schema-preflight.log"
 export GRAM_RAY_PORT=$((16379 + SLURM_JOB_ID % 10000))
 head_ip=$(getent ahostsv4 "${nodes[$head_index]}" | awk 'NR==1 {print $1; exit}')
 [[ -n "$head_ip" ]] || { echo 'Cannot resolve trainer head'; exit 2; }

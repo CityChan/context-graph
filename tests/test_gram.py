@@ -130,7 +130,7 @@ def test_helper_json_failure_and_transport_cleanup():
         backend.client = httpx.AsyncClient(transport=httpx.MockTransport(reply))
         try:
             with pytest.raises(MemoryBackendError):
-                await backend.json_call("test", "extract", {"document": "x"})
+                await backend.json_call("entities", "extract", {"document": "x"})
             assert calls[0]["chat_template_kwargs"] == {"enable_thinking": False}
         finally:
             await backend.aclose()

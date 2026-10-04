@@ -7,7 +7,7 @@ import json
 import os
 import time
 
-from .gram_memory import DocumentStream, GraphMemory, cosine, entity_key, parse_action, token_f1, triples
+from .gram_memory import DocumentStream, GraphMemory, cosine, entity_key, parse_action, token_f1, triples, memory_output_schema, validate_memory_output
 from .gram_prompts import ACTOR, BCP_ACTOR, ENTITIES, RELATIONS, MAINTENANCE
 from .gram_decoding import allowed_actions, action_regex
 
@@ -65,25 +65,33 @@ class MemoryBackend:
         await self.client.aclose()
 
     async def json_call(self, operation, system, payload):
+        structured_outputs = {"json": memory_output_schema(operation)}
         messages = [{"role": "system", "content": system},
                     {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}]
         started = time.monotonic()
         response = await self.client.post(self.endpoint + "/v1/chat/completions", json={
             "model": self.model, "messages": messages, "temperature": 0,
-            "max_tokens": self.max_tokens, "chat_template_kwargs": {"enable_thinking": False}})
+            "max_tokens": self.max_tokens, "chat_template_kwargs": {"enable_thinking": False},
+            "structured_outputs": structured_outputs})
         response.raise_for_status()
         data = response.json()
         choice = data["choices"][0]
         text = choice["message"]["content"]
         self.audit({"kind": "memory_call", "operation": operation, "model": self.model,
                     "messages": messages, "response": text, "usage": data.get("usage"),
+                    "structured_outputs": structured_outputs,
                     "finish_reason": choice.get("finish_reason"), "seconds": time.monotonic()-started})
         if choice.get("finish_reason") == "length":
-            raise MemoryBackendError("Memory helper exhausted its completion budget")
+            raise MemoryBackendError(f"Memory helper {operation} exhausted its completion budget")
         try:
-            return json.loads(text)
+            value = json.loads(text)
         except (ValueError, TypeError) as exc:
-            raise MemoryBackendError("Memory helper did not return strict JSON") from exc
+            raise MemoryBackendError(f"Memory helper {operation} did not return strict JSON") from exc
+        try:
+            validate_memory_output(operation, value)
+        except ValueError as exc:
+            raise MemoryBackendError(f"Memory helper {operation}: {exc}") from exc
+        return value
 
     async def aliases(self, names, existing, threshold):
         canonical = {entity_key(name): name for name in existing}
@@ -142,7 +150,7 @@ class MemoryBackend:
             graph.apply(add, remove, document["id"], aliases)
             return {"add": add, "remove": remove, "aliases": aliases}
         except (ValueError, TypeError, KeyError) as exc:
-            raise MemoryBackendError(str(exc)) from exc
+            raise MemoryBackendError(f"Memory helper {operation}: {exc}") from exc
 
 
 async def run_episode(task, policy, memory, config: GramConfig, audit=None, *, retrieval=None):

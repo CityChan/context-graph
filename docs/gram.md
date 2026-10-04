@@ -416,6 +416,33 @@ wrong answers, and token-truncated XML remain possible. The guard is a protocol
 change, not a paper-faithful reproduction or evidence of improved BC-P accuracy.
 Rerun the same two seeded rows in a fresh output directory before scaling up.
 
+### Frozen helper JSON schema
+
+An RL run passed GPU sampling preflight and reached its first rollout, then
+failed because the helper returned a relation row that was not three strings.
+The helper now requests vLLM `structured_outputs.json` for all three operations:
+entities are an array of nonempty strings, relations are an array of exactly
+three-string arrays, and maintenance is an object with only required `add` and
+`remove` arrays of triples. Empty arrays remain valid when there is no evidence.
+The schema does not add facts or choose entities. Local shape validation,
+entity membership checks, removal validation and atomic graph updates remain
+authoritative. No malformed rows are silently dropped or repaired. Truncation,
+invalid content or an unsupported schema server still fails visibly.
+
+Every helper audit records its requested schema, original response, finish reason
+and usage. Evaluation manifests record `gram-memory-json-schema-v1`; RL traces
+record the schema per call. This changes helper decoding, so use a new run and
+retain the prior artifacts. Both evaluation and RL use the shared helper.
+
+RL launchers run a three-request synthetic helper format probe after helper
+startup but before loading the training models. It emits `GRAM_MEMORY_SCHEMA_OK`
+only after all operations return valid shapes. Responses are saved separately
+in `memory-schema-preflight.jsonl` and are excluded from training trace counts;
+the synthetic probe is not benchmark evidence. Failures abort launch and retain
+the response audit. Local tests cover schemas, request forwarding, unchanged
+graphs on failures and probe failure propagation. Live grammar enforcement and
+successful RL updates remain Vista checks.
+
 ### Existing verification
 
 `python -m pytest tests/test_gram.py` exercises document advancement, invalid

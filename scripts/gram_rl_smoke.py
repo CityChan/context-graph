@@ -9,6 +9,30 @@ import re
 from scripts.prepare_gram_data import prepare, sha256, write_json
 
 
+async def check_memory_schema(root, endpoint, model):
+    """Probe all three helper grammars before loading the RL model; no benchmark data."""
+    from agents.gram_agent import MemoryBackend
+    from agents.gram_prompts import ENTITIES, RELATIONS, MAINTENANCE
+    from scripts.eval_gram import jsonl_writer
+    root = Path(root)
+    helper = MemoryBackend(endpoint, model, max_tokens=256,
+                           audit=jsonl_writer(root / "memory-schema-preflight.jsonl"))
+    payload = {"question": "Where was Alice born?", "requested_facts": "Alice was born in Paris.",
+               "document": {"id": "schema-probe", "title": "Synthetic probe", "text": "Alice was born in Paris."},
+               "existing_entities": [], "entities": ["Alice", "Paris"], "graph": []}
+    checked = []
+    try:
+        for operation, prompt in (("entities", ENTITIES), ("relations", RELATIONS), ("maintenance", MAINTENANCE)):
+            await helper.json_call(operation, prompt, payload)
+            checked.append(operation)
+    finally:
+        await helper.aclose()
+    report = {"output_protocol": "gram-memory-json-schema-v1", "checked": checked,
+              "model": model, "purpose": "synthetic format probe only"}
+    write_json(root / "memory-schema-preflight.json", report)
+    print("GRAM_MEMORY_SCHEMA_OK " + json.dumps(report), flush=True)
+
+
 def exercise_native_sampler(sampler, torch, device="cuda"):
     """Exercise the selected dispatch, not a directly called fallback method."""
     backend = getattr(sampler.forward, "__name__", "")
@@ -122,7 +146,7 @@ def audit(root, world_size=3, steps=2, benchmark="document-stream"):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=("prepare", "audit", "ray-ready", "sampler-check"))
+    parser.add_argument("mode", choices=("prepare", "audit", "ray-ready", "sampler-check", "memory-check"))
     parser.add_argument("--run", type=Path, required=True)
     parser.add_argument("--world-size", type=int, default=3)
     parser.add_argument("--benchmark", choices=("document-stream", "bcp"), default="document-stream")
@@ -135,6 +159,9 @@ def main():
             prepare_smoke(args.run / "data", Path("examples/gram/hotpotqa_dev_first2.json"))
     elif args.mode == "sampler-check":
         check_native_sampler(args.run)
+    elif args.mode == "memory-check":
+        import asyncio
+        asyncio.run(check_memory_schema(args.run, os.environ["GRAM_MEMORY_ENDPOINT"], os.environ["GRAM_MEMORY_MODEL"]))
     elif args.mode == "audit":
         print(json.dumps(audit(args.run, world_size=args.world_size, benchmark=args.benchmark)))
     else:

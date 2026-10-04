@@ -65,6 +65,37 @@ def triples(value) -> list[tuple[str, str, str]]:
     return out
 
 
+def memory_output_schema(operation):
+    """Constrain helper structure without choosing or inventing any facts."""
+    string = {"type": "string", "minLength": 1}
+    triple = {"type": "array", "items": string, "minItems": 3, "maxItems": 3}
+    rows = {"type": "array", "items": triple}
+    if operation == "entities":
+        return {"type": "array", "items": string}
+    if operation == "relations":
+        return rows
+    if operation == "maintenance":
+        return {"type": "object", "properties": {"add": rows, "remove": rows},
+                "required": ["add", "remove"], "additionalProperties": False}
+    raise ValueError(f"Unknown memory operation: {operation}")
+
+
+def validate_memory_output(operation, value):
+    """Keep local checks authoritative even if a server ignores its schema."""
+    if operation == "entities":
+        if not isinstance(value, list) or any(not isinstance(e, str) or not e.strip() for e in value):
+            raise ValueError("Entity extraction must return a list of nonempty strings")
+    elif operation == "relations":
+        triples(value)
+    elif operation == "maintenance":
+        if not isinstance(value, dict) or set(value) != {"add", "remove"}:
+            raise ValueError("Maintenance requires add and remove lists")
+        triples(value["add"])
+        triples(value["remove"])
+    else:
+        raise ValueError(f"Unknown memory operation: {operation}")
+
+
 def cosine(a, b):
     if len(a) != len(b) or not a or not all(math.isfinite(x) for x in [*a, *b]):
         raise ValueError("Invalid entity embedding")

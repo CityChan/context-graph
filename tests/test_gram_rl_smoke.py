@@ -123,7 +123,8 @@ def test_actual_smoke_overrides_compose_with_training_profile(benchmark):
 @pytest.mark.parametrize("trainer_fails", [False, True])
 @pytest.mark.parametrize("benchmark", ["document-stream", "bcp"])
 @pytest.mark.parametrize("sampler_fails", [False, True])
-def test_launcher_preserves_busy_nodes_and_propagates_training_failure(tmp_path, busy, trainer_fails, benchmark, sampler_fails):
+@pytest.mark.parametrize("memory_fails", [False, True])
+def test_launcher_preserves_busy_nodes_and_propagates_training_failure(tmp_path, busy, trainer_fails, benchmark, sampler_fails, memory_fails):
     mocks = tmp_path / "mocks.sh"
     mocks.write_text('''scontrol() { printf 'node0\\nnode1\\nnode2\\nnode3\\n'; }
 git() { [[ "$1" != rev-parse ]] || echo test-commit; }
@@ -136,6 +137,7 @@ srun() {
         _idle) [[ "$TEST_BUSY" == 0 ]]; return ;;
         _prepare) return 0 ;;
         _sampler-check) return "$TEST_SAMPLER_RC" ;;
+        _memory-check) return "$TEST_MEMORY_RC" ;;
         _ready) return 0 ;;
         _train) return "$TEST_TRAIN_RC" ;;
     esac
@@ -147,7 +149,8 @@ srun() {
            "SCRATCH": tmp_path.as_posix(), "SLURM_JOB_ID": "123", "SLURM_JOB_NODELIST": "mock",
            "TEST_CALLS": calls.as_posix(), "TEST_BUSY": str(int(busy)),
            "TEST_TRAIN_RC": "7" if trainer_fails else "0",
-           "TEST_SAMPLER_RC": "8" if sampler_fails else "0"}
+           "TEST_SAMPLER_RC": "8" if sampler_fails else "0",
+           "TEST_MEMORY_RC": "9" if memory_fails else "0"}
     if benchmark == "bcp":
         for name in ("bc_train.parquet", "bc_test.parquet"):
             (tmp_path / name).write_bytes(b"fixture")
@@ -167,8 +170,13 @@ srun() {
         assert proc.returncode == 2
         assert "_sampler-check" in invocations
         assert "_search" not in invocations and "_ray-head" not in invocations and "_train" not in invocations
+    elif memory_fails:
+        assert proc.returncode == 2
+        assert "_memory-check" in invocations
+        assert "_ray-head" not in invocations and "_train" not in invocations
     else:
         assert invocations.count("_sampler-check") == (2 if benchmark == "bcp" else 3)
+        assert invocations.index("_memory-check") < invocations.index("_ray-head")
         assert proc.returncode == (7 if trainer_fails else 0), proc.stdout + proc.stderr
         assert "_ray-head" in invocations and invocations.count("_ray-worker") == (1 if benchmark == "bcp" else 2)
         if benchmark == "bcp":
