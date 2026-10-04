@@ -218,7 +218,52 @@ placeholders from the evaluation client; **do not train from those files**.
 
 ## Train inside an existing allocation / Ray cluster
 
-### Four-node Qwen3.5-9B RL mechanics smoke
+### Four-node BC-P RL smoke
+
+For **GRAM reinforcement learning on BrowseComp-Plus**, use
+`scripts/smoke_gram_bcp_rl_qwen35_9b_4node_idev.sh` inside an idle four-node
+idev allocation. This entry trains on BC-P, then validates on BC-P; it does not
+use the bundled HotpotQA questions. Start from an isolated checkout:
+
+```bash
+cd /work/09281/chc_1996/vista/context-graph && git fetch origin && GRAM_BCP_CODE=$(mktemp -d "$SCRATCH/gram-bcp-rl-code-XXXXXX") && git worktree add --detach "$GRAM_BCP_CODE" origin/master && PROJECT_ROOT="$GRAM_BCP_CODE" bash "$GRAM_BCP_CODE/scripts/smoke_gram_bcp_rl_qwen35_9b_4node_idev.sh"
+```
+
+Topology: node 0 runs the BC-P retriever in `cxtgraph`, node 1 serves a frozen
+Qwen3.5-9B memory helper, and nodes 2--3 train the actor using the existing
+Qwen3.5 training environment (`deepseek_v4`). No environment is installed or
+replaced. It discovers `data/bc_train.parquet` and `data/bc_test.parquet` from
+the primary checkout, including when launched from a linked worktree. Override
+`GRAM_BCP_TRAIN_SOURCE` and `GRAM_BCP_VAL_SOURCE` only with the intended existing
+train and test files. It never substitutes test data for training. The full source
+question sets are checked for overlap before deterministic seed-42 sampling;
+source hashes and sampled indices are saved.
+
+The smoke selects four train questions and two test questions, performs two
+full-parameter updates with batch 2 x rollout 2, uses a 12K working context,
+and validates/saves at step 2. Each episode has at most 16 actions and 8192
+actor output tokens. These reduced budgets test the RL path, not BC-P quality.
+The actor uses external corpus search/open, graph-memory actions and answer
+submission through the same BC-P GRAM executor as zero-shot evaluation.
+Training reward is **binary BC-P task reward + 0.1 x mean format reward**;
+actor KL remains `low_var_kl`, coefficient `0.001`. This is a BC-P adaptation
+of GRAM's document-QA objective, not a reproduced paper training setting.
+
+The BC-P judge reuses existing `.openai_env` credentials. Reference answers
+are private grading inputs, absent from actor/helper tasks. Retrieval, helper
+and judge errors abort the run rather than silently becoming incorrect answers.
+`task_reward` reports answer correctness separately from shaped training reward.
+
+Logs live under `$SCRATCH/context-graph-gram/runs/gram-rl-smoke-JOBID-XXXXXX/`;
+watch `suite.log`, `search.log`, `memory-server.log`, `ray-{2,3}.log`, and
+`trainer.log`. The audit requires finite optimizer/KL metrics at both steps,
+a nonzero gradient, both ranks' model/optimizer/extra-state shards, helper
+activity, and BC-P search/grading traces in both training and validation.
+Only then is `GRAM_RL_SMOKE_COMPLETE` written. Local tests cover configuration,
+data isolation, reward routing, failure propagation and launch topology; a live
+Vista run is still needed to verify GPU memory fit and successful updates.
+
+### Four-node document-stream RL mechanics smoke
 
 `scripts/smoke_gram_rl_qwen35_9b_4node.sbatch` provisions a separate frozen
 memory helper on node 0 and a private three-GPU Ray training cluster on nodes

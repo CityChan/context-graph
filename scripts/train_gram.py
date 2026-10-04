@@ -1,4 +1,4 @@
-"""VERL GRPO integration for sequential-document GRAM; memory helpers stay frozen."""
+"""VERL GRPO for document-stream and BC-P GRAM; memory helpers stay frozen."""
 import json
 from uuid import uuid4
 
@@ -10,7 +10,7 @@ def validate_training_config(config):
     if algorithm.adv_estimator != "foldgrpo" or algorithm.foldgrpo_process_reward_mode != "relative_extrema":
         raise ValueError("GRAM requires episode-deduplicated GRPO (foldgrpo / relative_extrema, Q=0)")
     if algorithm.fix_bad_positive_adv or algorithm.use_kl_in_reward:
-        raise ValueError("GRAM uses terminal F1+format reward and actor KL, without reward-side KL/masking")
+        raise ValueError("GRAM uses terminal task+format reward and actor KL, without reward-side KL/masking")
     gram = rollout.plugin.gram
     if not gram.memory_endpoint or not gram.memory_model or not gram.memory_revision:
         raise ValueError("Configure an explicit frozen memory model and revision")
@@ -31,6 +31,9 @@ async def process_item(fields, context, memory=None, audit=None):
     validate_training_config(context.config)
     rollout = context.config.actor_rollout_ref.rollout
     settings = rollout.plugin.gram
+    benchmark = settings.get("benchmark", "document-stream")
+    if benchmark not in {"document-stream", "bcp"}:
+        raise ValueError(f"Unsupported GRAM training benchmark: {benchmark}")
     task = json.loads(scalar(fields["extra_info"])["gram_task_json"])
     # Ground truth stays outside the executor and every helper call.
     answers = json.loads(scalar(fields["reward_model"])["ground_truth"])
@@ -42,13 +45,34 @@ async def process_item(fields, context, memory=None, audit=None):
         memory = MemoryBackend(settings.memory_endpoint, settings.memory_model, audit=audit,
                                embedding_endpoint=settings.get("embedding_endpoint"),
                                embedding_model=settings.get("embedding_model"))
+    retrieval = None
     try:
+        if benchmark == "bcp":
+            from agents.gram_bcp import BcpRetrieval, score_bcp
+            if len(answers) != 1:
+                raise ValueError("BC-P requires one private reference answer")
+            retrieval = BcpRetrieval()
         result = await run_episode(task, make_policy(context.llm_client, context.tokenizer, rollout),
-                                   memory, config, audit)
+                                   memory, config, audit, retrieval=retrieval)
+        if benchmark == "bcp":
+            graded = await score_bcp(task["question"], answers[0], result["prediction"])
+            outcome = graded["score"]
+            if outcome not in (0, 1):
+                raise ValueError("BC-P task reward must be binary")
+            scores = {"task_reward": outcome, "format_reward": result["format_reward"],
+                      "training_reward": outcome + config.process_weight * result["format_reward"]}
+            if audit:
+                audit({"kind": "bcp_reward", "task_id": task["task_id"],
+                       "validation": not getattr(context, "is_train", True),
+                       "external_searches": result["external_searches"], **scores,
+                       "judge_audit": graded["judge_audit"]})
+        else:
+            scores = score_episode(result, answers, config.process_weight)
+            scores["task_reward"] = scores["answer_f1"]
     finally:
-        if owned:
-            await memory.aclose()
-    scores = score_episode(result, answers, config.process_weight)
+        import asyncio
+        await asyncio.gather(*([memory.aclose()] if owned else []),
+                             *([retrieval.aclose()] if retrieval is not None else []))
     outputs = []
     for segment in result.pop("segments"):
         outputs.append(AgentLoopOutput(
@@ -60,7 +84,7 @@ async def process_item(fields, context, memory=None, audit=None):
                 "is_finish": result["termination_reason"] == "answer",
                 "termination_reason": result["termination_reason"], "messages": segment["messages"],
                 "process_reward_mask": [0.0]*len(segment["response_ids"]),
-                "env_stats": {**scores, "task_reward": scores["answer_f1"], "main_turn": result["steps"],
+                "env_stats": {**scores, "main_turn": result["steps"],
                               "gram_documents_consumed": result["documents_consumed"],
                               "gram_policy_tokens": result["policy_tokens"]}}))
     return outputs
