@@ -162,3 +162,89 @@ def test_empty_graph_search_can_be_disabled_without_changing_legacy(enabled):
         GramConfig(action_decoding="xml_regex", bcp_progress_limit=2 if enabled else 0), retrieval=retrieval))
     assert result["graph"] == []
     assert ("memory_search" in states[2]["allowed_actions"]) == (not enabled)
+
+
+def test_empty_edit_feedback_retains_docids_and_blocks_repeat_even_after_progress():
+    responses = ["<search>Book author</search>", "<memory_insert>unsupported clue</memory_insert>",
+                 "<search> book   AUTHOR </search>", "<open_page>42</open_page>",
+                 "<memory_insert>Book by Alice</memory_insert>", "<search>Book author</search>",
+                 "<answer>Alice</answer>"]
+    states, events, calls = [], [], []
+    async def policy(messages, budget):
+        states.append(json.loads(messages[-1]["content"]))
+        return responses[len(states)-1], {"response_ids": [1, 2], "response_mask": [1, 1]}
+    async def retrieval(operation, content):
+        calls.append((operation, content))
+        return "docid: 42\nBook by Alice"
+    class Helper:
+        async def edit(self, operation, content, document, question, graph, threshold):
+            if document["id"] == "retrieval-0":
+                return {"add": [], "remove": [], "extraction_status": "no_entities"}
+            graph.apply([["Book", "author", "Alice"]], [], document["id"])
+            return {"add": [["Book", "author", "Alice"]], "remove": []}
+    result = asyncio.run(run_episode({"task_id": "x", "question": "Who?", "documents": []},
+        policy, Helper(), GramConfig(action_decoding="xml_regex", bcp_progress_limit=2),
+        events.append, retrieval=retrieval))
+    assert calls == [("search", "Book author"), ("open_page", "42")]
+    assert result["prediction"] == "Alice" and result["external_searches"] == 1
+    assert result["duplicate_retrievals_blocked"] == 2
+    assert result["no_change_memory_edits"] == 1
+    assert result["format_reward"] == 1 and result["policy_tokens"] == 14
+    assert len(result["segments"]) == 7  # Rejected actions still train on their original tokens.
+    empty_state = states[2]
+    assert empty_state["retrieval_history"][0]["returned_docids"] == ["42"]
+    assert empty_state["memory_obs"]["last_memory_edit"]["extraction_status"] == "no_entities"
+    assert "No new facts were saved" in empty_state["memory_obs"]["feedback"]
+    assert states[3]["document_obs"] is None
+    assert states[3]["retrieval_history"] == empty_state["retrieval_history"]
+    assert states[5]["memory_obs"]["last_memory_edit"]["new_edges"] == 1
+    assert [e["response"] for e in events] == responses
+    assert [e["step"] for e in events if e.get("executed") is False] == [2, 5]
+
+
+@pytest.mark.parametrize("guard", [0, 2])
+def test_retrieval_ledger_is_bounded_but_repeat_detection_keeps_old_requests(guard):
+    responses = [r for i in range(10) for r in
+                 (f"<search>query {i}</search>", "<memory_insert>None</memory_insert>")]
+    responses += ["<search>query 0</search>"]
+    states, calls = [], []
+    async def policy(messages, budget):
+        states.append(json.loads(messages[-1]["content"]))
+        return responses[len(states)-1], {"response_ids": [1], "response_mask": [1]}
+    async def retrieval(operation, content):
+        calls.append(content)
+        return "docid: 42\nNo useful facts"
+    class Helper:
+        async def edit(self, *args):
+            return {}
+    result = asyncio.run(run_episode({"task_id": "x", "question": "Who?", "documents": []},
+        policy, Helper(), GramConfig(max_steps=len(responses), action_decoding="xml_regex", bcp_progress_limit=guard),
+        retrieval=retrieval))
+    assert len(calls) == (10 if guard else 11)
+    assert result["termination_reason"] == "max_steps" and result["prediction"] == ""
+    if guard:
+        assert len(states[-1]["retrieval_history"]) == 8
+        assert states[-1]["retrieval_history"][0]["request"] == "query 2"
+    else:
+        assert "retrieval_history" not in states[-1]
+
+
+def test_duplicate_triples_are_not_new_memory_progress():
+    responses = iter(["<search>Book</search>", "<memory_insert>Book by Alice</memory_insert>",
+                      "<open_page>42</open_page>", "<memory_insert>Book by Alice</memory_insert>",
+                      "<answer>Alice</answer>"])
+    states = []
+    async def policy(messages, budget):
+        states.append(json.loads(messages[-1]["content"]))
+        return next(responses), {"response_ids": [1], "response_mask": [1]}
+    async def retrieval(*args):
+        return "docid: 42\nBook by Alice"
+    class Helper:
+        async def edit(self, operation, content, document, question, graph, threshold):
+            graph.apply([["Book", "author", "Alice"]], [], document["id"])
+            return {"add": [["Book", "author", "Alice"]]}
+    result = asyncio.run(run_episode({"task_id": "x", "question": "Who?", "documents": []},
+        policy, Helper(), GramConfig(action_decoding="xml_regex", bcp_progress_limit=2), retrieval=retrieval))
+    assert result["no_change_memory_edits"] == 1
+    assert states[-1]["memory_obs"]["last_memory_edit"]["new_edges"] == 0
+    assert result["graph"][0]["sources"] == ["retrieval-0", "retrieval-1"]

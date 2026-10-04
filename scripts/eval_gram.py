@@ -27,6 +27,8 @@ def summarize(results, selected):
                 "answered": sum(r.get("termination_reason") == "answer" for r in graded),
                 "blank_predictions": sum(not r.get("prediction", "").strip() for r in graded),
                 "documents_consumed": sum(r.get("documents_consumed", 0) for r in graded),
+                "no_change_memory_edits": sum(r.get("no_change_memory_edits", 0) for r in graded),
+                "duplicate_retrievals_blocked": sum(r.get("duplicate_retrievals_blocked", 0) for r in graded),
                 "mean_format_reward_graded": sum(r.get("format_reward", 0) for r in graded)/len(graded) if graded else None,
                 "accuracy_graded": sum(r["score"] for r in graded)/len(graded) if graded else None,
                 "accuracy": sum(r["score"] for r in graded)/selected if len(graded) == selected else None}

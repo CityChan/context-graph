@@ -416,6 +416,39 @@ wrong answers, and token-truncated XML remain possible. The guard is a protocol
 change, not a paper-faithful reproduction or evidence of improved BC-P accuracy.
 Rerun the same two seeded rows in a fresh output directory before scaling up.
 
+### BC-P external request history and empty edits
+
+The `d35ef4d` two-row run reached 100 steps on both rows with an empty final
+graph: 97 consumed observations, 97 empty edits, and 98 external searches.
+One row issued the same query 50 times. This demonstrates an external request
+loop; it does not establish why the helper extracted no facts. Inspect the
+saved `memory_call` requests and responses to distinguish empty entities from
+empty relations and unsupported actor proposals.
+
+With `bcp_progress_limit > 0`, the actor now sees the last eight external
+requests (request text capped at 512 characters, up to five returned docids)
+and the last edit's extraction status and actual graph edge changes. This is
+operational metadata, not an alternative answer-evidence store. Empty edits
+explicitly report that no new facts were saved. Re-inserting an existing triple
+does not count as a new edge even when it adds a new source attribution.
+
+The executor rejects a previously executed external request before calling the
+retriever. Search keys normalize case and whitespace; open-page keys retain
+case-sensitive docids. Detection covers the whole episode, including requests
+older than the bounded prompt history. Blocking does not advance the stream,
+reset internal-search counters, or remove the sampled action from training.
+The actor receives feedback to refine its query or open another source. This
+extends the opted-in adaptation guard and changes the protocol; set the limit
+to zero for previous unrestricted external retrieval. Eval source hashes prevent
+resuming older results with the changed executor.
+
+Episodes and summaries record `no_change_memory_edits` and
+`duplicate_retrievals_blocked`; action audits include `memory_effect` and helper
+edits distinguish `explicit_skip`, `no_entities`, and `no_relations`. Empty
+extraction remains valid and does not fabricate facts or trigger an automatic
+answer. This fix prevents duplicate tool execution and restores missing actor
+feedback; it does not guarantee useful extraction, completion, or accuracy.
+
 ### Frozen helper JSON schema
 
 An RL run passed GPU sampling preflight and reached its first rollout, then

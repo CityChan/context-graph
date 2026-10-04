@@ -9,6 +9,29 @@ from agents.gram_agent import MemoryBackend, MemoryBackendError
 from agents.gram_memory import GraphMemory, memory_output_schema
 
 
+@pytest.mark.parametrize("stage", ["explicit_skip", "no_entities", "no_relations"])
+def test_empty_helper_edits_report_stage_without_fabricating_facts(stage):
+    async def run():
+        backend = MemoryBackend("http://memory", "frozen")
+        await backend.client.aclose()
+        requests = []
+        def reply(request):
+            requests.append(json.loads(request.content))
+            value = ["Alice", "Paris"] if stage == "no_relations" and len(requests) == 1 else []
+            return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(value)}, "finish_reason": "stop"}]})
+        backend.client = httpx.AsyncClient(transport=httpx.MockTransport(reply))
+        graph = GraphMemory()
+        try:
+            result = await backend.edit("memory_insert", "None" if stage == "explicit_skip" else "unverified fact",
+                                        {"id": "doc", "text": "source", "title": "Source"}, "Question?", graph, .9)
+            assert result["extraction_status"] == stage
+            assert not result["add"] and not graph.edges
+            assert len(requests) == {"explicit_skip": 0, "no_entities": 1, "no_relations": 2}[stage]
+        finally:
+            await backend.aclose()
+    asyncio.run(run())
+
+
 @pytest.mark.parametrize("operation,valid,invalid", [
     ("entities", [[], ["Alice", "Paris"]], [[1], [""]]),
     ("relations", [[], [["Alice", "born_in", "Paris"]]],

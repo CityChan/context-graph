@@ -5,6 +5,7 @@ import asyncio
 from dataclasses import asdict, dataclass
 import json
 import os
+import re
 import time
 
 from .gram_memory import DocumentStream, GraphMemory, cosine, entity_key, parse_action, token_f1, triples, memory_output_schema, validate_memory_output
@@ -130,7 +131,7 @@ class MemoryBackend:
         try:
             if operation == "memory_insert":
                 if content.strip().casefold() in {"none", "no relevant facts"}:
-                    return {"add": [], "remove": [], "aliases": {}}
+                    return {"add": [], "remove": [], "aliases": {}, "extraction_status": "explicit_skip"}
                 entities = await self.json_call("entities", ENTITIES, {
                     **payload, "existing_entities": graph.entities})
                 if not isinstance(entities, list) or any(not isinstance(e, str) or not e.strip() for e in entities):
@@ -140,15 +141,17 @@ class MemoryBackend:
                 if any(s not in entities or o not in entities for s, _, o in add):
                     raise ValueError("Relation extraction used an unverified entity")
                 remove = []
+                extraction_status = "triples_extracted" if add else "no_relations" if entities else "no_entities"
             else:
                 result = await self.json_call("maintenance", MAINTENANCE, {**payload, "graph": graph.snapshot()})
                 if not isinstance(result, dict) or set(result) != {"add", "remove"}:
                     raise ValueError("Maintenance requires add and remove lists")
                 add, remove = triples(result["add"]), triples(result["remove"])
+                extraction_status = "maintenance_changes" if add or remove else "no_maintenance_changes"
             names = list(dict.fromkeys(x for e in add for x in (e[0], e[2])))
             aliases = await self.aliases(names, graph.entities, threshold)
             graph.apply(add, remove, document["id"], aliases)
-            return {"add": add, "remove": remove, "aliases": aliases}
+            return {"add": add, "remove": remove, "aliases": aliases, "extraction_status": extraction_status}
         except (ValueError, TypeError, KeyError) as exc:
             raise MemoryBackendError(f"Memory helper {operation}: {exc}") from exc
 
@@ -171,10 +174,14 @@ async def run_episode(task, policy, memory, config: GramConfig, audit=None, *, r
     external_searches = 0
     memory_searches = guard_blocks = 0
     last_memory_search = None
+    retrieval_history, seen_retrievals = [], set()
+    last_memory_edit = None
+    duplicate_retrievals = no_change_edits = 0
     started = time.monotonic()
     async def execute():
         nonlocal used, answer, search, feedback, reason, external_searches
         nonlocal memory_searches, guard_blocks, last_memory_search
+        nonlocal last_memory_edit, duplicate_retrievals, no_change_edits
         for step in range(config.max_steps):
             budget = min(config.max_step_tokens, config.max_episode_tokens-used)
             if budget < 10:
@@ -198,11 +205,18 @@ async def run_episode(task, policy, memory, config: GramConfig, audit=None, *, r
             if config.bcp_progress_limit:
                 state["memory_obs"].update(last_memory_search=last_memory_search,
                     memory_searches_since_progress=memory_searches,
-                    memory_search_limit=config.bcp_progress_limit)
+                    memory_search_limit=config.bcp_progress_limit,
+                    last_memory_edit=last_memory_edit)
+                # Operational history, not an alternative store of answer evidence.
+                state["retrieval_history"] = retrieval_history[-8:]
                 system += ("\nInternal memory_search only reads stored facts and cannot discover new evidence. "
                            "It is unavailable for an empty graph or after the memory search limit. "
                            "Consume a pending document before answering or retrieving more. "
                            "When stored facts do not suffice and no document is pending, use external search/open_page. "
+                           "retrieval_history records previous requests and returned docids, not answer evidence. "
+                           "Do not repeat a previous external request: refine the query or open a returned docid. "
+                           "Check last_memory_edit: consuming a document does not mean its facts were saved. "
+                           "If no edges were added, open the source page or change the query to obtain supported facts. "
                            "Keep actions concise; insert only supported facts, not speculation.\n")
             messages = [{"role": "system", "content": system},
                         {"role": "user", "content": json.dumps(state, ensure_ascii=False)}]
@@ -236,13 +250,28 @@ async def run_episode(task, policy, memory, config: GramConfig, audit=None, *, r
                 if stream.current is not None:
                     feedback = "Consume the current observation with Insert or Update first."
                 else:
+                    # Normalize only query case/whitespace; docids are case-sensitive.
+                    key = (operation, " ".join(content.split()).casefold() if operation == "search" else content.strip())
+                    if config.bcp_progress_limit and key in seen_retrievals:
+                        duplicate_retrievals += 1
+                        guard_blocks += 1
+                        feedback = "External request already executed; no new retrieval performed. Change the query or open a different returned docid."
+                        audit({**event, "operation": operation, "valid_format": True,
+                               "executed": False, "error": feedback})
+                        continue
                     observation = await retrieval(operation, content)
+                    seen_retrievals.add(key)
                     document = {"id": f"retrieval-{len(stream.documents)}", "title": f"{operation}: {content}", "text": observation}
                     stream.documents.append(document)
                     external_searches += int(operation == "search")
                     memory_searches = 0
                     last_memory_search = None
                     event["retrieved_document"] = document
+                    if config.bcp_progress_limit:
+                        retrieval_history.append({"step": step, "operation": operation,
+                            "request": content[:512], "document_id": document["id"],
+                            "returned_docids": list(dict.fromkeys(re.findall(r"(?m)^docid:\s*([^\s]+)", observation)))[:5]})
+                        del retrieval_history[:-8]
             elif operation == "memory_search":
                 search = graph.search(content, config.search_hops, config.search_top_k)
                 memory_searches += 1
@@ -252,8 +281,19 @@ async def run_episode(task, policy, memory, config: GramConfig, audit=None, *, r
             elif stream.current is None:
                 feedback = "No document remains. Search memory or answer."
             else:
+                before_edges = set(graph.edges)
                 edit = await memory.edit(operation, content, stream.current, stream.question, graph,
                                          config.entity_threshold)
+                added, removed = len(set(graph.edges) - before_edges), len(before_edges - set(graph.edges))
+                no_change_edits += int(not added and not removed)
+                last_memory_edit = {"document_id": stream.current["id"],
+                    "extraction_status": edit.get("extraction_status", "unreported"),
+                    "new_edges": added, "removed_edges": removed, "graph_edges": len(graph.edges)}
+                event["memory_effect"] = last_memory_edit
+                if config.bcp_progress_limit:
+                    feedback = f"Memory edit saved {added} new edges and removed {removed}; graph has {len(graph.edges)} edges."
+                    if not added and not removed:
+                        feedback += " No new facts were saved. Do not repeat the same retrieval; seek different evidence or open its source page."
                 stream.advance()
                 memory_searches = 0
                 last_memory_search = None
@@ -273,6 +313,8 @@ async def run_episode(task, policy, memory, config: GramConfig, audit=None, *, r
             "steps": len(segments), "policy_tokens": used, "documents_consumed": stream.cursor,
             "external_searches": external_searches,
             "progress_guard_blocks": guard_blocks,
+            "duplicate_retrievals_blocked": duplicate_retrievals,
+            "no_change_memory_edits": no_change_edits,
             "graph": graph.snapshot(), "elapsed_seconds": time.monotonic()-started,
             "config": asdict(config), "segments": segments}
 
