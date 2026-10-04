@@ -56,7 +56,7 @@ def test_bcp_rl_uses_retrieval_judge_private_labels_and_closes_on_failure(monkey
                                            "fix_bad_positive_adv": False, "use_kl_in_reward": False},
         "actor_rollout_ref": {"rollout": {"prompt_length": 12000, "response_length": 1024, "plugin": {
             "enable_summary": False, "gram": {"benchmark": "bcp", "memory_endpoint": "http://frozen", "memory_model": "helper",
-            "memory_revision": "fixed", "frozen_memory_acknowledged": True, "episode": {"max_steps": 4, "max_step_tokens": 512}}}}}})
+            "memory_revision": "fixed", "frozen_memory_acknowledged": True, "episode": {"max_steps": 4, "max_step_tokens": 512, "action_decoding": "xml_regex"}}}}}})
     client = Client(["<search>Book author</search>", "<memory_insert>Book by Alice</memory_insert>", "<answer>Paris</answer>"])
     context = SimpleNamespace(config=config, tokenizer=Tokenizer(), llm_client=client, is_train=True)
     fields = {"extra_info": {"gram_task_json": json.dumps({"task_id": "train-0", "question": "Where?", "documents": []})},
@@ -73,6 +73,12 @@ def test_bcp_rl_uses_retrieval_judge_private_labels_and_closes_on_failure(monkey
         assert audit[-1]["kind"] == "bcp_reward" and audit[-1]["external_searches"] == 1
         assert not audit[-1]["validation"]
         for out, (prefix, kwargs) in zip(outputs, client.calls):
+            import re
+            sampled = [token for token, mask in zip(out.response_ids, out.response_mask) if mask]
+            assert sampled[-1] == context.tokenizer.eos_token_id
+            text = context.tokenizer.decode(sampled[:-1])
+            assert re.fullmatch(kwargs["structured_outputs"]["regex"], text)
+            assert all(logp == -.125 for logp, mask in zip(out.response_logprobs, out.response_mask) if mask)
             assert (out.prompt_ids + out.response_ids)[:len(prefix)] == prefix
             assert "PRIVATE_REFERENCE" not in str(kwargs["messages"])
             assert not any(out.extra_fields["process_reward_mask"])

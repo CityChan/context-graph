@@ -25,7 +25,7 @@ def test_vllm_adapter_builds_guided_decoding_only_at_server_boundary():
 
 @pytest.mark.parametrize(
     "value",
-    [None, {"regex": "x"}, {"json": {}, "regex": "x"}, {"json": 3}],
+    [None, {"regex": ""}, {"regex": 3}, {"json": {}, "regex": "x"}, {"json": 3}],
 )
 def test_structured_outputs_reject_unsupported_envelopes(value):
     with pytest.raises((TypeError, ValueError)):

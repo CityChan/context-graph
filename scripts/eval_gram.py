@@ -24,6 +24,10 @@ def summarize(results, selected):
                 "pending": selected-len(results), "graded": len(graded),
                 "infrastructure_errors": len(results)-len(graded),
                 "resolved": sum(r["score"] for r in graded),
+                "answered": sum(r.get("termination_reason") == "answer" for r in graded),
+                "blank_predictions": sum(not r.get("prediction", "").strip() for r in graded),
+                "documents_consumed": sum(r.get("documents_consumed", 0) for r in graded),
+                "mean_format_reward_graded": sum(r.get("format_reward", 0) for r in graded)/len(graded) if graded else None,
                 "accuracy_graded": sum(r["score"] for r in graded)/len(graded) if graded else None,
                 "accuracy": sum(r["score"] for r in graded)/selected if len(graded) == selected else None}
     return {"selected": selected, "completed": len(results), "pending": selected-len(results),
@@ -66,11 +70,12 @@ async def evaluate(args):
     config = GramConfig(max_steps=args.max_steps, max_episode_tokens=args.episode_tokens,
                         max_step_tokens=args.step_tokens, timeout_seconds=args.timeout,
                         search_hops=args.search_hops, search_top_k=args.search_top_k,
-                        entity_threshold=args.entity_threshold)
+                        entity_threshold=args.entity_threshold,
+                        action_decoding=getattr(args, "action_decoding", "unconstrained"))
     repository = Path(__file__).resolve().parents[1]
     sources = ["agents/gram_agent.py", "agents/gram_memory.py", "agents/gram_prompts.py",
                "agents/utils.py", "scripts/eval_gram.py", "scripts/eval_bcp_qwen38.py",
-               "scripts/prepare_gram_data.py"]
+               "scripts/prepare_gram_data.py", "agents/gram_decoding.py", "agents/structured_outputs.py"]
     if bcp:
         sources += ["agents/gram_bcp.py", "envs/local_search.py", "envs/judge_client.py"]
     manifest = {"protocol": "gram-bcp-adaptation-v1" if bcp else "gram-document-stream-v1", "paper_exact_reproduction": False,
@@ -182,6 +187,7 @@ def main():
     parser.add_argument("--episode-tokens", type=int, default=32768)
     parser.add_argument("--step-tokens", type=int, default=2048)
     parser.add_argument("--max-steps", type=int, default=64)
+    parser.add_argument("--action-decoding", choices=["unconstrained", "xml_regex"], default="unconstrained")
     parser.add_argument("--search-hops", type=int, default=2)
     parser.add_argument("--search-top-k", type=int, default=12)
     parser.add_argument("--timeout", type=float, default=1800)

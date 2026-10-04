@@ -333,6 +333,45 @@ aggregation is retained; sequence weighting is not independently reproduced.
 
 ## Verification boundary
 
+### BC-P XML decoding repair
+
+The BC-P zero-shot and RL smoke launchers now default to
+`GRAM_ACTION_DECODING=xml_regex`. The observed unconstrained failure was ordinary
+prose preceding a valid action: the strict parser rejected 99 of 100 actions,
+leaving the episode at `max_steps` with an empty answer and an unconsumed search
+observation. Disabling tokenizer thinking alone does not constrain ordinary prose.
+
+The new mode requests vLLM regex-constrained generation: optional tagged reasoning
+and one XML action. Per-state action choices mirror executor guards: no external
+retrieval while a document is pending, no insert/update without a document, and
+no BC-P answer before an external search. It does not choose evidence or force a
+final answer. The strict XML parser, raw responses, sampled tokens and returned
+log-probabilities remain intact; no post-hoc tag extraction or answer fabrication
+is performed. Token-budget truncation and poor action selection can still fail.
+Both modern structured-output and legacy guided-decoding adapters forward regexes;
+an unsupported server produces a request error rather than a silent fallback.
+
+This changes the decoding protocol and can raise format reward mechanically; it
+is not evidence that RL learned formatting or that the original paper was
+reproduced. `config.action_decoding` is saved with evaluation manifests/episodes,
+the grammar source is hashed, and RL overrides/traces record the same setting.
+The shared executor and direct evaluator retain `unconstrained` as their default;
+use `GRAM_ACTION_DECODING=unconstrained` in launchers or
+`--action-decoding unconstrained` in the evaluator to opt out. Use a fresh run
+directory; incompatible manifests cannot resume into historical results.
+
+First run the zero-shot launcher with `GRAM_SAMPLES=2`. Inspect
+`evaluation/summary.json` for `answered`, `blank_predictions`,
+`documents_consumed`, and `mean_format_reward_graded`, and inspect
+`trajectory.jsonl` for actual `memory_call` events. These describe execution,
+not answer correctness; do not launch all 150 rows based on HTTP 200s alone.
+CPU tests cover the request wiring, state constraints, strict parsing, mocked
+end-to-end search/helper/answer flow and preservation of training tokens/logprobs.
+Actual Vista vLLM grammar compilation, model behavior and GPU training remain
+live smoke checks.
+
+### Existing verification
+
 `python -m pytest tests/test_gram.py` exercises document advancement, invalid
 actions, graph transactions/provenance, multi-hop retrieval, cosine merging,
 helper errors, reference isolation, dataset export, exact sampled training

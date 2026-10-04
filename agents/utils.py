@@ -348,7 +348,9 @@ class CallAPI(LLMClass):  # Call external API (OpenAI)
                         "api_structured_output_mode",
                         "structured_outputs",
                     ))
-                    schema = structured_outputs["json"]
+                    if structured_api_mode != "structured_outputs" and "json" not in structured_outputs:
+                        raise ValueError("Regex decoding requires API structured_outputs mode")
+                    schema = structured_outputs.get("json")
                     if structured_api_mode == "response_format":
                         request["response_format"] = {
                             "type": "json_schema",
@@ -371,7 +373,7 @@ class CallAPI(LLMClass):  # Call external API (OpenAI)
                 response = await self.client.chat.completions.create(**request)
 
                 text = response.choices[0].message.content or ""
-                if structured_outputs is not None:
+                if structured_outputs is not None and "json" in structured_outputs:
                     text = normalize_structured_content(text)
                 text_ids = self.tokenizer.encode(text, add_special_tokens=False)
 

@@ -28,6 +28,7 @@ unset OPENAI_URL
 export GRAM_PYTHON=${GRAM_PYTHON:-$SCRATCH/context-graph-swe/envs/agent-direct-Rs4ngP/bin/python}
 export GRAM_CONTEXT_LENGTH=${GRAM_CONTEXT_LENGTH:-65536}
 export GRAM_SAMPLES=${GRAM_SAMPLES:-2} GRAM_SEED=${GRAM_SEED:-42}
+export GRAM_ACTION_DECODING=${GRAM_ACTION_DECODING:-xml_regex}
 export GRAM_EPISODE_TOKENS=${GRAM_EPISODE_TOKENS:-24576} GRAM_MAX_STEPS=${GRAM_MAX_STEPS:-100}
 # Linked worktrees contain tracked code, not the primary checkout's local data.
 # Honor explicit DATA_PATH even when missing; never silently replace that choice.
@@ -63,7 +64,7 @@ if [[ ${1:-} == _eval ]]; then
       --endpoint "$GRAM_ACTOR_URL" --memory-endpoint "$GRAM_HELPER_URL" \
       --model "$MODEL_ID" --memory-model "$MODEL_ID" --model-path "$MODEL_PATH" \
       --model-revision "$MODEL_REVISION" --memory-revision "$MODEL_REVISION" \
-      --context-length "$GRAM_CONTEXT_LENGTH" --samples "$GRAM_SAMPLES" --seed "$GRAM_SEED" \
+      --context-length "$GRAM_CONTEXT_LENGTH" --samples "$GRAM_SAMPLES" --seed "$GRAM_SEED" --action-decoding "$GRAM_ACTION_DECODING" \
       --episode-tokens "$GRAM_EPISODE_TOKENS" --max-steps "$GRAM_MAX_STEPS" --timeout 3600
 fi
 [[ $# == 0 ]] || { echo 'No positional arguments expected'; exit 2; }
@@ -82,6 +83,7 @@ export GRAM_ACTOR_URL="http://${nodes[1]}:18000" GRAM_HELPER_URL="http://${nodes
 export NO_PROXY="${NO_PROXY:+$NO_PROXY,}localhost,127.0.0.1,${nodes[0]},${nodes[1]},${nodes[2]}"
 export no_proxy="$NO_PROXY"
 echo "GRAM_BCP_START samples=$GRAM_SAMPLES context=$GRAM_CONTEXT_LENGTH artifacts=$GRAM_RUN_DIR"
+echo "GRAM_ACTION_DECODING=$GRAM_ACTION_DECODING"
 echo "Evaluator=$GRAM_PYTHON data=$DATA_PATH"
 echo "Nodes: search=${nodes[0]} actor=${nodes[1]} memory=${nodes[2]} evaluator=${nodes[3]}"
 echo 'Protocol: zero-shot BC-P adaptation; actor thinking disabled; helper tokens additional; exact-name entity matching.'

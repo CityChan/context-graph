@@ -121,6 +121,15 @@ def test_call_api_can_bypass_agent_turn_token_cap_for_controllers(monkeypatch):
     assert completions.calls[0]["max_completion_tokens"] == 96
 
 
+def test_call_api_passes_regex_without_json_conversion(monkeypatch):
+    client, completions = _client(monkeypatch, "non-thinking")
+    regex = {"regex": "<answer>.*</answer>"}
+    asyncio.run(client.create_completion([1, 2], messages=[{"role": "user", "content": "q"}],
+                                        structured_outputs=regex))
+    assert completions.calls[0]["extra_body"]["structured_outputs"] == regex
+    assert "response_format" not in completions.calls[0]
+
+
 def test_call_llm_can_bypass_agent_turn_token_cap_for_controllers():
     async def run():
         server = _RolloutServer()

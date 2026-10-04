@@ -99,6 +99,7 @@ def test_actual_smoke_overrides_compose_with_training_profile(benchmark):
         extra += "\n" + smoke.split("            args+=(", 1)[1].split(")\n", 1)[0]
         extra = extra.replace("$JUDGE_MODEL", "gpt-5-nano")
     extra = extra.replace("$GRAM_RUN_DIR", "/smoke").replace("$GRAM_TRACE_DIR", "/smoke/traces").replace("$SLURM_JOB_ID", "123")
+    extra = extra.replace("${GRAM_ACTION_DECODING:-xml_regex}", "xml_regex")
     with initialize_config_dir(config_dir=str(ROOT / "verl/trainer/config"), version_base=None):
         config = compose(config_name="ppo_trainer", overrides=base_args + shlex.split(extra))
     from scripts.train_gram import validate_training_config
@@ -107,6 +108,7 @@ def test_actual_smoke_overrides_compose_with_training_profile(benchmark):
     assert config.data.train_batch_size == config.actor_rollout_ref.actor.ppo_mini_batch_size == (2 if benchmark == "bcp" else 1)
     if benchmark == "bcp":
         assert config.actor_rollout_ref.rollout.plugin.gram.benchmark == "bcp"
+        assert config.actor_rollout_ref.rollout.plugin.gram.episode.action_decoding == "xml_regex"
     assert config.actor_rollout_ref.rollout.max_model_len == 12288
     assert config.trainer.total_epochs == config.trainer.test_freq == 2
 

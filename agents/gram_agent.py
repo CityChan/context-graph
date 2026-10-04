@@ -9,6 +9,7 @@ import time
 
 from .gram_memory import DocumentStream, GraphMemory, cosine, entity_key, parse_action, token_f1, triples
 from .gram_prompts import ACTOR, BCP_ACTOR, ENTITIES, RELATIONS, MAINTENANCE
+from .gram_decoding import allowed_actions, action_regex
 
 
 class MemoryBackendError(RuntimeError):
@@ -25,8 +26,11 @@ class GramConfig:
     search_top_k: int = 12
     process_weight: float = 0.1
     entity_threshold: float = 0.9
+    action_decoding: str = "unconstrained"
 
     def __post_init__(self):
+        if self.action_decoding not in {"unconstrained", "xml_regex"}:
+            raise ValueError("Unknown GRAM action_decoding")
         if min(self.max_steps, self.max_episode_tokens, self.max_step_tokens,
                self.timeout_seconds, self.search_hops, self.search_top_k) <= 0:
             raise ValueError("GRAM budgets must be positive")
@@ -165,7 +169,13 @@ async def run_episode(task, policy, memory, config: GramConfig, audit=None, *, r
             if retrieval is not None:
                 state["budget"] = {"step": step, "max_steps": config.max_steps,
                                    "remaining_actor_tokens": config.max_episode_tokens-used}
-            messages = [{"role": "system", "content": BCP_ACTOR if retrieval is not None else ACTOR},
+            system = BCP_ACTOR if retrieval is not None else ACTOR
+            if config.action_decoding == "xml_regex":
+                state["action_decoding"] = config.action_decoding
+                state["allowed_actions"] = allowed_actions(has_document=stream.current is not None,
+                    external=retrieval is not None, external_searches=external_searches)
+                system += "\nChoose exactly one of allowed_actions. Put any reasoning inside <think>...</think>; never before the tags.\n"
+            messages = [{"role": "system", "content": system},
                         {"role": "user", "content": json.dumps(state, ensure_ascii=False)}]
             text, segment = await policy(messages, budget)
             if not segment.get("response_ids"):
@@ -244,7 +254,11 @@ def make_policy(client, tokenizer, rollout_config):
         budget = min(budget, rollout_config.response_length-len(agent.get_generation_prompt()))
         if budget < 10:
             raise ValueError("response_length cannot hold an action")
-        text = await agent.step(max_new_tokens=budget)
+        state = json.loads(messages[-1]["content"])
+        completion_kwargs = {}
+        if state.get("action_decoding") == "xml_regex":
+            completion_kwargs["structured_outputs"] = {"regex": action_regex(state["allowed_actions"])}
+        text = await agent.step(max_new_tokens=budget, completion_kwargs=completion_kwargs)
         if text is None:
             raise RuntimeError("Actor completion missing")
         return text, await agent.get_data()

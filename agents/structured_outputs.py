@@ -35,8 +35,12 @@ def normalize_structured_outputs(value: Any) -> dict[str, Any]:
     """
     if not isinstance(value, dict):
         raise TypeError("structured_outputs must be a dictionary")
+    if set(value) == {"regex"}:
+        if not isinstance(value["regex"], str) or not value["regex"].strip():
+            raise TypeError("structured_outputs['regex'] must be a nonempty string")
+        return {"regex": value["regex"]}
     if set(value) != {"json"}:
-        raise ValueError("structured_outputs must contain exactly one 'json' schema")
+        raise ValueError("structured_outputs must contain exactly one 'json' schema or 'regex'")
     schema = value["json"]
     if not isinstance(schema, (dict, str)):
         raise TypeError("structured_outputs['json'] must be a dictionary or JSON string")
@@ -52,7 +56,7 @@ def build_vllm_guided_decoding(
 ) -> GuidedDecodingT:
     """Convert the wire envelope to vLLM 0.10.1 GuidedDecodingParams."""
     normalized = normalize_structured_outputs(value)
-    return guided_decoding_cls(json=normalized["json"])
+    return guided_decoding_cls(**normalized)
 
 
 def build_vllm_structured_sampling_kwargs(value: Any, sampling_module: Any) -> dict[str, Any]:
@@ -64,5 +68,5 @@ def build_vllm_structured_sampling_kwargs(value: Any, sampling_module: Any) -> d
     normalized = normalize_structured_outputs(value)
     modern = getattr(sampling_module, "StructuredOutputsParams", None)
     if modern is not None:
-        return {"structured_outputs": modern(json=normalized["json"])}
-    return {"guided_decoding": sampling_module.GuidedDecodingParams(json=normalized["json"])}
+        return {"structured_outputs": modern(**normalized)}
+    return {"guided_decoding": sampling_module.GuidedDecodingParams(**normalized)}

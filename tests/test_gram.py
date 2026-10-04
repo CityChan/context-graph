@@ -277,6 +277,12 @@ def test_evaluator_http_end_to_end_and_resume(tmp_path, monkeypatch, bcp):
             content = next(responses)
             body = json.loads(request.content)
             assert body["max_tokens"] <= 512
+            if bcp:
+                import re
+                assert re.fullmatch(body["structured_outputs"]["regex"], content)
+                assert not re.fullmatch(body["structured_outputs"]["regex"], "I must search.\n" + content)
+            else:
+                assert "structured_outputs" not in body
             return httpx.Response(200, json={"choices": [{"token_ids": list(map(ord, content))+[0], "finish_reason": "stop"}]})
         assert request.url.path == "/v1/chat/completions"
         return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(next(helpers))}, "finish_reason": "stop"}]})
@@ -288,13 +294,21 @@ def test_evaluator_http_end_to_end_and_resume(tmp_path, monkeypatch, bcp):
                            search_top_k=12, entity_threshold=.9, model="model", model_revision="fixed",
                            memory_model="model", memory_revision="fixed", embedding_model=None,
                            embedding_endpoint=None, embedding_revision=None, context_length=20000, seed=42,
-                           endpoint="http://actor", memory_endpoint="http://memory", retry_errors=False)
+                           endpoint="http://actor", memory_endpoint="http://memory", retry_errors=False,
+                           action_decoding="xml_regex" if bcp else "unconstrained")
     assert asyncio.run(evaluate(args)) == 0
     summary = json.loads((output / "summary.json").read_text())
     assert summary["accuracy" if bcp else "mean_answer_f1"] == 1 and summary["graded"] == 1
+    if bcp:
+        assert summary["answered"] == 1 and summary["blank_predictions"] == 0
+        assert summary["documents_consumed"] == 2 and summary["mean_format_reward_graded"] == 1
     assert len(list(output.glob("instances/*/attempt-*/segments.json"))) == 1
     assert asyncio.run(evaluate(args)) == 0  # No actor/helper calls on resume.
     assert calls.count("/v1/completions") == (5 if bcp else 3)
+    args.action_decoding = "unconstrained" if bcp else "xml_regex"
+    with pytest.raises(ValueError, match="protocol mismatch"):
+        asyncio.run(evaluate(args))
+    args.action_decoding = "xml_regex" if bcp else "unconstrained"
     args.seed = 43
     with pytest.raises(ValueError, match="protocol mismatch"):
         asyncio.run(evaluate(args))
