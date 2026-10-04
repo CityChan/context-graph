@@ -5,6 +5,7 @@ from __future__ import annotations
 import collections
 import json
 import re
+from pathlib import Path
 from typing import Any
 
 
@@ -24,7 +25,10 @@ class ScienceWorldEnv:
         self._completed = False
         self._step_count = 0
         plugin = getattr(config, "plugin", None)
-        self._max_steps = int(getattr(plugin, "scienceworld_max_steps", 100) or 100)
+        max_steps = getattr(plugin, "scienceworld_max_steps", 100)
+        self._max_steps = 100 if max_steps is None else int(max_steps)
+        if self._max_steps < 1:
+            raise ValueError("scienceworld_max_steps must be positive")
 
     @staticmethod
     def _scalar(value):
@@ -36,6 +40,8 @@ class ScienceWorldEnv:
             return value
 
     async def init_env(self, item):
+        self.close()
+        self.stats.clear()
         extra_info = self._scalar(item.non_tensor_batch["extra_info"])
         if isinstance(extra_info, str):
             extra_info = json.loads(extra_info)
@@ -51,7 +57,7 @@ class ScienceWorldEnv:
         simplification = str(self.instance_info.get("simplification", ""))
         if not task_name:
             self.env_fail = True
-            return
+            raise ValueError("ScienceWorld task_name is required")
 
         try:
             from scienceworld import ScienceWorldEnv as Simulator
@@ -69,13 +75,18 @@ class ScienceWorldEnv:
                 f"{task_description}\n\nInitial observation:\n{observation}"
             )
             self.stats["variation_idx"] = variation_idx
-            self.stats["initial_valid"] = int(bool((info or {}).get("valid", True)))
+            self.stats["environment_score"] = float((info or {}).get("score", 0))
+            self._audit({"event": "reset", "observation": observation, "info": info})
         except Exception as exc:
             print(f"[ScienceWorld] Env init failed: {exc}")
             self.stats["env_init_error"] += 1
             self.env_fail = True
+            self.close()
+            raise RuntimeError("ScienceWorld initialization failed") from exc
 
     async def run_action(self, response: str) -> dict | None:
+        if self.is_finish or self.env_fail:
+            return {"action": "finish", "observation": "This episode has ended."}
         self.stats["action"] += 1
         fn_call = self._parse_fn_call(response)
         if fn_call is None or fn_call["function"] != "action":
@@ -91,25 +102,45 @@ class ScienceWorldEnv:
             observation, reward, completed, info = self._env.step(command)
             self._step_count += 1
             self.stats["environment_steps"] = self._step_count
-            self.stats["invalid_actions"] += int(not bool((info or {}).get("valid", True)))
-            self.stats["environment_score"] = float((info or {}).get("score", reward) or 0.0)
-            if completed:
-                self._completed = True
+            # ScienceWorld's `valid` is a list of available actions, not a validity flag.
+            info = info or {}
+            self.stats["environment_moves"] = int(info.get("moves", self._step_count))
+            score = float(info["score"])
+            self.stats["environment_score"] = score
+            self._audit({"event": "step", "command": command, "observation": observation,
+                         "reward": reward, "done": bool(completed), "info": info})
+            self._completed = score >= 100
+            step_limit = self._step_count >= self._max_steps
+            if completed or self._completed or step_limit:
                 self.is_finish = True
                 self.finish = True
-                self.stats["completed"] = 1
-                observation = f"{observation}\n\nTask completed successfully."
+                self.stats["completed"] = int(self._completed)
+                self.stats["environment_terminated"] = 1
+                self.stats["environment_step_limit"] = int(step_limit and not self._completed)
+                self.stats["environment_failure"] = int(score < 0)
+                message = "Task completed successfully." if self._completed else f"Episode ended with score {score:g}/100."
+                observation = f"{observation}\n\n{message}"
+                return {"action": "finish", "observation": str(observation)}
             return {"observation": str(observation)}
         except Exception as exc:
             print(f"[ScienceWorld] Action failed: {exc}")
             self.stats["env_error"] += 1
-            return {"observation": f"Environment error: {exc}"}
+            self.env_fail = True
+            self.is_finish = self.finish = True
+            self.close()
+            raise RuntimeError("ScienceWorld simulator action failed") from exc
 
     async def get_reward(self, item, messages, context) -> tuple:
         reward = 0.0 if self.env_fail else float(self._completed)
         self.stats["task_reward"] = reward
         self.stats["completed"] = int(self._completed)
         return ("", reward, {"ans_reward": reward, "task_complete": int(self._completed)})
+
+    def _audit(self, record):
+        path = self.instance_info.get("tool_log")
+        if path:
+            with Path(path).open("a", encoding="utf8") as stream:
+                stream.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
 
     @staticmethod
     def _parse_fn_call(text: str | None) -> dict | None:

@@ -11,6 +11,8 @@ import pandas as pd
 
 
 def collect_variations(split: str) -> list[dict]:
+    if split not in {"train", "dev", "test"}:
+        raise ValueError("Unknown ScienceWorld split")
     from scienceworld import ScienceWorldEnv
 
     env = ScienceWorldEnv()
