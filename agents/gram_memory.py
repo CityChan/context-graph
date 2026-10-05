@@ -65,13 +65,18 @@ def triples(value) -> list[tuple[str, str, str]]:
     return out
 
 
+MEMORY_MAX_ITEMS = 48
+MEMORY_MAX_STRING = 256
+MEMORY_OUTPUT_PROTOCOL = "gram-memory-json-schema-v3-bounded"
+
+
 def memory_output_schema(operation, *, entities=None):
     """Constrain helper structure without choosing or inventing any facts."""
-    string = {"type": "string", "minLength": 1}
+    string = {"type": "string", "minLength": 1, "maxLength": MEMORY_MAX_STRING}
     triple = {"type": "array", "items": string, "minItems": 3, "maxItems": 3}
-    rows = {"type": "array", "items": triple}
+    rows = {"type": "array", "items": triple, "maxItems": MEMORY_MAX_ITEMS}
     if operation == "entities":
-        return {"type": "array", "items": string}
+        return {"type": "array", "items": string, "maxItems": MEMORY_MAX_ITEMS}
     if operation == "relations":
         if entities is not None:
             if not isinstance(entities, list) or any(not isinstance(e, str) or not e.strip() for e in entities):
@@ -79,7 +84,7 @@ def memory_output_schema(operation, *, entities=None):
             if not entities:
                 return {"type": "array", "maxItems": 0}
             endpoint = {"type": "string", "enum": list(dict.fromkeys(entities))}
-            return {"type": "array", "items": {"type": "array", "minItems": 3, "maxItems": 3,
+            return {"type": "array", "maxItems": MEMORY_MAX_ITEMS, "items": {"type": "array", "minItems": 3, "maxItems": 3,
                     "prefixItems": [endpoint, string, endpoint], "items": False}}
         return rows
     if operation == "maintenance":
@@ -102,6 +107,13 @@ def validate_memory_output(operation, value):
         triples(value["remove"])
     else:
         raise ValueError(f"Unknown memory operation: {operation}")
+    lists = [value["add"], value["remove"]] if operation == "maintenance" else [value]
+    for rows in lists:
+        if len(rows) > MEMORY_MAX_ITEMS:
+            raise ValueError("Memory output exceeds item limit")
+        strings = rows if operation == "entities" else [s for row in rows for s in row]
+        if any(len(s) > MEMORY_MAX_STRING for s in strings):
+            raise ValueError("Memory output exceeds string length limit")
 
 
 def cosine(a, b):
@@ -121,7 +133,7 @@ class GraphMemory:
     def entities(self):
         return sorted({x for edge in self.edges for x in (edge[0], edge[2])})
 
-    def apply(self, add, remove, source: str, aliases=None):
+    def apply(self, add, remove, source: str, aliases=None, *, skip_absent_removals=False):
         # Validate the entire transaction before touching graph state.
         aliases = aliases or {}
         names = {entity_key(name): name for name in self.entities}
@@ -131,14 +143,16 @@ class GraphMemory:
         def normalize(rows):
             return [(canonical(s), r, canonical(o)) for s, r, o in triples(rows)]
         removals, additions = normalize(remove), normalize(add)
-        if any(edge not in self.edges for edge in removals):
+        skipped = [edge for edge in removals if edge not in self.edges]
+        if skipped and not skip_absent_removals:
             raise ValueError("Update attempted to remove an absent triple")
         updated = {edge: set(sources) for edge, sources in self.edges.items()}
         for edge in removals:
-            del updated[edge]
+            updated.pop(edge, None)
         for edge in additions:
             updated.setdefault(edge, set()).add(source)
         self.edges = updated
+        return skipped
 
     def snapshot(self):
         return [{"triple": list(e), "sources": sorted(src)} for e, src in sorted(self.edges.items())]

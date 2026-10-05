@@ -89,6 +89,9 @@ def test_bcp_seeded_rows_private_labels_and_shards(tmp_path):
 
 
 def test_judge_failure_not_policy_zero(monkeypatch):
+    async def no_wait(_):
+        pass
+    monkeypatch.setattr('agents.gram_bcp.asyncio.sleep', no_wait)
     async def failed(question, answer, prediction, audit_sink):
         audit_sink.append({'judge_method': 'llm_parse_failure'})
         return 0

@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 
 from agents.gram_agent import GramConfig, MemoryBackend, make_policy, run_episode, score_episode
+from agents.gram_memory import MEMORY_OUTPUT_PROTOCOL
 from scripts.prepare_gram_data import sha256, write_json
 
 
@@ -74,7 +75,9 @@ async def evaluate(args):
                         search_hops=args.search_hops, search_top_k=args.search_top_k,
                         entity_threshold=args.entity_threshold,
                         action_decoding=getattr(args, "action_decoding", "unconstrained"),
-                        bcp_progress_limit=getattr(args, "bcp_progress_limit", 0))
+                        bcp_progress_limit=getattr(args, "bcp_progress_limit", 0),
+                        final_answer_tokens=getattr(args, "final_answer_tokens", 0),
+                        reject_abstentions=getattr(args, "reject_abstentions", False))
     repository = Path(__file__).resolve().parents[1]
     sources = ["agents/gram_agent.py", "agents/gram_memory.py", "agents/gram_prompts.py",
                "agents/utils.py", "scripts/eval_gram.py", "scripts/eval_bcp_qwen38.py",
@@ -85,7 +88,7 @@ async def evaluate(args):
                 "data": data_manifest, "config": asdict(config), "task_ids": [t["task_id"] for t in tasks],
                 "actor": {"model": args.model, "declared_revision": args.model_revision},
                 "memory": {"model": args.memory_model, "declared_revision": args.memory_revision,
-                           "output_protocol": "gram-memory-json-schema-v2-entity-enum",
+                           "output_protocol": MEMORY_OUTPUT_PROTOCOL,
                            "input_protocol": "gram-memory-source-facts-v1"},
                 "entity_matching": "cosine" if args.embedding_model else "normalized-exact-plus-helper-canonicalization",
                 "embedding_model": args.embedding_model, "embedding_revision": args.embedding_revision,
@@ -192,6 +195,8 @@ def main():
     parser.add_argument("--episode-tokens", type=int, default=32768)
     parser.add_argument("--step-tokens", type=int, default=2048)
     parser.add_argument("--max-steps", type=int, default=64)
+    parser.add_argument("--final-answer-tokens", type=int, default=0)
+    parser.add_argument("--reject-abstentions", action="store_true")
     parser.add_argument("--action-decoding", choices=["unconstrained", "xml_regex"], default="unconstrained")
     parser.add_argument("--bcp-progress-limit", type=int, default=0,
                         help="Enable BC-P progress guard; maximum memory searches between retrieval/document consumption (0 disables)")

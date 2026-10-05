@@ -56,7 +56,7 @@ async def probe_relations(helper, event, entities, audit):
     for name, messages in relation_variants(event, entities):
         request = {"model": helper.model, "messages": messages, "temperature": 0,
                    "max_tokens": helper.max_tokens, "chat_template_kwargs": {"enable_thinking": False},
-                   "structured_outputs": {"json": memory_output_schema("relations", entities=entities)}}
+                   "structured_outputs": {"disable_any_whitespace": True, "json": memory_output_schema("relations", entities=entities)}}
         trial = {"variant": name}
         try:
             response = await helper.client.post(helper.endpoint + "/v1/chat/completions", json=request)
@@ -119,7 +119,7 @@ async def probe(source, output, endpoint, model):
                     request = {"model": model, "messages": messages, "temperature": 0,
                                "max_tokens": 2048, "chat_template_kwargs": {"enable_thinking": False}}
                     if structured:
-                        request["structured_outputs"] = {"json": memory_output_schema("entities")}
+                        request["structured_outputs"] = {"disable_any_whitespace": True, "json": memory_output_schema("entities")}
                     trial = {"variant": name}
                     try:
                         response = await helper.client.post(endpoint.rstrip("/") + "/v1/chat/completions", json=request)

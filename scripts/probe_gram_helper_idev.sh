@@ -10,6 +10,7 @@ export PYTHONPATH="$PROJECT_ROOT" PYTHONNOUSERSITE=1 PYTHONUNBUFFERED=1
 export MODEL_ID=Qwen/Qwen3.5-9B MODEL_REVISION=c202236235762e1c871ad0ccb60c8ee5ba337b9a
 export MODEL_PATH="$SCRATCH/hf_cache/hub/models--Qwen--Qwen3.5-9B/snapshots/$MODEL_REVISION"
 export MODEL_PORT=${MODEL_PORT:-18000}
+export SERVER_ENFORCE_EAGER=1 SERVER_COMPACT_JSON=1 SERVER_AUTO_INTERNAL_PORT=1
 cd "$PROJECT_ROOT"
 [[ -x "$GRAM_HELPER_PYTHON" && -d "$GRAM_HELPER_SOURCE" ]] || { echo 'Missing interpreter or source run'; exit 2; }
 mapfile -t nodes < <(scontrol show hostnames "${SLURM_JOB_NODELIST:?Missing allocation nodes}")

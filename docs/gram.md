@@ -13,7 +13,7 @@ The BC-P entrypoint is an **adaptation**, not the paper's document-stream benchm
 In an idle four-node allocation, run:
 
 ```bash
-cd /work/09281/chc_1996/vista/context-graph && git pull --ff-only origin master && GRAM_SAMPLES=2 bash scripts/smoke_gram_bcp_qwen35_9b_4node_idev.sh
+cd /work/09281/chc_1996/vista/context-graph && git pull --ff-only origin master && GRAM_SAMPLES=8 bash scripts/smoke_gram_bcp_qwen35_9b_4node_idev.sh
 ```
 
 The script starts local BC-P corpus retrieval, a pinned Qwen3.5-9B actor, a
@@ -32,8 +32,8 @@ worktree without that local file, the launcher resolves the primary checkout's
 always takes precedence; a missing explicit path fails rather than selecting
 another dataset. Missing evaluator Python and missing data have separate errors
 that print the exact path. The resolved interpreter/data paths are logged.
-The two rows are selected by the existing BC-P seeded sampling function (seed 42).
-Use `GRAM_SAMPLES=8` for a larger pilot or `-1` for all rows; tasks run serially
+The eight rows are selected by the existing BC-P seeded sampling function (seed 42).
+Use `GRAM_SAMPLES=2` for a smaller pilot or `-1` for all rows; tasks run serially
 and still obey the allocation's wall-clock limit.
 
 External `<search>` / `<open_page>` reuse `LocalSearch` ranking, repeat-snippet
@@ -45,12 +45,12 @@ with its corpus docids in the trajectory. A corpus search is required before
 Answer. Reference labels never enter actor/helper requests.
 
 Defaults: 65,536 context, 24,576 **actor output** tokens per episode, 2,048 per
-step, 100 policy actions, 3,600 seconds per episode, temperature 0, thinking
+step, 24 policy actions including the final answer, 3,600 seconds per episode, temperature 0, thinking
 disabled, exact-name entity matching plus helper canonicalization. These are
 **not a cost-matched comparison** to the existing thinking-enabled
 ContextGraph/FoldAgent runs. Each memory action costs a policy step and helper
 inference is additional; helper usage is logged in `trajectory.jsonl`.
-Override `GRAM_CONTEXT_LENGTH`, `GRAM_EPISODE_TOKENS`, `GRAM_MAX_STEPS`, or
+Override `GRAM_CONTEXT_LENGTH`, `GRAM_EPISODE_TOKENS`, `GRAM_MAX_STEPS`, `GRAM_FINAL_ANSWER_TOKENS`, or
 `GRAM_SEED` explicitly and preserve the resulting manifest.
 
 Scoring reuses BC-P strict matching followed by the configured judge
@@ -588,6 +588,51 @@ CPU tests compare real single/sharded Arrow fixtures against the normal HF cache
 builder, simulate `ENOSPC` on lock acquisition, and verify identical corpus indexes
 and unchanged source cache files. They do not establish Vista service startup,
 helper quality or successful RL updates.
+
+### Bounded helper outputs and episode completion
+
+The GRAM launchers now enable eager execution for the separately served actor
+and helper. They also configure XGrammar with `disable_any_whitespace=true` at
+server startup; helper requests carry the same setting. JSON string contents
+still permit spaces. The output contract is `gram-memory-json-schema-v3-bounded`:
+each entity/triple list has at most 48 entries, and each string has at most 256
+characters. Local validation rejects over-limit or truncated replies rather than
+silently shortening them. These bounds reduce repetitive output but do not
+guarantee a reply fits 2048 tokens or that extracted facts are correct.
+
+Maintenance skips a requested removal only when its canonical triple is absent,
+and records it in `edit.skipped_absent_removals`. Existing removals and additions
+are applied in the same validated transaction. The generic graph API remains
+strict by default; malformed edits and helper failures still propagate.
+
+The BC-P evaluation launcher defaults to 8 questions, 24 steps, and 24576 actor
+tokens. It reserves 512 tokens for an answer-only generation when tokens run low
+or on the last step, within the original step/token limits. That generation has
+no pending document text and receives graph search paths for the question; its
+XML grammar disallows thinking and further tools. BC-P RL smoke enables the
+same completion policy while retaining its existing 16-step/8192-token budget.
+Exact abstention labels such as `None` and `unknown` receive corrective feedback
+while budget remains. A final abstention stays blank and is reported as such;
+this policy cannot guarantee a supported or correct answer. The generic
+`GramConfig` defaults preserve previous behavior unless these options are enabled.
+These controller/budget changes must be recorded when comparing earlier scores.
+
+The Vista layout uses one model service per node. GRAM service launches unset
+inherited `VLLM_PORT` so vLLM can allocate internal ports automatically, leaving
+the explicit HTTP port unchanged. No ROCm-specific per-GPU port formula is used.
+The launchers reference the tracked `configs/gram_agent.yaml`; training now checks
+that it exists before startup. External job packagers must include `configs/`.
+This repository contains no SMILE packaging manifest to modify.
+
+Validation now collects UIDs, decoded inputs and ground truths after generation,
+so they align with the expanded segment batch and its rewards. A transient
+`llm_parse_failure` gets up to two additional judge calls after 15 and 60 seconds,
+with raw failure audits logged. Valid negative judgments are not retried; an
+exhausted or nonretryable failure remains an infrastructure error.
+
+These changes port the supplied debugging approach. Local regression tests do
+not establish the other terminal's reported accuracy or successful GPU updates;
+the one-GPU production helper probe and Vista eval/RL jobs still need rerunning.
 
 ### Existing verification
 

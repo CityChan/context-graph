@@ -767,18 +767,6 @@ class RayPPOTrainer:
             if self.config.reward_model.enable and test_batch[0].non_tensor_batch["reward_model"]["style"] == "model":
                 return {}
 
-            # Store original inputs
-            input_ids = test_batch.batch["input_ids"]
-            # TODO: Can we keep special tokens except for padding tokens?
-            input_texts = [self.tokenizer.decode(ids, skip_special_tokens=True) for ids in input_ids]
-            sample_inputs.extend(input_texts)
-            sample_uids.extend(test_batch.non_tensor_batch["uid"])
-
-            ground_truths = [
-                item.non_tensor_batch.get("reward_model", {}).get("ground_truth", None) for item in test_batch
-            ]
-            sample_gts.extend(ground_truths)
-
             # Set meta_info for generation (aligned with fit())
             test_batch.meta_info.update({
                 "eos_token_id": self.tokenizer.eos_token_id,
@@ -801,6 +789,14 @@ class RayPPOTrainer:
             test_batch.meta_info["global_steps"] = self.global_steps
 
             print("validation generation end")
+
+            # Agent loops may expand one episode into several training segments.
+            # Align every logged/metric row with the generated batch, not prompts.
+            sample_uids.extend(test_batch.non_tensor_batch["uid"])
+            sample_inputs.extend(self.tokenizer.decode(ids, skip_special_tokens=True)
+                                 for ids in test_batch.batch["input_ids"])
+            sample_gts.extend(item.non_tensor_batch.get("reward_model", {}).get("ground_truth", None)
+                              for item in test_batch)
 
             # Compute response_mask if not present (aligned with fit())
             if "response_mask" not in test_batch.batch.keys():

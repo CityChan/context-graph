@@ -28,8 +28,9 @@ def allowed_actions(*, has_document, external, external_searches,
     return actions
 
 
-def action_regex(actions):
+def action_regex(actions, *, allow_think=True):
     if not actions or len(actions) != len(set(actions)) or any(a not in OPERATIONS for a in actions):
         raise ValueError("Invalid GRAM allowed_actions")
     branches = "|".join(f"<{a}>{TEXT}+</{a}>" for a in actions)
-    return SPACE + f"(?:<think>{TEXT}*</think>{SPACE})?(?:{branches})" + SPACE
+    thinking = f"(?:<think>{TEXT}*</think>{SPACE})?" if allow_think else ""
+    return SPACE + thinking + f"(?:{branches})" + SPACE

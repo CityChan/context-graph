@@ -29,8 +29,13 @@ class GramConfig:
     entity_threshold: float = 0.9
     action_decoding: str = "unconstrained"
     bcp_progress_limit: int = 0
+    final_answer_tokens: int = 0
+    reject_abstentions: bool = False
 
     def __post_init__(self):
+        if self.final_answer_tokens and (self.action_decoding != "xml_regex" or
+                not 10 <= self.final_answer_tokens <= min(self.max_step_tokens, self.max_episode_tokens)):
+            raise ValueError("Final answer reserve requires xml_regex and 10..min(step, episode) tokens")
         if self.action_decoding not in {"unconstrained", "xml_regex"}:
             raise ValueError("Unknown GRAM action_decoding")
         if type(self.bcp_progress_limit) is not int or self.bcp_progress_limit < 0:
@@ -66,7 +71,7 @@ class MemoryBackend:
         await self.client.aclose()
 
     async def json_call(self, operation, system, payload):
-        structured_outputs = {"json": memory_output_schema(operation,
+        structured_outputs = {"disable_any_whitespace": True, "json": memory_output_schema(operation,
             entities=payload["entities"] if operation == "relations" else None)}
         messages = [{"role": "system", "content": system},
                     {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}]
@@ -156,8 +161,10 @@ class MemoryBackend:
                 extraction_status = "maintenance_changes" if add or remove else "no_maintenance_changes"
             names = list(dict.fromkeys(x for e in add for x in (e[0], e[2])))
             aliases = await self.aliases(names, graph.entities, threshold)
-            graph.apply(add, remove, document["id"], aliases)
-            return {"add": add, "remove": remove, "aliases": aliases, "extraction_status": extraction_status}
+            skipped = graph.apply(add, remove, document["id"], aliases,
+                                  skip_absent_removals=operation == "memory_update")
+            return {"add": add, "remove": remove, "aliases": aliases, "extraction_status": extraction_status,
+                    "skipped_absent_removals": skipped}
         except (ValueError, TypeError, KeyError) as exc:
             raise MemoryBackendError(f"Memory helper {operation}: {exc}") from exc
 
@@ -183,13 +190,17 @@ async def run_episode(task, policy, memory, config: GramConfig, audit=None, *, r
     retrieval_history, seen_retrievals = [], set()
     last_memory_edit = None
     duplicate_retrievals = no_change_edits = 0
+    abstentions = 0
     started = time.monotonic()
     async def execute():
         nonlocal used, answer, search, feedback, reason, external_searches
         nonlocal memory_searches, guard_blocks, last_memory_search
-        nonlocal last_memory_edit, duplicate_retrievals, no_change_edits
+        nonlocal last_memory_edit, duplicate_retrievals, no_change_edits, abstentions
         for step in range(config.max_steps):
-            budget = min(config.max_step_tokens, config.max_episode_tokens-used)
+            remaining = config.max_episode_tokens-used
+            finalizing = bool(config.final_answer_tokens and
+                              (step == config.max_steps-1 or remaining <= config.final_answer_tokens+10))
+            budget = min(config.max_step_tokens, remaining if finalizing else remaining-config.final_answer_tokens)
             if budget < 10:
                 reason = "token_limit"
                 break
@@ -224,6 +235,17 @@ async def run_episode(task, policy, memory, config: GramConfig, audit=None, *, r
                            "Check last_memory_edit: consuming a document does not mean its facts were saved. "
                            "If no edges were added, open the source page or change the query to obtain supported facts. "
                            "Keep actions concise; insert only supported facts, not speculation.\n")
+            if config.reject_abstentions and retrieval is not None:
+                system += "\nDo not submit None/unknown as an answer. Continue investigating while budget remains.\n"
+            if finalizing:
+                # This final generation is inside both the step and token budgets.
+                # Pending source text is not admissible evidence until inserted.
+                state["document_obs"] = None
+                state["finalizing"] = True
+                state["allowed_actions"] = ["answer"]
+                state["memory_obs"]["search_paths"] = graph.search(stream.question, config.search_hops, config.search_top_k)
+                system = ("Return exactly <answer>your concise answer</answer>, without thinking or another action. "
+                          "Use only stored graph evidence in memory_obs. No action budget remains.")
             messages = [{"role": "system", "content": system},
                         {"role": "user", "content": json.dumps(state, ensure_ascii=False)}]
             text, segment = await policy(messages, budget)
@@ -242,7 +264,7 @@ async def run_episode(task, policy, memory, config: GramConfig, audit=None, *, r
                 continue
             valid.append(1)
             feedback = ""
-            if config.bcp_progress_limit and operation not in state["allowed_actions"]:
+            if (config.bcp_progress_limit or finalizing) and operation not in state["allowed_actions"]:
                 guard_blocks += 1
                 feedback = "Action unavailable under BC-P progress guard; choose from allowed_actions."
                 audit({**event, "operation": operation, "valid_format": True,
@@ -250,6 +272,12 @@ async def run_episode(task, policy, memory, config: GramConfig, audit=None, *, r
                 continue
             if operation == "answer" and retrieval is not None and not external_searches:
                 feedback = "Perform an external corpus search before answering."
+            elif operation == "answer" and config.reject_abstentions and retrieval is not None and is_abstention(content):
+                abstentions += 1
+                feedback = "Abstention is not an answer; search for more evidence while budget remains."
+                event["error"] = feedback
+                if finalizing:
+                    reason = "abstention"
             elif operation == "answer":
                 answer, reason = content, "answer"
             elif operation in {"search", "open_page"}:
@@ -321,8 +349,16 @@ async def run_episode(task, policy, memory, config: GramConfig, audit=None, *, r
             "progress_guard_blocks": guard_blocks,
             "duplicate_retrievals_blocked": duplicate_retrievals,
             "no_change_memory_edits": no_change_edits,
+            "abstentions_rejected": abstentions,
             "graph": graph.snapshot(), "elapsed_seconds": time.monotonic()-started,
             "config": asdict(config), "segments": segments}
+
+
+def is_abstention(text):
+    return entity_key(text).strip(" .!\"'") in {
+        "none", "null", "unknown", "n/a", "not known", "i don't know", "i do not know",
+        "cannot determine", "unable to determine", "insufficient information", "no answer",
+    }
 
 
 def score_episode(result, answers, process_weight=0.1):
@@ -349,7 +385,7 @@ def make_policy(client, tokenizer, rollout_config):
         state = json.loads(messages[-1]["content"])
         completion_kwargs = {}
         if state.get("action_decoding") == "xml_regex":
-            completion_kwargs["structured_outputs"] = {"regex": action_regex(state["allowed_actions"])}
+            completion_kwargs["structured_outputs"] = {"regex": action_regex(state["allowed_actions"], allow_think=not state.get("finalizing", False))}
         text = await agent.step(max_new_tokens=budget, completion_kwargs=completion_kwargs)
         if text is None:
             raise RuntimeError("Actor completion missing")

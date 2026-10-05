@@ -1,4 +1,5 @@
 """External BC-P retrieval for GRAM; graph search remains inside gram_agent."""
+import asyncio
 import json
 from types import SimpleNamespace
 
@@ -33,10 +34,21 @@ class BcpRetrieval:
 
 async def score_bcp(question, answer, prediction):
     audit = []
-    score = await judge(question, answer, prediction, audit_sink=audit)
-    if not audit or audit[-1]["judge_method"] not in {"strict_em", "blank_prediction", "llm_judge"}:
-        raise RuntimeError("BC-P judge failed; this is not a policy failure")
-    return {"score": score, "judge_audit": audit}
+    for attempt, delay in enumerate((0, 15, 60), 1):
+        if delay:
+            await asyncio.sleep(delay)
+        before = len(audit)
+        score = await judge(question, answer, prediction, audit_sink=audit)
+        for row in audit[before:]:
+            row["outer_attempt"] = attempt
+        method = audit[-1].get("judge_method") if len(audit) > before else None
+        if method in {"strict_em", "blank_prediction", "llm_judge"}:
+            return {"score": score, "judge_audit": audit}
+        # Keep raw grader replies in failure logs; never retry a valid negative.
+        print("GRAM_JUDGE_FAILURE " + json.dumps(audit[before:], ensure_ascii=False), flush=True)
+        if method != "llm_parse_failure":
+            break
+    raise RuntimeError("BC-P judge failed; this is not a policy failure")
 
 
 def load_tasks(path, samples, seed, shard_index=0, shard_count=1):

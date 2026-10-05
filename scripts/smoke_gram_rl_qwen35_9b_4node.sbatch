@@ -128,6 +128,8 @@ case "${1:-}" in
                 +actor_rollout_ref.rollout.plugin.gram.benchmark=bcp
                 +actor_rollout_ref.rollout.plugin.gram.episode.action_decoding="${GRAM_ACTION_DECODING:-xml_regex}"
                 +actor_rollout_ref.rollout.plugin.gram.episode.bcp_progress_limit="${GRAM_BCP_PROGRESS_LIMIT:-2}"
+                +actor_rollout_ref.rollout.plugin.gram.episode.final_answer_tokens="${GRAM_FINAL_ANSWER_TOKENS:-512}"
+                +actor_rollout_ref.rollout.plugin.gram.episode.reject_abstentions=True
                 +ray_kwargs.ray_init.runtime_env.env_vars.JUDGE_MODEL="$JUDGE_MODEL")
         fi
         printf '%s\n' "${args[@]}" > "$GRAM_RUN_DIR/overrides.txt"
@@ -208,7 +210,7 @@ if [[ "$GRAM_BENCHMARK" == bcp ]]; then
     done
 fi
 export GRAM_MEMORY_ENDPOINT="http://${nodes[$helper_index]}:18000" GRAM_MEMORY_MODEL=Qwen/Qwen3.5-9B
-srun --overlap -N 1 -n 1 -w "${nodes[$helper_index]}" env -u LD_PRELOAD SWE_MODEL_MAX_LEN=32768 MODEL_PORT=18000 WORKERS=1 SEED=42 bash scripts/serve_swe_qwen35_9b_vista.sbatch > "$GRAM_RUN_DIR/memory-server.log" 2>&1 &
+srun --overlap -N 1 -n 1 -w "${nodes[$helper_index]}" env -u LD_PRELOAD SERVER_ENFORCE_EAGER=1 SERVER_COMPACT_JSON=1 SERVER_AUTO_INTERNAL_PORT=1 SWE_MODEL_MAX_LEN=32768 MODEL_PORT=18000 WORKERS=1 SEED=42 bash scripts/serve_swe_qwen35_9b_vista.sbatch > "$GRAM_RUN_DIR/memory-server.log" 2>&1 &
 helper_pid=$!; pids+=("$helper_pid")
 deadline=$((SECONDS + 1200))
 until curl --connect-timeout 3 --max-time 5 -fsS "$GRAM_MEMORY_ENDPOINT/health" >/dev/null 2>&1; do

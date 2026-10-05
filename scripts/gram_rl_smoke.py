@@ -13,6 +13,7 @@ async def check_memory_schema(root, endpoint, model):
     """Exercise production extraction, including an unanswerable-question control."""
     from agents.gram_agent import MemoryBackend
     from agents.gram_prompts import MAINTENANCE
+    from agents.gram_memory import MEMORY_OUTPUT_PROTOCOL
     from scripts.eval_gram import jsonl_writer
     from scripts.gram_helper_checks import check_helper_controls
     root = Path(root)
@@ -28,7 +29,7 @@ async def check_memory_schema(root, endpoint, model):
         await helper.json_call("maintenance", MAINTENANCE, payload)
     finally:
         await helper.aclose()
-    report = {"output_protocol": "gram-memory-json-schema-v2-entity-enum",
+    report = {"output_protocol": MEMORY_OUTPUT_PROTOCOL,
               "input_protocol": "gram-memory-source-facts-v1",
               "checked": ["entities", "relations", "maintenance"], "controls": controls,
               "model": model, "purpose": "production extraction with positive/negative controls; not benchmark accuracy"}

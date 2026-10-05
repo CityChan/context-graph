@@ -2,6 +2,7 @@
 # Run inside a configured training allocation/Ray cluster. No scheduler jobs are created here.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
+[[ -s configs/gram_agent.yaml ]] || { echo 'Missing configs/gram_agent.yaml: include configs/ in the training checkout/package' >&2; exit 2; }
 : "${MODEL_PATH:?Set the actor checkpoint directory}"
 : "${GRAM_TRAIN_DATA:?Set prepared train/data.parquet}"
 : "${GRAM_VAL_DATA:?Set prepared validation/data.parquet}"

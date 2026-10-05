@@ -83,7 +83,13 @@ case "${1:-}" in
     python -c 'import os, transformers, vllm; from transformers import AutoConfig; c=AutoConfig.from_pretrained(os.environ["MODEL_PATH"], local_files_only=True); print("Server versions:", transformers.__version__, vllm.__version__, "architecture:", c.architectures, flush=True)'
     # Exercise the failing CUDA sampling path before loading the model weights.
     python -c 'import torch, flashinfer; x=torch.randn(2, 32, device="cuda", dtype=torch.float32); y=flashinfer.sampling.top_k_top_p_sampling_from_logits(x, 4, 0.9); torch.cuda.synchronize(); assert y.shape == (2,); print("FlashInfer sampling preflight passed", flush=True)'
-    exec vllm serve "$MODEL_PATH" --served-model-name "$MODEL_ID" --host 0.0.0.0 --port "$MODEL_PORT" --tensor-parallel-size 1 --language-model-only --dtype bfloat16 --max-model-len "${MODEL_MAX_LEN:-32768}" --max-num-seqs "$WORKERS" --gpu-memory-utilization 0.90 --enable-chunked-prefill --generation-config vllm --seed "$SEED"
+    server_args=()
+    [[ ${SERVER_ENFORCE_EAGER:-0} != 1 ]] || server_args+=(--enforce-eager)
+    [[ ${SERVER_COMPACT_JSON:-0} != 1 ]] || server_args+=(--structured-outputs-config '{"backend":"xgrammar","disable_any_whitespace":true}')
+    # Vista runs one standalone server per node. Let vLLM allocate a free
+    # internal port instead of inheriting a fixed port from another launcher.
+    [[ ${SERVER_AUTO_INTERNAL_PORT:-0} != 1 ]] || unset VLLM_PORT
+    exec vllm serve "$MODEL_PATH" --served-model-name "$MODEL_ID" --host 0.0.0.0 --port "$MODEL_PORT" --tensor-parallel-size 1 --language-model-only --dtype bfloat16 --max-model-len "${MODEL_MAX_LEN:-32768}" --max-num-seqs "$WORKERS" --gpu-memory-utilization 0.90 --enable-chunked-prefill --generation-config vllm --seed "$SEED" "${server_args[@]}"
     ;;
   _search)
     activate "$AGENT_CONDA_ENV"
