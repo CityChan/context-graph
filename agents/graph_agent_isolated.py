@@ -289,6 +289,9 @@ async def process_item(
         working_memory_keep_recent = max(
             1, int(getattr(config.plugin, "working_memory_keep_recent", 1))
         )
+        retrieval_history_labels = coerce_bool(
+            getattr(config.plugin, "retrieval_history_labels", None), default=False,
+        )
         structured_memory_config_value = getattr(
             config.plugin, "structured_memory_enabled", None
         )
@@ -413,6 +416,9 @@ async def process_item(
         # leaving explicit controller/model prune operations available.
         auto_prune_max_active = max(
             0, int(getattr(config.plugin, "auto_prune_max_active", 12) or 0)
+        )
+        auto_prune_keep_recent = max(
+            0, int(getattr(config.plugin, "auto_prune_keep_recent", 0) or 0)
         )
         # Forced consolidation: every N main turns env injects a checkpoint where
         # policy MUST emit a graph op or <pass>. <pass> is reward-neutral only if
@@ -1197,7 +1203,9 @@ async def process_item(
             # so the same heuristic thresholds work fine.
             trace_before = graph_trace.capture(graph)
             auto_pruned = (
-                graph.auto_prune_low_value(max_active=auto_prune_max_active)
+                graph.auto_prune_low_value(
+                    max_active=auto_prune_max_active, keep_recent=auto_prune_keep_recent,
+                )
                 if auto_prune_max_active > 0
                 else []
             )
@@ -1239,6 +1247,8 @@ async def process_item(
                 observation = truncate_text(observation, max_lines=100, merge_repeat=True, merge_num=4)
             if repeat_hint:
                 observation = repeat_hint + "\n\n" + observation
+            if retrieval_history_labels:
+                observation = "[Latest tool feedback]\n" + str(observation)
 
             # The newest payload remains verbatim for immediate reasoning. Older
             # payloads are replaced by archive markers, while query-conditioned
@@ -1269,9 +1279,17 @@ async def process_item(
                     exclude_node_ids=excluded,
                 )
                 if retrieved:
+                    retrieval_heading = (
+                        "[Historical ContextGraph evidence]\n"
+                        "These are earlier observations, not the current simulator state. "
+                        "Use the latest tool feedback and recent action sequence to determine "
+                        "your current location and what has changed. Historical numeric-choice "
+                        "menus apply only to their original pending interaction.\n"
+                        if retrieval_history_labels else "[ContextGraph retrieved working memory]\n"
+                    )
                     observation = (
                         f"{observation}\n\n"
-                        "[ContextGraph retrieved working memory]\n"
+                        f"{retrieval_heading}"
                         f"{retrieved}"
                     )
                 retrieval_totals['calls'] += 1
@@ -1834,6 +1852,9 @@ async def process_item(
         env.stats['graph_controller_counts_as_turn'] = int(graph_controller_counts_as_turn)
         env.stats['graph_controller_turns'] = consolidation_stats['attempts']
         env.stats['turn_budget_used'] = iteration
+        env.stats['auto_prune_keep_recent'] = auto_prune_keep_recent
+        env.stats['working_memory_keep_recent'] = working_memory_keep_recent
+        env.stats['retrieval_history_labels'] = int(retrieval_history_labels)
         env.stats['consol_ops'] = consolidation_stats['ops']
         env.stats['consol_pass_valid'] = consolidation_stats['pass_valid']
         env.stats['consol_pass_invalid'] = consolidation_stats['pass_invalid']

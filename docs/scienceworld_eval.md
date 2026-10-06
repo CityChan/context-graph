@@ -62,7 +62,7 @@ read without mutating running jobs. Missing metrics remain unknown; protocol
 mismatches are explicitly reported and must be resolved before treating the
 comparison as matched.
 
-New ScienceWorld runs set `plugin.graph_controller_counts_as_turn=false` for
+The default `repaired` ScienceWorld profile sets `plugin.graph_controller_counts_as_turn=false` for
 both methods and record it in the manifest. ContextGraph controller checkpoints
 (including pass or rejected controller responses) no longer consume the
 100-turn task budget. They still consume the main token/context budget and
@@ -77,6 +77,45 @@ Per-task stats expose `turn_budget_used`, `graph_controller_turns`, and
 The generic graph agent defaults the flag to true for compatibility outside
 ScienceWorld. Existing pinned jobs retain their protocol. Use a fresh output
 directory for new runs; do not mix these results with the historical protocol.
+
+### Memory profiles
+
+Use `BENCH_MEMORY_PROFILE` in the launcher, or `--memory-profile` in the evaluator.
+The profile is saved for both methods and propagated to every task subprocess.
+
+| Profile | Controller counts as a task turn | ContextGraph memory |
+| --- | --- | --- |
+| `legacy` | Yes | Legacy pruning and history handling |
+| `turns` | No | Legacy pruning and history handling; isolates turn accounting |
+| `repaired` (default) | No | Recent-observation protection and repaired history handling |
+
+The repaired profile protects the latest eight active observations from automatic
+pruning, including failed-action feedback. Among other equal-value candidates,
+older observations are pruned first. The active-node cap is soft when all eligible
+observations are protected; explicit controller edits remain possible. Older
+observations are compacted only under context pressure (75% of the configured
+prompt-plus-response allowance), retaining the latest eight observation messages.
+Retrievals are marked as historical evidence: old room descriptions and numeric
+choice menus must not be treated as the current simulator state. Ordinary tool
+feedback no longer appends a graph-state dump; controller acknowledgements still do.
+
+The five-task-turn controller cadence and token budgets are unchanged. Controllers
+can still pass and consume tokens. FoldAgent execution is unchanged by this profile.
+Other benchmark entry points retain their existing defaults. These changes do not
+automatically correct an agent's wrong action or establish a score improvement;
+local tests use deterministic responses, and a fresh model evaluation is required.
+The `legacy` profile restores these two legacy policies under the current code,
+not a bit-identical replay of an older commit or server environment.
+
+For a fresh full ContextGraph run from the chosen checkout:
+
+```bash
+env -u BENCH_RUN_DIR -u BENCH_DATA BENCH_MEMORY_PROFILE=repaired BENCH_SAMPLES=-1 sbatch --time=48:00:00 scripts/eval_agent_benchmarks_qwen35_9b_4node.sbatch scienceworld contextgraph
+```
+
+Use `BENCH_MEMORY_PROFILE=turns` in a separate fresh run for the turn-only ablation.
+Keep model, budgets, dependencies and profile aligned when comparing methods.
+Never resume an existing output directory with a different profile.
 
 Historically there were two distinct limits: 100 simulator actions and 100
 agent-loop model turns, with consolidation calls incrementing the latter. A controlled

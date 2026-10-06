@@ -139,7 +139,7 @@ def test_characterize_controller_calls_sharing_scienceworld_turn_cap(
             return {"choices": [{"message": {"content": content, "raw_output_ids": tokens,
                                                "response_log_probs": [-0.125] * len(tokens)}}]}
     monkeypatch.setitem(sys.modules, "scienceworld", SimpleNamespace(ScienceWorldEnv=Simulator))
-    config = config_for("scienceworld", method, 65536)
+    config = config_for("scienceworld", method, 65536, memory_profile="turns")
     config.actor_rollout_ref.rollout.response_length = budget
     config.actor_rollout_ref.rollout.plugin.val_response_length = budget
     config.actor_rollout_ref.rollout.plugin.consolidation_interval = interval

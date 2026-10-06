@@ -143,6 +143,7 @@ def test_resume_skips_completed_and_retries_only_errors(monkeypatch, tmp_path):
     monkeypatch.setattr(runner, "preflight", lambda _: (tasks, {"revision": "one"}))
     calls = []
     def command(argv, log, timeout):
+        assert argv[argv.index("--memory-profile") + 1] == "repaired"
         attempt = Path(argv[argv.index("--task") + 1])
         identity = json.loads((attempt / "task.json").read_text())["task_id"]
         calls.append(identity)
@@ -152,7 +153,7 @@ def test_resume_skips_completed_and_retries_only_errors(monkeypatch, tmp_path):
     monkeypatch.setattr(runner, "run_command", command)
     args = SimpleNamespace(output=tmp_path, benchmark="scienceworld", method="foldagent", endpoint="unused",
                            model_path="unused", context_length=65536, max_steps=100, task_timeout=30,
-                           shard_index=0, shard_count=1, retry_errors=False)
+                           shard_index=0, shard_count=1, retry_errors=False, memory_profile="repaired")
     assert runner.run(args) == 2
     assert runner.run(args) == 2
     assert calls == ["a", "b"]

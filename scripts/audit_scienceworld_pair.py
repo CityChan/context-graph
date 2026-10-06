@@ -64,7 +64,9 @@ def protocol_check(cm, fm):
             if manifest.get("config") != manifests[0].get("config"):
                 mismatches.append({"method": method, "shard": index, "error": "within-method config mismatch"})
     allowed = {"actor_rollout_ref.rollout.plugin." + key for key in
-               ("workflow", "structured_graph_controller", "controller_owned_tool_formatting")}
+               ("workflow", "structured_graph_controller", "controller_owned_tool_formatting",
+                "contextgraph_memory_mode", "auto_prune_keep_recent", "working_memory_keep_recent",
+                "retrieval_history_labels", "inject_graph_state_after_action")}
     config_diff = differences(cm[0].get("config", {}), fm[0].get("config", {}))
     unexpected = {key: value for key, value in config_diff.items() if key not in allowed}
     same_selection = {t for m in cm for t in m["task_ids"]} == {t for m in fm for t in m["task_ids"]}

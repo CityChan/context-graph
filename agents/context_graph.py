@@ -1050,21 +1050,30 @@ class ContextGraph:
 
     # ── Automatic Graph Operations (heuristic warm-start) ──
 
-    def auto_prune_low_value(self, max_active: int = 20, min_value: float = -0.5) -> list[str]:
+    def auto_prune_low_value(
+        self, max_active: int = 20, min_value: float = -0.5, keep_recent: int = 0,
+    ) -> list[str]:
         """Auto-prune observation nodes when graph exceeds max_active.
 
         Strategy: Remove lowest-value observation nodes first (search results
         that weren't referenced by any edge beyond the auto-temporal one).
         Never prune root, subtask, or summary nodes.
+        Optionally protect the most recent observation window regardless of value.
+        The active-node cap remains soft when no unprotected candidate is eligible.
         """
         pruned = []
         active = self.active_nodes
         if len(active) <= max_active:
             return pruned
 
+        observations = [n for n in active if n.type == NodeType.OBSERVATION]
+        protected = {
+            n.id for n in sorted(observations, key=lambda n: _seq_key(n.id), reverse=True)
+            [:max(0, int(keep_recent))]
+        }
         # Candidates: observation nodes sorted by value (ascending)
         candidates = sorted(
-            [n for n in active if n.type == NodeType.OBSERVATION],
+            [n for n in observations if n.id not in protected],
             key=lambda n: (n.value, _seq_key(n.id) if self.memory_policy == "repaired" else -_seq_key(n.id)),
         )
 
