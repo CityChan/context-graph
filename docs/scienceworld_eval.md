@@ -42,6 +42,38 @@ evidence is reported as `generation_quality_passed=null` with
 `generation_unaudited_records`; it is not evidence of clean generation.
 This heuristic detects the observed output pattern, not its hardware cause.
 
+### Read-only paired diagnosis
+
+`scripts/audit_scienceworld_pair.py` compares only tasks graded by both methods,
+checks manifests, breaks down scores by task type, and reports termination,
+environment steps, controller calls and elapsed time. It extracts bounded tool
+and message tails for the largest score gaps in both directions. With
+`--scan-requests`, those selected cases also get raw token and controller-request
+counts; this is not a full-run token-degeneration certification. The script uses
+only the Python standard library and resolves saved Vista attempt paths relative
+to each result, so copied Windows artifacts work without editing results.
+
+```bash
+python scripts/audit_scienceworld_pair.py --contextgraph /path/to/contextgraph-run --foldagent /path/to/foldagent-run --output /path/outside/runs/scienceworld-audit.json --scan-requests
+```
+
+The output must be new and outside both runs. Completed result snapshots are
+read without mutating running jobs. Missing metrics remain unknown; protocol
+mismatches are explicitly reported and must be resolved before treating the
+comparison as matched.
+
+There are two distinct limits: 100 simulator actions and 100 agent-loop model
+turns. ContextGraph's consolidation calls increment the latter. A controlled
+test using both real agent loops, a fixed action policy, no branches and an
+enlarged token budget (the test tokenizer counts characters) demonstrates that
+16 controller calls can leave only 84 simulator actions. A synthetic task that
+requires 90 actions succeeds with FoldAgent and with ContextGraph checkpoints
+disabled, but fails under ContextGraph's default five-turn checkpoint schedule.
+This establishes a mechanism, not its contribution to any production score
+gap. Inspect real `hit_max_turn`, `environment_steps`, and `consol_attempts` on
+common tasks before changing budgets. An equal model-call budget and an equal
+environment-action opportunity are different comparison protocols.
+
 Branches act sequentially in the same episode. There is no simulator cloning
 or rollback. Negative terminal scores are clipped to zero for aggregation and
 preserved as `raw_score`. A terminal `done` flag alone does not indicate success.
