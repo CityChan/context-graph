@@ -77,6 +77,7 @@ def protocol_check(cm, fm):
 def aggregate(rows):
     graded = [r for r in rows if r["status"] == "graded"]
     keys = ("environment_steps", "environment_step_limit", "hit_max_turn", "hit_token_limit",
+            "turn_budget_used", "graph_controller_turns", "graph_controller_counts_as_turn",
             "hit_timeout", "consol_attempts", "consol_controller_errors", "consol_invalid",
             "graph_explicit_ops", "controller_mode_rejections", "invalid_tool", "empty_command",
             "session_time", "memory_retrieval_calls", "observation_budget_skips")

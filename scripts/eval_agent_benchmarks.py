@@ -36,6 +36,9 @@ def config_for(benchmark, method, context_length, max_steps=100):
     plugin = config.actor_rollout_ref.rollout.plugin
     plugin.workflow = benchmark + ("_graph" if method == "contextgraph" else "_branch")
     plugin.scienceworld_max_steps = max_steps
+    # Controller checkpoints consume tokens/time, but not task-turn opportunities.
+    # Keep this in both manifests so the paired budget convention is explicit.
+    plugin.graph_controller_counts_as_turn = False
     plugin.final_answer_reserve = 0
     plugin.final_answer_safety_margin = 128
     plugin.turn_max_new_tokens = 2048

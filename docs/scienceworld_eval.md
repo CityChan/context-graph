@@ -62,16 +62,35 @@ read without mutating running jobs. Missing metrics remain unknown; protocol
 mismatches are explicitly reported and must be resolved before treating the
 comparison as matched.
 
-There are two distinct limits: 100 simulator actions and 100 agent-loop model
-turns. ContextGraph's consolidation calls increment the latter. A controlled
+New ScienceWorld runs set `plugin.graph_controller_counts_as_turn=false` for
+both methods and record it in the manifest. ContextGraph controller checkpoints
+(including pass or rejected controller responses) no longer consume the
+100-turn task budget. They still consume the main token/context budget and
+session time. Ordinary main-agent responses, summaries and branch calls retain
+their existing turn accounting; an out-of-mode graph request in the ordinary
+task channel is still a counted, rejected response. The simulator retains its
+independent 100-action cap. This gives more task turns, not unlimited compute
+or a guarantee of 100 executed actions.
+
+Per-task stats expose `turn_budget_used`, `graph_controller_turns`, and
+`graph_controller_counts_as_turn`; request logs retain every controller call.
+The generic graph agent defaults the flag to true for compatibility outside
+ScienceWorld. Existing pinned jobs retain their protocol. Use a fresh output
+directory for new runs; do not mix these results with the historical protocol.
+
+Historically there were two distinct limits: 100 simulator actions and 100
+agent-loop model turns, with consolidation calls incrementing the latter. A controlled
 test using both real agent loops, a fixed action policy, no branches and an
 enlarged token budget (the test tokenizer counts characters) demonstrates that
 16 controller calls can leave only 84 simulator actions. A synthetic task that
 requires 90 actions succeeds with FoldAgent and with ContextGraph checkpoints
-disabled, but fails under ContextGraph's default five-turn checkpoint schedule.
+disabled, but fails under the historical five-turn checkpoint schedule.
+With controller turns excluded, the same test succeeds at action 90 with
+17 controller calls; a separate boundary case reaches action 100 with 19
+controller calls and still stops at the simulator cap.
 This establishes a mechanism, not its contribution to any production score
 gap. Inspect real `hit_max_turn`, `environment_steps`, and `consol_attempts` on
-common tasks before changing budgets. An equal model-call budget and an equal
+common tasks when interpreting results. An equal model-call budget and an equal
 environment-action opportunity are different comparison protocols.
 
 Branches act sequentially in the same episode. There is no simulator cloning

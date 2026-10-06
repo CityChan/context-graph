@@ -391,6 +391,10 @@ async def process_item(
             if structured_memory_enabled and structured_memory_step_limit
             else max_turn
         )
+        graph_controller_counts_as_turn = coerce_bool(
+            getattr(config.plugin, "graph_controller_counts_as_turn", None),
+            default=True,
+        )
 
         lambda_compact = getattr(config.plugin, "lambda_compact", 0.1)
         lambda_cost = getattr(config.plugin, "lambda_cost", 0.02)
@@ -1415,7 +1419,8 @@ async def process_item(
                     })
                     controller_turn_idx = len(agent['main'].chat) - 1
                     consolidation_stats['attempts'] += 1
-                    iteration += 1
+                    if graph_controller_counts_as_turn:
+                        iteration += 1
                     trace_before = graph_trace.capture(graph)
                     decision_context = {
                         "mode": "controller_action",
@@ -1626,7 +1631,8 @@ async def process_item(
                 consol_turn_idx = len(agent['main'].chat) - 1
                 consol_fn = extract_fn_call(consol_response)
                 consolidation_stats['attempts'] += 1
-                iteration += 1  # account for the extra LLM step
+                if graph_controller_counts_as_turn:
+                    iteration += 1
 
                 if consol_fn is not None and consol_fn['function'] in GRAPH_OPS:
                     # Real op — apply the same handler as the main loop branch.
@@ -1825,6 +1831,9 @@ async def process_item(
         # Consolidation checkpoint stats — surface in wandb to track whether
         # the policy is actually using the forced-exploration channel.
         env.stats['consol_attempts'] = consolidation_stats['attempts']
+        env.stats['graph_controller_counts_as_turn'] = int(graph_controller_counts_as_turn)
+        env.stats['graph_controller_turns'] = consolidation_stats['attempts']
+        env.stats['turn_budget_used'] = iteration
         env.stats['consol_ops'] = consolidation_stats['ops']
         env.stats['consol_pass_valid'] = consolidation_stats['pass_valid']
         env.stats['consol_pass_invalid'] = consolidation_stats['pass_invalid']

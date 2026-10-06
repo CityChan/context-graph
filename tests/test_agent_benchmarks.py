@@ -90,6 +90,8 @@ def test_paired_protocol_matches_model_budgets():
     assert cg.response_length == fa.response_length == 57344
     assert cg.plugin.final_answer_reserve == fa.plugin.final_answer_reserve
     assert cg.plugin.max_session == fa.plugin.max_session
+    assert cg.plugin.graph_controller_counts_as_turn is False
+    assert fa.plugin.graph_controller_counts_as_turn is False
     assert cg.plugin.structured_graph_controller and not fa.plugin.structured_graph_controller
 
 

@@ -89,14 +89,23 @@ def test_synced_vista_attempt_paths_are_resolved_locally(tmp_path):
     assert report["cases"][identity]["contextgraph"]["steps_recorded"] == 1
 
 
-@pytest.mark.parametrize("method,interval,expected_steps,expected_score", [
-    ("contextgraph", 5, 84, 0), ("foldagent", 5, 90, 100), ("contextgraph", 0, 90, 100)])
-def test_characterize_controller_calls_sharing_scienceworld_turn_cap(monkeypatch, method, interval, expected_steps, expected_score):
+@pytest.mark.parametrize("method,interval,count_controller,goal,budget,expected_steps,expected_score,controllers", [
+    ("contextgraph", 5, True, 90, 1_000_000, 84, 0, 16),
+    ("foldagent", 5, True, 90, 1_000_000, 90, 100, 0),
+    ("contextgraph", 0, True, 90, 1_000_000, 90, 100, 0),
+    ("contextgraph", 5, False, 90, 1_000_000, 90, 100, 17),
+    ("contextgraph", 5, False, 100, 1_000_000, 100, 100, 19),
+    ("contextgraph", 5, False, 101, 1_000_000, 100, 0, 19),
+    ("contextgraph", 5, False, 101, 8192, None, 0, None),
+])
+def test_characterize_controller_calls_sharing_scienceworld_turn_cap(
+    monkeypatch, method, interval, count_controller, goal, budget, expected_steps, expected_score, controllers
+):
     """Controlled reproduction, not a claim about observed real task outcomes.
 
-    Same action policy, no branches, success only at the 90th simulator action.
-    Token budget is enlarged equally because the test tokenizer uses characters;
-    this isolates the existing 100-model-turn vs 100-environment-step difference.
+    Same action policy, no branches, success only at the configured goal action.
+    Most cases enlarge the token budget because the test tokenizer uses characters;
+    the small-budget case checks that excluding controller turns retains the cap.
     """
     from scripts.eval_agent_benchmarks import config_for
     from tests.test_session_restart import Tokenizer
@@ -108,13 +117,16 @@ def test_characterize_controller_calls_sharing_scienceworld_turn_cap(monkeypatch
         def get_task_description(self): return "Complete ninety actions."
         def step(self, command):
             self.steps += 1
-            score = 100 if self.steps == 90 else 0
+            score = 100 if self.steps == goal else 0
             return f"Step {self.steps}", score, bool(score), {"score": score, "moves": self.steps}
         def close(self): pass
     class Client:
         calls = 0
         controllers = 0
         async def create_completion(self, ids, **kwargs):
+            # Match the real token client: refuse a request after its context cap.
+            if kwargs.get("max_len", 1_000_000) - len(ids) < 10:
+                return None
             self.calls += 1
             schema = (kwargs.get("structured_outputs") or {}).get("json", {})
             if "candidate_indices" in schema.get("properties", {}):
@@ -128,9 +140,10 @@ def test_characterize_controller_calls_sharing_scienceworld_turn_cap(monkeypatch
                                                "response_log_probs": [-0.125] * len(tokens)}}]}
     monkeypatch.setitem(sys.modules, "scienceworld", SimpleNamespace(ScienceWorldEnv=Simulator))
     config = config_for("scienceworld", method, 65536)
-    config.actor_rollout_ref.rollout.response_length = 1_000_000
-    config.actor_rollout_ref.rollout.plugin.val_response_length = 1_000_000
+    config.actor_rollout_ref.rollout.response_length = budget
+    config.actor_rollout_ref.rollout.plugin.val_response_length = budget
     config.actor_rollout_ref.rollout.plugin.consolidation_interval = interval
+    config.actor_rollout_ref.rollout.plugin.graph_controller_counts_as_turn = count_controller
     task = DataProto()
     task.non_tensor_batch = {"ability": np.array(["ScienceWorld@real"], dtype=object),
                              "extra_info": np.array([{"task_name": "synthetic", "workflow": config.actor_rollout_ref.rollout.plugin.workflow}], dtype=object),
@@ -141,8 +154,15 @@ def test_characterize_controller_calls_sharing_scienceworld_turn_cap(monkeypatch
     module = importlib.import_module("agents.graph_agent_isolated" if method == "contextgraph" else "agents.fold_agent")
     output = asyncio.run(module.process_item(task, context))
     stats = output[0].extra_fields["env_stats"]
-    assert stats["environment_steps"] == expected_steps
     assert stats["environment_score"] == expected_score
-    controller_enabled = method == "contextgraph" and interval == 5
-    assert client.controllers == (16 if controller_enabled else 0)
-    assert client.calls == (100 if controller_enabled else 90)
+    if expected_steps is None:
+        assert 0 < stats["environment_steps"] < 100
+        assert stats["hit_token_limit"]
+        assert client.controllers > 0
+        return
+    assert stats["environment_steps"] == expected_steps
+    assert client.controllers == controllers
+    assert client.calls == expected_steps + controllers
+    if method == "contextgraph":
+        assert stats["graph_controller_turns"] == controllers
+        assert stats["turn_budget_used"] == expected_steps + (controllers if count_controller else 0)
