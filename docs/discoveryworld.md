@@ -1,0 +1,56 @@
+# DiscoveryWorld paired evaluation
+
+This integration runs the **real** [AllenAI DiscoveryWorld simulator](https://github.com/allenai/discoveryworld), pinned to `fd591323920be0d3786ef350955de1945aa571e5`, with ContextGraph and FoldAgent. It is separate from DiscoveryBench's dataset analysis tasks.
+
+## Protocol
+
+- Default: eight official scenarios, Normal difficulty, seeds 0–4 (40 public tasks). `BENCH_DIFFICULTY=all` selects all three difficulties (120 tasks). No invented train/test split, tutorials, or small-skill tasks.
+- Fixed Qwen3.5-9B checkpoint, deterministic decoding, thinking enabled, same context/action/time budgets for both methods. Defaults: 65,536-token context, 100 task turns, 57,344 generated-token budget, 3,600-second session timeout. Graph controller calls use tokens/time but do not consume task turns with the default repaired memory profile. Branches and invalid tool calls still use task turns; only actual submitted environment actions tick the world. Set `BENCH_MAX_STEPS` explicitly for longer experiments.
+- Text-only: the official `UserInterface.renderJSON()` component of `getAgentObservation()`; image rendering and PNG saving are skipped. Public inventory, accessible objects, dialogs, feed, task description and action feedback are retained. No global object enumeration or hidden hypotheses enter the model prompt.
+- XML `action` tool with JSON in `command`; official action names and UUID arguments. During dialogs use `chosen_dialog_option_int`. Every accepted command calls `performAgentAction` followed by exactly one `tick`, including unsuccessful environment actions. Graph and branch operations do not tick the simulator.
+- Success is the official `completedSuccessfully`, not merely a terminal state. Report the official normalized procedural score ×100 and task success separately. **The paper's knowledge-discovery metric is not implemented**; `knowledge_score` is null. These are text-only paired agent results, not reproduction of the full three-metric paper protocol.
+- Full oracle scorecards are written to `scorecard.json` for grading only. Public `tools.jsonl`, raw `requests.jsonl`, trajectory, immutable manifest, package versions and simulator provenance are saved separately. Existing generation-audit criteria remain unchanged; passing them does not exclude semantic repetition.
+- One child process per task. Simulator/model errors are infrastructure errors, not model score zero. Resume requires identical code/config/data/environment; use `BENCH_RETRY_ERRORS=1` only to retry infrastructure errors.
+
+## Vista four-node smoke
+
+Use a clean committed checkout. The launcher builds a private overlay of the existing SWE agent environment; it does not modify `cxtgraph`, `deepseek_v4`, or running evaluations. `BENCH_BASE_PYTHON` must be Python 3.10 or 3.11: pinned upstream uses float-to-integer conversions removed in Python 3.12. Override the base path if the default SWE environment is unavailable.
+
+On an allocated four-node `idev`, from the checkout:
+
+```bash
+env -u BENCH_RUN_DIR -u BENCH_DATA -u BENCH_AGENT_ENV PROJECT_ROOT="$PWD" BENCH_SAMPLES=2 BENCH_MAX_STEPS=100 BENCH_DIFFICULTY=Normal bash scripts/eval_discoveryworld_qwen35_9b_4node.sbatch both
+```
+
+`both` assigns one server/evaluator pair to each method, evaluating the same two tasks (Chemistry and Archaeology, seed 0). Before model startup, a real two-action simulator probe runs all eight requested scenarios at seed 0. This is an infrastructure check, not a success-rate test.
+
+For a more useful memory smoke use `BENCH_SAMPLES=8` (one task per scenario), and inspect controller calls/turn limits before a full run. Two tasks do not establish comparative performance.
+
+For the full Normal suite, submit from the same clean checkout:
+
+```bash
+mkdir -p logs
+env -u BENCH_RUN_DIR -u BENCH_DATA -u BENCH_AGENT_ENV PROJECT_ROOT="$PWD" BENCH_SAMPLES=-1 BENCH_MAX_STEPS=200 BENCH_DIFFICULTY=Normal sbatch scripts/eval_discoveryworld_qwen35_9b_4node.sbatch both
+```
+
+Single-method `contextgraph` or `foldagent` uses both pairs as disjoint shards. Run outputs are under `$SCRATCH/context-graph-agent-benchmarks/runs/discoveryworld-9b-...`; the launcher prints the exact path and captures `suite.log`, including direct idev launches.
+
+```bash
+cat "$DW_RUN"/contextgraph*/summary.json "$DW_RUN"/foldagent*/summary.json
+tail -n 10 "$DW_RUN"/evaluator-*.log
+python scripts/audit_discoveryworld_pair.py --contextgraph "$DW_RUN" --foldagent "$DW_RUN" --output "$DW_RUN/pair-audit.json"
+```
+
+The audit compares only common graded task IDs and checks model, revision, code, data, budgets and config compatibility. It refuses overwriting an earlier audit.
+
+## Local verification
+
+In an isolated Python 3.10/3.11 agent environment:
+
+```bash
+python -m pip install -r requirements_discoveryworld.txt
+python scripts/probe_discoveryworld.py --output output/discoveryworld-simulator-probe
+DISCOVERYWORLD_LIVE_TEST=1 SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy python -m pytest tests/test_discoveryworld.py -q
+```
+
+The opt-in tests exercise all eight real Normal scenarios and both real agent loops with a scripted model client. They verify integration, not Qwen performance or Vista GPU compatibility. No language-model or paid judge API is used by the simulator probe.

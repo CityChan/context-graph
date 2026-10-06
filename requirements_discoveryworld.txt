@@ -1,0 +1,7 @@
+# Private agent overlay; preserve cxtgraph and existing benchmark environments.
+discoveryworld @ git+https://github.com/allenai/discoveryworld.git@fd591323920be0d3786ef350955de1945aa571e5
+pygame==2.6.1
+pathfinding==1.0.18
+httpx>=0.27,<1
+pandas>=2,<4
+filelock>=3.16,<4

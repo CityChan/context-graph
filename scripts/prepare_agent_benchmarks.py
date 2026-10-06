@@ -1,4 +1,4 @@
-"""Prepare immutable public ScienceWorld test tasks."""
+"""Prepare immutable ScienceWorld test or DiscoveryWorld public tasks."""
 from __future__ import annotations
 
 import argparse
@@ -13,13 +13,20 @@ from scripts.eval_discoverybench_qwen35 import save
 SCIENCEWORLD_VERSION = "1.2.3"
 
 
-def prepare(benchmark, output):
-    if benchmark != "scienceworld":
-        raise ValueError("Expected scienceworld")
+def prepare(benchmark, output, difficulty="Normal"):
+    if benchmark not in ("scienceworld", "discoveryworld"):
+        raise ValueError("Unknown benchmark")
     output = Path(output).resolve()
     output.mkdir(parents=True, exist_ok=True)
     if (output / "tasks.json").exists():
         raise ValueError("Prepared data already exists; reuse it or choose a new directory")
+    if benchmark == "discoveryworld":
+        from envs.discoveryworld_protocol import REVISION, tasks_for
+        tasks = tasks_for(difficulty)
+        save(output / "tasks.json", {"source": {"benchmark": benchmark, "revision": REVISION,
+             "split": "public", "difficulty": difficulty, "seeds": list(range(5))}, "tasks": tasks})
+        print(f"BENCHMARK_DATA_READY benchmark={benchmark} tasks={len(tasks)} path={output / 'tasks.json'}")
+        return
     from scripts.make_scienceworld_data import collect_variations
     version = importlib.metadata.version("scienceworld")
     if version != SCIENCEWORLD_VERSION:
@@ -35,7 +42,8 @@ def prepare(benchmark, output):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("benchmark", choices=["scienceworld"])
+    parser.add_argument("benchmark", choices=["scienceworld", "discoveryworld"])
+    parser.add_argument("--difficulty", choices=["Easy", "Normal", "Challenge", "all"], default="Normal")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    prepare(args.benchmark, args.output)
+    prepare(args.benchmark, args.output, args.difficulty)

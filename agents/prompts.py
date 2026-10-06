@@ -225,6 +225,31 @@ I've uploaded a python code repository in the directory /testbed. Consider the f
         )
         chat = [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}]
         return chat
+    elif workflow in ('discoveryworld', 'discoveryworld_branch', 'discoveryworld_graph'):
+        tools = scienceworld_tool()
+        tools[0]['function']['description'] = "Execute one DiscoveryWorld action. command is a JSON object encoded as a string, using the supplied action catalogue."
+        tools[0]['function']['parameters']['properties']['command']['description'] = "DiscoveryWorld action JSON, or chosen_dialog_option_int JSON during a dialog."
+        if workflow.endswith(('_branch', '_graph')):
+            tools += branch_tool()
+        if workflow.endswith('_graph') and expose_graph_tools:
+            tools += graph_tool()
+        description = PARALLEL_TOOL_PROMPT.format(description=convert_tools_to_description(tools))
+        description = description.replace(
+            "You may provide optional reasoning for your function call in natural language BEFORE the function call, but NOT after.",
+            "Output only one XML function call, with no prose or markdown.")
+        system = (
+            "You are a scientist in DiscoveryWorld. Read the task description in taskProgress and complete it by "
+            "exploring, taking measurements, testing hypotheses, and using evidence. Use only public observations. "
+            "Object arguments are integer UUIDs from observations, not names. Locations use exact supplied names. "
+            'Example: <function=action><parameter=command>{"action":"MOVE_DIRECTION","arg1":"north"}</parameter></function>. '
+            'During dialog use <function=action><parameter=command>{"chosen_dialog_option_int":1}</parameter></function> '
+            "with an option actually shown in dialog_box. Each environment action advances time once, including failed actions. "
+            "Branches share the same world and run sequentially; they do not reset or copy it. Historical observations may be stale. "
+            "Do not call finish; the environment ends on task termination or budget exhaustion. "
+            "Only during marked [GRAPH ACTION MODE] follow the controller JSON schema; otherwise use XML tools."
+        )
+        return [{'role': 'system', 'content': system + '\n\n' + description},
+                {'role': 'user', 'content': problem_statement}]
     elif workflow in ('scienceworld', 'scienceworld_branch', 'scienceworld_graph'):
         if scienceworld_prompt_profile not in ("legacy", "focus_v2"):
             raise ValueError("Unknown ScienceWorld prompt profile")

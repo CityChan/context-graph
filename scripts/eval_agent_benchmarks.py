@@ -1,4 +1,4 @@
-"""Resumable paired-agent evaluation for ScienceWorld.
+"""Resumable paired-agent evaluation for ScienceWorld and DiscoveryWorld.
 
 Each task has a process boundary, durable tool/request logs, a trajectory and an
 atomic result. A model/JVM failure is an infrastructure error, not zero.
@@ -24,29 +24,37 @@ from scripts.eval_discoverybench_qwen35 import MODEL, REVISION, digest, save, ta
 from scripts.prepare_agent_benchmarks import SCIENCEWORLD_VERSION
 from scripts.generation_audit import combine_degeneration_stats, degeneration_stats, require_generation_quality
 
-BENCHMARKS = ("scienceworld",)
+BENCHMARKS = ("scienceworld", "discoveryworld")
 METHODS = ("contextgraph", "foldagent")
 MEMORY_PROFILES = ("legacy", "turns", "repaired")
-PROMPT_PROFILES = ("legacy", "focus_v2")
+PROMPT_PROFILES = ("legacy", "focus_v2", "discoveryworld_v1")
 
 
 def config_for(benchmark, method, context_length, max_steps=100, memory_profile="repaired", prompt_profile="legacy"):
     if benchmark not in BENCHMARKS:
-        raise ValueError("Expected scienceworld")
+        raise ValueError("Unknown benchmark")
     if memory_profile not in MEMORY_PROFILES:
-        raise ValueError("Unknown ScienceWorld memory profile")
+        raise ValueError("Unknown memory profile")
     if prompt_profile not in PROMPT_PROFILES:
-        raise ValueError("Unknown ScienceWorld prompt profile")
+        raise ValueError("Unknown prompt profile")
+    if (benchmark == "discoveryworld") != (prompt_profile == "discoveryworld_v1"):
+        raise ValueError("DiscoveryWorld requires discoveryworld_v1; ScienceWorld requires legacy or focus_v2")
     from scripts.eval_discoverybench_qwen35 import config_for as base_config
     config = base_config(method, context_length)
     plugin = config.actor_rollout_ref.rollout.plugin
     plugin.workflow = benchmark + ("_graph" if method == "contextgraph" else "_branch")
-    plugin.scienceworld_max_steps = max_steps
+    if benchmark == "discoveryworld":
+        plugin.discoveryworld_max_steps = max_steps
+        plugin.max_turn = plugin.val_max_turn = max_steps
+        plugin.discoveryworld_prompt_profile = prompt_profile
+    else:
+        plugin.scienceworld_max_steps = max_steps
     # Controller checkpoints consume tokens/time, but not task-turn opportunities.
     # Keep this in both manifests so the paired budget convention is explicit.
     plugin.graph_controller_counts_as_turn = memory_profile == "legacy"
-    plugin.scienceworld_memory_profile = memory_profile
-    plugin.scienceworld_prompt_profile = prompt_profile
+    if benchmark == "scienceworld":
+        plugin.scienceworld_memory_profile = memory_profile
+        plugin.scienceworld_prompt_profile = prompt_profile
     if method == "contextgraph" and memory_profile == "repaired":
         plugin.contextgraph_memory_mode = "repaired"
         plugin.auto_prune_keep_recent = 8
@@ -61,13 +69,24 @@ def config_for(benchmark, method, context_length, max_steps=100, memory_profile=
 
 def load_tasks(path, benchmark, samples):
     if benchmark not in BENCHMARKS:
-        raise ValueError("Expected scienceworld")
+        raise ValueError("Unknown benchmark")
     bundle = json.loads(Path(path).read_text(encoding="utf8"))
     if bundle["source"]["benchmark"] != benchmark:
         raise ValueError("Benchmark/data mismatch")
     tasks = bundle["tasks"]
     if not tasks or len({t["task_id"] for t in tasks}) != len(tasks):
         raise ValueError("Empty or duplicate task list")
+    if benchmark == "discoveryworld":
+        from envs.discoveryworld_protocol import REVISION, tasks_for
+        source = bundle["source"]
+        if source.get("revision") != REVISION or source.get("split") != "public" or source.get("seeds") != list(range(5)):
+            raise ValueError("DiscoveryWorld public suite provenance mismatch")
+        expected = tasks_for(source["difficulty"])
+        if tasks != expected:
+            raise ValueError("DiscoveryWorld suite must match the full pinned catalogue; select subsets with --samples")
+        if samples != -1 and not 1 <= samples <= len(tasks):
+            raise ValueError("Invalid sample count")
+        return source, tasks if samples == -1 else tasks[:samples]
     for task in tasks:
         allowed = {"task_id", "task_name", "variation_idx", "split"}
         if set(task) != allowed:
@@ -91,6 +110,10 @@ def summary(root, ids, benchmark):
              "mean_score": sum(r["score"] for r in graded) / len(ids) if ids and len(graded) == len(ids) else None}
     value["score_scale"] = "0..100; negative terminal scores clipped to 0; raw scores retained per task"
     value["successes"] = sum(r["success"] for r in graded)
+    if benchmark == "discoveryworld":
+        value["score_scale"] = "official normalized procedural task score multiplied by 100"
+        value["knowledge_score"] = None
+        value["knowledge_evaluation"] = "not implemented; not a full three-metric DiscoveryWorld evaluation"
     value.update(combine_degeneration_stats(records))
     save(root / "summary.json", value)
     print("BENCHMARK_PROGRESS " + json.dumps(value), flush=True)
@@ -140,12 +163,15 @@ async def generate(args, task, directory):
     seed = 42 + int(hashlib.sha256(task["task_id"].encode()).hexdigest()[:8], 16) % 1000000
     client = TokenClient(args.endpoint, MODEL, tokenizer, rollout_config, seed, directory / "requests.jsonl")
     extra = dict(task, workflow=rollout_config.plugin.workflow, tool_log=str(directory / "tools.jsonl"))
-    extra.update(simplification="", problem_statement=f"ScienceWorld {task['task_name']}")
+    if args.benchmark == "discoveryworld":
+        extra.update(grading_log=str(directory / "scorecard.json"), problem_statement=task["scenario"])
+    else:
+        extra.update(simplification="", problem_statement=f"ScienceWorld {task['task_name']}")
     item = DataProto()
-    ability = "ScienceWorld@real"
+    ability = "DiscoveryWorld@real" if args.benchmark == "discoveryworld" else "ScienceWorld@real"
     item.non_tensor_batch = {"ability": np.array([ability], dtype=object), "extra_info": np.array([extra], dtype=object),
                              "uid": np.array([task["task_id"]], dtype=object), "reward_model": np.array([{}], dtype=object)}
-    item.meta_info = {"generation_kwargs": {}, "max_turn": 100}
+    item.meta_info = {"generation_kwargs": {}, "max_turn": args.max_steps if args.benchmark == "discoveryworld" else 100}
     try:
         output = await process_item(item, TaskContext(config=config, global_step=0, llm_client=client,
                                                       is_train=False, tokenizer=tokenizer))
@@ -157,10 +183,11 @@ async def generate(args, task, directory):
         if client.failed or any(stats.get(k) for k in ("env_init_error", "env_error")):
             raise RuntimeError("Model or environment failure; see trajectory and request logs")
         score = float(stats["environment_score"])
+        from envs.discoveryworld_protocol import PROTOCOL
         save(directory / "result.json", {"status": "graded", "score": max(0.0, min(100.0, score)),
                "raw_score": score, "success": bool(stats.get("completed")), "env_stats": stats,
                "termination_reason": trajectories[0].get("termination_reason"),
-               "protocol": "scienceworld-1.2.3/test/unsimplified/shared-sequential-environment"})
+               "protocol": PROTOCOL if args.benchmark == "discoveryworld" else "scienceworld-1.2.3/test/unsimplified/shared-sequential-environment"})
     finally:
         await client.client.aclose()
 
@@ -189,6 +216,13 @@ def preflight(args):
     if not any(m["id"] == MODEL and m.get("max_model_len", 0) >= args.context_length
                and str(m.get("root", "")).rstrip("/").endswith(REVISION) for m in models):
         raise ValueError("Server model/checkpoint/context mismatch")
+    if args.benchmark == "discoveryworld":
+        from envs.discoveryworld_protocol import verify_install
+        protocol["simulator"] = verify_install()
+        protocol["observation"] = "official text UI only; no images; oracle scorecards grading-only"
+        protocol["knowledge_evaluation"] = "not implemented"
+        protocol["versions"].update({p: importlib.metadata.version(p) for p in ("pygame", "pathfinding")})
+        return tasks, protocol
     if importlib.metadata.version("scienceworld") != SCIENCEWORLD_VERSION or source.get("version") != SCIENCEWORLD_VERSION:
         raise ValueError("ScienceWorld version mismatch")
     java = subprocess.run(["java", "-version"], check=True, timeout=20, capture_output=True, text=True)
