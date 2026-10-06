@@ -675,6 +675,11 @@ class AgentContext:
             credit * mask
             for credit, mask in zip(graph_edit_credit_mask, response_mask)
         ][:response_length]
+        graph_decision_mask = sum([
+            [int(isinstance(info, dict) and 'graph_edit_credit' in info)] * len(turn)
+            for turn, info in zip(self.chat_ids, self.additional_info)
+        ][prompt_turn:], [])
+        graph_decision_mask = [v * m for v, m in zip(graph_decision_mask, response_mask)][:response_length]
         response_turn_token_indices = {}
         response_offset = 0
         for turn_index in range(prompt_turn, len(self.chat_ids)):
@@ -698,6 +703,7 @@ class AgentContext:
             'response_mask': response_mask,
             'process_reward_mask': process_reward_mask,
             'graph_edit_credit_mask': graph_edit_credit_mask,
+            'graph_decision_mask': graph_decision_mask,
             'response_turn_token_indices': response_turn_token_indices,
             'num_turns': len(self.chat_ids),
             'messages': self.chat,

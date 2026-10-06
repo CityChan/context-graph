@@ -15,7 +15,8 @@ pytestmark = pytest.mark.skipif(not BASH, reason='Bash unavailable')
     ('complete', 0), ('missing_shard', 1), ('trainer_failure', 17),
     ('credit_failure', 19), ('missing_rollout', 1),
 ])
-def test_five_node_two_step_smoke_requires_checkpoint_and_credit(tmp_path, outcome, code):
+@pytest.mark.parametrize('backend', ['old_policy_counterfactual_qa', 'evidence'])
+def test_five_node_two_step_smoke_requires_checkpoint_and_credit(tmp_path, outcome, code, backend):
     (tmp_path / 'scripts').mkdir()
     (tmp_path / 'data').mkdir()
     for name in ('bc_train.parquet', 'bc_test.parquet'):
@@ -41,7 +42,7 @@ if [ "$TEST_OUTCOME" != missing_rollout ]; then printf '{}\\n' > "$ROLLOUT_DATA_
         'scontrol() { printf "%s\\n" node0 node1 node2 node3 node4; }',
         'git() { if [ "$1" = rev-parse ]; then echo fake-sha; fi; return 0; }',
         'source() { :; }', 'conda() { :; }', 'find() { echo /dev/null; }',
-        'python() { unset LD_PRELOAD; case "$1" in scripts/audit_*) printf "%s\\n" "$*" >> "$PROJECT_ROOT/audits"; if [ "$TEST_OUTCOME" = credit_failure ] && [ "$1" = scripts/audit_counterfactual_graph_credit.py ]; then return 19; fi ;; esac; return 0; }',
+        'python() { unset LD_PRELOAD; case "$1" in scripts/audit_*) printf "%s\\n" "$*" >> "$PROJECT_ROOT/audits"; if [ "$TEST_OUTCOME" = credit_failure ] && [[ "$1" = scripts/audit_*graph_credit.py ]]; then return 19; fi ;; esac; return 0; }',
         'export -f scontrol git source conda find python',
         f'bash "{(ROOT / "scripts/train_bcp_qwen35_9b_50step.sh").as_posix()}" contextgraph',
     ]) + '\n', encoding='utf8', newline='\n')
@@ -49,7 +50,7 @@ if [ "$TEST_OUTCOME" != missing_rollout ]; then printf '{}\\n' > "$ROLLOUT_DATA_
                CONDA_PREFIX=tmp_path.as_posix(), SLURM_JOB_ID='fixture', SLURM_JOB_NODELIST='fixture',
                OPENAI_API_KEY='fixture', BCP_TRAIN_PROFILE='contextgraph_32k_4x4_batch',
                BCP_TRAIN_TOPOLOGY='full', BCP_GRAPH_RPO_SMOKE='1', SMOKE_TEST='0',
-               PREFLIGHT_ONLY='0', TEST_OUTCOME=outcome)
+               PREFLIGHT_ONLY='0', TEST_OUTCOME=outcome, GRAPH_RPO_CREDIT_BACKEND=backend)
     result = subprocess.run([BASH, setup.as_posix()], cwd=ROOT, env=env,
                             capture_output=True, text=True, timeout=30,
                             creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
@@ -62,14 +63,17 @@ if [ "$TEST_OUTCOME" != missing_rollout ]; then printf '{}\\n' > "$ROLLOUT_DATA_
         'PPO_MINI_BATCH_SIZE': '4', 'EXPECTED_NUM_NODES': '5', 'CONTEXT_LENGTH': '32768',
         'RESPONSE_LENGTH': '24576', 'VAL_BEFORE_TRAIN': 'False', 'SAVE_FREQ': '2',
         'ADV_ESTIMATOR': 'graphrpo', 'POLICY_LOSS_MODE': 'graphrpo',
-        'USE_KL_LOSS': 'True', 'BC_CONTROLLER_ACTION_POLICY': 'structural',
+        'USE_KL_LOSS': 'True', 'BC_CONTROLLER_ACTION_POLICY': 'balanced' if backend == 'evidence' else 'structural',
     }.items():
         assert captured[key] == value
     if outcome == 'complete':
         audits = (tmp_path / 'audits').read_text()
         assert 'audit_bc_judge_results.py' in audits
-        assert 'audit_counterfactual_graph_credit.py' in audits
-        assert '--fail-on-integrity-error --min-tag-rate 0.9 --require-nonzero-delta' in audits
+        if backend == 'evidence':
+            assert 'audit_evidence_graph_credit.py' in audits and '--require-nonzero' in audits
+        else:
+            assert 'audit_counterfactual_graph_credit.py' in audits
+            assert '--fail-on-integrity-error --min-tag-rate 0.9 --require-nonzero-delta' in audits
     elif outcome == 'credit_failure':
         assert 'stage=graph_credit_audit exit=19' in (run_dir / 'failure.log').read_text()
 

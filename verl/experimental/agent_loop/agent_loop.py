@@ -177,6 +177,7 @@ class _InternalAgentLoopOutput(AgentLoopOutput):
     """Padded process reward mask."""
     graph_edit_credit_mask: Optional[torch.Tensor] = None
     """Padded GraphRPO edit-credit mask."""
+    graph_decision_mask: Optional[torch.Tensor] = None
 
 
 # make hydra.utils.instantiate happy
@@ -558,6 +559,13 @@ class AgentLoopWorkerBase:
             graph_edit_credit_mask = gec * response_mask.to(torch.float32)
 
 
+        graph_decision_mask = None
+        decision_list = output.extra_fields.get("graph_decision_mask")
+        if decision_list is not None:
+            pad_size = self.config.actor_rollout_ref.rollout.response_length - len(decision_list)
+            graph_decision_mask = torch.tensor(decision_list + [0] * max(pad_size, 0), dtype=torch.float32).unsqueeze(0)
+            graph_decision_mask *= response_mask.to(torch.float32)
+
         routed_experts = None
         if output.routed_experts is not None:
             total_length = input_ids.shape[1]
@@ -668,6 +676,7 @@ class AgentLoopWorkerBase:
             extra_fields=output.extra_fields,
             process_reward_mask=process_reward_mask,
             graph_edit_credit_mask=graph_edit_credit_mask,
+            graph_decision_mask=graph_decision_mask,
         )
 
     def _postprocess(self, inputs: list[_InternalAgentLoopOutput]) -> DataProto:
@@ -716,6 +725,10 @@ class AgentLoopWorkerBase:
             batch["process_reward_mask"] = process_reward_mask.to(torch.float32)
         if graph_edit_credit_mask is not None:
             batch["graph_edit_credit_mask"] = graph_edit_credit_mask.to(torch.float32)
+        if any(item.graph_decision_mask is not None for item in inputs):
+            batch["graph_decision_mask"] = torch.cat([
+                item.graph_decision_mask if item.graph_decision_mask is not None
+                else torch.zeros_like(item.response_mask, dtype=torch.float32) for item in inputs], dim=0)
         if mask_rollout is not None:
             batch["mask_rollout"] = mask_rollout
 

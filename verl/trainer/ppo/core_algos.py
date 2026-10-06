@@ -628,6 +628,7 @@ def compute_graphrpo_advantage(
     epsilon: float = 1e-6,
     process_reward_mask: Optional[torch.Tensor] = None,
     graph_edit_credit_mask: Optional[torch.Tensor] = None,
+    graph_decision_mask: Optional[torch.Tensor] = None,
     excluded_gen_uids: Optional[set[Any]] = None,
     config: Optional[AlgoConfig] = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
@@ -717,6 +718,24 @@ def compute_graphrpo_advantage(
     )
     if graph_credit.shape != token_level_rewards.shape or process_labels.shape != token_level_rewards.shape:
         raise ValueError("GraphRPO token-credit tensors must match token rewards")
+    if config is not None and config.get("graphrpo_normalize_decision_tokens", False):
+        if graph_decision_mask is None or graph_decision_mask.shape != response_mask.shape:
+            raise ValueError("Decision normalization requires a graph_decision_mask matching responses")
+        decisions = graph_decision_mask.to(torch.float32) * response_mask
+        if not torch.all((decisions == 0) | (decisions == 1)):
+            raise ValueError("Graph decision mask must be binary")
+        if not torch.isfinite(graph_credit).all() or torch.any((graph_credit != 0) & (decisions == 0)):
+            raise ValueError("Graph credit must be finite and confined to decision tokens")
+        graph_credit = graph_credit.clone()
+        # The policy loss already averages over all tokens of an episode across
+        # main/branch rows. Cancel that dilution for the local credit component only.
+        # Keep zero-credit decisions in the denominator and preserve signed credit;
+        # centering within a question would erase uniformly bad/good decisions.
+        for episode_id in episode_reward:
+            rows = [i for i, value in enumerate(episode_ids) if value == episode_id]
+            count = decisions[rows].sum()
+            if count > 0:
+                graph_credit[rows] *= response_mask[rows].sum() / count
 
     advantages = torch.zeros_like(token_level_rewards, dtype=torch.float32)
     for row, episode_id in enumerate(episode_ids):

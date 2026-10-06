@@ -135,7 +135,7 @@ if [ -f "${WORK:-/work/09281/chc_1996/vista}/.openai_env" ]; then
 fi
 STAGE=training_setup
 [ -n "${OPENAI_API_KEY:-}" ] || { echo "Missing judge credentials"; exit 2; }
-export TRAIN_DATA_FILE=data/bc_train.parquet VAL_DATA_FILE=data/bc_test.parquet
+export TRAIN_DATA_FILE=${GRAPH_RPO_TRAIN_DATA:-data/bc_train.parquet} VAL_DATA_FILE=data/bc_test.parquet
 sha256sum "$TRAIN_DATA_FILE" "$VAL_DATA_FILE" | tee "$RUN_DIR/data.sha256"
 export TOTAL_TRAINING_STEPS=50 TRAINER_VAL_ONLY=False
 export TRAINER_RESUME_MODE=disable
@@ -179,13 +179,19 @@ if [ "$METHOD" = contextgraph ]; then
   export ADV_ESTIMATOR=graphrpo POLICY_LOSS_MODE=graphrpo
   export BC_CONTROLLER_ACTION_POLICY=structural PROCESS_REWARD_SPEC='[scope]'
   export USE_KL_LOSS=True ACTOR_KL_LOSS_COEF=0.0005 ALGORITHM_KL_COEF=0.0
-  export GRAPH_RPO_CREDIT_BACKEND=old_policy_counterfactual_qa
+  export GRAPH_RPO_CREDIT_BACKEND=${GRAPH_RPO_CREDIT_BACKEND:-old_policy_counterfactual_qa}
   export GRAPH_RPO_COUNTERFACTUAL_SAMPLES=1 GRAPH_RPO_COUNTERFACTUAL_MAX_NEW_TOKENS=512
   export GRAPH_RPO_COUNTERFACTUAL_TEMPERATURE=1.0 GRAPH_RPO_COUNTERFACTUAL_TOP_P=1.0
   export GRAPH_RPO_COUNTERFACTUAL_SEED=42 GRAPH_RPO_COUNTERFACTUAL_ENABLE_THINKING=False
   export GRAPH_RPO_ALPHA=0.1 GRAPH_RPO_BETA=0.25 GRAPH_RPO_EPSILON=1e-6
   export GRAPH_RPO_DELTA_SCALE=1.0 GRAPH_RPO_DELTA_MAX=0.25
   export GRAPH_RPO_OPERATION_COSTS='{merge:0.0,prune:0.0,add_edge:0.0,select:0.0}'
+  if [ "$GRAPH_RPO_CREDIT_BACKEND" = evidence ]; then
+    export GRAPH_RPO_ALPHA=0.5 GRAPH_RPO_DELTA_MAX=1.0
+    export BC_CONTROLLER_ACTION_POLICY=balanced PROCESS_REWARD_SPEC='[]'
+    STAGE=evidence_data_preflight
+    python scripts/prepare_graph_evidence_data.py --check "$TRAIN_DATA_FILE"
+  fi
   export SAVE_ROLLOUT_DATA=1 ROLLOUT_DATA_DIR="$RUN_DIR/rollouts"
 fi
 if [ "${SMOKE_TEST:-0}" = 1 ]; then
@@ -197,6 +203,10 @@ if [ "${SMOKE_TEST:-0}" = 1 ]; then
   export MAX_TURN=4 MAX_SESSION=1 VAL_MAX_SESSION=1 TURN_MAX_NEW_TOKENS=512 SESSION_TIMEOUT=600
   export BC_DISABLE_WANDB=1
   echo "Smoke: 3 prompts x 2 rollouts, 3 trainer ranks, 1 step, 12K context; not a performance evaluation."
+  if [ "$METHOD" = contextgraph ] && [ "$GRAPH_RPO_CREDIT_BACKEND" = evidence ]; then
+    export MAX_TURN=16 MAX_SESSION=3 CONSOLIDATION_INTERVAL=2
+    echo "Evidence smoke: allow 16 turns and 3 branches; decision-credit audit required."
+  fi
 fi
 if [ "$BCP_GRAPH_RPO_SMOKE" = 1 ]; then
   export TOTAL_TRAINING_STEPS=2 TRAIN_MAX_SAMPLES=8 VAL_MAX_SAMPLES=4
@@ -283,13 +293,17 @@ if [ "$RC" -eq 0 ] && { [ "${SMOKE_TEST:-0}" = 1 ] || [ "$BCP_GRAPH_RPO_SMOKE" =
       [ -s "$SHARD" ] || { echo "Missing checkpoint shard: $SHARD"; exit 1; }
     done
   done
-  if [ "$BCP_GRAPH_RPO_SMOKE" = 1 ]; then
+  if [ "$BCP_GRAPH_RPO_SMOKE" = 1 ] || { [ "$METHOD" = contextgraph ] && [ "$GRAPH_RPO_CREDIT_BACKEND" = evidence ]; }; then
     STAGE=graph_credit_audit
     shopt -s nullglob
     ROLLOUT_FILES=("$ROLLOUT_DATA_DIR"/*.jsonl)
-    [ "${#ROLLOUT_FILES[@]}" -eq 2 ] || { echo "Expected two rollout JSONL files"; exit 1; }
+    [ "${#ROLLOUT_FILES[@]}" -eq "$TOTAL_TRAINING_STEPS" ] || { echo "Missing per-step rollout JSONL files"; exit 1; }
     python scripts/audit_bc_judge_results.py "${ROLLOUT_FILES[@]}" --fail-on-integrity-error
-    python scripts/audit_counterfactual_graph_credit.py "${ROLLOUT_FILES[@]}" --fail-on-integrity-error --min-tag-rate 0.9 --require-nonzero-delta
+    if [ "$GRAPH_RPO_CREDIT_BACKEND" = evidence ]; then
+      python scripts/audit_evidence_graph_credit.py "${ROLLOUT_FILES[@]}" --require-nonzero
+    else
+      python scripts/audit_counterfactual_graph_credit.py "${ROLLOUT_FILES[@]}" --fail-on-integrity-error --min-tag-rate 0.9 --require-nonzero-delta
+    fi
   fi
   echo "BCP_RL_SMOKE_COMPLETE method=$METHOD steps=$TOTAL_TRAINING_STEPS checkpoint=$CHECKPOINT_ROOT/global_step_$TOTAL_TRAINING_STEPS" | tee "$RUN_DIR/smoke-complete.txt"
 fi

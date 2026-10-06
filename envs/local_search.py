@@ -456,6 +456,10 @@ class LocalSearch:
         self.open_page_words = max(1, int(getattr(self.config.plugin, "open_page_words", 4096)))
         self.open_page_chars = max(256, int(getattr(self.config.plugin, "open_page_chars", 48000)))
         self.visited_pages = set()
+        # Trusted tool-returned text only; never populated from model citations.
+        self.evidence_documents = []
+        self.record_evidence = (getattr(self.config.plugin, 'graph_rpo_credit_backend', '') == 'evidence'
+                                or getattr(self.config.plugin, 'graph_branch_history', False))
         self.is_finish = False
         self.emergency_finish_wrapped = False
         # Allocate connections only after all constructor validation succeeds.
@@ -478,6 +482,7 @@ class LocalSearch:
         self.predicted_answer = None
         self.judge_audit = []
         self.instance_info = copy.deepcopy(extra)
+        self.evidence_documents = []
         self.instance_info['problem_statement'] = self.instance_info['query']
         self.search_skill_context = None
         self.search_skill_context_injected = False
@@ -525,6 +530,8 @@ class LocalSearch:
                                     self.search_snippet_chars,
                                 )
                                 show_topk += 1
+                            if self.record_evidence:
+                                self.evidence_documents.append({'docid': str(page['docid']), 'text': page['text']})
                             observation += (
                                 f"\n--- #{i}: {page['docid']}---\n"
                                 f"docid: {page['docid']}\n"
@@ -551,6 +558,8 @@ class LocalSearch:
                                 page['text'], self.open_page_words,
                                 self.open_page_chars,
                             )
+                            if self.record_evidence and page.get('docid') is not None and page['text'] not in ('Document not found for given docid.', 'Missing docid and url, or url not indexed.'):
+                                self.evidence_documents.append({'docid': str(page['docid']), 'text': page['text']})
                             observation += (
                                 f"[Opened Page Content]\n"
                                 f"docid: {page['docid']}\n"

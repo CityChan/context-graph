@@ -116,6 +116,8 @@ def test_graph_credit_and_process_rewards_keep_absolute_turn_mapping_after_resta
         assert indices
         assert all(segments[1]['process_reward_mask'][i] == -0.2 for i in indices)
         assert all(segments[1]['graph_edit_credit_mask'][i] == 0.7 for i in indices)
+        assert all(segments[1]['graph_decision_mask'][i] == 1 for i in indices)
+        assert sum(segments[0]['graph_decision_mask']) == 0
     asyncio.run(run())
 
 

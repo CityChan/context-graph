@@ -67,16 +67,23 @@ def validate_graph_snapshot(snapshot: Any) -> list[str]:
 class GraphTraceRecorder:
     """Capture complete before/after graph states for each parent-graph mutation."""
 
-    def __init__(self, graph: ContextGraph):
+    def __init__(self, graph: ContextGraph, credit_view_renderer=None, credit_metadata=None):
         initial = graph.to_dict(include_archives=False)
         self.initial_graph = deepcopy(initial)
         self.initial_hash = snapshot_hash(initial)
         self.events: list[dict[str, Any]] = []
         self._rendered_by_hash = {self.initial_hash: graph.to_state_text()}
+        self.credit_view_renderer = credit_view_renderer
+        self.credit_metadata = credit_metadata
+        self._credit_views = {}
+        if credit_view_renderer is not None:
+            self._credit_views[self.initial_hash] = credit_view_renderer(graph)
 
     def capture(self, graph: ContextGraph) -> dict[str, Any]:
         snapshot = deepcopy(graph.to_dict(include_archives=False))
         self._rendered_by_hash[snapshot_hash(snapshot)] = graph.to_state_text()
+        if self.credit_view_renderer is not None:
+            self._credit_views[snapshot_hash(snapshot)] = self.credit_view_renderer(graph)
         return snapshot
 
     def record(
@@ -147,6 +154,10 @@ class GraphTraceRecorder:
         event["rendered_before_hash"] = hashlib.sha256(
             event["rendered_before"].encode("utf-8")
         ).hexdigest()
+        if self.credit_view_renderer is not None:
+            event["credit_view_before"] = self._credit_views[snapshot_hash(before)]
+            event["credit_view_after"] = self._credit_views[snapshot_hash(after)]
+            event.update(self.credit_metadata() if self.credit_metadata else {})
         event["rendered_after_hash"] = hashlib.sha256(
             event["rendered_after"].encode("utf-8")
         ).hexdigest()

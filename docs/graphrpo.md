@@ -6,6 +6,9 @@ enabled only when `algorithm.adv_estimator=graphrpo` and
 
 ## Training semantics
 
+These are the original objective defaults. The opt-in evidence experiment below
+adds branch credit and a separate normalization for decision tokens.
+
 - A `gen_uid` identifies one episode. Its main and branch streams share the
   verified binary terminal reward and one episode-level outcome advantage.
 - The group baseline uses the population standard deviation. A zero-variance
@@ -27,6 +30,93 @@ enabled only when `algorithm.adv_estimator=graphrpo` and
 GraphRPO deliberately requires the structured graph controller. This makes one
 controller response exactly one edit decision span and prevents legacy XML
 graph calls from being mixed with environment actions.
+
+## Evidence and branch-credit experiment
+
+Set `GRAPH_RPO_CREDIT_BACKEND=evidence` for the new BC-P experiment. The default
+remains `old_policy_counterfactual_qa`, so existing launch commands keep their
+original objective. Evidence credit is supervised by training document annotations;
+it is not an evaluator-free correctness estimate or a demonstrated score improvement.
+
+- A branch receives `new_gold_documents / total_gold_documents` on its initiating
+  main-agent decision. Documents already retrieved by either the main or a branch
+  cannot earn discovery credit again. IDs come from actual displayed search/open
+  tool results, never model-written citations or unseen search hits.
+- For graph edits, freeze a bounded, question-conditioned retrieval view before
+  and after the edit. Credit is `(newly_visible_gold - lost_gold) / total_gold`.
+  Visibility requires eight consecutive words from previously tool-returned text
+  in the view. A document ID alone earns nothing. This conservative lexical proxy
+  can miss paraphrases and is not a fact-entailment judgment. The probe is not a
+  replay of the complete main-agent prompt. Archived evidence is not necessarily
+  visible; pruning that leaves retrieved evidence available incurs no loss.
+- A branch with task-word Jaccard similarity at least 0.6 to a previous branch
+  gets a 0.2 penalty only if it retrieved no new document or expanded source passage.
+  Opening more text from a previously seen page is exempt (new source eight-word
+  shingles), even though it earns no first-discovery bonus. This heuristic is
+  audited, not a hard branch ban.
+- A bounded history of six branch attempts, their new-document counts and their
+  unverified returned reports is shown to the policy. It contains no gold labels
+  and does not assert that a no-result search disproved a hypothesis.
+- Credit is assigned even when the final answer is wrong. Automatic edits and
+  rejected operations get no evidence credit. Valid passes have zero credit and
+  count in the decision-token denominator. There is no graph-size penalty.
+
+The evidence launcher enables `graphrpo_normalize_decision_tokens`: for each episode,
+the local-credit component is multiplied by total policy tokens across all streams
+divided by valid decision tokens. Combined with the existing episode-token loss
+weights, this averages local credit over decision tokens, rather than diluting it
+over the whole main/branch transcript. Outcome/process terms, entropy and KL retain
+their old weights. Zero-credit decisions count; episodes without decisions get zero
+local contribution. Signed credit is not centered within a question, which would
+erase uniformly useful/harmful decisions. This is a different objective and must
+be reported as such.
+
+The Qwen3.5 evidence profile uses alpha 0.5, delta clip 1.0, balanced controller
+actions, controller training temperature 0.8 (evaluation stays greedy), and token
+importance correction capped at 2.0. It keeps KL enabled and does not increase the
+hardware-dependent batch size or drop all-correct/all-wrong groups: those groups
+can still contain nonzero evidence credit. Scope-judge shaping is disabled in this
+profile. Final answer grading still uses the normal task judge.
+
+### Training labels and four-node smoke
+
+The input training parquet must contain nonempty `extra_info.graph_rpo_gold_docids`
+for every row. Labels must identify documents in the retriever's corpus and must
+come from training annotations. Missing/malformed labels fail preflight; they are
+never silently treated as an empty gold set. Validation does not need or read them.
+If existing parquet lacks the field, prepare a new file using JSON mapping exact
+training questions to lists of document IDs:
+
+```bash
+python scripts/prepare_graph_evidence_data.py --source data/bc_train.parquet --labels /path/to/training-question-docids.json --output /scratch/path/bc_train_evidence.parquet
+```
+
+The converter preserves prompts, answers and row ordering, and refuses overwrite.
+It does not infer annotation columns, download labels, or modify test data. A labels
+file/source path for the real Vista dataset must be supplied before this experiment
+can run; the repository does not contain those training annotations.
+
+Inside a free four-node Vista idev allocation, from the committed checkout:
+
+```bash
+GRAPH_RPO_TRAIN_DATA=/scratch/path/bc_train_evidence.parquet bash scripts/smoke_bcp_graphrpo_evidence_4node_idev.sh
+```
+
+This uses search plus three trainer GPUs, three prompts with two rollouts each,
+one optimizer step, a 12K context, up to 16 turns/three branches, and a controller
+checkpoint every two main turns. It preserves the existing environment separation.
+Completion requires checkpoint shards, judge integrity, persisted evidence decisions
+and nonzero local credit. Zero evidence signal is an inconclusive smoke that exits
+nonzero, not a successful training validation. It does not establish performance.
+
+Metrics include `graph_rpo_evidence_recall`, `graph_rpo_evidence_gained/lost`,
+`graph_rpo_branch_decisions`, `graph_rpo_duplicate_branch_rate`,
+`graph_rpo_decision_tokens`, and the existing signed/absolute credit sums. Per-event
+traces retain decision indices, bounded views, document sets and credit components.
+`scripts/audit_evidence_graph_credit.py` checks saved credit arithmetic and deduplicates
+episode streams. It does not revalidate document annotations against the corpus.
+Evaluation of a trained evidence-profile policy should also enable
+`plugin.graph_branch_history=True`; gold annotations remain unnecessary.
 
 ## Formal evaluator-free utility: paired old-policy QA outcomes
 

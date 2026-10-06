@@ -476,6 +476,7 @@ class AlgoConfig(BaseConfig):
     # GraphRPO uses binary verified rewards by default; controlled reward
     # ablations may explicitly opt in to finite scalar terminal rewards.
     graphrpo_alpha: float = 1.0
+    graphrpo_normalize_decision_tokens: bool = False
     graphrpo_beta: float = 1.0
     graphrpo_epsilon: float = 1e-6
     graphrpo_require_binary_reward: bool = True

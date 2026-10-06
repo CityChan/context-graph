@@ -328,6 +328,19 @@ if [ "$ADV_ESTIMATOR" = "graphrpo" ]; then
     "+actor_rollout_ref.rollout.plugin.graph_rpo_operation_costs=$GRAPH_RPO_OPERATION_COSTS"
   )
   case "$GRAPH_RPO_CREDIT_BACKEND" in
+    evidence)
+      python scripts/prepare_graph_evidence_data.py --check "$TRAIN_DATA_FILE"
+      GRAPH_RPO_ARGS+=(
+        "algorithm.graphrpo_normalize_decision_tokens=True"
+        "algorithm.rollout_correction.rollout_is=token"
+        "algorithm.rollout_correction.rollout_is_threshold=2.0"
+        "+actor_rollout_ref.rollout.plugin.graph_rpo_scope_process_reward=False"
+        "+actor_rollout_ref.rollout.plugin.graph_branch_history=True"
+        "+actor_rollout_ref.rollout.plugin.graph_controller_temperature=${GRAPH_CONTROLLER_TEMPERATURE:-0.8}"
+        "+actor_rollout_ref.rollout.plugin.graph_rpo_duplicate_threshold=${GRAPH_RPO_DUPLICATE_THRESHOLD:-0.6}"
+        "+actor_rollout_ref.rollout.plugin.graph_rpo_duplicate_penalty=${GRAPH_RPO_DUPLICATE_PENALTY:-0.2}"
+      )
+      ;;
     old_policy_counterfactual_qa)
       GRAPH_RPO_COUNTERFACTUAL_SAMPLES=${GRAPH_RPO_COUNTERFACTUAL_SAMPLES:-2}
       GRAPH_RPO_COUNTERFACTUAL_MAX_NEW_TOKENS=${GRAPH_RPO_COUNTERFACTUAL_MAX_NEW_TOKENS:-512}
@@ -378,7 +391,7 @@ if [ "$ADV_ESTIMATOR" = "graphrpo" ]; then
       )
       ;;
     *)
-      echo "ERROR: GRAPH_RPO_CREDIT_BACKEND must be old_policy_counterfactual_qa, reference_answer_likelihood, old_policy_answer_likelihood, or external_evaluator"
+      echo "ERROR: unsupported GRAPH_RPO_CREDIT_BACKEND (expected evidence, old_policy_counterfactual_qa, reference_answer_likelihood, old_policy_answer_likelihood, or external_evaluator)"
       exit 1
       ;;
   esac

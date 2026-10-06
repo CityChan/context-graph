@@ -374,6 +374,7 @@ def compute_advantage(
             epsilon=float(config.get("graphrpo_epsilon", 1e-6)),
             process_reward_mask=data.batch.get("process_reward_mask"),
             graph_edit_credit_mask=data.batch.get("graph_edit_credit_mask"),
+            graph_decision_mask=data.batch.get("graph_decision_mask"),
             excluded_gen_uids=excluded_gen_uids,
             config=config,
         )

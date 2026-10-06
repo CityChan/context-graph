@@ -60,6 +60,7 @@ from .graph_controller import (
     graph_checkpoint_due,
 )
 from .graph_trace import GraphTraceRecorder
+from .evidence_credit import assign_evidence_credits, branch_history, expanded_documents, gold_docids
 from .context_graph_modes import memory_mode, run_foldagent_equivalent
 from .diagnostic_fixes import ANSWER_CONSISTENCY, RepeatAdvice, validate_fix
 from .structured_memory import (
@@ -230,6 +231,12 @@ async def process_item(
         adv_estimator = str(getattr(context.config.algorithm, "adv_estimator", "")).lower()
         graph_rpo_enabled = adv_estimator in {"graphrpo", "advantageestimator.graphrpo"}
         graph_rpo_backend = graph_rpo_credit_backend(config.plugin) if graph_rpo_enabled else None
+        evidence_training = graph_rpo_enabled and is_train and graph_rpo_backend == "evidence"
+        evidence_gold = gold_docids(_get(item.non_tensor_batch['extra_info'])) if evidence_training else None
+        if evidence_training and not hasattr(env, 'evidence_documents'):
+            raise ValueError("Evidence GraphRPO requires trusted LocalSearch document records")
+        branch_attempts = []
+        remember_branches = coerce_bool(getattr(config.plugin, "graph_branch_history", False), default=False)
         if graph_rpo_enabled and is_train:
             if not structured_graph_controller:
                 raise ValueError(
@@ -503,7 +510,19 @@ async def process_item(
             "max_context_snapshot_tokens": 0,
             "persistent_context_injections": 0,
         }
-        graph_trace = GraphTraceRecorder(graph)
+        def evidence_view(g):
+            # Retrieval updates diagnostic counters; do not perturb live statistics.
+            saved_stats = copy.deepcopy(g.last_retrieval_stats)
+            try:
+                return g.retrieve_context(query_text, summary_budget=retrieval_summary_budget,
+                    evidence_budget=retrieval_evidence_budget, max_summaries=retrieval_max_summaries,
+                    max_evidence=retrieval_max_evidence)
+            finally:
+                g.last_retrieval_stats = saved_stats
+
+        graph_trace = GraphTraceRecorder(graph,
+            credit_view_renderer=evidence_view if evidence_training else None,
+            credit_metadata=(lambda: {'evidence_document_count': len(env.evidence_documents)}) if evidence_training else None)
         graph_controller = GraphActionController(
             max_candidates=int(
                 getattr(config.plugin, "graph_controller_max_candidates", 12)
@@ -822,6 +841,8 @@ async def process_item(
                 agent['main'].messages()[-1].get("content", query_text)
                 if agent['main'].messages() else query_text
             )
+            if remember_branches and branch_attempts:
+                memory_overlay = (memory_overlay or "") + "\n" + branch_history(branch_attempts)
             response = await step_preserving_final_answer(
                 agent['main'],
                 protected_final_answer_budget,
@@ -940,6 +961,8 @@ async def process_item(
 
             # ── Branch: spawn isolated child subgraph ──
             elif fn_call is not None and fn_call['function'] == 'branch':
+                branch_turn_index = len(agent['main'].chat) - 1
+                branch_document_start = len(getattr(env, 'evidence_documents', []))
                 trace_before = graph_trace.capture(graph)
                 if iteration >= effective_max_turn:
                     observation = "No remaining turn budget to start a branch."
@@ -1093,12 +1116,22 @@ async def process_item(
                     else:
                         observation = branch_message
                     branch_return[agent_name] = branch_message
-                    graph_trace.record(
+                    branch_event = graph_trace.record(
                         graph, trace_before, turn_id=main_turn_count,
                         source="model", op="branch",
                         args=fn_call.get('arguments', {}), success=True,
                         assistant_content=response,
+                        assistant_turn_index=branch_turn_index,
                     )
+                    documents = getattr(env, 'evidence_documents', [])
+                    seen_docs = {str(d['docid']) for d in documents[:branch_document_start]}
+                    retrieved_docs = {str(d['docid']) for d in documents[branch_document_start:]}
+                    if evidence_training:
+                        branch_event.update(evidence_seen_before=sorted(seen_docs), evidence_retrieved=sorted(retrieved_docs),
+                            evidence_expanded_documents=sorted(expanded_documents(documents[:branch_document_start], documents[branch_document_start:])))
+                    if remember_branches:
+                        branch_attempts.append({'task': description + ' ' + message_to_branch,
+                            'new_documents': len(retrieved_docs - seen_docs), 'report': branch_message})
 
             # ── Regular tools on main agent: add observation to PARENT graph ──
             elif (
@@ -1414,7 +1447,7 @@ async def process_item(
                                     config.plugin,
                                     "graph_controller_temperature",
                                     0.0,
-                                )),
+                                )) if is_train or graph_rpo_backend != "evidence" else 0.0,
                                 "top_p": float(getattr(
                                     config.plugin,
                                     "graph_controller_top_p",
@@ -2057,7 +2090,11 @@ async def process_item(
 
         reference_edit_requests = []
         if graph_rpo_enabled and is_train:
-            if graph_rpo_backend == EXTERNAL_EVALUATOR_BACKEND:
+            if graph_rpo_backend == "evidence":
+                graph_rpo_metrics = assign_evidence_credits(agent=agent['main'],
+                    graph_trace=graph_trace_payload, gold=evidence_gold,
+                    documents=env.evidence_documents, plugin_config=config.plugin)
+            elif graph_rpo_backend == EXTERNAL_EVALUATOR_BACKEND:
                 graph_rpo_metrics = await assign_graph_edit_credits(
                     agent=agent['main'],
                     graph_trace=graph_trace_payload,
@@ -2140,6 +2177,10 @@ async def process_item(
             else:  # pragma: no cover - graph_rpo_credit_backend validates this.
                 raise ValueError(f"unsupported GraphRPO credit backend: {graph_rpo_backend}")
             env.stats.update(graph_rpo_metrics)
+            if evidence_training:
+                env.stats['graph_rpo_decision_tokens'] = sum(
+                    sum(agent['main'].token_mask[i]) for i, info in enumerate(agent['main'].additional_info)
+                    if isinstance(info, dict) and 'graph_edit_credit' in info)
 
         use_graph_reward = (
             not graph_rpo_enabled and process_reward and 'graph' in process_reward
@@ -2207,7 +2248,8 @@ async def process_item(
                     'meta_info': f"N: {len(agent)} | {name} | G:{len(graph.nodes)}n/{len(graph.active_edges)}e [iso]",
                     'process_reward_mask': out['process_reward_mask'],
                     **(
-                        {'graph_edit_credit_mask': out['graph_edit_credit_mask']}
+                        {'graph_edit_credit_mask': out['graph_edit_credit_mask'],
+                         'graph_decision_mask': out['graph_decision_mask']}
                         if graph_rpo_enabled
                         else {}
                     ),
