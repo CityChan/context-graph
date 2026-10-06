@@ -18,6 +18,8 @@ cd "$PROJECT_ROOT"
 export BENCH_CONTEXT_LENGTH=${BENCH_CONTEXT_LENGTH:-65536} BENCH_SAMPLES=${BENCH_SAMPLES:--1}
 export BENCH_MAX_STEPS=${BENCH_MAX_STEPS:-100}
 export BENCH_MEMORY_PROFILE=${BENCH_MEMORY_PROFILE:-repaired}
+export BENCH_PROMPT_PROFILE=${BENCH_PROMPT_PROFILE:-legacy}
+case "$BENCH_PROMPT_PROFILE" in legacy|focus_v2) ;; *) echo 'Expected BENCH_PROMPT_PROFILE=legacy or focus_v2'; exit 2 ;; esac
 case "$BENCH_MEMORY_PROFILE" in legacy|turns|repaired) ;; *) echo 'Expected BENCH_MEMORY_PROFILE=legacy, turns or repaired'; exit 2 ;; esac
 export SERVER_ENFORCE_EAGER=${SERVER_ENFORCE_EAGER:-1}
 case "$SERVER_ENFORCE_EAGER" in 0|1) ;; *) echo 'SERVER_ENFORCE_EAGER must be 0 or 1'; exit 2 ;; esac
@@ -42,7 +44,7 @@ if [[ ${1:-} == _eval ]]; then
     agent_preload
     extra=()
     [[ ${BENCH_RETRY_ERRORS:-0} == 1 ]] && extra+=(--retry-errors)
-    exec "$BENCH_AGENT_ENV/bin/python" -u scripts/eval_agent_benchmarks.py "$BENCHMARK" --method "$2" --endpoint "$3" --output "$BENCH_RUN_DIR/$4" --shard-index "$5" --shard-count "$6" --data "$BENCH_DATA" --model-path "$MODEL_PATH" --context-length "$BENCH_CONTEXT_LENGTH" --samples "$BENCH_SAMPLES" --max-steps "$BENCH_MAX_STEPS" --memory-profile "$BENCH_MEMORY_PROFILE" "${extra[@]}"
+    exec "$BENCH_AGENT_ENV/bin/python" -u scripts/eval_agent_benchmarks.py "$BENCHMARK" --method "$2" --endpoint "$3" --output "$BENCH_RUN_DIR/$4" --shard-index "$5" --shard-count "$6" --data "$BENCH_DATA" --model-path "$MODEL_PATH" --context-length "$BENCH_CONTEXT_LENGTH" --samples "$BENCH_SAMPLES" --max-steps "$BENCH_MAX_STEPS" --memory-profile "$BENCH_MEMORY_PROFILE" --prompt-profile "$BENCH_PROMPT_PROFILE" "${extra[@]}"
 fi
 
 export BENCHMARK=${1:?Expected scienceworld}
@@ -69,7 +71,7 @@ export BENCH_RUN_DIR
 exec 8>"$BENCH_RUN_DIR/launcher.lock"
 flock -n 8 || { echo 'This run already has a launcher'; exit 2; }
 exec > >(tee -a "$BENCH_RUN_DIR/suite.log") 2>&1
-echo "BENCHMARK_BATCH_START benchmark=$BENCHMARK method=$mode memory_profile=$BENCH_MEMORY_PROFILE artifacts=$BENCH_RUN_DIR"
+echo "BENCHMARK_BATCH_START benchmark=$BENCHMARK method=$mode memory_profile=$BENCH_MEMORY_PROFILE prompt_profile=$BENCH_PROMPT_PROFILE artifacts=$BENCH_RUN_DIR"
 
 # Only this private overlay is modified; preserve cxtgraph and the SWE env.
 base=${BENCH_BASE_PYTHON:-/scratch/09281/chc_1996/context-graph-swe/envs/agent-direct-Rs4ngP/bin/python}

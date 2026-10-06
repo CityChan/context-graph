@@ -27,13 +27,16 @@ from scripts.generation_audit import combine_degeneration_stats, degeneration_st
 BENCHMARKS = ("scienceworld",)
 METHODS = ("contextgraph", "foldagent")
 MEMORY_PROFILES = ("legacy", "turns", "repaired")
+PROMPT_PROFILES = ("legacy", "focus_v2")
 
 
-def config_for(benchmark, method, context_length, max_steps=100, memory_profile="repaired"):
+def config_for(benchmark, method, context_length, max_steps=100, memory_profile="repaired", prompt_profile="legacy"):
     if benchmark not in BENCHMARKS:
         raise ValueError("Expected scienceworld")
     if memory_profile not in MEMORY_PROFILES:
         raise ValueError("Unknown ScienceWorld memory profile")
+    if prompt_profile not in PROMPT_PROFILES:
+        raise ValueError("Unknown ScienceWorld prompt profile")
     from scripts.eval_discoverybench_qwen35 import config_for as base_config
     config = base_config(method, context_length)
     plugin = config.actor_rollout_ref.rollout.plugin
@@ -43,6 +46,7 @@ def config_for(benchmark, method, context_length, max_steps=100, memory_profile=
     # Keep this in both manifests so the paired budget convention is explicit.
     plugin.graph_controller_counts_as_turn = memory_profile == "legacy"
     plugin.scienceworld_memory_profile = memory_profile
+    plugin.scienceworld_prompt_profile = prompt_profile
     if method == "contextgraph" and memory_profile == "repaired":
         plugin.contextgraph_memory_mode = "repaired"
         plugin.auto_prune_keep_recent = 8
@@ -129,7 +133,7 @@ async def generate(args, task, directory):
         from agents.graph_agent_isolated import process_item
     else:
         from agents.fold_agent import process_item
-    config = config_for(args.benchmark, args.method, args.context_length, args.max_steps, args.memory_profile)
+    config = config_for(args.benchmark, args.method, args.context_length, args.max_steps, args.memory_profile, args.prompt_profile)
     rollout_config = config.actor_rollout_ref.rollout
     tokenizer = AutoTokenizer.from_pretrained(args.model_path, local_files_only=True)
     tokenizer_preflight(tokenizer, rollout_config)
@@ -172,7 +176,7 @@ def preflight(args):
                 "model_path": str(Path(args.model_path).resolve()), "seed": 42,
                 "decoding": {"temperature": 0, "top_p": 1, "thinking": True},
                 "server_execution": {"requested_enforce_eager": os.environ.get("SERVER_ENFORCE_EAGER", "1") == "1"},
-                "config": OmegaConf.to_container(config_for(args.benchmark, args.method, args.context_length, args.max_steps, args.memory_profile)),
+                "config": OmegaConf.to_container(config_for(args.benchmark, args.method, args.context_length, args.max_steps, args.memory_profile, args.prompt_profile)),
                 "task_timeout": args.task_timeout,
                 "versions": {p: importlib.metadata.version(p) for p in ("torch", "transformers", "httpx", "pandas", "numpy", "omegaconf")},
                 "commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()}
@@ -224,7 +228,8 @@ def run(args):
                 run_command([sys.executable, "-u", __file__, args.benchmark, "--task", str(attempt),
                              "--method", args.method, "--endpoint", args.endpoint, "--model-path", args.model_path,
                              "--context-length", str(args.context_length), "--max-steps", str(args.max_steps),
-                             "--memory-profile", args.memory_profile],
+                             "--memory-profile", args.memory_profile,
+                             "--prompt-profile", args.prompt_profile],
                             attempt / "generation.log", args.task_timeout)
                 result = json.loads((attempt / "result.json").read_text(encoding="utf8"))
             except Exception as exc:
@@ -252,6 +257,7 @@ def main():
     parser.add_argument("--context-length", type=int, choices=[32768, 65536], default=65536)
     parser.add_argument("--max-steps", type=int, default=100)
     parser.add_argument("--memory-profile", choices=MEMORY_PROFILES, default="repaired")
+    parser.add_argument("--prompt-profile", choices=PROMPT_PROFILES, default="legacy")
     parser.add_argument("--samples", type=int, default=-1)
     parser.add_argument("--shard-index", type=int, default=0)
     parser.add_argument("--shard-count", type=int, default=1)

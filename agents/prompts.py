@@ -7,6 +7,7 @@ def create_chat(
     item=None,
     *,
     expose_graph_tools=True,
+    scienceworld_prompt_profile="legacy",
 ):
     if workflow == 'code':
         tool_description = TOOL_PROMPT.format(description=convert_tools_to_description(codeact_tool()))
@@ -225,7 +226,9 @@ I've uploaded a python code repository in the directory /testbed. Consider the f
         chat = [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}]
         return chat
     elif workflow in ('scienceworld', 'scienceworld_branch', 'scienceworld_graph'):
-        tools = scienceworld_tool()
+        if scienceworld_prompt_profile not in ("legacy", "focus_v2"):
+            raise ValueError("Unknown ScienceWorld prompt profile")
+        tools = scienceworld_tool(focus_guidance=scienceworld_prompt_profile == "focus_v2")
         if 'branch' in workflow:
             tools = tools + branch_tool()
         if 'graph' in workflow:
@@ -233,6 +236,11 @@ I've uploaded a python code repository in the directory /testbed. Consider the f
             if expose_graph_tools:
                 tools = tools + graph_tool()
         tool_description = PARALLEL_TOOL_PROMPT.format(description=convert_tools_to_description(tools))
+        if scienceworld_prompt_profile == "focus_v2":
+            tool_description = tool_description.replace(
+                "You may provide optional reasoning for your function call in natural language BEFORE the function call, but NOT after.",
+                "Output exactly one function call, with no prose or markdown before or after it.",
+            )
         system_prompt = (
             "You are a science agent acting in the ScienceWorld text simulator. "
             "Complete the task through a sequence of real environment actions. "
@@ -243,8 +251,18 @@ I've uploaded a python code repository in the directory /testbed. Consider the f
             "Useful commands include `go to <location>`, `open <container>`, `pick up <object>`, "
             "`put <object> in <container>`, `activate <device>`, `connect <object> to <object>`, "
             "`pour <container> into <container>`, and `focus on <object>`. "
-            "Focus on the relevant object when the task asks you to identify, measure, or test it."
         )
+        if scienceworld_prompt_profile == "focus_v2":
+            system_prompt += (
+                " `focus on <object>` selects a task target; it is not an inspection or exploration command. "
+                "Focusing on the wrong object can immediately fail the task and end the episode. "
+                "Follow the task's focus instructions in order, and focus only when observations support "
+                "that the object matches the requested target. If the target is not visible, explore to "
+                "find it before focusing; do not substitute an unrelated visible object. "
+                "Use `look around` or `inventory` to inspect the current state."
+            )
+        else:
+            system_prompt += "Focus on the relevant object when the task asks you to identify, measure, or test it."
         if workflow == 'scienceworld_graph':
             if expose_graph_tools:
                 system_prompt += (

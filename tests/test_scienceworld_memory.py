@@ -56,6 +56,15 @@ def test_profiles_preserve_budgets_and_record_method_differences(profile, counts
     assert not protocol_check([manifests[0]], [manifests[1]])["matched"]
 
 
+def test_prompt_profile_is_a_shared_comparison_constraint():
+    configs = [config_for("scienceworld", method, 65536, prompt_profile="focus_v2")
+               for method in ["contextgraph", "foldagent"]]
+    manifests = [{"task_ids": ["task"], "config": OmegaConf.to_container(x)} for x in configs]
+    assert protocol_check([manifests[0]], [manifests[1]])["matched"]
+    manifests[1]["config"]["actor_rollout_ref"]["rollout"]["plugin"]["scienceworld_prompt_profile"] = "legacy"
+    assert not protocol_check([manifests[0]], [manifests[1]])["matched"]
+
+
 def test_repaired_loop_keeps_latest_feedback_and_recent_history(monkeypatch):
     from agents.graph_agent_isolated import process_item
     from tests.test_session_restart import Tokenizer

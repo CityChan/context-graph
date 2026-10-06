@@ -215,6 +215,7 @@ async def process_item(
             workflow,
             item,
             expose_graph_tools=not structured_graph_controller,
+            scienceworld_prompt_profile=getattr(config.plugin, "scienceworld_prompt_profile", "legacy"),
         )
 
         branch_prompt = BRANCH_MESSAGE_SEARCH if 'search' in workflow else BRANCH_MESSAGE

@@ -76,7 +76,8 @@ async def process_item(
 
         # Create prompt
         workflow = _get(item.non_tensor_batch['extra_info']).get('workflow', None) or getattr(config.plugin, "workflow", "search")
-        user_prompt = create_chat(env.instance_info['problem_statement'], workflow, item)
+        user_prompt = create_chat(env.instance_info['problem_statement'], workflow, item,
+                                  scienceworld_prompt_profile=getattr(config.plugin, "scienceworld_prompt_profile", "legacy"))
 
         branch_prompt = BRANCH_MESSAGE_SEARCH if 'search' in workflow else BRANCH_MESSAGE
 

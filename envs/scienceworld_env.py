@@ -76,7 +76,8 @@ class ScienceWorldEnv:
             )
             self.stats["variation_idx"] = variation_idx
             self.stats["environment_score"] = float((info or {}).get("score", 0))
-            self._audit({"event": "reset", "observation": observation, "info": info})
+            self._audit({"event": "reset", "task_description": task_description,
+                         "observation": observation, "info": info})
         except Exception as exc:
             print(f"[ScienceWorld] Env init failed: {exc}")
             self.stats["env_init_error"] += 1

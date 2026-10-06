@@ -43,6 +43,7 @@ def test_scienceworld_done_is_not_success(monkeypatch, tmp_path, score, done, su
     assert env.stats["invalid_actions"] == 0  # empty valid-action list is not an invalid-action flag
     assert asyncio.run(env.get_reward(task, [], None))[1] == int(success)
     assert len((tmp_path / "tools.jsonl").read_text().splitlines()) == 2
+    assert json.loads((tmp_path / "tools.jsonl").read_text().splitlines()[0])["task_description"] == "goal"
     sim = env._env
     env.close()
     assert sim.closed
@@ -106,13 +107,14 @@ def test_subprocess_timeout_and_nonzero_are_errors(tmp_path):
 
 
 @pytest.mark.parametrize("method", ["contextgraph", "foldagent"])
-def test_real_agent_loop_stops_on_environment_finish(monkeypatch, method):
+@pytest.mark.parametrize("profile", ["legacy", "focus_v2"])
+def test_real_agent_loop_stops_on_environment_finish(monkeypatch, method, profile):
     benchmark = "scienceworld"
     import importlib
     from tests.test_session_restart import Tokenizer, Client
     from verl import DataProto
     module = importlib.import_module("agents.graph_agent_isolated" if method == "contextgraph" else "agents.fold_agent")
-    config = config_for(benchmark, method, 65536)
+    config = config_for(benchmark, method, 65536, prompt_profile=profile)
     extra = {"workflow": config.actor_rollout_ref.rollout.plugin.workflow}
     class Simulator:
         def __init__(self, **kwargs): pass
@@ -135,6 +137,9 @@ def test_real_agent_loop_stops_on_environment_finish(monkeypatch, method):
     assert len(client.calls) == 1
     assert out[0].extra_fields["is_finish"]
     assert out[0].extra_fields["env_stats"]["environment_score"] == 100
+    system = out[0].extra_fields["messages"][0]["content"]
+    assert ("not an inspection or exploration command" in system) == (profile == "focus_v2")
+    assert ("You may provide optional reasoning" in system) == (profile == "legacy")
 
 
 def test_resume_skips_completed_and_retries_only_errors(monkeypatch, tmp_path):
@@ -144,6 +149,7 @@ def test_resume_skips_completed_and_retries_only_errors(monkeypatch, tmp_path):
     calls = []
     def command(argv, log, timeout):
         assert argv[argv.index("--memory-profile") + 1] == "repaired"
+        assert argv[argv.index("--prompt-profile") + 1] == "focus_v2"
         attempt = Path(argv[argv.index("--task") + 1])
         identity = json.loads((attempt / "task.json").read_text())["task_id"]
         calls.append(identity)
@@ -153,7 +159,7 @@ def test_resume_skips_completed_and_retries_only_errors(monkeypatch, tmp_path):
     monkeypatch.setattr(runner, "run_command", command)
     args = SimpleNamespace(output=tmp_path, benchmark="scienceworld", method="foldagent", endpoint="unused",
                            model_path="unused", context_length=65536, max_steps=100, task_timeout=30,
-                           shard_index=0, shard_count=1, retry_errors=False, memory_profile="repaired")
+                           shard_index=0, shard_count=1, retry_errors=False, memory_profile="repaired", prompt_profile="focus_v2")
     assert runner.run(args) == 2
     assert runner.run(args) == 2
     assert calls == ["a", "b"]

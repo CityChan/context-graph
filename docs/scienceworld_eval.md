@@ -1,5 +1,34 @@
 # ScienceWorld with Qwen3.5-9B
 
+## Focus action guidance (opt-in prompt protocol)
+
+Set `BENCH_PROMPT_PROFILE=focus_v2` (CLI: `--prompt-profile focus_v2`) to explain
+that `focus` selects the task target and can end an episode with failure when
+used on a wrong object. It is not a way to inspect arbitrary objects. The agent
+must follow the task's focus instructions and explore first if the target is
+not visible. This generic guidance contains no task answers or gold paths.
+The warning is consistent with the [AI2 CLIN ScienceWorld prompt](https://github.com/allenai/clin/blob/main/model_utils.py).
+
+This version also removes the tool footer's permission to add prose, which
+conflicted with the system's single-XML-call instruction. It leaves thinking,
+decoding, parsing, environment actions, scoring and termination unchanged.
+Both ContextGraph and FoldAgent receive the same action guidance. The default
+is `legacy` for controlled comparisons; prompt and memory profiles are separate.
+The resolved prompt profile is in the manifest config and is checked by the
+paired audit. Use a fresh run directory, not a resume of an older protocol.
+
+For a four-node idev paired rerun of the two early-failure tasks:
+
+```bash
+env -u BENCH_RUN_DIR -u BENCH_DATA BENCH_PROMPT_PROFILE=focus_v2 BENCH_MEMORY_PROFILE=repaired BENCH_SAMPLES=2 BENCH_CONTEXT_LENGTH=65536 BENCH_MAX_STEPS=100 SERVER_ENFORCE_EAGER=1 bash scripts/eval_agent_benchmarks_qwen35_9b_4node.sbatch scienceworld both
+```
+
+`both` runs the same two tasks per method (four episodes total). This is a
+diagnostic smoke, not a performance estimate. Check the actual focus commands,
+raw terminal scores and controller counts. If no controller is reached, it
+does not validate controller turn accounting or long-history compaction.
+Reset records in `tools.jsonl` now include the simulator task description.
+
 The four-node launcher prepares ScienceWorld, starts two inference servers,
 runs ContextGraph and FoldAgent, and saves per-task scores and trajectories.
 ScienceWorld uses a local Java simulator; Docker and external search or judge

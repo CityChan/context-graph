@@ -508,13 +508,17 @@ def alfworld_tool(action_only: bool = False):
     return [action, think, finish]
 
 
-def scienceworld_tool():
+def scienceworld_tool(*, focus_guidance=False):
     """Action tool for the ScienceWorld text simulator."""
     return [{
         'type': 'function',
         'function': {
             'name': 'action',
             'description': (
+                "Execute one text command in the ScienceWorld environment. "
+                "Use `look around` or `inventory` to inspect state. `focus on <object>` selects "
+                "the task target and may terminate the episode with failure if the target is wrong."
+                if focus_guidance else
                 "Execute one text command in the ScienceWorld environment. "
                 "Use `look around`, `inventory`, `focus on <object>`, and the "
                 "possible actions/objects reported by observations to plan experiments."
