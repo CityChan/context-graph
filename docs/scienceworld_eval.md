@@ -24,6 +24,24 @@ token cap. Use request logs when comparing inference costs. ContextGraph uses
 the balanced structured controller; FoldAgent uses its existing branch loop.
 RL shaping rewards are not benchmark scores.
 
+New server launches default to `SERVER_ENFORCE_EAGER=1` (`--enforce-eager`).
+Explicit `SERVER_ENFORCE_EAGER=0` opts out and clears `TORCHDYNAMO_DISABLE` in
+the server process. Both methods must use the same setting. The requested
+setting is recorded in the evaluator manifest; it does not attest the mode of
+an independently started endpoint. Changing it requires a new run directory.
+Existing jobs and checkouts pinned to older commits are not updated.
+
+After each task, the evaluator scans that attempt's `requests.jsonl` output IDs.
+A request containing at least 20 consecutive token IDs of zero is flagged once.
+`summary.json` records `model_requests`, `degenerate_requests`, and
+`degenerate_request_rate`. Strictly more than 1% at any progress checkpoint
+saves the summary with `generation_quality_passed=false` and raises an error,
+which makes the batch exit nonzero. Exactly 1% is allowed. These are request
+counts, not token counts, and only current attempts contribute. Missing audit
+evidence is reported as `generation_quality_passed=null` with
+`generation_unaudited_records`; it is not evidence of clean generation.
+This heuristic detects the observed output pattern, not its hardware cause.
+
 Branches act sequentially in the same episode. There is no simulator cloning
 or rollback. Negative terminal scores are clipped to zero for aggregation and
 preserved as `raw_score`. A terminal `done` flag alone does not indicate success.

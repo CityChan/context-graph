@@ -591,6 +591,22 @@ helper quality or successful RL updates.
 
 ### Bounded helper outputs and episode completion
 
+Evaluation now audits actor output token IDs for runs of at least 20 consecutive
+zeros. Each affected request counts once. The summary includes `model_requests`,
+`degenerate_requests`, and `degenerate_request_rate`; strictly more than 1% at
+an episode boundary saves the summary and raises an error. Exactly 1% is allowed.
+Only the current attempt's `actor_requests.jsonl` contributes, not prompt IDs,
+previous attempts, or helper chat calls (which do not expose output token IDs).
+No outputs are silently discarded or regenerated. Old results without audit
+counts are marked unaudited, with `generation_quality_passed=null` rather than
+certified clean. This is a pattern detector, not proof of a CUDA failure.
+
+The shared BC-P/GAIA evaluator applies the same check at shard merge, scanning
+only selected tasks' `requests-*.jsonl` files and excluding preflight probes.
+New shared model servers default to eager mode; `SERVER_ENFORCE_EAGER=0` opts
+out and clears `TORCHDYNAMO_DISABLE`. Requested mode is recorded in manifests;
+the change does not alter existing jobs pinned to older checkouts.
+
 The GRAM launchers now enable eager execution for the separately served actor
 and helper. They also configure XGrammar with `disable_any_whitespace=true` at
 server startup; helper requests carry the same setting. JSON string contents

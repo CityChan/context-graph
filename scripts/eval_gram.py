@@ -9,6 +9,7 @@ from pathlib import Path
 from agents.gram_agent import GramConfig, MemoryBackend, make_policy, run_episode, score_episode
 from agents.gram_memory import MEMORY_OUTPUT_PROTOCOL
 from scripts.prepare_gram_data import sha256, write_json
+from scripts.generation_audit import combine_degeneration_stats, degeneration_stats, require_generation_quality
 
 
 def jsonl_writer(path):
@@ -19,6 +20,12 @@ def jsonl_writer(path):
 
 
 def summarize(results, selected):
+    summary = _summarize_scores(results, selected)
+    summary.update(combine_degeneration_stats(results))
+    return summary
+
+
+def _summarize_scores(results, selected):
     graded = [r for r in results if r["status"] == "graded"]
     if results and any("benchmark" in r and r["benchmark"] == "bcp" for r in results):
         return {"benchmark": "bcp", "selected": selected, "completed": len(results),
@@ -81,7 +88,8 @@ async def evaluate(args):
     repository = Path(__file__).resolve().parents[1]
     sources = ["agents/gram_agent.py", "agents/gram_memory.py", "agents/gram_prompts.py",
                "agents/utils.py", "scripts/eval_gram.py", "scripts/eval_bcp_qwen38.py",
-               "scripts/prepare_gram_data.py", "agents/gram_decoding.py", "agents/structured_outputs.py"]
+               "scripts/prepare_gram_data.py", "agents/gram_decoding.py", "agents/structured_outputs.py",
+               "scripts/generation_audit.py"]
     if bcp:
         sources += ["agents/gram_bcp.py", "envs/local_search.py", "envs/judge_client.py"]
     manifest = {"protocol": "gram-bcp-adaptation-v1" if bcp else "gram-document-stream-v1", "paper_exact_reproduction": False,
@@ -93,6 +101,7 @@ async def evaluate(args):
                 "entity_matching": "cosine" if args.embedding_model else "normalized-exact-plus-helper-canonicalization",
                 "embedding_model": args.embedding_model, "embedding_revision": args.embedding_revision,
                 "context_length": args.context_length, "seed": args.seed, "temperature": 0.0,
+                "server_execution": {"requested_enforce_eager": os.environ.get("SERVER_ENFORCE_EAGER", "1") == "1"},
                 "template_enable_thinking": False,
                 "source_sha256": {p: sha256(repository / p) for p in sources}}
     tokenizer = AutoTokenizer.from_pretrained(args.model_path, local_files_only=True)
@@ -167,13 +176,17 @@ async def evaluate(args):
         if bcp:
             result["benchmark"] = "bcp"
         result["attempt"] = str(attempt.resolve())
+        request_log = attempt / "actor_requests.jsonl"
+        result["generation_audit"] = degeneration_stats([request_log] if request_log.exists() else [])
         write_json(path, result)
         results.append(result)
         summary = summarize(results, len(tasks))
         write_json(args.output / "summary.json", summary)
         print("GRAM_PROGRESS " + json.dumps(summary), flush=True)
+        require_generation_quality(summary)
     summary = summarize(results, len(tasks))
     write_json(args.output / "summary.json", summary)
+    require_generation_quality(summary)
     return 2 if summary["infrastructure_errors"] else 0
 
 

@@ -177,7 +177,11 @@ def test_summary_does_not_conflate_infrastructure_and_zero_score():
             {"status": "infrastructure_error"}]
     assert summarize(rows, 3) == {"selected": 3, "completed": 2, "pending": 1, "graded": 1,
                                   "infrastructure_errors": 1, "mean_answer_f1_graded": 0.,
-                                  "mean_answer_f1": None, "answered": 0}
+                                  "mean_answer_f1": None, "answered": 0,
+                                  "model_requests": 0, "degenerate_requests": 0,
+                                  "degenerate_request_rate": None,
+                                  "generation_quality_passed": None,
+                                  "generation_unaudited_records": 2}
 
 
 def test_real_agent_export_and_training_reward_no_label_leak():

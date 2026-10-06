@@ -19,6 +19,7 @@ import traceback
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.evaluation_records import read_evaluation
+from scripts.generation_audit import degeneration_stats, has_degenerate_run, require_generation_quality
 
 
 def select_indices(size, samples, seed):
@@ -148,9 +149,16 @@ def tokenizer_preflight(tokenizer, config):
 
 
 def summarize(root):
-    _, _, summary = read_evaluation(root)
+    root = Path(root)
+    _, results, summary = read_evaluation(root)
+    paths = [root / f"requests-{row['source_index']}.jsonl" for row in results]
+    summary.update(degeneration_stats(path for path in paths if path.exists()))
+    summary["generation_unaudited_records"] = sum(not path.exists() for path in paths)
+    if summary["generation_unaudited_records"] and summary["generation_quality_passed"] is True:
+        summary["generation_quality_passed"] = None
     (root / "summary.json").write_text(json.dumps(summary, indent=2))
     print(json.dumps(summary, indent=2))
+    require_generation_quality(summary)
     if summary["execution_errors"] or summary["judge_parse_failures"]:
         raise RuntimeError("Evaluation contains execution/judge failures; do not treat as a clean score")
 
@@ -177,6 +185,7 @@ async def evaluate(args):
         "indices": indices, "rank": args.rank, "method": args.method,
         "model": args.model, "model_path": str(Path(args.model_path).resolve()), "seed": args.seed,
         "judge_model": os.environ.get("JUDGE_MODEL", "gpt-5-nano"),
+        "server_execution": {"requested_enforce_eager": os.environ.get("SERVER_ENFORCE_EAGER", "1") == "1"},
         "transformers": transformers.__version__, "config": OmegaConf.to_container(config),
         "commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()}
     (root / f"manifest-{args.rank}.json").write_text(json.dumps(manifest, indent=2))

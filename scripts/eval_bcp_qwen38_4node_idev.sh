@@ -2,6 +2,8 @@
 # Existing allocation only. Run once per allocation: react, foldagent or contextgraph.
 set -euo pipefail
 export PROJECT_ROOT=${PROJECT_ROOT:-/work/09281/chc_1996/vista/context-graph}
+export SERVER_ENFORCE_EAGER=${SERVER_ENFORCE_EAGER:-1}
+case "$SERVER_ENFORCE_EAGER" in 0|1) ;; *) echo 'SERVER_ENFORCE_EAGER must be 0 or 1'; exit 2 ;; esac
 export SERVER_CONDA_ENV=${SERVER_CONDA_ENV:-deepseek_v4}
 export AGENT_CONDA_ENV=${AGENT_CONDA_ENV:-cxtgraph}
 export CONDA_SH=${CONDA_SH:-/work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh}
@@ -84,7 +86,12 @@ case "${1:-}" in
     # Exercise the failing CUDA sampling path before loading the model weights.
     python -c 'import torch, flashinfer; x=torch.randn(2, 32, device="cuda", dtype=torch.float32); y=flashinfer.sampling.top_k_top_p_sampling_from_logits(x, 4, 0.9); torch.cuda.synchronize(); assert y.shape == (2,); print("FlashInfer sampling preflight passed", flush=True)'
     server_args=()
-    [[ ${SERVER_ENFORCE_EAGER:-0} != 1 ]] || server_args+=(--enforce-eager)
+    if [[ "$SERVER_ENFORCE_EAGER" == 1 ]]; then
+        server_args+=(--enforce-eager)
+    else
+        unset TORCHDYNAMO_DISABLE
+    fi
+    echo "Server execution: SERVER_ENFORCE_EAGER=$SERVER_ENFORCE_EAGER"
     [[ ${SERVER_COMPACT_JSON:-0} != 1 ]] || server_args+=(--structured-outputs-config '{"backend":"xgrammar","disable_any_whitespace":true}')
     # Vista runs one standalone server per node. Let vLLM allocate a free
     # internal port instead of inheriting a fixed port from another launcher.

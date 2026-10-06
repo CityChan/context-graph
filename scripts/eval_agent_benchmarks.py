@@ -22,6 +22,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from scripts.eval_discoverybench_qwen35 import MODEL, REVISION, digest, save, task_key, shard_tasks
 from scripts.prepare_agent_benchmarks import SCIENCEWORLD_VERSION
+from scripts.generation_audit import combine_degeneration_stats, degeneration_stats, require_generation_quality
 
 BENCHMARKS = ("scienceworld",)
 METHODS = ("contextgraph", "foldagent")
@@ -73,8 +74,10 @@ def summary(root, ids, benchmark):
              "mean_score": sum(r["score"] for r in graded) / len(ids) if ids and len(graded) == len(ids) else None}
     value["score_scale"] = "0..100; negative terminal scores clipped to 0; raw scores retained per task"
     value["successes"] = sum(r["success"] for r in graded)
+    value.update(combine_degeneration_stats(records))
     save(root / "summary.json", value)
     print("BENCHMARK_PROGRESS " + json.dumps(value), flush=True)
+    require_generation_quality(value)
     return value
 
 
@@ -155,6 +158,7 @@ def preflight(args):
                 "model": MODEL, "model_revision": REVISION,
                 "model_path": str(Path(args.model_path).resolve()), "seed": 42,
                 "decoding": {"temperature": 0, "top_p": 1, "thinking": True},
+                "server_execution": {"requested_enforce_eager": os.environ.get("SERVER_ENFORCE_EAGER", "1") == "1"},
                 "config": OmegaConf.to_container(config_for(args.benchmark, args.method, args.context_length, args.max_steps)),
                 "task_timeout": args.task_timeout,
                 "versions": {p: importlib.metadata.version(p) for p in ("torch", "transformers", "httpx", "pandas", "numpy", "omegaconf")},
@@ -212,6 +216,8 @@ def run(args):
             except Exception as exc:
                 result = {"status": "infrastructure_error", "stage": stage, "error": str(exc)}
             result.update(task_id=task["task_id"], attempt=str(attempt), elapsed_seconds=time.monotonic() - started)
+            request_log = attempt / "requests.jsonl"
+            result["generation_audit"] = degeneration_stats([request_log] if request_log.exists() else [])
             save(result_path, result)
             summary(root, ids, args.benchmark)
         final = summary(root, ids, args.benchmark)
