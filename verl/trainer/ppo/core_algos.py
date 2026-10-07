@@ -568,6 +568,7 @@ def compute_graphrpo_loss_weights(
     gen_uid: np.ndarray,
     *,
     excluded_gen_uids: Optional[set[Any]] = None,
+    allow_empty: bool = False,
 ) -> torch.Tensor:
     """Return exact ``1 / (|Q| K_q |M_g|)`` token weights.
 
@@ -588,6 +589,8 @@ def compute_graphrpo_loss_weights(
     for row, (question_id, episode_id) in enumerate(zip(question_ids, episode_ids, strict=True)):
         if episode_id in excluded:
             continue
+        if allow_empty and not response_mask[row].to(torch.bool).any():
+            continue
         if episode_id in episode_question and episode_question[episode_id] != question_id:
             raise ValueError(f"GraphRPO gen_uid {episode_id!r} belongs to multiple questions")
         episode_question[episode_id] = question_id
@@ -596,6 +599,8 @@ def compute_graphrpo_loss_weights(
             group_episodes[question_id].append(episode_id)
 
     if not group_episodes:
+        if allow_empty:
+            return torch.zeros_like(response_mask, dtype=torch.float32)
         raise ValueError("GraphRPO batch contains no non-dummy question groups")
     for question_id, episodes in group_episodes.items():
         if len(episodes) < 2:
@@ -643,6 +648,25 @@ def compute_graphrpo_advantage(
     """
     if epsilon <= 0.0:
         raise ValueError("GraphRPO epsilon must be positive")
+    if config is not None and config.get("graphrpo_memory_only", False):
+        # Same-state continuation groups already carry their leave-one-out
+        # advantage. Do not add episode reward or process labels a second time.
+        if graph_edit_credit_mask is None or graph_decision_mask is None:
+            raise ValueError("Memory-only GraphRPO requires credit and decision masks")
+        if graph_edit_credit_mask.shape != response_mask.shape or graph_decision_mask.shape != response_mask.shape:
+            raise ValueError("Memory-only GraphRPO masks must match response tokens")
+        episode_ids = _graph_rpo_python_ids(gen_uid)
+        if len(episode_ids) != response_mask.shape[0]:
+            raise ValueError("GraphRPO identifiers must match response batch size")
+        active = torch.tensor([uid not in (excluded_gen_uids or set()) for uid in episode_ids],
+                              dtype=torch.bool, device=response_mask.device)
+        if not torch.equal(graph_decision_mask[active], response_mask[active]):
+            raise ValueError("Memory-only GraphRPO may optimize only selected M tokens")
+        credit = graph_edit_credit_mask.to(torch.float32)
+        if not torch.isfinite(credit[active]).all() or torch.any((credit[active] != 0) & (response_mask[active] == 0)):
+            raise ValueError("Memory-only credit must be finite and confined to M tokens")
+        advantages = torch.where(active[:, None], credit, 0.0) * response_mask
+        return advantages, advantages
     question_ids = _graph_rpo_python_ids(index)
     episode_ids = _graph_rpo_python_ids(gen_uid)
     excluded = set(excluded_gen_uids or set())

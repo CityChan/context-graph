@@ -127,6 +127,7 @@ algorithm:
 
   # GraphRPO token-advantage coefficients (used only when adv_estimator=graphrpo)
   graphrpo_alpha: 1.0
+  graphrpo_memory_only: false
   graphrpo_normalize_decision_tokens: false
   graphrpo_beta: 1.0
   graphrpo_epsilon: 1.0e-6

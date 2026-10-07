@@ -77,6 +77,7 @@ from .graph_rpo import (
     ANSWER_LIKELIHOOD_BACKENDS,
     EXTERNAL_EVALUATOR_BACKEND,
     OLD_POLICY_COUNTERFACTUAL_QA_BACKEND,
+    OLD_POLICY_CONTINUATION_BACKEND,
     GraphRPOEvaluatorError,
     assign_counterfactual_graph_edit_credits,
     assign_graph_edit_credits,
@@ -157,6 +158,8 @@ def make_graph_aware_run_action(env, child_graph: ContextGraph):
 async def process_item(
         item: DataProto,
         context: TaskContext,
+        *,
+        _continuation=None,
 ) -> Union[AgentLoopOutput, list[AgentLoopOutput]]:
     """Isolated ContextGraph agent loop.
 
@@ -171,6 +174,16 @@ async def process_item(
          stays immutable so generated and optimized prompts remain identical.
     """
     mode = memory_mode(context.config.actor_rollout_ref.rollout.plugin)
+    if (
+        context.is_train
+        and str(getattr(context.config.algorithm, 'adv_estimator', '')).lower()
+        in {'graphrpo', 'advantageestimator.graphrpo'}
+        and graph_rpo_credit_backend(context.config.actor_rollout_ref.rollout.plugin)
+        == OLD_POLICY_CONTINUATION_BACKEND
+        and _continuation is None
+    ):
+        from .graph_rpo_continuation import run_continuation_group
+        return await run_continuation_group(item, context, process_item)
     if mode == "foldagent":
         return await run_foldagent_equivalent(item, context)
     os.environ["no_proxy"] = ""
@@ -200,6 +213,8 @@ async def process_item(
     env = EnvClass(config, tokenizer, ability)
 
     async with managed_environment(env):
+        if _continuation is not None:
+            _continuation.attach(env)
         try:
             await env.init_env(item)
         except Exception as e:
@@ -264,6 +279,10 @@ async def process_item(
             for required_label in required_labels:
                 if required_label not in process_reward:
                     process_reward.append(required_label)
+        if _continuation is not None:
+            # Only the selected M decision receives continuation credit. Avoid
+            # auxiliary scope judges and unrelated process shaping in this path.
+            process_reward = None
         max_traj = getattr(config.plugin, "max_traj", None)
         enable_retrieval_memory = getattr(
             config.plugin, "enable_retrieval_memory", True
@@ -1434,6 +1453,13 @@ async def process_item(
                         'role': 'user', 'content': fitted_controller_prompt,
                     })
 
+                    if _continuation is not None:
+                        elapsed = _continuation.at_checkpoint(
+                            agent['main'], graph, env, iteration,
+                            time.time() - session_start_time,
+                        )
+                        session_start_time = time.time() - elapsed
+
                     controller_response = await step_preserving_final_answer(
                         agent['main'],
                         protected_final_answer_budget,
@@ -1466,6 +1492,8 @@ async def process_item(
                             <= protected_final_answer_budget + 9
                         )
                         break
+                    if _continuation is not None:
+                        await _continuation.capture_decision(agent['main'])
                     session_message.append({
                         'role': 'assistant', 'content': controller_response,
                     })
@@ -1801,6 +1829,8 @@ async def process_item(
             print(score)
         except Exception as e:
             print(f"[Error] Getting reward: {e}")
+            if _continuation is not None:
+                raise  # A judge outage is not evidence against this M decision.
             score, reward_dict = ("", 0), {"ans_reward": 0.0, "format_reward": 0.0, "ref_reward": 0.0}
 
         graph_rewards = graph.compute_graph_reward(
@@ -2091,7 +2121,10 @@ async def process_item(
 
         reference_edit_requests = []
         if graph_rpo_enabled and is_train:
-            if graph_rpo_backend == "evidence":
+            if graph_rpo_backend == OLD_POLICY_CONTINUATION_BACKEND:
+                # Group credit is assigned after all real continuations finish.
+                graph_rpo_metrics = {}
+            elif graph_rpo_backend == "evidence":
                 graph_rpo_metrics = assign_evidence_credits(agent=agent['main'],
                     graph_trace=graph_trace_payload, gold=evidence_gold,
                     documents=env.evidence_documents, plugin_config=config.plugin)

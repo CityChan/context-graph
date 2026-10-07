@@ -177,7 +177,8 @@ def validate_config(
         print("NOTICE: You have both enabled in-reward kl and kl loss.")
 
     if str(config.algorithm.adv_estimator).lower() == "graphrpo":
-        assert config.actor_rollout_ref.rollout.n >= 2, "GraphRPO requires rollout.n >= 2"
+        memory_only = bool(config.algorithm.get("graphrpo_memory_only", False))
+        assert config.actor_rollout_ref.rollout.n >= (1 if memory_only else 2), "GraphRPO requires rollout.n >= 2 unless memory-only"
         assert not config.algorithm.use_kl_in_reward, (
             "GraphRPO applies KL in the policy objective; use_kl_in_reward must be False"
         )
@@ -207,13 +208,21 @@ def validate_config(
         assert graph_credit_backend in {
             "external_evaluator",
             "old_policy_counterfactual_qa",
+            "old_policy_continuation",
             "reference_answer_likelihood",
             "old_policy_answer_likelihood",
         }, (
             "GraphRPO plugin.graph_rpo_credit_backend must be external_evaluator, "
-            "old_policy_counterfactual_qa, reference_answer_likelihood, or "
+            "old_policy_counterfactual_qa, old_policy_continuation, reference_answer_likelihood, or "
             "old_policy_answer_likelihood"
         )
+        assert memory_only == (graph_credit_backend == "old_policy_continuation"), (
+            "graphrpo_memory_only must be enabled exactly for old_policy_continuation"
+        )
+        if memory_only:
+            assert int(plugin.get("graph_rpo_continuation_samples", 4)) >= 2
+            assert int(plugin.get("graph_rpo_continuation_checkpoint", 1)) >= 1
+            assert float(plugin.get("graph_controller_temperature", 0)) > 0
         if graph_credit_backend == "external_evaluator":
             assert str(plugin.get("graph_rpo_evaluator_url", "")).strip(), (
                 "external-evaluator GraphRPO requires plugin.graph_rpo_evaluator_url"

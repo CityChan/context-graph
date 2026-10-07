@@ -4,6 +4,80 @@ This implementation follows Section 4.2 of the ContextGraph manuscript. It is
 enabled only when `algorithm.adv_estimator=graphrpo` and
 `actor_rollout_ref.actor.policy_loss.loss_mode=graphrpo`.
 
+## Same-state continuation experiment (M-only, opt-in)
+
+`graph_rpo_credit_backend=old_policy_continuation` with
+`algorithm.graphrpo_memory_only=True` trains the existing maintenance role of
+the shared model. Inference prompts, controller scheduling, legal actions and
+all previous backend defaults stay unchanged. This is **real tool continuation**,
+not the older tool-free before/after QA probe below.
+
+One ordinary rollout records an ordered tape of model completions and raw
+LocalSearch RPC results up to a maintenance checkpoint. Each candidate replays
+that prefix through the **same agent loop**, including branches, archives,
+visited-document state, graph operations and token/turn accounting. Replayed
+requests must match, and the checkpoint verifies a hash of the actual model
+input, graph/archives, environment state and turn count. Prefix wall time is
+also charged to every continuation. Replay makes no model/search RPCs and
+returns fresh copies of cached results. It does not deep-copy live connections
+or pretend a graph snapshot restores an arbitrary simulator.
+
+At that checkpoint, K independently sampled M decisions each continue with the
+pre-update model using real tools and the normal task judge. Later maintenance
+uses the same frozen policy and schedule; it is not recursively branched. For
+candidate i, its credit is `R_i - mean(R_j for j != i)`. Ties produce zero task
+advantage; duplicates, legal passes and rejected decisions are not selectively
+discarded. There is no compression bonus, operation cost, outcome normalization
+or extra episode/process reward in this mode. PPO's existing KL regularizer
+still applies on selected M tokens. The pilot also enables the existing clipped
+token importance correction for rollout/training probability differences.
+
+Only the selected M completion is trainable. The recorded prefix is retained as
+conditioning tokens with a zero loss mask; future E/M tokens and branch streams
+are excluded from training. The emitted M prefix is checked against the exact
+model input, and original token IDs/logprobs are retained. Each maintenance
+state has a fresh group ID and each candidate a distinct episode ID, so the
+existing GraphRPO loss averages states, candidates, then decision tokens.
+An episode ending before the chosen checkpoint emits a zero-mask sample and is
+excluded from loss normalization. Infrastructure, replay, judge and timeout
+failures abort the whole group rather than becoming negative M labels.
+
+Limits of this first implementation:
+
+- Only the read-only `LocalSearch` environment is supported. No SWE, ScienceWorld,
+  or DiscoveryWorld cloning is implemented. Session restarts and structured fact
+  memory are rejected in this training mode.
+- One checkpoint per source rollout, configured by the 1-based
+  `graph_rpo_continuation_checkpoint` (default 1); K is
+  `graph_rpo_continuation_samples` (default 4). Controller temperature must be
+  positive. `rollout.n` controls source prefixes and can be 1.
+- One continuation per candidate is a noisy estimate. All-failure groups still
+  have zero task advantage. There is no automatic curriculum or learned PRM.
+- This preserves the existing training context protocol, including its immutable
+  history. It does not claim the graph is the executor's only evidence source.
+- It assumes the synchronous PPO training cycle: complete the rollout batch
+  before updating shared weights. E can change after each optimizer update.
+
+The `graph_rpo_continuation` record in saved training rollouts contains the state
+hash, group, checkpoint, policy step, seeds, all candidate rewards and local
+advantage. Telemetry includes skipped/nonzero fractions, mean absolute advantage
+and decision-token counts. Ordinary validation does not fork and measures the
+complete shared-model agent.
+
+On Vista, after setting any model/data overrides required by the existing BC-P
+launcher, submit the two-update pilot (five nodes, 24-hour allocation):
+
+```bash
+sbatch scripts/train_bcp_graphrpo_continuation.sh
+```
+
+The wrapper defaults to four source prefixes, four candidates each, four
+validation examples and checkpointing every update. It reuses the existing SFT
+checkpoint/model setup. Increase `TOTAL_TRAINING_STEPS` only after inspecting
+replay integrity, nonzero advantages, optimizer metrics and saved checkpoints.
+Local tests exercise the real loop with controlled model/search responses;
+they are not evidence of successful Vista GPU training or task improvement.
+
 ## Training semantics
 
 These are the original objective defaults. The opt-in evidence experiment below

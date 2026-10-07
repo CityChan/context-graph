@@ -385,6 +385,7 @@ def compute_advantage(
             index=data.non_tensor_batch["uid"],
             gen_uid=data.non_tensor_batch["gen_uid"],
             excluded_gen_uids=excluded_gen_uids,
+            allow_empty=bool(config.get("graphrpo_memory_only", False)),
         )
     else:
         # handle all other adv estimator type other than GAE and GRPO
@@ -644,6 +645,7 @@ class RayPPOTrainer:
 
             trajectory_fields: dict[str, list] = {}
             for key in (
+                "graph_rpo_continuation",
                 "messages", "env_stats", "is_finish", "termination_reason",
                 "agent_name", "graph_trace", "graph_state", "graph_rewards",
                 "model_contexts", "branch_model_contexts", "contextgraph_memory_mode",
