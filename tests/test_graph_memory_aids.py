@@ -112,3 +112,34 @@ def test_invalid_note_recalls_accepted_commands_after_repeated_rejections():
     assert "2 of your last 4" in note and "`pick up soap`, `open the oven`" in note and "commit" not in note.lower()
     ok = add("look around", "This room is called the kitchen.")
     assert invalid_note(graph, ok) == ""
+
+
+def test_commit_recheck_expires_after_visible_state_changes(monkeypatch, tmp_path):
+    state = {"look": "a bowl (containing red paint, yellow paint)"}
+
+    class Simulator:
+        def __init__(self, **kwargs):
+            pass
+        def load(self, **kwargs):
+            pass
+        def reset(self):
+            return "room", {"score": 0, "look": state["look"]}
+        def get_task_description(self):
+            return "Create orange paint, then focus on the orange paint."
+        def step(self, command):
+            if command == "stir bowl":
+                state["look"] = "a bowl (containing orange paint)"
+            return f"did {command}", 0, False, {"score": 0, "moves": 1, "look": state["look"]}
+        def close(self):
+            pass
+    monkeypatch.setitem(sys.modules, "scienceworld", SimpleNamespace(ScienceWorldEnv=Simulator))
+    plugin = SimpleNamespace(scienceworld_commit_check=True, scienceworld_commit_recheck=True)
+    env = ScienceWorldEnv(SimpleNamespace(plugin=plugin), None, "x")
+    asyncio.run(env.init_env(item({"task_name": "paint", "tool_log": str(tmp_path / "t.jsonl")})))
+    act = lambda c: asyncio.run(env.run_action(f"<function=action><parameter=command>{c}</parameter></function>"))["observation"]
+    assert "[Commit check]" in act("focus on bowl")
+    act("look around")  # visible state unchanged: the earlier check still holds
+    act("stir bowl")
+    assert "[Commit check]" in act("focus on bowl")  # state changed: check again
+    assert act("focus on bowl") == "did focus on bowl"
+    assert env.stats["commit_checks"] == 2 and env.stats["commit_rechecks"] == 1 and env.stats["commit_confirmed"] == 1

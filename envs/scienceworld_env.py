@@ -31,8 +31,11 @@ class ScienceWorldEnv:
             raise ValueError("scienceworld_max_steps must be positive")
         # Opt-in two-phase commit for the irreversible `focus on` (same for every method; default off).
         self._commit_check = bool(getattr(plugin, "scienceworld_commit_check", False))
+        # Recheck variant: a confirmation is only valid while the visible room state is unchanged.
+        self._commit_recheck = bool(getattr(plugin, "scienceworld_commit_recheck", False))
+        self._look = ""
         self.commit_evidence = None  # optional callable(target) -> str supplied by a memory system
-        self._checked_commits = set()
+        self._checked_commits = {}
         self._task_description = ""
 
     @staticmethod
@@ -56,7 +59,8 @@ class ScienceWorldEnv:
         self.finish = False
         self._completed = False
         self._step_count = 0
-        self._checked_commits = set()
+        self._checked_commits = {}
+        self._look = ""
 
         task_name = str(self.instance_info.get("task_name", "")).strip()
         variation_idx = int(self.instance_info.get("variation_idx", 0))
@@ -76,6 +80,7 @@ class ScienceWorldEnv:
                 generateGoldPath=False,
             )
             observation, info = self._env.reset()
+            self._look = str((info or {}).get("look", observation))
             task_description = self._env.get_task_description()
             self._task_description = str(task_description)
             self.instance_info["problem_statement"] = (
@@ -116,6 +121,7 @@ class ScienceWorldEnv:
             self.stats["environment_steps"] = self._step_count
             # ScienceWorld's `valid` is a list of available actions, not a validity flag.
             info = info or {}
+            self._look = str(info.get("look", self._look))
             self.stats["environment_moves"] = int(info.get("moves", self._step_count))
             score = float(info["score"])
             self.stats["environment_score"] = score
@@ -144,14 +150,17 @@ class ScienceWorldEnv:
 
     def _commit_gate(self, command):
         """The first `focus on X` for a target in an episode returns a confirmation request instead of a
-        simulator step; sending the same command again (at any later point) commits it."""
+        simulator step; sending the same command again (at any later point) commits it. With
+        ``scienceworld_commit_recheck`` the confirmation expires once the visible room state changes."""
         norm = " ".join(command.lower().split())
         if not norm.startswith("focus on "):
             return None
-        if norm in self._checked_commits:
+        if norm in self._checked_commits and (
+                not self._commit_recheck or self._checked_commits[norm] == self._look):
             self.stats["commit_confirmed"] += 1
             return None
-        self._checked_commits.add(norm)
+        self.stats["commit_rechecks"] += int(norm in self._checked_commits)
+        self._checked_commits[norm] = self._look
         self.stats["commit_checks"] += 1
         target = command.strip()[len("focus on"):].strip()
         message = (f"[Commit check] No simulator step was taken. `focus on {target}` is irreversible: focusing on "
