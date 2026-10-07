@@ -87,7 +87,7 @@ def test_discoveryworld_keeps_its_existing_default():
     assert OmegaConf.to_container(default) == OmegaConf.to_container(explicit)
 
 
-def test_repaired_loop_keeps_latest_feedback_and_recent_history(monkeypatch):
+def _run_repaired_synthetic(monkeypatch, overrides=()):
     from agents.graph_agent_isolated import process_item
     from tests.test_session_restart import Tokenizer
     from verl import DataProto
@@ -122,7 +122,7 @@ def test_repaired_loop_keeps_latest_feedback_and_recent_history(monkeypatch):
                                                "response_log_probs": [-0.1] * len(tokens)}}]}
 
     monkeypatch.setitem(sys.modules, "scienceworld", SimpleNamespace(ScienceWorldEnv=Simulator))
-    config = config_for("scienceworld", "contextgraph", 65536, memory_profile="repaired")
+    config = config_for("scienceworld", "contextgraph", 65536, memory_profile="repaired", overrides=overrides)
     config.actor_rollout_ref.rollout.response_length = 1_000_000
     config.actor_rollout_ref.rollout.plugin.val_response_length = 1_000_000
     task = DataProto()
@@ -133,7 +133,11 @@ def test_repaired_loop_keeps_latest_feedback_and_recent_history(monkeypatch):
     client = Client()
     output = asyncio.run(process_item(task, SimpleNamespace(config=config, tokenizer=Tokenizer(),
                         llm_client=client, is_train=False, global_step=0)))
-    row = output[0].extra_fields
+    return output[0].extra_fields, client
+
+
+def test_repaired_loop_keeps_latest_feedback_and_recent_history(monkeypatch):
+    row, client = _run_repaired_synthetic(monkeypatch)
     assert row["env_stats"]["environment_steps"] == 18
     assert row["env_stats"]["turn_budget_used"] == 18
     assert row["env_stats"]["graph_controller_turns"] == 3
@@ -155,3 +159,19 @@ def test_repaired_loop_keeps_latest_feedback_and_recent_history(monkeypatch):
             prunes.append(event)
             assert latest not in event["args"]["node_ids"]
     assert prunes
+
+
+def test_out_of_band_controller_and_archived_only_retrieval(monkeypatch):
+    row, client = _run_repaired_synthetic(
+        monkeypatch, overrides=("controller_out_of_band=true", "retrieval_archived_only=true"))
+    stats = row["env_stats"]
+    assert stats["environment_steps"] == 18 and stats["graph_controller_turns"] == 3
+    assert stats["consol_out_of_band"] == 3 and stats["retrieval_archived_only"] == 1
+    ordinary = [text for text, kwargs in client.calls if not kwargs.get("structured_outputs")]
+    controller = [text for text, kwargs in client.calls if kwargs.get("structured_outputs")]
+    assert len(controller) == 3 and "[GRAPH ACTION MODE" in controller[0]
+    # The controller exchange never reaches the agent's working context.
+    assert not any("[GRAPH ACTION MODE turn=" in text or "[GRAPH ACTION APPLIED" in text for text in ordinary)
+    # Nothing has been archived in this short episode, so no evidence is duplicated by retrieval.
+    assert not any("[Historical ContextGraph evidence]" in text for text in ordinary)
+    assert "The door is now open." in ordinary[-1] and "You move to the bathroom." in ordinary[-1]

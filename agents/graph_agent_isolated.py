@@ -440,6 +440,15 @@ async def process_item(
         # graph.is_saturated() returns True. 0 disables consolidation entirely
         # (back to v2 behavior).
         consolidation_interval = getattr(config.plugin, "consolidation_interval", 0)
+        # Opt-in: controller checkpoints edit the graph without leaving their prompt, decision
+        # and graph-state acknowledgement in the agent's working context.
+        controller_out_of_band = coerce_bool(
+            getattr(config.plugin, "controller_out_of_band", None), default=False,
+        )
+        # Opt-in: retrieval restores only evidence that is no longer verbatim in the context.
+        retrieval_archived_only = coerce_bool(
+            getattr(config.plugin, "retrieval_archived_only", None), default=False,
+        )
         initial_consolidation_turn = getattr(
             config.plugin, "initial_consolidation_turn", 0
         )
@@ -796,7 +805,7 @@ async def process_item(
         consolidation_stats = {
             'attempts': 0, 'ops': 0, 'pass_valid': 0, 'pass_invalid': 0,
             'invalid': 0, 'budget_skips': 0, 'controller_errors': 0,
-            'candidate_skips': 0,
+            'candidate_skips': 0, 'out_of_band': 0,
         }
         mask_rollout = True
         timed_out = False
@@ -806,6 +815,7 @@ async def process_item(
         observation_budget_skips = 0
         session_message = []
         working_memory_turns = []
+        context_turn_nodes = {}
         retrieval_totals = {
             'calls': 0,
             'summary_tokens': 0,
@@ -1325,6 +1335,8 @@ async def process_item(
                 excluded = (
                     {new_evidence_node_id} if new_evidence_node_id is not None else set()
                 )
+                if retrieval_archived_only:
+                    excluded |= {context_turn_nodes[t] for t in working_memory_turns if t in context_turn_nodes}
                 retrieved = graph.retrieve_context(
                     query=response,
                     summary_budget=retrieval_summary_budget,
@@ -1384,6 +1396,8 @@ async def process_item(
             observation_budget_truncations += int(fitted_observation != str(observation))
             if enable_history_replacement:
                 working_memory_turns.append(observation_turn)
+                if new_evidence_node_id is not None:
+                    context_turn_nodes[observation_turn] = new_evidence_node_id
             session_message.append({'role': 'user', 'content': fitted_observation})
 
             # Preserve the terminal observation, then stop before a same-turn
@@ -1609,6 +1623,13 @@ async def process_item(
                     )
                     if diagnostic_fix == "repeat" and graph_call is not None and repeat_select_hint:
                         controller_ack = repeat_select_hint + "\n\n" + controller_ack
+                    if controller_out_of_band:
+                        # The decision is applied to the graph; drop the controller exchange from
+                        # the working context so the next turn continues from the last observation.
+                        agent['main'].rollback(k=2)
+                        consolidation_stats['out_of_band'] += 1
+                        session_message.append({'role': 'user', 'content': '[CONTROLLER OUT OF BAND] ' + controller_ack[:300]})
+                        continue
                     fitted_controller_ack = append_observation_preserving_final_answer(
                         agent['main'],
                         controller_ack,
@@ -1920,6 +1941,8 @@ async def process_item(
         env.stats['consol_budget_skips'] = consolidation_stats['budget_skips']
         env.stats['consol_controller_errors'] = consolidation_stats['controller_errors']
         env.stats['consol_candidate_skips'] = consolidation_stats['candidate_skips']
+        env.stats['consol_out_of_band'] = consolidation_stats['out_of_band']
+        env.stats['retrieval_archived_only'] = int(retrieval_archived_only)
         env.stats['structured_graph_controller'] = int(structured_graph_controller)
         env.stats['controller_allow_pass'] = int(controller_allow_pass)
         env.stats['controller_structural_policy'] = int(
