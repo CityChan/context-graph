@@ -10,6 +10,8 @@ Both are off by default, so existing protocols are unchanged.
 * ``action_repeat_memory``: when an environment action and its result exactly match earlier
   action nodes in the graph (including pruned ones), the latest feedback states how often it
   already happened. The memory is ContextGraph's own node history; nothing is blocked.
+* ``action_invalid_memory``: when the simulator keeps rejecting commands as unrecognized, the latest
+  feedback lists commands it accepted earlier in the episode, recalled from the graph's action nodes.
 * ``commit_graph_evidence``: when the environment asks for confirmation of an irreversible commit
   (ScienceWorld ``scienceworld_commit_check``), ContextGraph attaches the observation lines from its
   nodes (including pruned ones) that mention the commit target.
@@ -55,6 +57,39 @@ def repeat_note(graph, node_id):
     )
 
 
+UNRECOGNIZED = "No known action matches that input."
+
+
+def _action_nodes(graph):
+    return [node for node in graph.nodes.values() if node.metadata.get("tool") == "action"
+            and not str(node.metadata.get("raw_content", node.content)).startswith("[Commit check]")]
+
+
+def invalid_note(graph, node_id, window=6, threshold=2, show=8):
+    """Feedback prefix after repeated unrecognized commands: commands accepted earlier, else ''."""
+    node = graph.nodes.get(node_id)
+    if node is None or node.metadata.get("tool") != "action":
+        return ""
+    if not str(node.metadata.get("raw_content", node.content)).startswith(UNRECOGNIZED):
+        return ""
+    actions = _action_nodes(graph)
+    recent = actions[-window:]
+    rejected = sum(str(n.metadata.get("raw_content", n.content)).startswith(UNRECOGNIZED) for n in recent)
+    if rejected < threshold:
+        return ""
+    accepted = []
+    for other in reversed(actions):
+        command = normalize_command(other.metadata.get("command", ""))
+        if command and command not in accepted and not str(
+                other.metadata.get("raw_content", other.content)).startswith(UNRECOGNIZED):
+            accepted.append(command)
+        if len(accepted) >= show:
+            break
+    listed = ", ".join(f"`{c}`" for c in accepted) if accepted else "none yet"
+    return (f"[ContextGraph memory] {rejected} of your last {len(recent)} actions were not recognized by the "
+            f"simulator. Commands it accepted earlier in this episode: {listed}.")
+
+
 def commit_evidence(graph, target, limit=6):
     """Observation lines stored in the graph that mention ``target`` (most recent last)."""
     words = normalize_command(target).split()
@@ -66,12 +101,8 @@ def commit_evidence(graph, target, limit=6):
     head = next((w for w in reversed(words) if w.isalpha() and len(w) >= 3), None)
     for key in [target] + ([head] if head and head != target else []):
         lines, seen = [], set()
-        for node in graph.nodes.values():
-            if node.metadata.get("tool") != "action":
-                continue
+        for node in _action_nodes(graph):
             raw = str(node.metadata.get("raw_content", node.content))
-            if raw.startswith("[Commit check]"):
-                continue
             for line in raw.splitlines():
                 text = " ".join(line.split())
                 if key in text.lower() and text not in seen:

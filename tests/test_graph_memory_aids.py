@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import numpy as np
 
 from agents.context_graph import ContextGraph, NodeType, EdgeRelation
-from agents.graph_memory_aids import commit_evidence, repeat_note, set_vocabulary
+from agents.graph_memory_aids import commit_evidence, invalid_note, repeat_note, set_vocabulary
 from agents.tool_spec import graph_tool
 from envs.scienceworld_env import ScienceWorldEnv
 
@@ -96,3 +96,19 @@ def test_commit_check_requires_repeating_focus_before_stepping(monkeypatch, tmp_
         assert stepped == ["look around", "Focus  on peach tree", "focus on flower pot 4"]
         assert env.stats["commit_checks"] == 2 and env.stats["commit_confirmed"] == 2
         assert env.stats["environment_steps"] == 3
+
+
+def test_invalid_note_recalls_accepted_commands_after_repeated_rejections():
+    graph = ContextGraph()
+    meta = lambda cmd, obs: {"tool": "action", "command": cmd, "raw_content": obs}
+    add = lambda cmd, obs: graph.add_node(obs[:20], NodeType.OBSERVATION, metadata=meta(cmd, obs))
+    add("open the oven", "The oven is now open.")
+    add("pick up soap", "You move the soap to the inventory.")
+    first = add("grab the substance called soap", "No known action matches that input.")
+    assert invalid_note(graph, first) == ""  # a single rejection is not a pattern
+    add("focus on soap", "[Commit check] No simulator step was taken.")
+    second = add("take soap", "No known action matches that input.")
+    note = invalid_note(graph, second)
+    assert "2 of your last 4" in note and "`pick up soap`, `open the oven`" in note and "commit" not in note.lower()
+    ok = add("look around", "This room is called the kitchen.")
+    assert invalid_note(graph, ok) == ""
