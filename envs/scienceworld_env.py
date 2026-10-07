@@ -32,7 +32,7 @@ class ScienceWorldEnv:
         # Opt-in two-phase commit for the irreversible `focus on` (same for every method; default off).
         self._commit_check = bool(getattr(plugin, "scienceworld_commit_check", False))
         self.commit_evidence = None  # optional callable(target) -> str supplied by a memory system
-        self._pending_commit = None
+        self._checked_commits = set()
         self._task_description = ""
 
     @staticmethod
@@ -56,7 +56,7 @@ class ScienceWorldEnv:
         self.finish = False
         self._completed = False
         self._step_count = 0
-        self._pending_commit = None
+        self._checked_commits = set()
 
         task_name = str(self.instance_info.get("task_name", "")).strip()
         variation_idx = int(self.instance_info.get("variation_idx", 0))
@@ -143,18 +143,15 @@ class ScienceWorldEnv:
             raise RuntimeError("ScienceWorld simulator action failed") from exc
 
     def _commit_gate(self, command):
-        """The first `focus on X` for a target returns a confirmation request instead of a simulator step;
-        sending the same command again commits it."""
+        """The first `focus on X` for a target in an episode returns a confirmation request instead of a
+        simulator step; sending the same command again (at any later point) commits it."""
         norm = " ".join(command.lower().split())
-        pending, self._pending_commit = self._pending_commit, None
         if not norm.startswith("focus on "):
-            self.stats["commit_changed"] += int(pending is not None)
             return None
-        if norm == pending:
+        if norm in self._checked_commits:
             self.stats["commit_confirmed"] += 1
             return None
-        self.stats["commit_changed"] += int(pending is not None)
-        self._pending_commit = norm
+        self._checked_commits.add(norm)
         self.stats["commit_checks"] += 1
         target = command.strip()[len("focus on"):].strip()
         message = (f"[Commit check] No simulator step was taken. `focus on {target}` is irreversible: focusing on "

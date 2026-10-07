@@ -54,7 +54,9 @@ def test_commit_evidence_quotes_graph_lines_about_the_target():
     graph.add_node("check", NodeType.OBSERVATION, metadata=meta("focus on flower pot 4", "[Commit check] flower pot 4"))
     text = commit_evidence(graph, "Flower Pot 4")
     assert n1 in text and "peach tree" in text and "[Commit check]" not in text and "bee hive" not in text
-    assert "peach tree" in commit_evidence(graph, "red peach tree")  # falls back to the longest word
+    assert "peach tree" in commit_evidence(graph, "the flower pot 4")  # leading articles are ignored
+    assert "peach tree" in commit_evidence(graph, "old tree")  # falls back to the head noun
+    assert "(`look around`)" in text
     assert "No stored observation" in commit_evidence(graph, "unicorn")
 
 
@@ -87,9 +89,10 @@ def test_commit_check_requires_repeating_focus_before_stepping(monkeypatch, tmp_
             assert stepped == ["focus on flower pot 4"]
             continue
         assert stepped == [] and "[Commit check]" in first and "find a plant" in first and "evidence for flower pot 4" in first
-        act("look around")
         act("focus on peach tree")
+        act("look around")
         act("Focus  on peach tree")
-        assert stepped == ["look around", "Focus  on peach tree"]
-        assert env.stats["commit_checks"] == 2 and env.stats["commit_confirmed"] == 1 and env.stats["commit_changed"] == 1
-        assert env.stats["environment_steps"] == 2
+        act("focus on flower pot 4")
+        assert stepped == ["look around", "Focus  on peach tree", "focus on flower pot 4"]
+        assert env.stats["commit_checks"] == 2 and env.stats["commit_confirmed"] == 2
+        assert env.stats["environment_steps"] == 3

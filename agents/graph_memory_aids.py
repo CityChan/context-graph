@@ -57,12 +57,14 @@ def repeat_note(graph, node_id):
 
 def commit_evidence(graph, target, limit=6):
     """Observation lines stored in the graph that mention ``target`` (most recent last)."""
-    target = normalize_command(target)
+    words = normalize_command(target).split()
+    while words and words[0] in ("the", "a", "an"):
+        words = words[1:]
+    target = " ".join(words)
     if not target:
         return ""
-    words = [w for w in target.split() if w.isalpha() and len(w) >= 4]
-    keys = [target] + ([max(words, key=len)] if words and max(words, key=len) != target else [])
-    for key in keys:
+    head = next((w for w in reversed(words) if w.isalpha() and len(w) >= 3), None)
+    for key in [target] + ([head] if head and head != target else []):
         lines, seen = [], set()
         for node in graph.nodes.values():
             if node.metadata.get("tool") != "action":
@@ -74,7 +76,7 @@ def commit_evidence(graph, target, limit=6):
                 text = " ".join(line.split())
                 if key in text.lower() and text not in seen:
                     seen.add(text)
-                    lines.append(f"{node.id} (`{node.metadata.get('command', '')}`): {text[:240]}")
+                    lines.append(f"{node.id} (`{normalize_command(node.metadata.get('command', ''))}`): {text[:240]}")
         if lines:
             return f"[ContextGraph evidence mentioning `{key}`]\n" + "\n".join(lines[-limit:])
     return f"[ContextGraph evidence] No stored observation mentions `{target}`."
