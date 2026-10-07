@@ -82,7 +82,31 @@ env -u BENCH_RUN_DIR -u BENCH_DATA -u BENCH_AGENT_ENV PROJECT_ROOT="$PWD" BENCH_
 
 For a more useful memory smoke use `BENCH_SAMPLES=8` (one task per scenario), and inspect controller calls/turn limits before a full run. Two tasks do not establish comparative performance.
 
-For the full Normal suite, submit from the same clean checkout:
+## Full suite submission
+
+From a clean committed checkout on a Vista login node:
+
+```bash
+bash scripts/submit_discoveryworld_qwen35_9b_all200.sh
+```
+
+This submits two independent sbatch jobs, one per method. Each requests four
+nodes for 48 hours, with two server/evaluator pairs splitting 120 tasks into
+60 tasks each. The fixed protocol is all eight scenarios, all three difficulties,
+five seeds, `compact_v1`, 65536 context tokens, 200 environment/agent turns,
+repaired memory, and eager serving. The token budget remains unchanged.
+
+The submitter creates a detached worktree at the invoking checkout's commit and
+separate fresh run directories. Old `BENCH_DATA`, `BENCH_AGENT_ENV`, and run-directory
+settings do not redirect this submission. It records the commit, both job IDs,
+artifact paths and log paths under
+`$SCRATCH/context-graph-agent-benchmarks/submissions/discoveryworld-all200-*/`.
+The exact directory is printed as `DISCOVERYWORLD_SUBMISSION`; `jobs.tsv` is
+updated after each successful submission. If the second submission fails, the
+first job remains submitted and recorded; inspect that record before retrying.
+Existing jobs are never cancelled. Running the submitter again creates new jobs.
+
+For only the Normal suite, the configurable evaluator remains available:
 
 ```bash
 mkdir -p logs
