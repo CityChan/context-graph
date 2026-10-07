@@ -39,8 +39,20 @@ model input, and original token IDs/logprobs are retained. Each maintenance
 state has a fresh group ID and each candidate a distinct episode ID, so the
 existing GraphRPO loss averages states, candidates, then decision tokens.
 An episode ending before the chosen checkpoint emits a zero-mask sample and is
-excluded from loss normalization. Infrastructure, replay, judge and timeout
-failures abort the whole group rather than becoming negative M labels.
+excluded from loss normalization. Exhausted network/timeout failures, HTTP
+408/429/5xx responses and explicit environment/judge failure flags discard the
+whole group and emit one zero-mask audit sample. Completed siblings are not
+salvaged: doing so would change the comparison group. Queued siblings stop and
+running siblings are cancelled and drained before returning. Replay/token
+inconsistency, configuration/authentication errors and unknown programming errors
+still propagate; caller cancellation is not converted into a training sample.
+
+An entirely zero-mask batch skips model computation, optimizer and scheduler
+updates and empty-tensor metrics, while saving the rollout audit. It consumes a
+rollout attempt in the existing step budget, reported by
+`training/skipped_empty_memory_batch=1` and `training/actor_update_calls=0`.
+Validation/checkpoint hooks for that skipped attempt are not run. Valid tied
+groups retain their M masks and can still receive KL regularization.
 
 Limits of this first implementation:
 
@@ -48,9 +60,18 @@ Limits of this first implementation:
   or DiscoveryWorld cloning is implemented. Session restarts and structured fact
   memory are rejected in this training mode.
 - One checkpoint per source rollout, configured by the 1-based
-  `graph_rpo_continuation_checkpoint` (default 1); K is
+  `graph_rpo_continuation_checkpoint` (default 1). `random` samples an ordinal
+  uniformly from 1 through `graph_rpo_continuation_checkpoint_max` (default 4)
+  **before** executing the prefix, without looking at future rewards. The seed
+  and chosen ordinal are saved. Short episodes may not reach it and are skipped;
+  this is not uniform sampling over the maintenance points actually reached.
+  K is
   `graph_rpo_continuation_samples` (default 4). Controller temperature must be
   positive. `rollout.n` controls source prefixes and can be 1.
+- `graph_rpo_continuation_concurrency` (default 2) bounds simultaneous candidates
+  **per source group**. Existing source groups/workers remain parallel, so the
+  cluster-wide limit also depends on their count. This does not reduce the total
+  continuation work or guarantee a particular speedup.
 - One continuation per candidate is a noisy estimate. All-failure groups still
   have zero task advantage. There is no automatic curriculum or learned PRM.
 - This preserves the existing training context protocol, including its immutable
@@ -60,19 +81,20 @@ Limits of this first implementation:
 
 The `graph_rpo_continuation` record in saved training rollouts contains the state
 hash, group, checkpoint, policy step, seeds, all candidate rewards and local
-advantage. Telemetry includes skipped/nonzero fractions, mean absolute advantage
+advantage. Telemetry includes failed/skipped/nonzero fractions, mean absolute advantage
 and decision-token counts. Ordinary validation does not fork and measures the
 complete shared-model agent.
 
 On Vista, after setting any model/data overrides required by the existing BC-P
-launcher, submit the two-update pilot (five nodes, 24-hour allocation):
+launcher, submit the two-attempt pilot (five nodes, 24-hour allocation):
 
 ```bash
 sbatch scripts/train_bcp_graphrpo_continuation.sh
 ```
 
-The wrapper defaults to four source prefixes, four candidates each, four
-validation examples and checkpointing every update. It reuses the existing SFT
+The wrapper defaults to four source prefixes, four candidates each, concurrency
+two per group, random checkpoint ordinals 1..4, four validation examples and
+checkpointing every non-skipped step. It reuses the existing SFT
 checkpoint/model setup. Increase `TOTAL_TRAINING_STEPS` only after inspecting
 replay integrity, nonzero advantages, optimizer metrics and saved checkpoints.
 Local tests exercise the real loop with controlled model/search responses;

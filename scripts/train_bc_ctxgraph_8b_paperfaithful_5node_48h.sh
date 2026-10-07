@@ -336,6 +336,8 @@ if [ "$ADV_ESTIMATOR" = "graphrpo" ]; then
         "algorithm.rollout_correction.rollout_is_threshold=2.0"
         "+actor_rollout_ref.rollout.plugin.graph_rpo_continuation_samples=${GRAPH_RPO_CONTINUATION_SAMPLES:-4}"
         "+actor_rollout_ref.rollout.plugin.graph_rpo_continuation_checkpoint=${GRAPH_RPO_CONTINUATION_CHECKPOINT:-1}"
+        "+actor_rollout_ref.rollout.plugin.graph_rpo_continuation_checkpoint_max=${GRAPH_RPO_CONTINUATION_CHECKPOINT_MAX:-4}"
+        "+actor_rollout_ref.rollout.plugin.graph_rpo_continuation_concurrency=${GRAPH_RPO_CONTINUATION_CONCURRENCY:-2}"
         "+actor_rollout_ref.rollout.plugin.graph_controller_temperature=${GRAPH_CONTROLLER_TEMPERATURE:-0.8}"
         "+actor_rollout_ref.rollout.plugin.graph_rpo_scope_process_reward=False"
       )

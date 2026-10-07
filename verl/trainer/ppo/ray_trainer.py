@@ -620,6 +620,24 @@ class RayPPOTrainer:
 
         print(f"Dumped generations to {filename}")
 
+    def _skip_empty_memory_batch(self, batch, metrics, timing_raw):
+        """No trainable M tokens: log the audit without invoking model workers."""
+        if not self.config.algorithm.get("graphrpo_memory_only", False):
+            return False
+        if batch.batch["response_mask"].any():
+            return False
+        metrics["training/skipped_empty_memory_batch"] = 1
+        metrics["training/actor_update_calls"] = 0
+        stats = batch.non_tensor_batch.get("env_stats", [])
+        metrics["training/continuation_failed_groups"] = sum(
+            (row or {}).get("graph_rpo_continuation_failed", 0) for row in stats
+        )
+        batch.batch["token_level_scores"] = torch.zeros_like(batch.batch["response_mask"], dtype=torch.float32)
+        rollout_data_dir = self.config.trainer.get("rollout_data_dir")
+        if rollout_data_dir:
+            self._log_rollout_data(batch, {}, timing_raw, rollout_data_dir)
+        return True
+
     def _log_rollout_data(
         self, batch: DataProto, reward_extra_infos_dict: dict, timing_raw: dict, rollout_data_dir: str
     ):
@@ -1457,6 +1475,25 @@ class RayPPOTrainer:
                     if "response_mask" not in batch.batch.keys():
                         batch.batch["response_mask"] = compute_response_mask(batch)
 
+                    if self._skip_empty_memory_batch(batch, metrics, timing_raw):
+                        # Count the rollout attempt, not an optimizer update. Do not
+                        # run AdamW/scheduler or empty-tensor training metrics.
+                        metrics.update({"training/global_step": self.global_steps,
+                                        "training/epoch": epoch})
+                        logger.log(data=metrics, step=self.global_steps)
+                        self._stop_profiling(curr_step_profile)
+                        prev_step_profile = False
+                        progress_bar.update(1)
+                        self.global_steps += 1
+                        curr_step_profile = self.global_steps in (self.config.global_profiler.steps or [])
+                        if is_last_step:
+                            progress_bar.close()
+                            logger.finish()
+                            return
+                        if hasattr(self.train_dataset, "on_batch_end"):
+                            self.train_dataset.on_batch_end(batch=batch)
+                        continue
+
                     # mask_rollout is an optional optimization decision supplied
                     # by ContextGraph agent loops. Standard single-turn rollouts
                     # do not emit it and should keep every generated response.
@@ -1644,6 +1681,9 @@ class RayPPOTrainer:
                             actor_output = self.actor_rollout_wg.update_actor(batch)
                         actor_output_metrics = reduce_metrics(actor_output.meta_info["metrics"])
                         metrics.update(actor_output_metrics)
+                        if self.config.algorithm.get("graphrpo_memory_only", False):
+                            metrics["training/actor_update_calls"] = 1
+                            metrics["training/skipped_empty_memory_batch"] = 0
 
                     # Log rollout generations if enabled
                     rollout_data_dir = self.config.trainer.get("rollout_data_dir", None)

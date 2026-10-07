@@ -220,8 +220,11 @@ def validate_config(
             "graphrpo_memory_only must be enabled exactly for old_policy_continuation"
         )
         if memory_only:
+            from agents.graph_rpo_continuation import choose_checkpoint
+
             assert int(plugin.get("graph_rpo_continuation_samples", 4)) >= 2
-            assert int(plugin.get("graph_rpo_continuation_checkpoint", 1)) >= 1
+            choose_checkpoint(plugin, seed=0)
+            assert int(plugin.get("graph_rpo_continuation_concurrency", 2)) >= 1
             assert float(plugin.get("graph_controller_temperature", 0)) > 0
         if graph_credit_backend == "external_evaluator":
             assert str(plugin.get("graph_rpo_evaluator_url", "")).strip(), (

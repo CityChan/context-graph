@@ -195,7 +195,7 @@ def searchr1_em_score(labels, prediction: str) -> bool:
     return any(searchr1_normalize_answer(label) == normalized_prediction for label in labels)
 
 
-async def judge(question, correct_answer, predicted_answer, audit_sink=None):
+async def judge(question, correct_answer, predicted_answer, audit_sink=None, *, raise_errors=False):
     # Patch browsecomp typo
     correct_answer = "ttellomS saiboT"[::-1] if "tellomS saiboT"[::-1] in correct_answer else correct_answer  # fix
     correct_answer = "yayhdapottahC najnarawsiB"[::-1] if "yayhdapattahC najnarawsiB"[::-1] in correct_answer else correct_answer
@@ -241,7 +241,10 @@ async def judge(question, correct_answer, predicted_answer, audit_sink=None):
             score = 0
             audit["judge_method"] = "llm_parse_failure"
             for attempt in range(3):
-                response = await call_openai_raw(messages, model=judge_model)
+                if raise_errors:
+                    response = await call_openai_raw(messages, model=judge_model, raise_errors=True)
+                else:
+                    response = await call_openai_raw(messages, model=judge_model)
                 grade_report = parse_judge_response(response)
                 audit["grader_attempts"].append({
                     "attempt": attempt + 1,
@@ -661,6 +664,7 @@ Once you’re confident everything is covered and verified, submit the final ans
             }, ensure_ascii=False))
             print(f"[Judged] score={score}\nLabel: {self.answer_aliases[0]}\nModel: " + predicted_answer.split('\n')[0])
             return score
+        judge_kwargs = {"raise_errors": True} if getattr(self, "raise_judge_errors", False) else {}
         if '<q1>' in self.label_answer:
             label_answer_dict = extract_q_dict(self.label_answer)
             predicted_answer_dict = extract_q_dict(predicted_answer)
@@ -672,6 +676,7 @@ Once you’re confident everything is covered and verified, submit the final ans
                         label,
                         predicted_answer_dict[key],
                         audit_sink=audit_sink,
+                        **judge_kwargs,
                     )
                     all_reward.append(reward)
                 else:
@@ -682,6 +687,7 @@ Once you’re confident everything is covered and verified, submit the final ans
             self.label_answer,
             predicted_answer,
             audit_sink=audit_sink,
+            **judge_kwargs,
         )
 
     async def aclose(self):

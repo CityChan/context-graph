@@ -306,6 +306,7 @@ class AgentLoopRewardManager(AbstractRewardManager):
                       "graph_rpo_duplicate_branches", "graph_rpo_duplicate_branch_rate",
                       "graph_rpo_decision_tokens",
                       "graph_rpo_continuation_skipped",
+                      "graph_rpo_continuation_failed",
                       "graph_rpo_continuation_nonzero",
                       "graph_rpo_continuation_advantage",
                       "graph_rpo_continuation_abs_advantage",

@@ -7,7 +7,7 @@ import pytest
 from envs.judge_client import call_openai_raw
 
 
-@pytest.mark.parametrize("outcome", ["ok", "failure", "cancel"])
+@pytest.mark.parametrize("outcome", ["ok", "failure", "cancel", "strict_failure"])
 def test_judge_client_closes_on_every_exit(monkeypatch, outcome):
     closed = []
 
@@ -22,7 +22,7 @@ def test_judge_client_closes_on_every_exit(monkeypatch, outcome):
             closed.append(True)
 
         async def create(self, **kwargs):
-            if outcome == "failure":
+            if outcome in {"failure", "strict_failure"}:
                 raise RuntimeError("unavailable")
             if outcome == "cancel":
                 raise asyncio.CancelledError()
@@ -30,7 +30,10 @@ def test_judge_client_closes_on_every_exit(monkeypatch, outcome):
             return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="yes"))])
 
     monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(AsyncOpenAI=Client))
-    if outcome == "cancel":
+    if outcome == "strict_failure":
+        with pytest.raises(RuntimeError, match="unavailable"):
+            asyncio.run(call_openai_raw("test", max_retries=1, raise_errors=True))
+    elif outcome == "cancel":
         with pytest.raises(asyncio.CancelledError):
             asyncio.run(call_openai_raw("test", max_retries=1))
     else:
