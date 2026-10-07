@@ -142,16 +142,31 @@ for pair in 0 1; do
     srun -p gh --jobid="$SLURM_JOB_ID" --overlap -N 1 -n 1 -w "$server" env SWE_MODEL_MAX_LEN="$BENCH_CONTEXT_LENGTH" MODEL_PORT=18000 WORKERS=1 SEED=42 bash scripts/serve_swe_qwen35_9b_vista.sbatch > "$BENCH_RUN_DIR/server-${labels[$pair]}.log" 2>&1 8>&- &
     server_pids+=("$!"); pids+=("$!")
 done
+startup_log_tails() {
+    local label
+    for label in "${labels[@]}"; do
+        printf 'SERVER_STARTUP_LOG method=%s path=%s/server-%s.log\n' "$label" "$BENCH_RUN_DIR" "$label"
+        tail -n 60 "$BENCH_RUN_DIR/server-$label.log" || true
+    done
+}
 deadline=$((SECONDS + 1200))
+next_stage_report=$SECONDS
 while true; do
     ready=0
     for pair in 0 1; do
-        kill -0 "${server_pids[$pair]}" 2>/dev/null || { echo 'Server exited; inspect server log'; exit 2; }
+        kill -0 "${server_pids[$pair]}" 2>/dev/null || { echo 'Server exited'; startup_log_tails; exit 2; }
         if curl --connect-timeout 3 --max-time 5 -fsS "http://${nodes[$((pair * 2))]}:18000/health" >/dev/null 2>&1; then ready=$((ready + 1)); fi
     done
     (( ready == 2 )) && break
-    (( SECONDS < deadline )) || { echo 'Model startup timeout'; exit 2; }
+    (( SECONDS < deadline )) || { echo 'Model startup timeout'; startup_log_tails; exit 2; }
     echo "Waiting for servers: $ready/2"
+    if (( SECONDS >= next_stage_report )); then
+        for label in "${labels[@]}"; do
+            last_stage=$(awk '/^SERVER_STARTUP / {last=$0} END {print last}' "$BENCH_RUN_DIR/server-$label.log")
+            printf 'SERVER_STARTUP_PROGRESS method=%s %s\n' "$label" "${last_stage:-no stage marker yet}"
+        done
+        next_stage_report=$((SECONDS + 60))
+    fi
     sleep 15
 done
 eval_pids=()

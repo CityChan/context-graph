@@ -1,6 +1,10 @@
 #!/bin/bash
 # Existing allocation only. Run once per allocation: react, foldagent or contextgraph.
 set -euo pipefail
+server_stage() {
+  printf 'SERVER_STARTUP time=%(%FT%T%z)T pid=%s node=%s stage=%s\n' -1 "$$" "${HOSTNAME:-unknown}" "$1"
+}
+if [[ ${1:-} == _server ]]; then server_stage shared_launcher_enter; fi
 export PROJECT_ROOT=${PROJECT_ROOT:-/work/09281/chc_1996/vista/context-graph}
 export SERVER_ENFORCE_EAGER=${SERVER_ENFORCE_EAGER:-1}
 case "$SERVER_ENFORCE_EAGER" in 0|1) ;; *) echo 'SERVER_ENFORCE_EAGER must be 0 or 1'; exit 2 ;; esac
@@ -36,15 +40,24 @@ cd "$PROJECT_ROOT"
 # Internal roles use inherited, validated paths; never submit another Slurm job.
 case "${1:-}" in
   _server)
-    activate "$SERVER_CONDA_ENV"
+    set +u
+    server_stage server_conda_source_begin
+    source "$CONDA_SH"
+    server_stage server_conda_activate_begin
+    conda activate "$SERVER_CONDA_ENV"
+    set -u
+    server_stage server_conda_ready
     # Use the actual toolkit, not NVHPC's compilers/bin/nvcc wrapper directory.
     # These defaults match the existing Vista DeepSeek launcher.
     export CUDA_HOME=${SERVER_CUDA_HOME:-/home1/apps/nvidia/Linux_aarch64/25.3/cuda/12.8}
     CUDA_MATH_ROOT=${SERVER_CUDA_MATH_ROOT:-/home1/apps/nvidia/Linux_aarch64/25.3/math_libs/12.8}
+    server_stage cuda_compiler_path_begin
     [ -x "$CUDA_HOME/bin/nvcc" ] || { echo "Missing CUDA compiler: $CUDA_HOME/bin/nvcc"; exit 2; }
     CUDA_LIB_DIR="$CUDA_HOME/targets/sbsa-linux/lib"
+    server_stage cuda_runtime_path_begin
     [ -s "$CUDA_LIB_DIR/libcudart.so" ] || CUDA_LIB_DIR="$CUDA_HOME/lib64"
     [ -s "$CUDA_LIB_DIR/libcudart.so" ] || { echo "Missing libcudart.so under $CUDA_HOME"; exit 2; }
+    server_stage cuda_math_path_begin
     [ -s "$CUDA_MATH_ROOT/targets/sbsa-linux/include/curand.h" ] || { echo "Missing CUDA math headers under $CUDA_MATH_ROOT"; exit 2; }
     export CUDA_PATH="$CUDA_HOME" CUDACXX="$CUDA_HOME/bin/nvcc" FLASHINFER_NVCC="$CUDA_HOME/bin/nvcc"
     export PATH="$CUDA_HOME/bin:$PATH"
@@ -52,6 +65,7 @@ case "${1:-}" in
     # Driver stubs belong only in link-time paths, never LD_LIBRARY_PATH.
     export LD_LIBRARY_PATH="$CONDA_PREFIX/lib:$CUDA_LIB_DIR:$CUDA_MATH_ROOT/targets/sbsa-linux/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
     export CPATH="$CUDA_HOME/include:$CUDA_MATH_ROOT/targets/sbsa-linux/include${CPATH:+:$CPATH}"
+    server_stage cache_mktemp_begin
     SERVER_CACHE_ROOT=$(mktemp -d "/tmp/bcp-server-${SLURM_JOB_ID}-XXXXXX")
     export FLASHINFER_WORKSPACE_BASE="$SERVER_CACHE_ROOT/flashinfer"
     export VLLM_CACHE_ROOT="$SERVER_CACHE_ROOT/vllm"
@@ -61,10 +75,12 @@ case "${1:-}" in
     export XDG_CACHE_HOME="$SERVER_CACHE_ROOT/xdg"
     export TMPDIR="$SERVER_CACHE_ROOT/tmp" TMP="$SERVER_CACHE_ROOT/tmp" TEMP="$SERVER_CACHE_ROOT/tmp"
     export VLLM_FLASHINFER_AUTOTUNE_CACHE_DIR="$SERVER_CACHE_ROOT/flashinfer-autotune"
+    server_stage cache_mkdir_begin
     mkdir -p "$FLASHINFER_WORKSPACE_BASE" "$VLLM_CACHE_ROOT" "$TORCHINDUCTOR_CACHE_DIR" "$TRITON_CACHE_DIR" "$CUDA_CACHE_PATH" "$XDG_CACHE_HOME" "$TMPDIR" "$VLLM_FLASHINFER_AUTOTUNE_CACHE_DIR"
     echo "Server node-local caches: root=$SERVER_CACHE_ROOT vllm=$VLLM_CACHE_ROOT inductor=$TORCHINDUCTOR_CACHE_DIR triton=$TRITON_CACHE_DIR tmp=$TMPDIR"
     echo "Server CUDA: $CUDA_HOME; runtime libraries: $CUDA_LIB_DIR"
     echo "FlashInfer node-local workspace: $FLASHINFER_WORKSPACE_BASE"
+    server_stage nvcc_version_begin
     "$CUDACXX" --version
     # Vista's module environment can export CC=nvc. FlashInfer uses CC as
     # nvcc's -ccbin, so CUDAHOSTCXX alone does not fix its JIT compiler choice.
@@ -76,14 +92,17 @@ case "${1:-}" in
     # Same Vista TLS workaround as the DeepSeek server launcher. Apply before
     # importing torch/vLLM; architecture-inspection subprocesses inherit it.
     export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1
+    server_stage torch_library_lookup_begin
     TORCH_GLOBAL_DEPS=$(python -c 'import importlib.util, pathlib; s=importlib.util.find_spec("torch"); print(pathlib.Path(s.origin).parent / "lib" / "libtorch_global_deps.so")')
     [ -s "$TORCH_GLOBAL_DEPS" ] || { echo "Missing PyTorch preload library: $TORCH_GLOBAL_DEPS"; exit 2; }
     export LD_PRELOAD="$TORCH_GLOBAL_DEPS${LD_PRELOAD:+:$LD_PRELOAD}"
     echo "Server TLS setup: torch global deps preloaded; CPU thread limits=1"
     export HF_HOME="$SCRATCH/hf_cache" HF_HUB_CACHE="$SCRATCH/hf_cache/hub"
     export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
+    server_stage model_config_import_begin
     python -c 'import os, transformers, vllm; from transformers import AutoConfig; c=AutoConfig.from_pretrained(os.environ["MODEL_PATH"], local_files_only=True); print("Server versions:", transformers.__version__, vllm.__version__, "architecture:", c.architectures, flush=True)'
     # Exercise the failing CUDA sampling path before loading the model weights.
+    server_stage flashinfer_preflight_begin
     python -c 'import torch, flashinfer; x=torch.randn(2, 32, device="cuda", dtype=torch.float32); y=flashinfer.sampling.top_k_top_p_sampling_from_logits(x, 4, 0.9); torch.cuda.synchronize(); assert y.shape == (2,); print("FlashInfer sampling preflight passed", flush=True)'
     server_args=()
     if [[ "$SERVER_ENFORCE_EAGER" == 1 ]]; then
@@ -96,6 +115,7 @@ case "${1:-}" in
     # Vista runs one standalone server per node. Let vLLM allocate a free
     # internal port instead of inheriting a fixed port from another launcher.
     [[ ${SERVER_AUTO_INTERNAL_PORT:-0} != 1 ]] || unset VLLM_PORT
+    server_stage vllm_serve_exec
     exec vllm serve "$MODEL_PATH" --served-model-name "$MODEL_ID" --host 0.0.0.0 --port "$MODEL_PORT" --tensor-parallel-size 1 --language-model-only --dtype bfloat16 --max-model-len "${MODEL_MAX_LEN:-32768}" --max-num-seqs "$WORKERS" --gpu-memory-utilization 0.90 --enable-chunked-prefill --generation-config vllm --seed "$SEED" "${server_args[@]}"
     ;;
   _search)

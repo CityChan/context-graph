@@ -12,6 +12,10 @@
 
 # Inference only. Repository containers and official tests run on an x86 Docker host.
 set -euo pipefail
+server_stage() {
+  printf 'SERVER_STARTUP time=%(%FT%T%z)T pid=%s node=%s stage=%s\n' -1 "$$" "${HOSTNAME:-unknown}" "$1"
+}
+server_stage swe_wrapper_enter
 : "${SLURM_JOB_ID:?Run inside idev or submit with sbatch}"
 : "${SCRATCH:?SCRATCH must be set}"
 # Vista GH nodes have one GPU. Lock before loading weights or profiling KV cache;
@@ -25,6 +29,7 @@ if ! flock -n 9; then
 fi
 # Older launchers do not hold the lock. Refuse to compete with their live engines
 # (or another GPU workload); never kill a process from this launcher.
+server_stage gpu_availability_begin
 gpu_processes=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader)
 if [[ -n "${gpu_processes//[[:space:]]/}" ]]; then
   echo "SWE_SERVER_GPU_BUSY node=$(hostname -s) compute_pids=$gpu_processes; inspect nvidia-smi before retrying" >&2
@@ -41,12 +46,16 @@ case "$MODEL_MAX_LEN" in 32768|65536) ;; *) echo "Unsupported SWE model context:
 echo "SWE server max_model_len=$MODEL_MAX_LEN"
 cd "$PROJECT_ROOT"
 set +u
+server_stage wrapper_conda_source_begin
 source "$CONDA_SH"
+server_stage wrapper_conda_activate_begin
 conda activate "$SERVER_CONDA_ENV"
 set -u
+server_stage wrapper_conda_ready
 export HF_HOME="$SCRATCH/hf_cache" HF_HUB_CACHE="$SCRATCH/hf_cache/hub"
 export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 export MODEL_PATH=${MODEL_PATH:-}
+server_stage checkpoint_files_begin
 MODEL_PATH=$(python -c 'import os,json; from pathlib import Path; from huggingface_hub import snapshot_download; scratch=Path(os.environ["SCRATCH"]).resolve(); p=Path(os.environ["MODEL_PATH"] or snapshot_download(os.environ["MODEL_ID"],revision=os.environ["MODEL_REVISION"],cache_dir=str(scratch/"hf_cache"/"hub"),local_files_only=True)).resolve(); assert p.is_relative_to(scratch), "Checkpoint must be on SCRATCH"; idx=json.loads((p/"model.safetensors.index.json").read_text()); shards=set(idx["weight_map"].values()); assert shards and all((p/s).is_file() and (p/s).stat().st_size>0 for s in shards), "Incomplete checkpoint"; print(p)')
 export MODEL_PATH
 echo "Model=$MODEL_ID checkpoint=$MODEL_PATH"
@@ -55,4 +64,5 @@ echo "Reach this endpoint from the Docker host through an SSH tunnel; allocation
 # Reuse the CUDA/compiler/TLS/node-local-cache setup already used by the 9B evaluations.
 # Its BC-P/GAIA dataset selector is irrelevant to inference. Keep the caller's
 # benchmark in the evaluator, but do not pass it into the reused server launcher.
+server_stage shared_launcher_handoff
 exec env -u BENCHMARK bash scripts/eval_bcp_qwen38_4node_idev.sh _server

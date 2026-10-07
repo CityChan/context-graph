@@ -264,6 +264,13 @@ transcript and graph diagnostics; `requests.jsonl` records token IDs including
 branch/controller calls; `tools.jsonl` records environment interactions.
 Interrupted tasks may have only incremental logs.
 
+Model startup logs include `SERVER_STARTUP` markers with time, node, PID and stage
+across both the SWE wrapper and shared server launcher. While waiting for health,
+the batch prints each server's latest stage every minute. On startup failure or
+timeout it prints both bounded log tails before cleanup. A last `*_begin` marker
+identifies the next diagnostic target, not a proven root cause. These diagnostics
+do not change the serving configuration, startup deadline or evaluation budgets.
+
 Set `BENCH_RUN_DIR` to the printed run directory, then inspect:
 
 ```bash
