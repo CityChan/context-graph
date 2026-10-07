@@ -174,6 +174,11 @@ async def process_item(
          stays immutable so generated and optimized prompts remain identical.
     """
     mode = memory_mode(context.config.actor_rollout_ref.rollout.plugin)
+    if context.is_train and context.config.algorithm.get('graphrpo_alternating_roles', False):
+        if (str(context.config.algorithm.get('adv_estimator', '')).lower() not in
+                {'graphrpo', 'advantageestimator.graphrpo'} or
+                graph_rpo_credit_backend(context.config.actor_rollout_ref.rollout.plugin) != OLD_POLICY_CONTINUATION_BACKEND):
+            raise ValueError('Alternating E/M requires GraphRPO with old_policy_continuation')
     if (
         context.is_train
         and str(getattr(context.config.algorithm, 'adv_estimator', '')).lower()
@@ -182,7 +187,10 @@ async def process_item(
         == OLD_POLICY_CONTINUATION_BACKEND
         and _continuation is None
     ):
-        from .graph_rpo_continuation import run_continuation_group
+        from .graph_rpo_continuation import run_continuation_group, run_executor_group
+        from verl.trainer.ppo.graph_rpo_roles import graph_rpo_update_role
+        if graph_rpo_update_role(context.config.algorithm, context.global_step) == "E":
+            return await run_executor_group(item, context, process_item)
         return await run_continuation_group(item, context, process_item)
     if mode == "foldagent":
         return await run_foldagent_equivalent(item, context)
@@ -1493,6 +1501,9 @@ async def process_item(
                         )
                         break
                     if _continuation is not None:
+                        # Mark every sampled M response, including rejected edits/pass.
+                        # E updates must never optimize controller tokens.
+                        agent['main'].add_graph_edit_credit(len(agent['main'].chat) - 1, 0.0)
                         await _continuation.capture_decision(agent['main'])
                     session_message.append({
                         'role': 'assistant', 'content': controller_response,

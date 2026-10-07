@@ -61,7 +61,7 @@ class ContextGraphAgentLoop(AgentLoopBase):
         is_validate = kwargs.get('validate', False)
         context = TaskContext(
             config=self.config,
-            global_step=kwargs.get('global_step', 0),
+            global_step=kwargs.get('global_steps', kwargs.get('global_step', 0)),
             llm_client=llm_client,
             is_train=not is_validate,
             tokenizer=self.tokenizer,
@@ -106,7 +106,7 @@ class ContextGraphIsolatedAgentLoop(AgentLoopBase):
         is_validate = kwargs.get('validate', False)
         context = TaskContext(
             config=self.config,
-            global_step=kwargs.get('global_step', 0),
+            global_step=kwargs.get('global_steps', kwargs.get('global_step', 0)),
             llm_client=llm_client,
             is_train=not is_validate,
             tokenizer=self.tokenizer,

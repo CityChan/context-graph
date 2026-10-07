@@ -178,7 +178,9 @@ def validate_config(
 
     if str(config.algorithm.adv_estimator).lower() == "graphrpo":
         memory_only = bool(config.algorithm.get("graphrpo_memory_only", False))
-        assert config.actor_rollout_ref.rollout.n >= (1 if memory_only else 2), "GraphRPO requires rollout.n >= 2 unless memory-only"
+        alternating = bool(config.algorithm.get("graphrpo_alternating_roles", False))
+        assert not (memory_only and alternating), "Choose M-only or alternating E/M, not both"
+        assert config.actor_rollout_ref.rollout.n >= (1 if memory_only or alternating else 2), "GraphRPO requires rollout.n >= 2 unless using internal E/M candidate groups"
         assert not config.algorithm.use_kl_in_reward, (
             "GraphRPO applies KL in the policy objective; use_kl_in_reward must be False"
         )
@@ -216,16 +218,18 @@ def validate_config(
             "old_policy_counterfactual_qa, old_policy_continuation, reference_answer_likelihood, or "
             "old_policy_answer_likelihood"
         )
-        assert memory_only == (graph_credit_backend == "old_policy_continuation"), (
-            "graphrpo_memory_only must be enabled exactly for old_policy_continuation"
+        assert (memory_only or alternating) == (graph_credit_backend == "old_policy_continuation"), (
+            "old_policy_continuation requires M-only or alternating E/M training"
         )
-        if memory_only:
+        if memory_only or alternating:
             from agents.graph_rpo_continuation import choose_checkpoint
 
             assert int(plugin.get("graph_rpo_continuation_samples", 4)) >= 2
             choose_checkpoint(plugin, seed=0)
             assert int(plugin.get("graph_rpo_continuation_concurrency", 2)) >= 1
             assert float(plugin.get("graph_controller_temperature", 0)) > 0
+            if alternating:
+                assert int(plugin.get("graph_rpo_executor_samples", 2)) >= 2
         if graph_credit_backend == "external_evaluator":
             assert str(plugin.get("graph_rpo_evaluator_url", "")).strip(), (
                 "external-evaluator GraphRPO requires plugin.graph_rpo_evaluator_url"

@@ -252,7 +252,8 @@ def test_memory_advantages_do_not_include_episode_or_process_rewards():
     assert torch.equal(advantages, credit)
 
 
-def test_launcher_overrides_compose_into_training_config(tmp_path):
+@pytest.mark.parametrize('alternating', [False, True])
+def test_launcher_overrides_compose_into_training_config(tmp_path, alternating):
     import os
     import shutil
     import subprocess
@@ -272,6 +273,7 @@ def test_launcher_overrides_compose_into_training_config(tmp_path):
                             timeout=15, env={**os.environ, 'ADV_ESTIMATOR': 'graphrpo',
                                 'BC_CTXGRAPH_PROTOCOL': 'controller',
                                 'GRAPH_RPO_CREDIT_BACKEND': 'old_policy_continuation',
+                                'GRAPH_RPO_ALTERNATING_ROLES': str(alternating),
                                 'GRAPH_RPO_CONTINUATION_CHECKPOINT': 'random'},
                             creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
     assert result.returncode == 0, result.stderr
@@ -279,10 +281,26 @@ def test_launcher_overrides_compose_into_training_config(tmp_path):
     assert process_reward == '[]'
     with initialize_config_dir(config_dir=str(root / 'verl/trainer/config'), version_base=None):
         config = compose(config_name='ppo_trainer', overrides=overrides)
-    assert config.algorithm.graphrpo_memory_only
+    assert config.algorithm.graphrpo_memory_only == (not alternating)
+    assert config.algorithm.graphrpo_alternating_roles == alternating
+    from verl.utils.config import omega_conf_to_dataclass
+    assert omega_conf_to_dataclass(config.algorithm).graphrpo_alternating_roles == alternating
     assert config.algorithm.rollout_correction.rollout_is == 'token'
     assert config.actor_rollout_ref.rollout.plugin.graph_rpo_continuation_samples >= 2
     assert config.actor_rollout_ref.rollout.plugin.graph_rpo_continuation_checkpoint == 'random'
+    from verl.utils.config import validate_config
+    config.algorithm.adv_estimator = 'graphrpo'
+    config.actor_rollout_ref.actor.policy_loss.loss_mode = 'graphrpo'
+    config.actor_rollout_ref.actor.use_dynamic_bsz = True
+    config.actor_rollout_ref.rollout.n = 1
+    config.actor_rollout_ref.rollout.agent.default_agent_loop = 'context_graph_isolated_agent'
+    from omegaconf import OmegaConf
+    OmegaConf.update(config, 'actor_rollout_ref.rollout.plugin.structured_graph_controller', True, force_add=True)
+    validate_config(config, use_reference_policy=False, use_critic=False)
+    if alternating:
+        config.actor_rollout_ref.rollout.plugin.graph_rpo_executor_samples = 1
+        with pytest.raises(AssertionError):
+            validate_config(config, use_reference_policy=False, use_critic=False)
 
 
 def test_random_checkpoint_is_seeded_and_does_not_always_select_first():
@@ -462,7 +480,8 @@ def test_real_judge_path_preserves_error_types_for_continuations(monkeypatch, st
     assert len(closed) == 2
 
 
-def test_driver_skips_empty_batches_without_entering_model_or_optimizer_workers(monkeypatch):
+@pytest.mark.parametrize('alternating', [False, True])
+def test_driver_skips_empty_batches_without_entering_model_or_optimizer_workers(monkeypatch, alternating):
     import ast
     import uuid
     from pathlib import Path
@@ -492,7 +511,7 @@ def test_driver_skips_empty_batches_without_entering_model_or_optimizer_workers(
         log=lambda **kw: logs.append(kw), finish=lambda: closed.append(True)))
     trainer = object.__new__(RayPPOTrainer)
     trainer.config = OmegaConf.create({
-        'algorithm': {'graphrpo_memory_only': True},
+        'algorithm': {'graphrpo_memory_only': not alternating, 'graphrpo_alternating_roles': alternating},
         'trainer': {'project_name': 'test', 'experiment_name': 'test', 'logger': [],
                     'total_epochs': 1, 'rollout_data_dir': 'audit'},
         'global_profiler': {'steps': None, 'profile_continuous_steps': False},
@@ -520,7 +539,11 @@ def test_driver_skips_empty_batches_without_entering_model_or_optimizer_workers(
     assert all(row['data']['training/actor_update_calls'] == 0 for row in logs)
     assert all(row['data']['training/continuation_failed_groups'] == 1 for row in logs)
     assert trainer.global_steps == 3  # Bounded rollout attempts, no infinite resampling.
+    if alternating:
+        assert logs[0]['data']['graphrpo/E/actor_update_calls'] == 0
+        assert logs[1]['data']['graphrpo/M/actor_update_calls'] == 0
     audits[0].batch['response_mask'][0, 0] = 1
     assert not trainer._skip_empty_memory_batch(audits[0], {}, {})  # A tied but valid group stays trainable.
     trainer.config.algorithm.graphrpo_memory_only = False
+    trainer.config.algorithm.graphrpo_alternating_roles = False
     assert not trainer._skip_empty_memory_batch(audits[1], {}, {})  # Other backends unchanged.

@@ -1,8 +1,9 @@
-"""Same-state GraphRPO for the read-only LocalSearch environment.
+"""Role-specific GraphRPO for the read-only LocalSearch environment.
 
 Replay the exact prefix through the ordinary agent loop, then sample one new
 maintenance decision and run its real continuation. Only that decision trains.
 No simulator cloning, second executor, graph-quality judge, or inference fork.
+Alternating E updates use independent whole episodes and exclude all M tokens.
 """
 
 from __future__ import annotations
@@ -250,6 +251,7 @@ def _memory_output(output, decision, *, group, candidate, advantage, audit):
         graph_decision_mask=list(mask),
         graph_edit_credit_mask=[advantage * m for m in mask],
         graph_rpo_continuation=audit,
+        graph_rpo_training_role="M",
     )
     result.extra_fields.setdefault("env_stats", {}).update(
         graph_rpo_continuation_skipped=int(decision is None),
@@ -262,20 +264,122 @@ def _memory_output(output, decision, *, group, candidate, advantage, audit):
     return result
 
 
-async def run_continuation_group(item, context, run_episode):
-    """One prefix, K independent decisions, K real continuations, M-only loss."""
+async def _checked_episode(item, context, run_episode, session):
+    child = copy.copy(context)
+    child.llm_client = session
+    outputs = await run_episode(item, child, _continuation=session)
+    if session.error:
+        raise session.error
+    main = next(out for out in outputs if out.extra_fields["agent_name"] == "main")
+    stats = main.extra_fields.get("env_stats", {})
+    if session.env.env_fail or stats.get("call_fail") or stats.get("hit_timeout") or stats.get("judge_parse_failure"):
+        raise ContinuationUnavailable("Continuation environment, timeout or judge failure")
+    return outputs
+
+
+def _failed_group(session, context, group, error, checkpoint=None, role="M"):
+    from .utils import AgentLoopOutput, AgentLoopMetrics
+
+    prompt = session.fallback_prompt
+    if not prompt:
+        raise error
+    limit = int(context.config.actor_rollout_ref.rollout.prompt_length)
+    output = AgentLoopOutput(prompt_ids=prompt[-limit:], response_ids=[context.tokenizer.eos_token_id],
+        response_mask=[0], response_logprobs=[0.0], reward_score=0.0,
+        metrics=AgentLoopMetrics(), extra_fields={
+            "is_finish": False, "termination_reason": "continuation_unavailable"})
+    result = _memory_output(output, None, group=group, candidate=0, advantage=0,
+        audit={"backend": BACKEND, "group": group, "checkpoint": checkpoint,
+               "seed": session.seed, "state_hash": session.state_hash, "role": role,
+               "global_step": context.global_step,
+               "skipped": "service_failure", "error_type": type(error).__name__})
+    result.extra_fields["graph_rpo_training_role"] = role
+    return [result]
+
+
+def _validate_training(context):
     plugin = context.config.actor_rollout_ref.rollout.plugin
-    algorithm = context.config.algorithm
     if plugin.get("contextgraph_memory_mode", "legacy") == "foldagent":
         raise ValueError("Continuation training requires ContextGraph memory")
-    if not algorithm.get("graphrpo_memory_only", False):
-        raise ValueError("old_policy_continuation requires algorithm.graphrpo_memory_only=True")
     if not plugin.get("structured_graph_controller", False):
         raise ValueError("Continuation training requires the structured graph controller")
     if plugin.get("structured_memory_enabled", False) or plugin.get("enable_summary", False):
         raise ValueError("Continuation v1 requires ordinary graph memory without session restarts")
     if float(plugin.get("graph_controller_temperature", 0.0)) <= 0:
         raise ValueError("Continuation training requires graph_controller_temperature > 0")
+    return plugin
+
+
+async def run_executor_group(item, context, run_episode):
+    """K ordinary episodes; learn all E turns, including branches, but no M turns.
+
+    M participates in rollouts with the same pre-update shared policy. Parameters
+    remain fixed during sampling, not across alternating optimizer updates.
+    """
+    from verl.trainer.ppo.graph_rpo_roles import graph_rpo_update_role
+
+    if graph_rpo_update_role(context.config.algorithm, context.global_step) != "E":
+        raise ValueError("Executor groups require an E update")
+    plugin = _validate_training(context)
+    count = int(plugin.get("graph_rpo_executor_samples", 2))
+    concurrency = int(plugin.get("graph_rpo_continuation_concurrency", 2))
+    if count < 2 or concurrency < 1:
+        raise ValueError("Executor samples must be >=2 and concurrency >=1")
+    group = uuid4().hex
+    seed = int(group[:8], 16) % (2**31)
+    sessions = []
+    for index in range(count):
+        # Checkpoint 0 is never reached. No replay tape or M-only truncation.
+        session = Continuation(context.llm_client, 0, seed=seed + index * 100003)
+        session.recording = False
+        sessions.append(session)
+
+    async def candidate(index):
+        return await _checked_episode(item, context, run_episode, sessions[index])
+
+    try:
+        episodes = await bounded_candidates(count, concurrency, candidate)
+    except Exception as error:
+        if not recoverable(error):
+            raise
+        session = next((s for s in sessions if s.fallback_prompt), sessions[0])
+        return _failed_group(session, context, group, error, role="E")
+    rewards = [float(next(o for o in episode if o.extra_fields['agent_name'] == 'main').reward_score)
+               for episode in episodes]
+    advantages = leave_one_out(rewards)
+    outputs = []
+    for index, episode in enumerate(episodes):
+        for output in episode:
+            if float(output.reward_score) != rewards[index]:
+                raise ReplayMismatch("Executor streams disagree on terminal reward")
+            decisions = output.extra_fields["graph_decision_mask"]
+            if len(decisions) != len(output.response_mask):
+                raise ReplayMismatch("Executor decision mask does not match response")
+            output.response_mask = [int(bool(m) and not d) for m, d in zip(output.response_mask, decisions)]
+            output.extra_fields.update(
+                uid=group, gen_uid=f"{group}:{index}", mask_rollout=False,
+                graph_rpo_training_role="E",
+                process_reward_mask=[0.0] * len(decisions),
+                graph_edit_credit_mask=[0.0] * len(decisions),
+                graph_rpo_continuation={"backend": BACKEND, "role": "E", "group": group,
+                    "candidate": index, "global_step": context.global_step,
+                    "seed": sessions[index].seed, "rewards": rewards,
+                    "continuation_model_calls": sessions[index].live_calls,
+                    "concurrency": concurrency,
+                    "advantage": advantages[index]},
+            )
+            outputs.append(output)
+    return outputs
+
+
+async def run_continuation_group(item, context, run_episode):
+    """One prefix, K independent decisions, K real continuations, M-only loss."""
+    from verl.trainer.ppo.graph_rpo_roles import graph_rpo_update_role
+
+    plugin = _validate_training(context)
+    algorithm = context.config.algorithm
+    if not algorithm.get("graphrpo_memory_only", False) and graph_rpo_update_role(algorithm, context.global_step) != "M":
+        raise ValueError("Continuation groups require memory-only training or an M update")
     count = int(plugin.get("graph_rpo_continuation_samples", 4))
     group = uuid4().hex
     base_seed = int(group[:8], 16) % (2**31)
@@ -285,36 +389,13 @@ async def run_continuation_group(item, context, run_episode):
         raise ValueError("Continuation samples must be >=2 and concurrency must be >=1")
 
     async def run(session):
-        child = copy.copy(context)
-        child.llm_client = session
-        outputs = await run_episode(item, child, _continuation=session)
-        if session.error:
-            raise session.error
-        main = next(out for out in outputs if out.extra_fields["agent_name"] == "main")
-        stats = main.extra_fields.get("env_stats", {})
-        if session.env.env_fail or stats.get("call_fail") or stats.get("hit_timeout") or stats.get("judge_parse_failure"):
-            raise ContinuationUnavailable("Continuation environment, timeout or judge failure")
-        return main
+        outputs = await _checked_episode(item, context, run_episode, session)
+        return next(out for out in outputs if out.extra_fields["agent_name"] == "main")
 
-    prefix = Continuation(context.llm_client, checkpoint)
+    prefix = Continuation(context.llm_client, checkpoint, seed=base_seed)
 
     def failed(error):
-        from .utils import AgentLoopOutput, AgentLoopMetrics
-
-        # Nonempty, loss-inert sentinel; no fabricated model completion or reward label.
-        prompt = prefix.fallback_prompt
-        if not prompt:
-            raise error  # No valid model input exists to package safely.
-        limit = int(context.config.actor_rollout_ref.rollout.prompt_length)
-        token = context.tokenizer.eos_token_id
-        output = AgentLoopOutput(prompt_ids=prompt[-limit:], response_ids=[token],
-                                 response_mask=[0], response_logprobs=[0.0], reward_score=0.0,
-                                 metrics=AgentLoopMetrics(), extra_fields={
-                                     "is_finish": False, "termination_reason": "continuation_unavailable"})
-        return [_memory_output(output, None, group=group, candidate=0, advantage=0,
-            audit={"backend": BACKEND, "group": group, "checkpoint": checkpoint,
-                   "seed": base_seed, "state_hash": prefix.state_hash,
-                   "skipped": "service_failure", "error_type": type(error).__name__})]
+        return _failed_group(prefix, context, group, error, checkpoint)
 
     try:
         output = await run(prefix)
@@ -327,7 +408,8 @@ async def run_continuation_group(item, context, run_episode):
     else:
         # Early completion is not a bad memory decision: there was no decision.
         return [_memory_output(output, None, group=group, candidate=0, advantage=0,
-                               audit={"backend": BACKEND, "checkpoint": checkpoint,
+                               audit={"backend": BACKEND, "role": "M", "group": group,
+                                      "candidate": 0, "global_step": context.global_step, "checkpoint": checkpoint,
                                       "seed": base_seed, "skipped": "checkpoint_not_reached"})]
 
     async def candidate(index):
@@ -348,7 +430,7 @@ async def run_continuation_group(item, context, run_episode):
     outputs = []
     for index, ((session, output), advantage) in enumerate(zip(candidates, advantages)):
         audit = {
-            "backend": BACKEND, "group": group, "checkpoint": checkpoint,
+            "backend": BACKEND, "role": "M", "group": group, "checkpoint": checkpoint,
             "state_hash": prefix.state_hash, "global_step": context.global_step,
             "candidate": index, "seed": session.seed, "rewards": rewards,
             "checkpoint_seed": base_seed, "concurrency": concurrency,

@@ -636,6 +636,7 @@ def compute_graphrpo_advantage(
     graph_decision_mask: Optional[torch.Tensor] = None,
     excluded_gen_uids: Optional[set[Any]] = None,
     config: Optional[AlgoConfig] = None,
+    training_role: Optional[str] = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Compute the token advantage in the GraphRPO objective.
 
@@ -648,7 +649,13 @@ def compute_graphrpo_advantage(
     """
     if epsilon <= 0.0:
         raise ValueError("GraphRPO epsilon must be positive")
-    if config is not None and config.get("graphrpo_memory_only", False):
+    if training_role not in {None, "E", "M"}:
+        raise ValueError("Unknown GraphRPO training role")
+    if training_role == "E" and (graph_decision_mask is None or
+            graph_decision_mask.shape != response_mask.shape or
+            torch.any(graph_decision_mask.to(torch.bool) & response_mask.to(torch.bool))):
+        raise ValueError("Executor GraphRPO must exclude all M tokens")
+    if training_role == "M" or (config is not None and config.get("graphrpo_memory_only", False)):
         # Same-state continuation groups already carry their leave-one-out
         # advantage. Do not add episode reward or process labels a second time.
         if graph_edit_credit_mask is None or graph_decision_mask is None:
@@ -716,7 +723,11 @@ def compute_graphrpo_advantage(
         rewards = torch.stack([episode_reward[episode_id] for episode_id in episodes])
         mean = rewards.mean()
         population_std = rewards.std(unbiased=False)
-        if not torch.isfinite(population_std) or population_std.item() == 0.0:
+        if training_role == "E":
+            # Deduplicate main/branch streams before the question-level LOO baseline.
+            for episode_id in episodes:
+                episode_advantage[episode_id] = (len(episodes) * episode_reward[episode_id] - rewards.sum()) / (len(episodes) - 1)
+        elif not torch.isfinite(population_std) or population_std.item() == 0.0:
             for episode_id in episodes:
                 episode_advantage[episode_id] = torch.zeros_like(mean)
         else:
@@ -725,6 +736,13 @@ def compute_graphrpo_advantage(
                 episode_advantage[episode_id] = (
                     episode_reward[episode_id] - mean
                 ) / denominator
+
+    if training_role == "E":
+        advantages = torch.zeros_like(token_level_rewards, dtype=torch.float32)
+        for row, episode_id in enumerate(episode_ids):
+            if episode_id not in excluded:
+                advantages[row] = episode_advantage[episode_id] * response_mask[row]
+        return advantages, advantages
 
     alpha = float(config.get("graphrpo_alpha", 1.0) if config is not None else 1.0)
     beta = float(config.get("graphrpo_beta", 1.0) if config is not None else 1.0)

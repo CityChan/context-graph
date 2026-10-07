@@ -4,6 +4,54 @@ This implementation follows Section 4.2 of the ContextGraph manuscript. It is
 enabled only when `algorithm.adv_estimator=graphrpo` and
 `actor_rollout_ref.actor.policy_loss.loss_mode=graphrpo`.
 
+## Alternating executor and memory training (E+M, opt-in)
+
+Set `algorithm.graphrpo_alternating_roles=True`,
+`algorithm.graphrpo_memory_only=False` and keep the
+`old_policy_continuation` backend. The same actor and optimizer train both
+roles. Odd saved training steps train E; even steps train M. The step counts
+rollout attempts, including skipped batches, so resuming does not reset the
+schedule or repeatedly retry an unavailable role.
+
+- **E:** sample K independent complete episodes of the same question with the
+  pre-update shared policy. Give each episode leave-one-out terminal advantage
+  `R_i - mean(R_j, j != i)`. Train its execution tokens, including branch/return
+  and answer tokens; exclude every controller completion, including pass and
+  rejected edits. Main and branch streams share an episode ID and count once
+  in the reward baseline. Weight questions, episodes, then all E tokens in an
+  episode equally at their respective levels. No graph or process bonus is added.
+- **M:** use the same-state continuation procedure below. Only the selected
+  maintenance completion trains, using its continuation group's relative reward.
+
+Each role retains PPO clipping and KL on its selected tokens. E and M use the
+existing executor prompts and structured maintenance requests; this does not
+introduce a second model, adapter, inference loop or automatic evaluator change.
+The other role participates in rollouts but has no direct loss in that update.
+Shared weights change after each update, so neither role is permanently frozen.
+Terminal reward estimates remain noisy and all-tied groups have zero task credit.
+
+Both roles use whole-group service-failure exclusion and the actor's collective
+finite-loss guard. `graph_rpo_training_role` is saved per row; the trainer checks
+it against the saved step before applying credit. `graphrpo/E/*` and
+`graphrpo/M/*` report candidate counts, skipped groups, trainable tokens, nonzero
+advantage fractions and actor update metrics separately.
+
+The Vista pilot defaults to two rollout attempts (E then M), four questions per
+attempt, K=2 for both roles and per-group concurrency 2. It uses five nodes and
+a 24-hour allocation, reusing the existing model/data setup:
+
+```bash
+sbatch scripts/train_bcp_graphrpo_em.sh
+```
+
+`GRAPH_RPO_EXECUTOR_SAMPLES` and `GRAPH_RPO_CONTINUATION_SAMPLES` control the two
+group sizes. The old M-only launcher/defaults remain available. This E+M path
+still supports only LocalSearch and still uses immutable training history; it
+does not fix the history-replacement difference from retrieval-memory inference.
+Tests cover real agent-loop role masks and branches, driver credit/normalization,
+and both roles updating one optimizer with synthetic token log-probabilities.
+They do not establish successful GPU training or task improvement.
+
 ## Same-state continuation experiment (M-only, opt-in)
 
 `graph_rpo_credit_backend=old_policy_continuation` with

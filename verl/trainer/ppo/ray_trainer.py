@@ -363,9 +363,22 @@ def compute_advantage(
         data.batch["advantages"] = advantages
         data.batch["returns"] = returns
     elif adv_estimator == AdvantageEstimator.GRAPHRPO:
+        from verl.trainer.ppo.graph_rpo_roles import graph_rpo_update_role
+
+        training_role = graph_rpo_update_role(config, data.meta_info.get("global_steps", 0))
         excluded_gen_uids = set()
         if data.meta_info.get("gen_uid_dummy") is not None:
             excluded_gen_uids.add(data.meta_info["gen_uid_dummy"])
+        if training_role is not None:
+            roles = data.non_tensor_batch.get("graph_rpo_training_role")
+            if roles is None:
+                raise ValueError("Alternating GraphRPO requires explicit rollout roles")
+            episode_ids = data.non_tensor_batch["gen_uid"]
+            active_ids = {uid for uid, mask in zip(episode_ids, data.batch["response_mask"])
+                          if mask.any() and uid not in excluded_gen_uids}
+            excluded_gen_uids.update(uid for uid in episode_ids if uid not in active_ids)
+            if any(role != training_role for role, uid in zip(roles, episode_ids) if uid in active_ids):
+                raise ValueError("GraphRPO rollout role differs from the saved training step")
         advantages, returns = core_algos.compute_graphrpo_advantage(
             token_level_rewards=data.batch["token_level_rewards"],
             response_mask=data.batch["response_mask"],
@@ -377,6 +390,7 @@ def compute_advantage(
             graph_decision_mask=data.batch.get("graph_decision_mask"),
             excluded_gen_uids=excluded_gen_uids,
             config=config,
+            training_role=training_role,
         )
         data.batch["advantages"] = advantages
         data.batch["returns"] = returns
@@ -385,7 +399,7 @@ def compute_advantage(
             index=data.non_tensor_batch["uid"],
             gen_uid=data.non_tensor_batch["gen_uid"],
             excluded_gen_uids=excluded_gen_uids,
-            allow_empty=bool(config.get("graphrpo_memory_only", False)),
+            allow_empty=bool(config.get("graphrpo_memory_only", False) or training_role),
         )
     else:
         # handle all other adv estimator type other than GAE and GRPO
@@ -621,13 +635,33 @@ class RayPPOTrainer:
         print(f"Dumped generations to {filename}")
 
     def _skip_empty_memory_batch(self, batch, metrics, timing_raw):
-        """No trainable M tokens: log the audit without invoking model workers."""
-        if not self.config.algorithm.get("graphrpo_memory_only", False):
+        """No trainable role tokens: log the audit without invoking model workers."""
+        from verl.trainer.ppo.graph_rpo_roles import graph_rpo_update_role
+
+        role = graph_rpo_update_role(self.config.algorithm, batch.meta_info.get("global_steps", 0))
+        if role is not None:
+            # Main/branch rows share a candidate; count its outcome only once.
+            audits = {}
+            for row in batch.non_tensor_batch.get("graph_rpo_continuation", []):
+                if row:
+                    audits.setdefault((row.get("group"), row.get("candidate", 0)), row)
+            valid = [row for row in audits.values() if not row.get("skipped")]
+            metrics[f"graphrpo/{role}/attempts"] = 1
+            metrics[f"graphrpo/{role}/trainable_tokens"] = batch.batch["response_mask"].sum().item()
+            metrics[f"graphrpo/{role}/candidates"] = len(valid)
+            metrics[f"graphrpo/{role}/skipped_groups"] = sum(bool(row.get("skipped")) for row in audits.values())
+            metrics[f"graphrpo/{role}/nonzero_advantage_fraction"] = sum(row.get("advantage", 0) != 0 for row in valid) / max(1, len(valid))
+            metrics[f"graphrpo/{role}/mean_abs_advantage"] = sum(abs(row.get("advantage", 0)) for row in valid) / max(1, len(valid))
+            if valid:
+                metrics[f"graphrpo/{role}/mean_reward"] = sum(row["rewards"][row["candidate"]] for row in valid) / len(valid)
+        if not (self.config.algorithm.get("graphrpo_memory_only", False) or role):
             return False
         if batch.batch["response_mask"].any():
             return False
         metrics["training/skipped_empty_memory_batch"] = 1
         metrics["training/actor_update_calls"] = 0
+        if role:
+            metrics[f"graphrpo/{role}/actor_update_calls"] = 0
         stats = batch.non_tensor_batch.get("env_stats", [])
         metrics["training/continuation_failed_groups"] = sum(
             (row or {}).get("graph_rpo_continuation_failed", 0) for row in stats
@@ -663,7 +697,7 @@ class RayPPOTrainer:
 
             trajectory_fields: dict[str, list] = {}
             for key in (
-                "graph_rpo_continuation",
+                "graph_rpo_continuation", "graph_rpo_training_role",
                 "messages", "env_stats", "is_finish", "termination_reason",
                 "agent_name", "graph_trace", "graph_state", "graph_rewards",
                 "model_contexts", "branch_model_contexts", "contextgraph_memory_mode",
@@ -1681,9 +1715,14 @@ class RayPPOTrainer:
                             actor_output = self.actor_rollout_wg.update_actor(batch)
                         actor_output_metrics = reduce_metrics(actor_output.meta_info["metrics"])
                         metrics.update(actor_output_metrics)
-                        if self.config.algorithm.get("graphrpo_memory_only", False):
+                        if self.config.algorithm.get("graphrpo_memory_only", False) or self.config.algorithm.get("graphrpo_alternating_roles", False):
                             metrics["training/actor_update_calls"] = 1
                             metrics["training/skipped_empty_memory_batch"] = 0
+                            if self.config.algorithm.get("graphrpo_alternating_roles", False):
+                                from verl.trainer.ppo.graph_rpo_roles import graph_rpo_update_role
+                                role = graph_rpo_update_role(self.config.algorithm, self.global_steps)
+                                metrics.update({f"graphrpo/{role}/{key}": value for key, value in actor_output_metrics.items()})
+                                metrics[f"graphrpo/{role}/actor_update_calls"] = 1
 
                     # Log rollout generations if enabled
                     rollout_data_dir = self.config.trainer.get("rollout_data_dir", None)
