@@ -67,5 +67,5 @@ if [[ "$method" == contextgraph ]]; then echo 65001; else echo '65002;vista'; fi
         assert method in settings[10] and settings[10] != "stale"
         assert Path(settings[11]).joinpath("scripts", RUNNER).exists()
         args = (capture / f"{method}.args").read_text().splitlines()
-        assert "--nodes=4" in args and "--time=48:00:00" in args and "--export=ALL" in args
+        assert "--nodes=4" in args and "--time=24:00:00" in args and "--export=ALL" in args
         assert args[-1] == method

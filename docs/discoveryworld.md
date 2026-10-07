@@ -91,7 +91,7 @@ bash scripts/submit_discoveryworld_qwen35_9b_all200.sh
 ```
 
 This submits two independent sbatch jobs, one per method. Each requests four
-nodes for 48 hours, with two server/evaluator pairs splitting 120 tasks into
+nodes for 24 hours, with two server/evaluator pairs splitting 120 tasks into
 60 tasks each. The fixed protocol is all eight scenarios, all three difficulties,
 five seeds, `compact_v1`, 65536 context tokens, 200 environment/agent turns,
 repaired memory, and eager serving. The token budget remains unchanged.

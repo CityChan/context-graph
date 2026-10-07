@@ -34,7 +34,7 @@ for method in contextgraph foldagent; do
         BENCH_DIFFICULTY=all BENCH_MEMORY_PROFILE=repaired SERVER_ENFORCE_EAGER=1 \
         sbatch --parsable --export=ALL --job-name="dw-$method-all200" \
         --partition=gh --account=AST24021 --nodes=4 --ntasks-per-node=1 \
-        --cpus-per-task=72 --time=48:00:00 --chdir="$code" \
+        --cpus-per-task=72 --time=24:00:00 --chdir="$code" \
         --output="$stdout" --error="$stderr" \
         "$code/scripts/eval_discoveryworld_qwen35_9b_4node.sbatch" "$method"); then
         printf 'Submission failed for %s. Previously submitted jobs are retained; inspect %s/jobs.tsv before retrying.\n' "$method" "$submission" >&2
