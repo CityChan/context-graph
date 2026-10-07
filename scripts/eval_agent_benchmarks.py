@@ -104,7 +104,7 @@ def load_tasks(path, benchmark, samples):
             raise ValueError("Unexpected task fields; grading references must remain separate")
         # Formal results use the test split; the dev split is allowed for method tuning only.
         if task["split"] not in ("test", "dev") or task["split"] != bundle["source"].get("split"):
-            raise ValueError("ScienceWorld tasks must come from one official test or dev bundle")
+            raise ValueError("ScienceWorld tasks must come from one official test split bundle (or dev split for tuning)")
     if samples != -1 and not 1 <= samples <= len(tasks):
         raise ValueError("samples must be -1 or between 1 and the dataset size")
     tasks = sorted(tasks, key=lambda t: t["task_id"])

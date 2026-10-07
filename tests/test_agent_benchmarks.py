@@ -71,6 +71,8 @@ def test_dataset_rejects_gold_and_wrong_split(tmp_path):
     save(path, {"source": {"benchmark": "scienceworld"}, "tasks": [{"task_id": "x", "task_name": "q", "variation_idx": 0, "split": "train"}]})
     with pytest.raises(ValueError, match="test split"):
         load_tasks(path, "scienceworld", -1)
+    save(path, {"source": {"benchmark": "scienceworld", "split": "dev"}, "tasks": [{"task_id": "x", "task_name": "q", "variation_idx": 0, "split": "dev"}]})
+    assert load_tasks(path, "scienceworld", -1)[1][0]["split"] == "dev"
 
 
 def test_summary_does_not_count_infrastructure_as_agent_failure(tmp_path):
