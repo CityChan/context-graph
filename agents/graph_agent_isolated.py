@@ -63,7 +63,7 @@ from .graph_trace import GraphTraceRecorder
 from .evidence_credit import assign_evidence_credits, branch_history, expanded_documents, gold_docids
 from .context_graph_modes import memory_mode, run_foldagent_equivalent
 from .diagnostic_fixes import ANSWER_CONSISTENCY, RepeatAdvice, validate_fix
-from .graph_memory_aids import repeat_note, set_vocabulary
+from .graph_memory_aids import commit_evidence, repeat_note, set_vocabulary
 from .structured_memory import (
     GapStepScheduler,
     StructuredFactMemory,
@@ -486,6 +486,8 @@ async def process_item(
         graph = ContextGraph(tokenizer, namespace_prefix="n", memory_policy=mode)
         query_text = env.instance_info['problem_statement']
         root_id = graph.add_node(query_text, NodeType.QUERY)
+        if bool(getattr(config.plugin, "commit_graph_evidence", False)) and hasattr(env, "commit_evidence"):
+            env.commit_evidence = lambda target, g=graph: commit_evidence(g, target)
         structured_memory = (
             StructuredFactMemory(
                 query_text,

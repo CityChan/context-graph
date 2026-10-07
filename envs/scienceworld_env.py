@@ -29,6 +29,11 @@ class ScienceWorldEnv:
         self._max_steps = 100 if max_steps is None else int(max_steps)
         if self._max_steps < 1:
             raise ValueError("scienceworld_max_steps must be positive")
+        # Opt-in two-phase commit for the irreversible `focus on` (same for every method; default off).
+        self._commit_check = bool(getattr(plugin, "scienceworld_commit_check", False))
+        self.commit_evidence = None  # optional callable(target) -> str supplied by a memory system
+        self._pending_commit = None
+        self._task_description = ""
 
     @staticmethod
     def _scalar(value):
@@ -51,6 +56,7 @@ class ScienceWorldEnv:
         self.finish = False
         self._completed = False
         self._step_count = 0
+        self._pending_commit = None
 
         task_name = str(self.instance_info.get("task_name", "")).strip()
         variation_idx = int(self.instance_info.get("variation_idx", 0))
@@ -71,6 +77,7 @@ class ScienceWorldEnv:
             )
             observation, info = self._env.reset()
             task_description = self._env.get_task_description()
+            self._task_description = str(task_description)
             self.instance_info["problem_statement"] = (
                 f"{task_description}\n\nInitial observation:\n{observation}"
             )
@@ -98,6 +105,10 @@ class ScienceWorldEnv:
         if not command:
             self.stats["empty_command"] += 1
             return {"observation": "The action command cannot be empty."}
+        if self._commit_check:
+            check = self._commit_gate(command)
+            if check is not None:
+                return {"observation": check}
 
         try:
             observation, reward, completed, info = self._env.step(command)
@@ -130,6 +141,32 @@ class ScienceWorldEnv:
             self.is_finish = self.finish = True
             self.close()
             raise RuntimeError("ScienceWorld simulator action failed") from exc
+
+    def _commit_gate(self, command):
+        """The first `focus on X` for a target returns a confirmation request instead of a simulator step;
+        sending the same command again commits it."""
+        norm = " ".join(command.lower().split())
+        pending, self._pending_commit = self._pending_commit, None
+        if not norm.startswith("focus on "):
+            self.stats["commit_changed"] += int(pending is not None)
+            return None
+        if norm == pending:
+            self.stats["commit_confirmed"] += 1
+            return None
+        self.stats["commit_changed"] += int(pending is not None)
+        self._pending_commit = norm
+        self.stats["commit_checks"] += 1
+        target = command.strip()[len("focus on"):].strip()
+        message = (f"[Commit check] No simulator step was taken. `focus on {target}` is irreversible: focusing on "
+                   f"an object that is not the requested target fails the task immediately.\n"
+                   f"Task: {self._task_description}\n")
+        evidence = self.commit_evidence(target) if self.commit_evidence is not None else ""
+        if evidence:
+            message += evidence + "\n"
+        message += ("If the observations show that this object is exactly the target the task asks for, send the "
+                    "same command again to commit. Otherwise choose a different action.")
+        self._audit({"event": "commit_check", "command": command, "observation": message})
+        return message
 
     async def get_reward(self, item, messages, context) -> tuple:
         reward = 0.0 if self.env_fail else float(self._completed)
