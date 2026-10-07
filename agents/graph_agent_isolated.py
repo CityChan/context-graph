@@ -63,6 +63,7 @@ from .graph_trace import GraphTraceRecorder
 from .evidence_credit import assign_evidence_credits, branch_history, expanded_documents, gold_docids
 from .context_graph_modes import memory_mode, run_foldagent_equivalent
 from .diagnostic_fixes import ANSWER_CONSISTENCY, RepeatAdvice, validate_fix
+from .graph_memory_aids import repeat_note, set_vocabulary
 from .structured_memory import (
     GapStepScheduler,
     StructuredFactMemory,
@@ -180,6 +181,10 @@ async def process_item(
     validate_session_summary(config.plugin)
     is_train = context.is_train
     diagnostic_fix = validate_fix(getattr(config.plugin, "diagnostic_fix", "none"), is_train)
+    # Opt-in aids (defaults keep the historical protocol); set before any prompt/graph text is built.
+    set_vocabulary(str(getattr(config.plugin, "graph_vocabulary", "focus")))
+    action_repeat_memory = bool(getattr(config.plugin, "action_repeat_memory", False))
+    action_repeat_notes = 0
     repeat_advice = RepeatAdvice()
 
     if not is_train:
@@ -1281,6 +1286,12 @@ async def process_item(
                 observation = truncate_text(observation, max_lines=100, merge_repeat=True, merge_num=4)
             if repeat_hint:
                 observation = repeat_hint + "\n\n" + observation
+            if (action_repeat_memory and fn_call and fn_call.get('function') == 'action'
+                    and new_evidence_node_id is not None):
+                note = repeat_note(graph, new_evidence_node_id)
+                if note:
+                    observation = note + "\n\n" + str(observation)
+                    action_repeat_notes += 1
             if retrieval_history_labels:
                 observation = "[Latest tool feedback]\n" + str(observation)
 
@@ -1889,6 +1900,8 @@ async def process_item(
         env.stats['auto_prune_keep_recent'] = auto_prune_keep_recent
         env.stats['working_memory_keep_recent'] = working_memory_keep_recent
         env.stats['retrieval_history_labels'] = int(retrieval_history_labels)
+        env.stats['graph_vocabulary'] = str(getattr(config.plugin, "graph_vocabulary", "focus"))
+        env.stats['action_repeat_notes'] = action_repeat_notes
         env.stats['consol_ops'] = consolidation_stats['ops']
         env.stats['consol_pass_valid'] = consolidation_stats['pass_valid']
         env.stats['consol_pass_invalid'] = consolidation_stats['pass_invalid']

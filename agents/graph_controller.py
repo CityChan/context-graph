@@ -10,6 +10,11 @@ from typing import Any
 from .context_graph import ContextGraph
 
 
+
+def _neutral():
+    from .graph_memory_aids import neutral
+    return neutral()
+
 class GraphControllerError(ValueError):
     """Raised when a constrained graph decision cannot be safely executed."""
 
@@ -275,7 +280,8 @@ class GraphActionController:
                 "add_edge uses exactly two ordered indices (source, target) "
                 "and a causal/semantic/temporal relation"
             ),
-            "select": "select uses one index for a genuine focus shift",
+            "select": ("select uses one index for a genuine change of the active node" if _neutral()
+                       else "select uses one index for a genuine focus shift"),
             "pass": "pass uses no indices",
         }
         action_help = "; ".join(
@@ -440,7 +446,8 @@ class GraphActionController:
         ):
             if allow_pass:
                 return {"function": "pass", "arguments": {}}
-            raise GraphControllerError("select target is already the active focus")
+            raise GraphControllerError("select target is already the active node" if _neutral()
+                                       else "select target is already the active focus")
         if action == "add_edge":
             if indices[0] == indices[1]:
                 raise GraphControllerError("add_edge requires distinct candidates")

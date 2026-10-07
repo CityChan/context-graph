@@ -64,7 +64,9 @@ def handle_select(graph: ContextGraph, fn_call: dict) -> GraphOpResult:
 
     node = graph.nodes[node_id]
     content_preview = node.content[:500]
-    return GraphOpResult(f"Focus shifted to [{node_id}] ({node.type.value}).\n\nContent:\n{content_preview}\n\n{graph.to_state_text()}", True)
+    from .graph_memory_aids import neutral
+    label = "Active node set to" if neutral() else "Focus shifted to"
+    return GraphOpResult(f"{label} [{node_id}] ({node.type.value}).\n\nContent:\n{content_preview}\n\n{graph.to_state_text()}", True)
 
 
 def handle_prune(graph: ContextGraph, fn_call: dict) -> GraphOpResult:

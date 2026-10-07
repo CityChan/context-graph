@@ -324,6 +324,8 @@ def branch_tool():
 
 def graph_tool():
     """Graph operations for ContextGraph-based context management."""
+    from .graph_memory_aids import neutral
+    active_wording = neutral()
     merge = {
         'type': 'function',
         'function': {
@@ -385,6 +387,11 @@ def graph_tool():
         'function': {
             'name': 'select',
             'description': (
+                "Make a different context node the active node. "
+                "The active node determines which part of the context graph is prioritized. "
+                "The node must be ACTIVE in the latest eligible list. "
+                "Use this to switch the active node between different sub-problems or evidence threads."
+            ) if active_wording else (
                 "Change the active focus to a different context node. "
                 "The active node determines which part of the context graph is prioritized. "
                 "The node must be ACTIVE in the latest eligible list. "
@@ -395,7 +402,8 @@ def graph_tool():
                 'properties': {
                     'node_id': {
                         'type': 'string',
-                        'description': 'The node ID to focus on (e.g., "n3").',
+                        'description': ('The node ID to make active (e.g., "n3").' if active_wording
+                                        else 'The node ID to focus on (e.g., "n3").'),
                     },
                 },
                 'required': ['node_id'],

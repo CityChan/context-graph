@@ -50,6 +50,11 @@ def _lexical_terms(text: str) -> set[str]:
     }
 
 
+
+def _neutral():
+    from .graph_memory_aids import neutral
+    return neutral()
+
 class NodeType(str, Enum):
     QUERY = "query"
     OBSERVATION = "observation"
@@ -719,7 +724,7 @@ class ContextGraph:
         lines = [
             f"[Graph] {len(active)}/{len(self.nodes)} nodes active, "
             f"{len(self.active_edges)} active edges, ops={self.operation_count}, "
-            f"focus=[{self.active_node_id}]",
+            f"{'active' if _neutral() else 'focus'}=[{self.active_node_id}]",
             eligibility_line,
         ]
 
@@ -773,7 +778,7 @@ class ContextGraph:
 
         parts = []
         for node in nodes:
-            marker = " [FOCUS]" if node.id == self.active_node_id else ""
+            marker = (" [ACTIVE]" if _neutral() else " [FOCUS]") if node.id == self.active_node_id else ""
             parts.append(f"--- [{node.id}] {node.type.value}{marker} ---")
             parts.append(node.content)
             parts.append("")
