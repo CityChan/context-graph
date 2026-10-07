@@ -9,6 +9,7 @@ import re
 import tempfile
 
 from envs.discoveryworld_protocol import tasks_for
+from envs.discoveryworld_observation import PROFILES, dumps, encode
 from envs.scienceworld_env import ScienceWorldEnv
 
 
@@ -21,6 +22,9 @@ class DiscoveryWorldEnv(ScienceWorldEnv):
         self._env = self._frames = None
         self._step_count = 0
         self._max_steps = int(getattr(config.plugin, "discoveryworld_max_steps", 100))
+        self._observation_profile = getattr(config.plugin, "discoveryworld_observation_profile", "full")
+        if self._observation_profile not in PROFILES:
+            raise ValueError("Unknown DiscoveryWorld observation profile")
         if self._max_steps < 1:
             raise ValueError("discoveryworld_max_steps must be positive")
 
@@ -44,9 +48,9 @@ class DiscoveryWorldEnv(ScienceWorldEnv):
             self._actions = self._env.listKnownActions(limited=False)
             observation = self._observe()
             self._score()
-            self.instance_info["problem_statement"] = json.dumps({
+            self.instance_info["problem_statement"] = dumps({
                 "actions": self._actions, "teleport_locations": self._env.listTeleportLocationsDict(),
-                "initial_observation": observation}, ensure_ascii=False)
+                "initial_observation": encode(observation, self._observation_profile)}, self._observation_profile)
             self._audit({"event": "reset", "observation": observation})
         except Exception:
             self.stats["env_init_error"] += 1
@@ -128,7 +132,8 @@ class DiscoveryWorldEnv(ScienceWorldEnv):
             self.stats["environment_step_limit"] = int(limit and not ended)
             self._audit({"event": "step", "command": command, "result": result,
                          "observation": observation, "done": self.is_finish})
-            payload = {"observation": json.dumps({"action_result": result, "ui": observation}, ensure_ascii=False)}
+            payload = {"observation": dumps({"action_result": result,
+                       "ui": encode(observation, self._observation_profile)}, self._observation_profile)}
             if self.is_finish:
                 payload["action"] = "finish"
             return payload

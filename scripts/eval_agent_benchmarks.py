@@ -31,9 +31,11 @@ PROMPT_PROFILES = ("legacy", "focus_v2", "discoveryworld_v1")
 DEFAULT_MEMORY_PROFILES = {"scienceworld": "turns", "discoveryworld": "repaired"}
 
 
-def config_for(benchmark, method, context_length, max_steps=100, memory_profile=None, prompt_profile="legacy"):
+def config_for(benchmark, method, context_length, max_steps=100, memory_profile=None, prompt_profile="legacy", observation_profile="full"):
     if benchmark not in BENCHMARKS:
         raise ValueError("Unknown benchmark")
+    if observation_profile not in ("full", "compact_v1") or (benchmark != "discoveryworld" and observation_profile != "full"):
+        raise ValueError("Compact observations are only supported for DiscoveryWorld")
     if memory_profile is None:
         memory_profile = DEFAULT_MEMORY_PROFILES[benchmark]
     if memory_profile not in MEMORY_PROFILES:
@@ -50,6 +52,7 @@ def config_for(benchmark, method, context_length, max_steps=100, memory_profile=
         plugin.discoveryworld_max_steps = max_steps
         plugin.max_turn = plugin.val_max_turn = max_steps
         plugin.discoveryworld_prompt_profile = prompt_profile
+        plugin.discoveryworld_observation_profile = observation_profile
     else:
         plugin.scienceworld_max_steps = max_steps
     # Controller checkpoints consume tokens/time, but not task-turn opportunities.
@@ -159,7 +162,7 @@ async def generate(args, task, directory):
         from agents.graph_agent_isolated import process_item
     else:
         from agents.fold_agent import process_item
-    config = config_for(args.benchmark, args.method, args.context_length, args.max_steps, args.memory_profile, args.prompt_profile)
+    config = config_for(args.benchmark, args.method, args.context_length, args.max_steps, args.memory_profile, args.prompt_profile, getattr(args, "discoveryworld_observation_profile", "full"))
     rollout_config = config.actor_rollout_ref.rollout
     tokenizer = AutoTokenizer.from_pretrained(args.model_path, local_files_only=True)
     tokenizer_preflight(tokenizer, rollout_config)
@@ -187,10 +190,15 @@ async def generate(args, task, directory):
             raise RuntimeError("Model or environment failure; see trajectory and request logs")
         score = float(stats["environment_score"])
         from envs.discoveryworld_protocol import PROTOCOL
+        result_protocol = "scienceworld-1.2.3/test/unsimplified/shared-sequential-environment"
+        if args.benchmark == "discoveryworld":
+            result_protocol = PROTOCOL
+            if getattr(args, "discoveryworld_observation_profile", "full") == "compact_v1":
+                result_protocol += "/compact_v1"
         save(directory / "result.json", {"status": "graded", "score": max(0.0, min(100.0, score)),
                "raw_score": score, "success": bool(stats.get("completed")), "env_stats": stats,
                "termination_reason": trajectories[0].get("termination_reason"),
-               "protocol": PROTOCOL if args.benchmark == "discoveryworld" else "scienceworld-1.2.3/test/unsimplified/shared-sequential-environment"})
+               "protocol": result_protocol})
     finally:
         await client.client.aclose()
 
@@ -206,7 +214,7 @@ def preflight(args):
                 "model_path": str(Path(args.model_path).resolve()), "seed": 42,
                 "decoding": {"temperature": 0, "top_p": 1, "thinking": True},
                 "server_execution": {"requested_enforce_eager": os.environ.get("SERVER_ENFORCE_EAGER", "1") == "1"},
-                "config": OmegaConf.to_container(config_for(args.benchmark, args.method, args.context_length, args.max_steps, args.memory_profile, args.prompt_profile)),
+                "config": OmegaConf.to_container(config_for(args.benchmark, args.method, args.context_length, args.max_steps, args.memory_profile, args.prompt_profile, getattr(args, "discoveryworld_observation_profile", "full"))),
                 "task_timeout": args.task_timeout,
                 "versions": {p: importlib.metadata.version(p) for p in ("torch", "transformers", "httpx", "pandas", "numpy", "omegaconf")},
                 "commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()}
@@ -223,6 +231,7 @@ def preflight(args):
         from envs.discoveryworld_protocol import verify_install
         protocol["simulator"] = verify_install()
         protocol["observation"] = "official text UI only; no images; oracle scorecards grading-only"
+        protocol["observation_profile"] = getattr(args, "discoveryworld_observation_profile", "full")
         protocol["knowledge_evaluation"] = "not implemented"
         protocol["versions"].update({p: importlib.metadata.version(p) for p in ("pygame", "pathfinding")})
         return tasks, protocol
@@ -266,7 +275,8 @@ def run(args):
                              "--method", args.method, "--endpoint", args.endpoint, "--model-path", args.model_path,
                              "--context-length", str(args.context_length), "--max-steps", str(args.max_steps),
                              "--memory-profile", args.memory_profile,
-                             "--prompt-profile", args.prompt_profile],
+                             "--prompt-profile", args.prompt_profile,
+                             "--discoveryworld-observation-profile", getattr(args, "discoveryworld_observation_profile", "full")],
                             attempt / "generation.log", args.task_timeout)
                 result = json.loads((attempt / "result.json").read_text(encoding="utf8"))
             except Exception as exc:
@@ -296,6 +306,7 @@ def main():
     parser.add_argument("--memory-profile", choices=MEMORY_PROFILES,
                         help="Default: turns for ScienceWorld, repaired for DiscoveryWorld")
     parser.add_argument("--prompt-profile", choices=PROMPT_PROFILES, default="legacy")
+    parser.add_argument("--discoveryworld-observation-profile", choices=("full", "compact_v1"), default="full")
     parser.add_argument("--samples", type=int, default=-1)
     parser.add_argument("--shard-index", type=int, default=0)
     parser.add_argument("--shard-count", type=int, default=1)
@@ -303,6 +314,8 @@ def main():
     parser.add_argument("--retry-errors", action="store_true")
     parser.add_argument("--task", type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.benchmark != "discoveryworld" and args.discoveryworld_observation_profile != "full":
+        parser.error("--discoveryworld-observation-profile is only supported for DiscoveryWorld")
     if args.memory_profile is None:
         args.memory_profile = DEFAULT_MEMORY_PROFILES[args.benchmark]
     if args.max_steps < 1 or args.task_timeout < 1:

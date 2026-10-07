@@ -150,13 +150,14 @@ def test_simulator_errors_are_not_agent_failures():
 
 @pytest.mark.skipif(not os.environ.get("DISCOVERYWORLD_LIVE_TEST"), reason="opt-in real pinned simulator")
 @pytest.mark.parametrize("method", ["contextgraph", "foldagent"])
-def test_real_agent_loop_and_simulator(method, tmp_path):
+@pytest.mark.parametrize("observation_profile", ["full", "compact_v1"])
+def test_real_agent_loop_and_simulator(method, observation_profile, tmp_path):
     import importlib
     import numpy as np
     from tests.test_session_restart import Tokenizer, Client
     from verl import DataProto
     module = importlib.import_module("agents.graph_agent_isolated" if method == "contextgraph" else "agents.fold_agent")
-    config = config_for("discoveryworld", method, 65536, 2, prompt_profile="discoveryworld_v1")
+    config = config_for("discoveryworld", method, 65536, 2, prompt_profile="discoveryworld_v1", observation_profile=observation_profile)
     extra = dict(tasks_for()[0], workflow=config.actor_rollout_ref.rollout.plugin.workflow,
                  grading_log=str(tmp_path / "scorecard.json"))
     task = DataProto()
@@ -167,6 +168,8 @@ def test_real_agent_loop_and_simulator(method, tmp_path):
     context = SimpleNamespace(config=config, tokenizer=Tokenizer(), llm_client=client, is_train=False, global_step=0)
     out = asyncio.run(module.process_item(task, context))
     assert len(client.calls) == 2
+    for ids, _ in client.calls:
+        assert ("discoveryworld.compact.v1" in Tokenizer().decode(ids)) == (observation_profile == "compact_v1")
     assert out[0].extra_fields["env_stats"]["environment_steps"] == 2
     for _, kwargs in client.calls:
         assert "criticalHypotheses" not in str(kwargs.get("messages"))

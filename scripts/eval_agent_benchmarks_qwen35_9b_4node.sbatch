@@ -47,6 +47,7 @@ agent_preload() {
 if [[ ${1:-} == _eval ]]; then
     agent_preload
     extra=()
+    if [[ "$BENCHMARK" == discoveryworld ]]; then extra+=(--discoveryworld-observation-profile "${BENCH_DISCOVERYWORLD_OBSERVATION_PROFILE:-full}"); fi
     [[ ${BENCH_RETRY_ERRORS:-0} == 1 ]] && extra+=(--retry-errors)
     exec "$BENCH_AGENT_ENV/bin/python" -u scripts/eval_agent_benchmarks.py "$BENCHMARK" --method "$2" --endpoint "$3" --output "$BENCH_RUN_DIR/$4" --shard-index "$5" --shard-count "$6" --data "$BENCH_DATA" --model-path "$MODEL_PATH" --context-length "$BENCH_CONTEXT_LENGTH" --samples "$BENCH_SAMPLES" --max-steps "$BENCH_MAX_STEPS" --memory-profile "$BENCH_MEMORY_PROFILE" --prompt-profile "$BENCH_PROMPT_PROFILE" "${extra[@]}"
 fi
@@ -110,7 +111,7 @@ if [[ "$BENCHMARK" == discoveryworld ]]; then
         echo 'DISCOVERYWORLD_AGENT_DEPENDENCY_CHECK (normal Python startup)'
         agent_preload
         "$BENCH_AGENT_ENV/bin/python" -c 'import torch, numpy, transformers, omegaconf, tensordict; print("DISCOVERYWORLD_AGENT_DEPENDENCIES_OK", flush=True)'
-        "$BENCH_AGENT_ENV/bin/python" scripts/probe_discoveryworld.py --output "$BENCH_RUN_DIR/simulator-probe" --difficulty "$BENCH_DIFFICULTY"
+        "$BENCH_AGENT_ENV/bin/python" scripts/probe_discoveryworld.py --output "$BENCH_RUN_DIR/simulator-probe" --difficulty "$BENCH_DIFFICULTY" --observation-profile "${BENCH_DISCOVERYWORLD_OBSERVATION_PROFILE:-full}"
     )
 fi
 mkdir -p "$(dirname "$BENCH_DATA")"

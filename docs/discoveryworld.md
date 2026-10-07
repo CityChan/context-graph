@@ -12,6 +12,46 @@ This integration runs the **real** [AllenAI DiscoveryWorld simulator](https://gi
 - Full oracle scorecards are written to `scorecard.json` for grading only. Public `tools.jsonl`, raw `requests.jsonl`, trajectory, immutable manifest, package versions and simulator provenance are saved separately. Existing generation-audit criteria remain unchanged; passing them does not exclude semantic repetition.
 - One child process per task. Simulator/model errors are infrastructure errors, not model score zero. Resume requires identical code/config/data/environment; use `BENCH_RETRY_ERRORS=1` only to retry infrastructure errors.
 
+## Optional compact public observations
+
+`BENCH_DISCOVERYWORLD_OBSERVATION_PROFILE=compact_v1` (CLI:
+`--discoveryworld-observation-profile compact_v1`) enables the same encoding for
+both agents. The default is `full`, retaining the existing JSON serialization.
+This setting applies only to DiscoveryWorld; it does not change ScienceWorld,
+the common token/turn accounting, simulator actions, or scoring.
+
+Each compact observation is a self-contained snapshot. Inventory, accessible
+objects, and nearby objects use column/row tables. Repeated long strings in those
+tables refer to a dictionary included in that same observation. The embedded
+legend distinguishes dictionary indices from object UUIDs. Directions, distances,
+UUIDs, names, descriptions, ordering, duplicates, and all other public fields are
+retained. Task descriptions, dialogs, measurements, and action results remain
+present on every applicable step. There is no dependence on a previous snapshot
+and no new oracle information. Unknown or nested object records stay verbatim.
+
+The selected profile is recorded in the manifest/config and compact result
+protocol; resume and paired audits reject mismatched profiles. `tools.jsonl`
+continues to store the original public UI. The model receives the encoded UI
+both at reset and after actions. Use a new run directory when changing profiles.
+
+Audit existing raw logs without starting a simulator or model:
+
+```bash
+python scripts/audit_discoveryworld_observations.py "$DW_RUN" --tokenizer "$SCRATCH/hf_cache/hub/models--Qwen--Qwen3.5-9B/snapshots/c202236235762e1c871ad0ccb60c8ee5ba337b9a" --output "$DW_RUN/compact-observation-audit.json"
+```
+
+The audit checks JSON round-trip equality and measures actual tokenizer lengths,
+including the compact legend and text dictionary. Counts cover serialized public
+observations/action results, not complete prompts, action catalogues, model
+generations, or future behavior. Without `--tokenizer`, it reports character counts
+only. It refuses to overwrite an existing report.
+
+Local validation on the pinned simulator, Normal difficulty, seed 0, all eight
+scenarios (reset plus two rotation actions each) reconstructed all 24 snapshots.
+Using the pinned Qwen3.5-9B tokenizer, per-scenario serialized observation token
+reductions were approximately 27–32%. This is a short mechanics/encoding probe,
+not a replay of the Vista trajectories or evidence of improved task success.
+
 ## Vista four-node smoke
 
 Use a clean committed checkout. The launcher selects an existing Python 3.10/3.11

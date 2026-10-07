@@ -12,7 +12,7 @@ from envs.discoveryworld_env import DiscoveryWorldEnv
 from envs.discoveryworld_protocol import tasks_for, verify_install
 
 
-async def probe(output, difficulty):
+async def probe(output, difficulty, observation_profile="full"):
     output.mkdir(parents=True, exist_ok=True)
     provenance = verify_install()
     records = []
@@ -20,7 +20,8 @@ async def probe(output, difficulty):
     for task in [t for t in tasks_for(difficulty) if t["seed"] == 0]:
         directory = output / task["task_id"]
         directory.mkdir(exist_ok=True)
-        env = DiscoveryWorldEnv(SimpleNamespace(plugin=SimpleNamespace(discoveryworld_max_steps=2)), None, "DiscoveryWorld@real")
+        env = DiscoveryWorldEnv(SimpleNamespace(plugin=SimpleNamespace(discoveryworld_max_steps=2,
+                                discoveryworld_observation_profile=observation_profile)), None, "DiscoveryWorld@real")
         with (directory / "simulator.log").open("w", encoding="utf8") as log, contextlib.redirect_stdout(log):
             try:
                 item = SimpleNamespace(non_tensor_batch={"extra_info": dict(task,
@@ -34,7 +35,8 @@ async def probe(output, difficulty):
                 records.append({"task_id": task["task_id"], "passed": True, "environment_steps": 2})
             finally:
                 env.close()
-    report = {"simulator": provenance, "purpose": "real environment mechanics only; no model performance evaluation", "cases": records}
+    report = {"simulator": provenance, "observation_profile": observation_profile,
+              "purpose": "real environment mechanics only; no model performance evaluation", "cases": records}
     (output / "report.json").write_text(json.dumps(report, indent=2), encoding="utf8")
     print("DISCOVERYWORLD_SIMULATOR_OK " + json.dumps(report), flush=True)
 
@@ -43,5 +45,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--difficulty", choices=["Easy", "Normal", "Challenge", "all"], default="Normal")
+    parser.add_argument("--observation-profile", choices=["full", "compact_v1"], default="full")
     args = parser.parse_args()
-    asyncio.run(probe(args.output, args.difficulty))
+    asyncio.run(probe(args.output, args.difficulty, args.observation_profile))

@@ -15,6 +15,9 @@ export PROJECT_ROOT=${PROJECT_ROOT:-/work/09281/chc_1996/vista/context-graph}
 export BENCH_DIFFICULTY=${BENCH_DIFFICULTY:-Normal}
 case "$BENCH_DIFFICULTY" in Easy|Normal|Challenge|all) ;; *) echo 'Invalid BENCH_DIFFICULTY'; exit 2 ;; esac
 export BENCH_PROMPT_PROFILE=discoveryworld_v1
+export BENCH_DISCOVERYWORLD_OBSERVATION_PROFILE=${BENCH_DISCOVERYWORLD_OBSERVATION_PROFILE:-full}
+case "$BENCH_DISCOVERYWORLD_OBSERVATION_PROFILE" in full|compact_v1) ;; *) echo 'Expected BENCH_DISCOVERYWORLD_OBSERVATION_PROFILE=full or compact_v1'; exit 2 ;; esac
+echo "DISCOVERYWORLD_OBSERVATION_PROFILE=$BENCH_DISCOVERYWORLD_OBSERVATION_PROFILE"
 export BENCH_REQUIREMENTS=requirements_discoveryworld.txt
 BENCH_BASE_PYTHON=$(python -I -S "$PROJECT_ROOT/scripts/select_discoveryworld_python.py")
 export BENCH_BASE_PYTHON
