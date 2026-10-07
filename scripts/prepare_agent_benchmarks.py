@@ -13,7 +13,7 @@ from scripts.eval_discoverybench_qwen35 import save
 SCIENCEWORLD_VERSION = "1.2.3"
 
 
-def prepare(benchmark, output, difficulty="Normal"):
+def prepare(benchmark, output, difficulty="Normal", split="test"):
     if benchmark not in ("scienceworld", "discoveryworld"):
         raise ValueError("Unknown benchmark")
     output = Path(output).resolve()
@@ -31,8 +31,11 @@ def prepare(benchmark, output, difficulty="Normal"):
     version = importlib.metadata.version("scienceworld")
     if version != SCIENCEWORLD_VERSION:
         raise ValueError(f"Expected scienceworld=={SCIENCEWORLD_VERSION}, got {version}")
-    tasks = collect_variations("test")
-    source = {"benchmark": benchmark, "version": version, "split": "test", "simplification": ""}
+    # The dev split is for method tuning only; formal results use the test split.
+    if split not in ("test", "dev"):
+        raise ValueError("ScienceWorld split must be test or dev")
+    tasks = collect_variations(split)
+    source = {"benchmark": benchmark, "version": version, "split": split, "simplification": ""}
     tasks.sort(key=lambda t: t["task_id"])
     if not tasks or len({t["task_id"] for t in tasks}) != len(tasks):
         raise ValueError("Empty or duplicate task list")
@@ -45,5 +48,6 @@ if __name__ == "__main__":
     parser.add_argument("benchmark", choices=["scienceworld", "discoveryworld"])
     parser.add_argument("--difficulty", choices=["Easy", "Normal", "Challenge", "all"], default="Normal")
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--split", choices=["test", "dev"], default="test", help="ScienceWorld split")
     args = parser.parse_args()
-    prepare(args.benchmark, args.output, args.difficulty)
+    prepare(args.benchmark, args.output, args.difficulty, args.split)

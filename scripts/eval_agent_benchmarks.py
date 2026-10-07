@@ -25,13 +25,14 @@ from scripts.prepare_agent_benchmarks import SCIENCEWORLD_VERSION
 from scripts.generation_audit import combine_degeneration_stats, degeneration_stats, require_generation_quality
 
 BENCHMARKS = ("scienceworld", "discoveryworld")
-METHODS = ("contextgraph", "foldagent")
+METHODS = ("contextgraph", "foldagent", "react")
 MEMORY_PROFILES = ("legacy", "turns", "repaired")
 PROMPT_PROFILES = ("legacy", "focus_v2", "discoveryworld_v1")
 DEFAULT_MEMORY_PROFILES = {"scienceworld": "turns", "discoveryworld": "repaired"}
 
 
-def config_for(benchmark, method, context_length, max_steps=100, memory_profile=None, prompt_profile="legacy"):
+def config_for(benchmark, method, context_length, max_steps=100, memory_profile=None, prompt_profile="legacy",
+               max_turn=100, overrides=()):
     if benchmark not in BENCHMARKS:
         raise ValueError("Unknown benchmark")
     if memory_profile is None:
@@ -43,15 +44,18 @@ def config_for(benchmark, method, context_length, max_steps=100, memory_profile=
     if (benchmark == "discoveryworld") != (prompt_profile == "discoveryworld_v1"):
         raise ValueError("DiscoveryWorld requires discoveryworld_v1; ScienceWorld requires legacy or focus_v2")
     from scripts.eval_discoverybench_qwen35 import config_for as base_config
-    config = base_config(method, context_length)
+    # ReAct shares FoldAgent's non-graph settings but runs the linear loop without branch tools.
+    config = base_config("foldagent" if method == "react" else method, context_length)
     plugin = config.actor_rollout_ref.rollout.plugin
-    plugin.workflow = benchmark + ("_graph" if method == "contextgraph" else "_branch")
+    plugin.workflow = benchmark + {"contextgraph": "_graph", "foldagent": "_branch", "react": ""}[method]
     if benchmark == "discoveryworld":
         plugin.discoveryworld_max_steps = max_steps
         plugin.max_turn = plugin.val_max_turn = max_steps
         plugin.discoveryworld_prompt_profile = prompt_profile
     else:
         plugin.scienceworld_max_steps = max_steps
+        # Agent-loop model turns; the simulator keeps its own max_steps action cap.
+        plugin.max_turn = plugin.val_max_turn = max_turn
     # Controller checkpoints consume tokens/time, but not task-turn opportunities.
     # Keep this in both manifests so the paired budget convention is explicit.
     plugin.graph_controller_counts_as_turn = memory_profile == "legacy"
@@ -67,6 +71,10 @@ def config_for(benchmark, method, context_length, max_steps=100, memory_profile=
     plugin.final_answer_reserve = 0
     plugin.final_answer_safety_margin = 128
     plugin.turn_max_new_tokens = 2048
+    if overrides:
+        # Explicit plugin overrides for ablations (key=value dotlist); recorded in the manifest config.
+        from omegaconf import OmegaConf
+        config.actor_rollout_ref.rollout.plugin = OmegaConf.merge(plugin, OmegaConf.from_dotlist(list(overrides)))
     return config
 
 
@@ -94,8 +102,9 @@ def load_tasks(path, benchmark, samples):
         allowed = {"task_id", "task_name", "variation_idx", "split"}
         if set(task) != allowed:
             raise ValueError("Unexpected task fields; grading references must remain separate")
-        if task["split"] != "test":
-            raise ValueError("Formal evaluation requires the ScienceWorld test split")
+        # Formal results use the test split; the dev split is allowed for method tuning only.
+        if task["split"] not in ("test", "dev") or task["split"] != bundle["source"].get("split"):
+            raise ValueError("ScienceWorld tasks must come from one official test or dev bundle")
     if samples != -1 and not 1 <= samples <= len(tasks):
         raise ValueError("samples must be -1 or between 1 and the dataset size")
     tasks = sorted(tasks, key=lambda t: t["task_id"])
@@ -157,9 +166,12 @@ async def generate(args, task, directory):
     from scripts.eval_bcp_qwen38 import TokenClient, tokenizer_preflight
     if args.method == "contextgraph":
         from agents.graph_agent_isolated import process_item
+    elif args.method == "react":
+        from agents.react_agent import process_item
     else:
         from agents.fold_agent import process_item
-    config = config_for(args.benchmark, args.method, args.context_length, args.max_steps, args.memory_profile, args.prompt_profile)
+    config = config_for(args.benchmark, args.method, args.context_length, args.max_steps, args.memory_profile,
+                        args.prompt_profile, args.max_turn, args.override)
     rollout_config = config.actor_rollout_ref.rollout
     tokenizer = AutoTokenizer.from_pretrained(args.model_path, local_files_only=True)
     tokenizer_preflight(tokenizer, rollout_config)
@@ -174,13 +186,14 @@ async def generate(args, task, directory):
     ability = "DiscoveryWorld@real" if args.benchmark == "discoveryworld" else "ScienceWorld@real"
     item.non_tensor_batch = {"ability": np.array([ability], dtype=object), "extra_info": np.array([extra], dtype=object),
                              "uid": np.array([task["task_id"]], dtype=object), "reward_model": np.array([{}], dtype=object)}
-    item.meta_info = {"generation_kwargs": {}, "max_turn": args.max_steps if args.benchmark == "discoveryworld" else 100}
+    item.meta_info = {"generation_kwargs": {}, "max_turn": args.max_steps if args.benchmark == "discoveryworld" else args.max_turn}
     try:
         output = await process_item(item, TaskContext(config=config, global_step=0, llm_client=client,
                                                       is_train=False, tokenizer=tokenizer))
         if not output:
             raise RuntimeError("Empty agent rollout")
-        trajectories = [dict(r.extra_fields) for r in output]
+        # ReAct returns one AgentLoopOutput; the branch/graph loops return a list.
+        trajectories = [dict(r.extra_fields) for r in (output if isinstance(output, list) else [output])]
         save(directory / "trajectory.json", trajectories)
         stats = trajectories[0]["env_stats"]
         if client.failed or any(stats.get(k) for k in ("env_init_error", "env_error")):
@@ -190,7 +203,7 @@ async def generate(args, task, directory):
         save(directory / "result.json", {"status": "graded", "score": max(0.0, min(100.0, score)),
                "raw_score": score, "success": bool(stats.get("completed")), "env_stats": stats,
                "termination_reason": trajectories[0].get("termination_reason"),
-               "protocol": PROTOCOL if args.benchmark == "discoveryworld" else "scienceworld-1.2.3/test/unsimplified/shared-sequential-environment"})
+               "protocol": PROTOCOL if args.benchmark == "discoveryworld" else f"scienceworld-1.2.3/{task.get('split', 'test')}/unsimplified/shared-sequential-environment"})
     finally:
         await client.client.aclose()
 
@@ -206,7 +219,9 @@ def preflight(args):
                 "model_path": str(Path(args.model_path).resolve()), "seed": 42,
                 "decoding": {"temperature": 0, "top_p": 1, "thinking": True},
                 "server_execution": {"requested_enforce_eager": os.environ.get("SERVER_ENFORCE_EAGER", "1") == "1"},
-                "config": OmegaConf.to_container(config_for(args.benchmark, args.method, args.context_length, args.max_steps, args.memory_profile, args.prompt_profile)),
+                "config": OmegaConf.to_container(config_for(args.benchmark, args.method, args.context_length, args.max_steps,
+                                                            args.memory_profile, args.prompt_profile,
+                                                            getattr(args, "max_turn", 100), getattr(args, "override", ()))),
                 "task_timeout": args.task_timeout,
                 "versions": {p: importlib.metadata.version(p) for p in ("torch", "transformers", "httpx", "pandas", "numpy", "omegaconf")},
                 "commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()}
@@ -266,7 +281,9 @@ def run(args):
                              "--method", args.method, "--endpoint", args.endpoint, "--model-path", args.model_path,
                              "--context-length", str(args.context_length), "--max-steps", str(args.max_steps),
                              "--memory-profile", args.memory_profile,
-                             "--prompt-profile", args.prompt_profile],
+                             "--prompt-profile", args.prompt_profile,
+                             "--max-turn", str(getattr(args, "max_turn", 100)),
+                             *[f"--override={o}" for o in getattr(args, "override", ())]],
                             attempt / "generation.log", args.task_timeout)
                 result = json.loads((attempt / "result.json").read_text(encoding="utf8"))
             except Exception as exc:
@@ -293,6 +310,10 @@ def main():
     parser.add_argument("--model-path", required=True)
     parser.add_argument("--context-length", type=int, choices=[32768, 65536], default=65536)
     parser.add_argument("--max-steps", type=int, default=100)
+    parser.add_argument("--max-turn", type=int, default=100,
+                        help="ScienceWorld agent-loop model turns (separate from the --max-steps action cap)")
+    parser.add_argument("--override", action="append", default=[],
+                        help="plugin config override key=value (repeatable; ablations only)")
     parser.add_argument("--memory-profile", choices=MEMORY_PROFILES,
                         help="Default: turns for ScienceWorld, repaired for DiscoveryWorld")
     parser.add_argument("--prompt-profile", choices=PROMPT_PROFILES, default="legacy")
@@ -305,7 +326,7 @@ def main():
     args = parser.parse_args()
     if args.memory_profile is None:
         args.memory_profile = DEFAULT_MEMORY_PROFILES[args.benchmark]
-    if args.max_steps < 1 or args.task_timeout < 1:
+    if args.max_steps < 1 or args.max_turn < 1 or args.task_timeout < 1:
         parser.error("step and timeout limits must be positive")
     if args.task:
         asyncio.run(generate(args, json.loads((args.task / "task.json").read_text(encoding="utf8")), args.task))

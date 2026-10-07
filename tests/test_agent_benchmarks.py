@@ -203,3 +203,14 @@ def test_resume_skips_completed_and_retries_only_errors(monkeypatch, tmp_path):
     monkeypatch.setattr(runner, "preflight", lambda _: (tasks, {"revision": "changed"}))
     with pytest.raises(ValueError, match="Resume protocol"):
         runner.run(args)
+
+
+def test_react_turn_budget_and_overrides_config():
+    from scripts.eval_agent_benchmarks import config_for
+    react = config_for("scienceworld", "react", 65536, max_turn=300).actor_rollout_ref.rollout.plugin
+    graph = config_for("scienceworld", "contextgraph", 65536, max_turn=300,
+                       overrides=["consolidation_interval=10", "auto_prune_max_active=20"]).actor_rollout_ref.rollout.plugin
+    assert react.workflow == "scienceworld" and not react.structured_graph_controller
+    assert graph.workflow == "scienceworld_graph" and graph.structured_graph_controller
+    assert react.max_turn == react.val_max_turn == graph.max_turn == 300
+    assert graph.consolidation_interval == 10 and graph.auto_prune_max_active == 20
