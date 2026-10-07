@@ -84,6 +84,13 @@ mkdir -p "$(dirname "$BENCH_AGENT_ENV")"
 (
     flock -x 7
     requirements_sha=$(sha256sum "$BENCH_REQUIREMENTS" | cut -d' ' -f1)
+    if [[ "$BENCHMARK" == discoveryworld ]]; then
+        # Check before venv/pip and also reject incompatible cached overlays.
+        "$base" "$PROJECT_ROOT/scripts/select_discoveryworld_python.py" --check "$base"
+        if [[ -x "$BENCH_AGENT_ENV/bin/python" ]]; then
+            "$base" "$PROJECT_ROOT/scripts/select_discoveryworld_python.py" --check "$BENCH_AGENT_ENV/bin/python"
+        fi
+    fi
     if [[ ! -f "$BENCH_AGENT_ENV/.ready" ]]; then
         [[ -x "$base" ]] || { echo "Missing BENCH_BASE_PYTHON: $base"; exit 2; }
         "$base" -m venv --system-site-packages "$BENCH_AGENT_ENV"

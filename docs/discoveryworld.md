@@ -14,7 +14,19 @@ This integration runs the **real** [AllenAI DiscoveryWorld simulator](https://gi
 
 ## Vista four-node smoke
 
-Use a clean committed checkout. The launcher builds a private overlay of the existing SWE agent environment; it does not modify `cxtgraph`, `deepseek_v4`, or running evaluations. `BENCH_BASE_PYTHON` must be Python 3.10 or 3.11: pinned upstream uses float-to-integer conversions removed in Python 3.12. Override the base path if the default SWE environment is unavailable.
+Use a clean committed checkout. The launcher selects an existing Python 3.10/3.11
+agent interpreter, preferring `cxtgraph`, and checks its inherited agent packages
+before installing anything. It builds a private overlay and does not modify
+`cxtgraph`, `deepseek_v4`, or running evaluations. An explicit `BENCH_BASE_PYTHON`
+override must pass the same checks; an incompatible override fails without fallback.
+Pinned upstream uses float-to-integer conversions removed in Python 3.12.
+
+The selected interpreter and overlay path are printed before setup. Default
+overlays now end in `-py310` or `-py311`, avoiding reuse of the earlier unversioned
+overlay that could have been created with the SWE environment's Python 3.12.
+Existing overlays are also checked before pip or model startup. No old environment
+is deleted or rewritten to change its Python version. If no compatible interpreter
+with agent dependencies is found, setup stops and lists the rejected candidates.
 
 On an allocated four-node `idev`, from the checkout:
 
