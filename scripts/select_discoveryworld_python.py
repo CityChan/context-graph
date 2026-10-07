@@ -10,27 +10,31 @@ import subprocess
 import sys
 
 
-PROBE = ('import sys,json,importlib.util; '
-         'print(json.dumps({"version":list(sys.version_info[:2]),'
-         '"missing":[m for m in ("torch","numpy","transformers","omegaconf","tensordict") '
-         'if importlib.util.find_spec(m) is None]}))')
+PROBE = 'import sys; print("%d.%d" % sys.version_info[:2], flush=True)'
 
 
 def check_python(path):
-    """Check version and inherited agent packages before creating an overlay."""
+    """Check only the interpreter version; never initialize site or scan packages.
+
+    -I alone still processes .pth and sitecustomize. On shared environments those
+    startup hooks can stall, so version selection also needs -S. The normal agent
+    dependency/simulator preflight remains separate and retains site initialization.
+    """
     try:
-        result = subprocess.run([str(path), "-I", "-c", PROBE], capture_output=True,
+        result = subprocess.run([str(path), "-I", "-S", "-c", PROBE], capture_output=True,
                                 text=True, timeout=30, check=True,
                                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
-        info = json.loads(result.stdout)
+        version = tuple(int(part) for part in result.stdout.strip().split("."))
+        if len(version) != 2:
+            raise ValueError("Expected major.minor version output")
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"Version probe timed out for {path}; compatibility is unknown "
+                           "(site initialization and package scanning were disabled)") from exc
     except (OSError, subprocess.SubprocessError, ValueError) as exc:
         raise RuntimeError(f"Cannot inspect {path}: {exc}") from exc
-    version = tuple(info["version"])
     if version not in ((3, 10), (3, 11)):
         raise RuntimeError(f"{path}: Python {version[0]}.{version[1]}; DiscoveryWorld requires 3.10/3.11")
-    if info["missing"]:
-        raise RuntimeError(f"{path}: missing agent packages: {', '.join(info['missing'])}")
-    return info
+    return {"version": list(version)}
 
 
 def candidates(environ):
@@ -60,7 +64,7 @@ def select_python(environ=None):
             return os.path.abspath(path)
         except RuntimeError as exc:
             failures.append(str(exc))
-    raise RuntimeError("No compatible agent Python found. Set BENCH_BASE_PYTHON to an existing "
+    raise RuntimeError("Could not confirm a compatible agent Python. Set BENCH_BASE_PYTHON to an existing "
                        "Python 3.10/3.11 agent environment. Checked: " + "; ".join(failures))
 
 

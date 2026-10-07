@@ -86,9 +86,9 @@ mkdir -p "$(dirname "$BENCH_AGENT_ENV")"
     requirements_sha=$(sha256sum "$BENCH_REQUIREMENTS" | cut -d' ' -f1)
     if [[ "$BENCHMARK" == discoveryworld ]]; then
         # Check before venv/pip and also reject incompatible cached overlays.
-        "$base" "$PROJECT_ROOT/scripts/select_discoveryworld_python.py" --check "$base"
+        "$base" -I -S "$PROJECT_ROOT/scripts/select_discoveryworld_python.py" --check "$base"
         if [[ -x "$BENCH_AGENT_ENV/bin/python" ]]; then
-            "$base" "$PROJECT_ROOT/scripts/select_discoveryworld_python.py" --check "$BENCH_AGENT_ENV/bin/python"
+            "$base" -I -S "$PROJECT_ROOT/scripts/select_discoveryworld_python.py" --check "$BENCH_AGENT_ENV/bin/python"
         fi
     fi
     if [[ ! -f "$BENCH_AGENT_ENV/.ready" ]]; then
@@ -106,7 +106,12 @@ mkdir -p "$(dirname "$BENCH_AGENT_ENV")"
 ) 7>"$BENCH_AGENT_ENV.setup.lock"
 cp "$BENCH_AGENT_ENV/installed.txt" "$BENCH_RUN_DIR/environment.txt"
 if [[ "$BENCHMARK" == discoveryworld ]]; then
-    "$BENCH_AGENT_ENV/bin/python" scripts/probe_discoveryworld.py --output "$BENCH_RUN_DIR/simulator-probe" --difficulty "$BENCH_DIFFICULTY"
+    (
+        echo 'DISCOVERYWORLD_AGENT_DEPENDENCY_CHECK (normal Python startup)'
+        agent_preload
+        "$BENCH_AGENT_ENV/bin/python" -c 'import torch, numpy, transformers, omegaconf, tensordict; print("DISCOVERYWORLD_AGENT_DEPENDENCIES_OK", flush=True)'
+        "$BENCH_AGENT_ENV/bin/python" scripts/probe_discoveryworld.py --output "$BENCH_RUN_DIR/simulator-probe" --difficulty "$BENCH_DIFFICULTY"
+    )
 fi
 mkdir -p "$(dirname "$BENCH_DATA")"
 (

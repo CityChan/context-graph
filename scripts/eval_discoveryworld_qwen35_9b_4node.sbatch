@@ -16,9 +16,9 @@ export BENCH_DIFFICULTY=${BENCH_DIFFICULTY:-Normal}
 case "$BENCH_DIFFICULTY" in Easy|Normal|Challenge|all) ;; *) echo 'Invalid BENCH_DIFFICULTY'; exit 2 ;; esac
 export BENCH_PROMPT_PROFILE=discoveryworld_v1
 export BENCH_REQUIREMENTS=requirements_discoveryworld.txt
-BENCH_BASE_PYTHON=$(python "$PROJECT_ROOT/scripts/select_discoveryworld_python.py")
+BENCH_BASE_PYTHON=$(python -I -S "$PROJECT_ROOT/scripts/select_discoveryworld_python.py")
 export BENCH_BASE_PYTHON
-python_tag=$("$BENCH_BASE_PYTHON" -c 'import sys; print("py%d%d" % sys.version_info[:2])')
+python_tag=$("$BENCH_BASE_PYTHON" -I -S -c 'import sys; print("py%d%d" % sys.version_info[:2])')
 export BENCH_AGENT_ENV=${BENCH_AGENT_ENV:-$SCRATCH/context-graph-agent-benchmarks/envs/discoveryworld-fd591323-$python_tag}
 echo "DISCOVERYWORLD_AGENT_PYTHON=$BENCH_BASE_PYTHON overlay=$BENCH_AGENT_ENV"
 export BENCH_DATA=${BENCH_DATA:-$SCRATCH/context-graph-agent-benchmarks/data/discoveryworld-fd591323-$BENCH_DIFFICULTY/tasks.json}
