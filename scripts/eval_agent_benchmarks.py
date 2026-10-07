@@ -28,11 +28,14 @@ BENCHMARKS = ("scienceworld", "discoveryworld")
 METHODS = ("contextgraph", "foldagent")
 MEMORY_PROFILES = ("legacy", "turns", "repaired")
 PROMPT_PROFILES = ("legacy", "focus_v2", "discoveryworld_v1")
+DEFAULT_MEMORY_PROFILES = {"scienceworld": "turns", "discoveryworld": "repaired"}
 
 
-def config_for(benchmark, method, context_length, max_steps=100, memory_profile="repaired", prompt_profile="legacy"):
+def config_for(benchmark, method, context_length, max_steps=100, memory_profile=None, prompt_profile="legacy"):
     if benchmark not in BENCHMARKS:
         raise ValueError("Unknown benchmark")
+    if memory_profile is None:
+        memory_profile = DEFAULT_MEMORY_PROFILES[benchmark]
     if memory_profile not in MEMORY_PROFILES:
         raise ValueError("Unknown memory profile")
     if prompt_profile not in PROMPT_PROFILES:
@@ -290,7 +293,8 @@ def main():
     parser.add_argument("--model-path", required=True)
     parser.add_argument("--context-length", type=int, choices=[32768, 65536], default=65536)
     parser.add_argument("--max-steps", type=int, default=100)
-    parser.add_argument("--memory-profile", choices=MEMORY_PROFILES, default="repaired")
+    parser.add_argument("--memory-profile", choices=MEMORY_PROFILES,
+                        help="Default: turns for ScienceWorld, repaired for DiscoveryWorld")
     parser.add_argument("--prompt-profile", choices=PROMPT_PROFILES, default="legacy")
     parser.add_argument("--samples", type=int, default=-1)
     parser.add_argument("--shard-index", type=int, default=0)
@@ -299,6 +303,8 @@ def main():
     parser.add_argument("--retry-errors", action="store_true")
     parser.add_argument("--task", type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.memory_profile is None:
+        args.memory_profile = DEFAULT_MEMORY_PROFILES[args.benchmark]
     if args.max_steps < 1 or args.task_timeout < 1:
         parser.error("step and timeout limits must be positive")
     if args.task:

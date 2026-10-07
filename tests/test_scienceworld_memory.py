@@ -65,6 +65,28 @@ def test_prompt_profile_is_a_shared_comparison_constraint():
     assert not protocol_check([manifests[0]], [manifests[1]])["matched"]
 
 
+@pytest.mark.parametrize("method", ["contextgraph", "foldagent"])
+def test_default_changes_only_controller_accounting_from_legacy(method):
+    default = config_for("scienceworld", method, 65536)
+    legacy = config_for("scienceworld", method, 65536, memory_profile="legacy")
+    plugin = default.actor_rollout_ref.rollout.plugin
+    assert plugin.scienceworld_memory_profile == "turns"
+    assert plugin.scienceworld_prompt_profile == "legacy"
+    assert plugin.graph_controller_counts_as_turn is False
+    # All model, memory, prompt and budget settings must remain identical.
+    plugin.graph_controller_counts_as_turn = True
+    plugin.scienceworld_memory_profile = "legacy"
+    assert OmegaConf.to_container(default) == OmegaConf.to_container(legacy)
+
+
+def test_discoveryworld_keeps_its_existing_default():
+    default = config_for("discoveryworld", "contextgraph", 65536,
+                         prompt_profile="discoveryworld_v1")
+    explicit = config_for("discoveryworld", "contextgraph", 65536,
+                          memory_profile="repaired", prompt_profile="discoveryworld_v1")
+    assert OmegaConf.to_container(default) == OmegaConf.to_container(explicit)
+
+
 def test_repaired_loop_keeps_latest_feedback_and_recent_history(monkeypatch):
     from agents.graph_agent_isolated import process_item
     from tests.test_session_restart import Tokenizer
@@ -100,7 +122,7 @@ def test_repaired_loop_keeps_latest_feedback_and_recent_history(monkeypatch):
                                                "response_log_probs": [-0.1] * len(tokens)}}]}
 
     monkeypatch.setitem(sys.modules, "scienceworld", SimpleNamespace(ScienceWorldEnv=Simulator))
-    config = config_for("scienceworld", "contextgraph", 65536)
+    config = config_for("scienceworld", "contextgraph", 65536, memory_profile="repaired")
     config.actor_rollout_ref.rollout.response_length = 1_000_000
     config.actor_rollout_ref.rollout.plugin.val_response_length = 1_000_000
     task = DataProto()

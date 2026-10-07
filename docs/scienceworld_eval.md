@@ -1,5 +1,23 @@
 # ScienceWorld with Qwen3.5-9B
 
+## Default: isolate controller turn accounting
+
+New ScienceWorld runs default to `BENCH_MEMORY_PROFILE=turns` and
+`BENCH_PROMPT_PROFILE=legacy`. This keeps the legacy memory and prompt settings
+and excludes controller checkpoints from the task-turn budget. DiscoveryWorld
+retains its `repaired` memory default.
+
+Use explicit settings when rerunning from a shell that may contain older exports:
+
+```bash
+env -u BENCH_RUN_DIR -u BENCH_DATA BENCH_MEMORY_PROFILE=turns BENCH_PROMPT_PROFILE=legacy BENCH_SAMPLES=2 bash scripts/eval_agent_benchmarks_qwen35_9b_4node.sbatch scienceworld both
+```
+
+For a controlled comparison, run `BENCH_MEMORY_PROFILE=legacy` separately with
+the same commit, tasks, prompt, model and serving settings. Inspect saved initial
+requests and per-task controller counts. An episode ending before any controller
+call cannot validate turn accounting. Neither profile guarantees correct actions.
+
 ## Focus action guidance (opt-in prompt protocol)
 
 Set `BENCH_PROMPT_PROFILE=focus_v2` (CLI: `--prompt-profile focus_v2`) to explain
@@ -16,6 +34,10 @@ Both ContextGraph and FoldAgent receive the same action guidance. The default
 is `legacy` for controlled comparisons; prompt and memory profiles are separate.
 The resolved prompt profile is in the manifest config and is checked by the
 paired audit. Use a fresh run directory, not a resume of an older protocol.
+
+The two-task `focus_v2` smoke still produced wrong-target focus failures despite
+the guidance appearing in the saved prompts. This profile is experimental; it
+does not establish a fix or explain differences from historical evaluations.
 
 For a four-node idev paired rerun of the two early-failure tasks:
 
@@ -91,8 +113,8 @@ read without mutating running jobs. Missing metrics remain unknown; protocol
 mismatches are explicitly reported and must be resolved before treating the
 comparison as matched.
 
-The default `repaired` ScienceWorld profile sets `plugin.graph_controller_counts_as_turn=false` for
-both methods and record it in the manifest. ContextGraph controller checkpoints
+The default `turns` ScienceWorld profile sets `plugin.graph_controller_counts_as_turn=false` for
+both methods and records it in the manifest. ContextGraph controller checkpoints
 (including pass or rejected controller responses) no longer consume the
 100-turn task budget. They still consume the main token/context budget and
 session time. Ordinary main-agent responses, summaries and branch calls retain
@@ -115,8 +137,8 @@ The profile is saved for both methods and propagated to every task subprocess.
 | Profile | Controller counts as a task turn | ContextGraph memory |
 | --- | --- | --- |
 | `legacy` | Yes | Legacy pruning and history handling |
-| `turns` | No | Legacy pruning and history handling; isolates turn accounting |
-| `repaired` (default) | No | Recent-observation protection and repaired history handling |
+| `turns` (default) | No | Legacy pruning and history handling; isolates turn accounting |
+| `repaired` (opt-in) | No | Recent-observation protection and repaired history handling |
 
 The repaired profile protects the latest eight active observations from automatic
 pruning, including failed-action feedback. Among other equal-value candidates,
@@ -139,10 +161,10 @@ not a bit-identical replay of an older commit or server environment.
 For a fresh full ContextGraph run from the chosen checkout:
 
 ```bash
-env -u BENCH_RUN_DIR -u BENCH_DATA BENCH_MEMORY_PROFILE=repaired BENCH_SAMPLES=-1 sbatch --time=48:00:00 scripts/eval_agent_benchmarks_qwen35_9b_4node.sbatch scienceworld contextgraph
+env -u BENCH_RUN_DIR -u BENCH_DATA BENCH_MEMORY_PROFILE=turns BENCH_PROMPT_PROFILE=legacy BENCH_SAMPLES=-1 sbatch --time=48:00:00 scripts/eval_agent_benchmarks_qwen35_9b_4node.sbatch scienceworld contextgraph
 ```
 
-Use `BENCH_MEMORY_PROFILE=turns` in a separate fresh run for the turn-only ablation.
+Use `BENCH_MEMORY_PROFILE=repaired` in a separate fresh run for the memory ablation.
 Keep model, budgets, dependencies and profile aligned when comparing methods.
 Never resume an existing output directory with a different profile.
 

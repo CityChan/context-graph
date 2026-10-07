@@ -96,6 +96,23 @@ def test_paired_protocol_matches_model_budgets():
     assert cg.plugin.structured_graph_controller and not fa.plugin.structured_graph_controller
 
 
+@pytest.mark.parametrize("benchmark,explicit,expected", [
+    ("scienceworld", None, "turns"), ("discoveryworld", None, "repaired"),
+    ("scienceworld", "repaired", "repaired"), ("scienceworld", "legacy", "legacy"),
+])
+def test_cli_resolves_profile_before_dispatch(monkeypatch, tmp_path, benchmark, explicit, expected):
+    import scripts.eval_agent_benchmarks as runner
+    argv = ["eval", benchmark, "--endpoint", "http://unused", "--model-path", "unused",
+            "--data", str(tmp_path / "data.json"), "--output", str(tmp_path / "output")]
+    if explicit:
+        argv.extend(["--memory-profile", explicit])
+    monkeypatch.setattr(sys, "argv", argv)
+    observed = []
+    monkeypatch.setattr(runner, "run", lambda args: observed.append(args.memory_profile))
+    runner.main()
+    assert observed == [expected]
+
+
 def test_subprocess_timeout_and_nonzero_are_errors(tmp_path):
     script = tmp_path / "child.py"
     script.write_text("import time\ntime.sleep(60)\n")
@@ -140,6 +157,22 @@ def test_real_agent_loop_stops_on_environment_finish(monkeypatch, method, profil
     system = out[0].extra_fields["messages"][0]["content"]
     assert ("not an inspection or exploration command" in system) == (profile == "focus_v2")
     assert ("You may provide optional reasoning" in system) == (profile == "legacy")
+    if profile == "legacy":
+        legacy_config = config_for(benchmark, method, 65536, memory_profile="legacy")
+        legacy_client = Client([response])
+        legacy_context = SimpleNamespace(config=legacy_config, tokenizer=Tokenizer(),
+                                         llm_client=legacy_client, is_train=False, global_step=0)
+        asyncio.run(module.process_item(task, legacy_context))
+        # Compare the actual token-client input and generation settings, not just
+        # saved transcript text. Turn accounting must not change the first request.
+        assert len(legacy_client.calls) == 1
+        actual_ids, actual_settings = client.calls[0]
+        legacy_ids, legacy_settings = legacy_client.calls[0]
+        assert actual_ids == legacy_ids
+        # Each agent session creates a fresh request-routing UUID.
+        assert {k: v for k, v in actual_settings.items() if k != "uid"} == {
+            k: v for k, v in legacy_settings.items() if k != "uid"
+        }
 
 
 def test_resume_skips_completed_and_retries_only_errors(monkeypatch, tmp_path):

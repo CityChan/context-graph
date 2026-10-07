@@ -17,7 +17,9 @@ cd "$PROJECT_ROOT"
 : "${SCRATCH:?SCRATCH must be set}"
 export BENCH_CONTEXT_LENGTH=${BENCH_CONTEXT_LENGTH:-65536} BENCH_SAMPLES=${BENCH_SAMPLES:--1}
 export BENCH_MAX_STEPS=${BENCH_MAX_STEPS:-100}
-export BENCH_MEMORY_PROFILE=${BENCH_MEMORY_PROFILE:-repaired}
+default_memory_profile=turns
+if [[ ${1:-} == discoveryworld || ( ${1:-} == _eval && ${BENCHMARK:-} == discoveryworld ) ]]; then default_memory_profile=repaired; fi
+export BENCH_MEMORY_PROFILE=${BENCH_MEMORY_PROFILE:-$default_memory_profile}
 export BENCH_PROMPT_PROFILE=${BENCH_PROMPT_PROFILE:-legacy}
 case "$BENCH_PROMPT_PROFILE" in legacy|focus_v2|discoveryworld_v1) ;; *) echo 'Unknown BENCH_PROMPT_PROFILE'; exit 2 ;; esac
 case "$BENCH_MEMORY_PROFILE" in legacy|turns|repaired) ;; *) echo 'Expected BENCH_MEMORY_PROFILE=legacy, turns or repaired'; exit 2 ;; esac
