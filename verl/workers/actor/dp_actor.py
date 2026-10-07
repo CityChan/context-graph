@@ -30,6 +30,7 @@ from verl import DataProto
 from verl.trainer.ppo.core_algos import agg_loss, get_policy_loss_fn, kl_penalty
 from verl.utils.attention_utils import index_first_axis, pad_input, rearrange, unpad_input
 from verl.utils.device import get_device_id, get_device_name
+from verl.utils.distributed_loss import require_finite_losses
 from verl.utils.fsdp_utils import FSDPModule, fsdp2_clip_grad_norm_
 from verl.utils.profiler import GPUMemoryLogger
 from verl.utils.py_functional import append_to_dict
@@ -469,11 +470,10 @@ class DataParallelPPOActor(BasePPOActor):
                     micro_batches = mini_batch.split(self.config.ppo_micro_batch_size_per_gpu)
 
                 self.actor_optimizer.zero_grad()
-                did_backward = False
 
                 for micro_batch in micro_batches:
                     micro_batch = micro_batch.to(get_device_id())
-                    micro_batch_metrics = {"actor/skipped_nonfinite_micro_batch": 0.0}
+                    micro_batch_metrics = {}
                     model_inputs = {**micro_batch.batch, **micro_batch.non_tensor_batch}
                     response_mask = model_inputs["response_mask"]
                     overlong_mask = model_inputs.get("overlong_mask", None)
@@ -533,16 +533,7 @@ class DataParallelPPOActor(BasePPOActor):
                         )
                     pg_loss, pg_metrics = policy_loss_fn(**policy_loss_kwargs)
                     micro_batch_metrics.update(pg_metrics)
-                    # Multiplying NaN by zero still produces NaN. If a future
-                    # loss path bypasses the safe denominator in agg_loss,
-                    # skip this microbatch entirely instead of poisoning the
-                    # accumulated gradients.
-                    if not bool(torch.isfinite(pg_loss).item()):
-                        print(f"WARN: pg_loss is non-finite ({pg_loss.item()}), skipping microbatch")
-                        micro_batch_metrics["actor/skipped_nonfinite_micro_batch"] = 1.0
-                        micro_batch_metrics["actor/pg_loss"] = 0.0
-                        append_to_dict(metrics, micro_batch_metrics)
-                        continue
+                    checked_losses = {"pg_loss": pg_loss}
 
                     # Skip if using pure rollout correction mode (metrics already in pg_metrics)
                     rollout_log_prob = model_inputs.get("rollout_log_probs", None)
@@ -598,44 +589,29 @@ class DataParallelPPOActor(BasePPOActor):
                                 loss_mask=response_mask,
                                 loss_agg_mode=loss_agg_mode,
                             )
-                        if not bool(torch.isfinite(kl_loss).item()):
-                            print(f"WARN: kl_loss is non-finite ({kl_loss.item()}), skipping microbatch")
-                            micro_batch_metrics["actor/skipped_nonfinite_micro_batch"] = 1.0
-                            micro_batch_metrics["actor/pg_loss"] = pg_loss.detach().item() * loss_scale_factor
-                            micro_batch_metrics["actor/kl_loss"] = 0.0
-                            append_to_dict(metrics, micro_batch_metrics)
-                            continue
+                        checked_losses["kl_loss"] = kl_loss
 
                         policy_loss = policy_loss + kl_loss * self.config.kl_loss_coef
                         micro_batch_metrics["actor/kl_loss"] = kl_loss.detach().item() * loss_scale_factor
                         micro_batch_metrics["actor/kl_coef"] = self.config.kl_loss_coef
 
-                    if self.config.use_dynamic_bsz:
-                        # relative to the dynamic bsz
-                        loss = policy_loss * loss_scale_factor
-                    else:
-                        loss = policy_loss * loss_scale_factor
-                    if not bool(torch.isfinite(loss).item()):
-                        print(f"WARN: policy loss is non-finite ({loss.item()}), skipping microbatch")
-                        micro_batch_metrics["actor/skipped_nonfinite_micro_batch"] = 1.0
-                        micro_batch_metrics["actor/pg_loss"] = pg_loss.detach().item() * loss_scale_factor
-                        append_to_dict(metrics, micro_batch_metrics)
-                        continue
+                    loss = policy_loss * loss_scale_factor
+                    try:
+                        require_finite_losses(**checked_losses, total_loss=loss)
+                    except FloatingPointError:
+                        # Drop gradients accumulated from preceding microbatches.
+                        # No rank may independently skip an FSDP backward.
+                        self.actor_optimizer.zero_grad(set_to_none=True)
+                        raise
                     if self.scaler is not None:
                         self.scaler.scale(loss).backward()
                     else:
                         loss.backward()
-                    did_backward = True
 
                     micro_batch_metrics["actor/pg_loss"] = pg_loss.detach().item() * loss_scale_factor
                     append_to_dict(metrics, micro_batch_metrics)
 
-                if did_backward:
-                    grad_norm = self._optimizer_step()
-                else:
-                    # Avoid GradScaler/clip_grad_norm edge cases when every
-                    # microbatch was empty or non-finite.
-                    grad_norm = torch.zeros((), device=get_device_id())
+                grad_norm = self._optimizer_step()
                 mini_batch_metrics = {"actor/grad_norm": grad_norm.detach().item()}
                 append_to_dict(metrics, mini_batch_metrics)
         self.actor_optimizer.zero_grad()

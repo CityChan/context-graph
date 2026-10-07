@@ -50,13 +50,14 @@ def test_foldagent_training_selects_paper_advantage_formula():
     assert "'optimization_masked_rollouts'" in trainer
 
 
-def test_nonfinite_actor_microbatches_are_skipped_instead_of_multiplied_by_zero():
+def test_nonfinite_actor_losses_use_collective_guard_before_backward():
     source = _read("verl/workers/actor/dp_actor.py")
 
     assert "pg_loss = pg_loss * 0.0" not in source
     assert "kl_loss = kl_loss * 0.0" not in source
-    assert '"actor/skipped_nonfinite_micro_batch"' in source
-    assert "did_backward" in source
+    assert 'require_finite_losses(**checked_losses, total_loss=loss)' in source
+    assert '"actor/skipped_nonfinite_micro_batch"' not in source
+    assert "did_backward" not in source
 
 
 def test_foldagent_penalizes_the_last_action_when_finish_is_missing():

@@ -54,6 +54,16 @@ rollout attempt in the existing step budget, reported by
 Validation/checkpoint hooks for that skipped attempt are not run. Valid tied
 groups retain their M masks and can still receive KL regularization.
 
+The shared FSDP actor checks policy, optional KL and total losses collectively
+before each microbatch backward. If any rank reports a non-finite loss, every
+rank clears accumulated gradients and raises `FloatingPointError` before that
+backward or optimizer step. This deliberately stops training for diagnosis;
+it neither substitutes a zero reward nor attempts recovery with a zero loss.
+Finite zero-mask microbatches still participate in backward. The guard applies
+to all objectives using this actor, and adds one collective per microbatch.
+CPU/Gloo tests cover asymmetric NaN/Inf failures and a zero-mask rank using the
+actual actor update loop; GPU FSDP/NCCL execution remains a separate smoke test.
+
 Limits of this first implementation:
 
 - Only the read-only `LocalSearch` environment is supported. No SWE, ScienceWorld,
