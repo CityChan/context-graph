@@ -108,6 +108,43 @@ exact model inputs/outputs, fold errors and final working history are retained i
 trajectory artifacts; manifests identify the adaptation and pinned source.
 CPU tests validate execution contracts, not zero-shot model performance.
 
+## SUPO-style zero-shot baseline
+
+The independent `supo` / `search_supo` executor reimplements the rollout in
+[SUPO Algorithm 2](https://arxiv.org/abs/2510.06727v1). After a tool call crosses
+the context threshold, its action/observation pair is excluded from working
+history. The same model summarizes the preceding context, and execution resumes
+from the original task plus that summary. The tool has already run: its effects
+are not undone. Raw results and discarded rounds remain in audit artifacts.
+
+This is a **paper-based zero-shot rollout adaptation**, not SUPO joint RL training
+or evaluation of an official SUPO checkpoint. Training calls are rejected. It
+currently supports BC-P and our local text-only GAIA setup. It does not change
+the existing ReAct, FoldAgent, AgentFold or ContextGraph protocols.
+
+For an existing four-node Vista idev allocation:
+
+```bash
+BENCHMARK=bcp SAMPLES=8 bash scripts/eval_bcp_qwen35_9b_4node_idev.sh supo
+```
+
+Alternatively, `sbatch scripts/eval_bcp_supo_qwen35_9b_4node.sbatch` requests four
+nodes for 24 hours. Both default to Qwen3.5-9B and an eight-task smoke. Threshold
+`SUPO_CONTEXT_THRESHOLD=16384`, `SUPO_MAX_SUMMARIES=2` and
+`SUPO_SUMMARY_MAX_TOKENS=1024` are configurable and saved in the manifest. The
+Python equivalents are `--supo-context-threshold`, `--supo-max-summaries`, and
+`--supo-summary-max-tokens`.
+
+The adaptation retains the 32K working window, 100 model requests (including
+summaries and invalid calls) and 24K cumulative response allowance. Generated
+IDs and visible observation/instruction text consume the allowance; a summary
+never resets it. Discarded observations are not shown to the model and are
+reported separately. This budget and the reserved final-answer phase are our
+evaluation controls, not the paper's original long-horizon training protocol.
+Invalid summaries stop with `invalid_summary`; exhausted summary count stops
+with `summary_limit`. Neither means success. Inspect `summary_restarts` to verify
+that a smoke actually exercised compression. GPU performance remains unverified.
+
 ## Runtime and code layout
 
 | Directory | Responsibility |

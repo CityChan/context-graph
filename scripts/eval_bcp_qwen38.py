@@ -103,10 +103,10 @@ class TokenClient:
 def config_for(args):
     from omegaconf import OmegaConf
     workflow = {"react": "search", "foldagent": "search_branch", "agentfold": "search_agentfold",
-                "contextgraph": "search_graph"}[args.method]
+                "contextgraph": "search_graph", "supo": "search_supo"}[args.method]
     # The graph executor reads this even for inference. An empty estimator
     # explicitly leaves training-only GraphRPO credit assignment disabled.
-    return OmegaConf.create({"algorithm": {"adv_estimator": ""}, "actor_rollout_ref": {"rollout": {
+    config = OmegaConf.create({"algorithm": {"adv_estimator": ""}, "actor_rollout_ref": {"rollout": {
         "prompt_length": 8192, "response_length": 24576,
         "plugin": {
             "workflow": workflow, "max_turn": 100, "val_max_turn": 100,
@@ -128,6 +128,10 @@ def config_for(args):
             "open_page_chars": 48000,
             "apply_chat_template_kwargs": {"enable_thinking": True, "preserve_thinking": True},
         }}}})
+    if args.method == "supo":
+        from agents.supo_agent import settings
+        config.actor_rollout_ref.rollout.plugin.update(settings(args))
+    return config
 
 
 def tokenizer_preflight(tokenizer, config):
@@ -191,6 +195,9 @@ async def evaluate(args):
     if args.method == "agentfold":
         from agents.agentfold_agent import PROVENANCE
         manifest["baseline_protocol"] = PROVENANCE
+    elif args.method == "supo":
+        from agents.supo_agent import PROVENANCE, settings
+        manifest["baseline_protocol"] = {**PROVENANCE, **settings(config.actor_rollout_ref.rollout.plugin)}
     (root / f"manifest-{args.rank}.json").write_text(json.dumps(manifest, indent=2))
 
     # Keep the same server preflight across all methods.
@@ -248,7 +255,10 @@ def main():
     parser.add_argument("--merge", action="store_true")
     parser.add_argument("--benchmark", choices=["bcp", "gaia"], default="bcp")
     parser.add_argument("--output", required=True)
-    parser.add_argument("--method", choices=["react", "foldagent", "contextgraph", "agentfold"])
+    parser.add_argument("--method", choices=["react", "foldagent", "contextgraph", "agentfold", "supo"])
+    parser.add_argument("--supo-context-threshold", type=int, default=16384)
+    parser.add_argument("--supo-max-summaries", type=int, default=2)
+    parser.add_argument("--supo-summary-max-tokens", type=int, default=1024)
     parser.add_argument("--memory-mode", choices=["legacy", "repaired"], default="repaired")
     parser.add_argument("--model", default="Qwen/Qwen3.8-27B")
     parser.add_argument("--model-path")

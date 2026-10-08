@@ -133,12 +133,16 @@ case "${1:-}" in
     export HF_HOME="$SCRATCH/hf_cache" HF_HUB_CACHE="$SCRATCH/hf_cache/hub"
     export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 STRUCTURED_MEMORY_ENABLED=0
     unset QWEN_ENABLE_THINKING
-    exec python -u scripts/eval_bcp_qwen38.py --benchmark "$BENCHMARK" --method "$METHOD" --memory-mode "$MEMORY_MODE" --model "$MODEL_ID" --model-path "$MODEL_PATH" --endpoint "$2" --rank "$3" --data "$DATA_PATH" --samples "$SAMPLES" --seed "$SEED" --workers "$WORKERS" --output "$RUN_ROOT"
+    BASELINE_ARGS=()
+    if [ "$METHOD" = supo ]; then
+      BASELINE_ARGS=(--supo-context-threshold "${SUPO_CONTEXT_THRESHOLD:-16384}" --supo-max-summaries "${SUPO_MAX_SUMMARIES:-2}" --supo-summary-max-tokens "${SUPO_SUMMARY_MAX_TOKENS:-1024}")
+    fi
+    exec python -u scripts/eval_bcp_qwen38.py --benchmark "$BENCHMARK" --method "$METHOD" --memory-mode "$MEMORY_MODE" --model "$MODEL_ID" --model-path "$MODEL_PATH" --endpoint "$2" --rank "$3" --data "$DATA_PATH" --samples "$SAMPLES" --seed "$SEED" --workers "$WORKERS" --output "$RUN_ROOT" "${BASELINE_ARGS[@]}"
     ;;
 esac
 
-export METHOD=${1:?Usage: bash scripts/eval_bcp_qwen38_4node_idev.sh react|foldagent|contextgraph|agentfold}
-case "$METHOD" in react|foldagent|contextgraph|agentfold) ;; *) echo "Invalid method: $METHOD"; exit 2 ;; esac
+export METHOD=${1:?Usage: bash scripts/eval_bcp_qwen38_4node_idev.sh react|foldagent|contextgraph|agentfold|supo}
+case "$METHOD" in react|foldagent|contextgraph|agentfold|supo) ;; *) echo "Invalid method: $METHOD"; exit 2 ;; esac
 : "${SLURM_JOB_ID:?Run inside an existing four-node idev}"
 : "${SLURM_JOB_NODELIST:?Missing allocation nodes}"
 : "${SCRATCH:?Missing Vista scratch directory}"

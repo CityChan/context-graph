@@ -34,7 +34,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Evaluate GAIA search-agent parquets.")
     parser.add_argument("--data-path", default="data/gaia_validation_graph.parquet")
     parser.add_argument("--output-dir", default="results/gaia")
-    parser.add_argument("--workflow", choices=["search", "search_branch", "search_graph", "search_agentfold"], default=None,
+    parser.add_argument("--workflow", choices=["search", "search_branch", "search_graph", "search_agentfold", "search_supo"], default=None,
                         help="Override extra_info.workflow. Default reads workflow from parquet.")
     parser.add_argument("--model-name", default="gpt-5-nano")
     parser.add_argument("--tokenizer-name", default="Qwen/Qwen2.5-7B-Instruct")
@@ -83,6 +83,8 @@ def _process_item_for_workflow(workflow: str):
         from agents.graph_agent_isolated import process_item
     elif workflow == "search_agentfold":
         from agents.agentfold_agent import process_item
+    elif workflow == "search_supo":
+        from agents.supo_agent import process_item
     else:
         raise ValueError(f"Unsupported workflow: {workflow}")
     return process_item
@@ -255,6 +257,9 @@ async def eval_one(row: dict[str, Any], args: argparse.Namespace, tokenizer) -> 
             result["judge_audit"] = extra_fields.get("judge_audit", [])
             if workflow == "search_agentfold":
                 for key in ("agentfold", "model_contexts", "working_history", "termination_reason"):
+                    result[key] = extra_fields.get(key)
+            elif workflow == "search_supo":
+                for key in ("supo", "model_contexts", "working_history", "termination_reason"):
                     result[key] = extra_fields.get(key)
     except Exception as exc:
         result["error"] = repr(exc)
