@@ -136,13 +136,16 @@ case "${1:-}" in
     BASELINE_ARGS=()
     if [ "$METHOD" = supo ]; then
       BASELINE_ARGS=(--supo-context-threshold "${SUPO_CONTEXT_THRESHOLD:-16384}" --supo-max-summaries "${SUPO_MAX_SUMMARIES:-2}" --supo-summary-max-tokens "${SUPO_SUMMARY_MAX_TOKENS:-1024}")
+    elif [[ "$METHOD" == memobrain || "$METHOD" == amem ]]; then
+      BASELINE_ARGS=(--memory-helper-max-tokens "${MEMORY_HELPER_MAX_TOKENS:-1024}" --memobrain-recall-interval "${MEMOBRAIN_RECALL_INTERVAL:-5}" --memobrain-context-threshold "${MEMOBRAIN_CONTEXT_THRESHOLD:-16384}" --amem-topk "${AMEM_TOPK:-5}" --amem-memory-tokens "${AMEM_MEMORY_TOKENS:-4096}")
+      if [[ "$METHOD" == amem ]]; then python scripts/prepare_amem_embedding.py --offline; fi
     fi
     exec python -u scripts/eval_bcp_qwen38.py --benchmark "$BENCHMARK" --method "$METHOD" --memory-mode "$MEMORY_MODE" --model "$MODEL_ID" --model-path "$MODEL_PATH" --endpoint "$2" --rank "$3" --data "$DATA_PATH" --samples "$SAMPLES" --seed "$SEED" --workers "$WORKERS" --output "$RUN_ROOT" "${BASELINE_ARGS[@]}"
     ;;
 esac
 
-export METHOD=${1:?Usage: bash scripts/eval_bcp_qwen38_4node_idev.sh react|foldagent|contextgraph|agentfold|supo}
-case "$METHOD" in react|foldagent|contextgraph|agentfold|supo) ;; *) echo "Invalid method: $METHOD"; exit 2 ;; esac
+export METHOD=${1:?Usage: bash scripts/eval_bcp_qwen38_4node_idev.sh react|foldagent|contextgraph|agentfold|supo|memobrain|amem}
+case "$METHOD" in react|foldagent|contextgraph|agentfold|supo|memobrain|amem) ;; *) echo "Invalid method: $METHOD"; exit 2 ;; esac
 : "${SLURM_JOB_ID:?Run inside an existing four-node idev}"
 : "${SLURM_JOB_NODELIST:?Missing allocation nodes}"
 : "${SCRATCH:?Missing Vista scratch directory}"
@@ -196,6 +199,8 @@ EVAL_PIDS=()
 cleanup() {
   set +e
   for pid in "${EVAL_PIDS[@]}" "${SERVICE_PIDS[@]}"; do kill "$pid" 2>/dev/null; done
+  # A sequential baseline smoke must release GPUs/ports before its next launch.
+  for pid in "${EVAL_PIDS[@]}" "${SERVICE_PIDS[@]}"; do wait "$pid" 2>/dev/null; done
 }
 trap cleanup EXIT
 trap 'exit 130' INT

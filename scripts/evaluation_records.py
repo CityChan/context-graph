@@ -20,6 +20,8 @@ def read_evaluation(root):
             raise ValueError("Shard model mismatch")
         if manifest.get("server_execution") != first.get("server_execution"):
             raise ValueError("Shard server execution mismatch")
+        if manifest.get("baseline_protocol") != first.get("baseline_protocol"):
+            raise ValueError("Shard baseline protocol mismatch")
         if any(manifest[key] != first[key] for key in fields):
             raise ValueError("Shard provenance mismatch")
         if manifest.get("retrieval", "local_bcp_corpus") != first.get("retrieval", "local_bcp_corpus"):

@@ -1,0 +1,39 @@
+#!/bin/bash
+# Run one method, or both sequentially, inside an existing four-node idev.
+set -euo pipefail
+METHOD=${1:-both}
+case "$METHOD" in memobrain|amem|both) ;; *) echo 'Usage: bash scripts/smoke_bcp_graph_memory_qwen35_9b_4node_idev.sh memobrain|amem|both'; exit 2 ;; esac
+export PROJECT_ROOT=${PROJECT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}
+: "${SLURM_JOB_ID:?Run inside an existing four-node idev}"
+: "${SCRATCH:?Missing Vista scratch directory}"
+export SAMPLES=${SAMPLES:-3} WORKERS=${WORKERS:-1} BENCHMARK=bcp
+export MEMORY_MODE=repaired
+export CONDA_SH=${CONDA_SH:-/work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh}
+export AGENT_CONDA_ENV=${AGENT_CONDA_ENV:-cxtgraph}
+set +u
+source "$CONDA_SH"
+conda activate "$AGENT_CONDA_ENV"
+set -u
+cd "$PROJECT_ROOT"
+mapfile -t SMOKE_NODES < <(scontrol show hostnames "$SLURM_JOB_NODELIST")
+[[ ${#SMOKE_NODES[@]} == 4 ]] || { echo 'Exactly four nodes required'; exit 2; }
+# Uses the existing dependency, and caches only pinned MiniLM weights on scratch.
+if [[ "$METHOD" == amem || "$METHOD" == both ]]; then
+  env -u HF_HUB_OFFLINE -u TRANSFORMERS_OFFLINE HF_HOME="$SCRATCH/hf_cache" HF_HUB_CACHE="$SCRATCH/hf_cache/hub" python scripts/prepare_amem_embedding.py
+fi
+SMOKE_ROOT=${SMOKE_ROOT:-$(mktemp -d "$SCRATCH/bcp-graph-memory-${SLURM_JOB_ID}-XXXXXX")}
+mkdir -p "$SMOKE_ROOT"
+METHODS=("$METHOD")
+[[ "$METHOD" != both ]] || METHODS=(memobrain amem)
+rc=0
+for method in "${METHODS[@]}"; do
+  export RUN_ROOT="$SMOKE_ROOT/$method"
+  if bash scripts/eval_bcp_qwen35_9b_4node_idev.sh "$method"; then
+    python scripts/audit_graph_memory_smoke.py "$RUN_ROOT" || rc=1
+  else
+    echo "GRAPH_MEMORY_SMOKE_FAILED method=$method; inspect $RUN_ROOT"
+    rc=1
+  fi
+done
+echo "GRAPH_MEMORY_SMOKE_COMPLETE status=$rc artifacts=$SMOKE_ROOT"
+exit "$rc"

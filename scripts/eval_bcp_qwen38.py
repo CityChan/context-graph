@@ -103,7 +103,8 @@ class TokenClient:
 def config_for(args):
     from omegaconf import OmegaConf
     workflow = {"react": "search", "foldagent": "search_branch", "agentfold": "search_agentfold",
-                "contextgraph": "search_graph", "supo": "search_supo"}[args.method]
+                "contextgraph": "search_graph", "supo": "search_supo",
+                "memobrain": "search_memobrain", "amem": "search_amem"}[args.method]
     # The graph executor reads this even for inference. An empty estimator
     # explicitly leaves training-only GraphRPO credit assignment disabled.
     config = OmegaConf.create({"algorithm": {"adv_estimator": ""}, "actor_rollout_ref": {"rollout": {
@@ -130,6 +131,9 @@ def config_for(args):
         }}}})
     if args.method == "supo":
         from agents.supo_agent import settings
+        config.actor_rollout_ref.rollout.plugin.update(settings(args))
+    elif args.method in {"memobrain", "amem"}:
+        from agents.graph_memory_baselines import settings
         config.actor_rollout_ref.rollout.plugin.update(settings(args))
     return config
 
@@ -198,6 +202,10 @@ async def evaluate(args):
     elif args.method == "supo":
         from agents.supo_agent import PROVENANCE, settings
         manifest["baseline_protocol"] = {**PROVENANCE, **settings(config.actor_rollout_ref.rollout.plugin)}
+    elif args.method in {"memobrain", "amem"}:
+        from agents.memory_baseline_agent import provenance
+        from agents.graph_memory_baselines import settings
+        manifest["baseline_protocol"] = provenance(args.method, settings(config.actor_rollout_ref.rollout.plugin))
     (root / f"manifest-{args.rank}.json").write_text(json.dumps(manifest, indent=2))
 
     # Keep the same server preflight across all methods.
@@ -255,7 +263,12 @@ def main():
     parser.add_argument("--merge", action="store_true")
     parser.add_argument("--benchmark", choices=["bcp", "gaia"], default="bcp")
     parser.add_argument("--output", required=True)
-    parser.add_argument("--method", choices=["react", "foldagent", "contextgraph", "agentfold", "supo"])
+    parser.add_argument("--method", choices=["react", "foldagent", "contextgraph", "agentfold", "supo", "memobrain", "amem"])
+    parser.add_argument("--memory-helper-max-tokens", type=int, default=1024)
+    parser.add_argument("--memobrain-recall-interval", type=int, default=5)
+    parser.add_argument("--memobrain-context-threshold", type=int, default=16384)
+    parser.add_argument("--amem-topk", type=int, default=5)
+    parser.add_argument("--amem-memory-tokens", type=int, default=4096)
     parser.add_argument("--supo-context-threshold", type=int, default=16384)
     parser.add_argument("--supo-max-summaries", type=int, default=2)
     parser.add_argument("--supo-summary-max-tokens", type=int, default=1024)

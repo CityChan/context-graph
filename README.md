@@ -18,6 +18,7 @@ successful 32K training updates and memory fit on that topology remain unverifie
 | Train Qwen3.5-9B on Vista | [RL setup, preflight, smoke and submission](docs/bcp_qwen35_9b_rl.md) |
 | Train executor and memory roles with EM-RPO | [Shared-policy training, compatibility and limitations](docs/em_rpo.md) |
 | Evaluate BC-P / text-only local GAIA | [BC-P guide](docs/bcp_qwen35_9b_eval.md), [GAIA guide](docs/gaia_qwen35_9b_eval.md) |
+| Smoke-test MemoBrain and A-MEM on BC-P | [Protocol and four-node idev commands](docs/graph_memory_baselines.md) |
 | Evaluate SWE-bench Verified or Lite | [Container, model and grading guide](docs/swebench_verified_eval.md) |
 | Submit Lite ARM containers + inference + grading in one job | [Four-node batch entry](docs/swebench_verified_eval.md#all-in-one-four-node-batch-submission) |
 | Re-evaluate DiscoveryBench with Qwen3.5-9B | [Paired ContextGraph/FoldAgent batch job](docs/discoverybench_qwen35_9b_eval.md) |
