@@ -14,11 +14,12 @@ import time
 from .agentfold_agent import _fit_observation, _get, parse_response
 from .environment_lifecycle import managed_environment
 from .prompts import create_chat
+from .single_tool_protocol import MAX_FORMAT_ERRORS, PROTOCOL, retry_context
 from .utils import AgentLoopMetrics, AgentLoopOutput, _apply_chat_template, select_env
 
 
 PROVENANCE = {
-    "method": "supo", "variant": "zero_shot_rollout_adaptation_v1",
+    "method": "supo", "variant": "zero_shot_rollout_adaptation_v2", **PROTOCOL,
     "paper": "https://arxiv.org/abs/2510.06727v1", "algorithm": 2,
     "implementation": "paper_based_reimplementation",
     "supo_rl_training": False, "trained_supo_checkpoint": False,
@@ -84,7 +85,7 @@ async def process_item(item, context):
     env.raise_judge_errors = True
     async with managed_environment(env):
         await env.init_env(item)
-        fixed = create_chat(env.instance_info["problem_statement"], "search", item)
+        fixed = create_chat(env.instance_info["problem_statement"], "search_single", item)
         if len(render(fixed)) >= threshold:
             raise ValueError("SUPO threshold must exceed the full initial prompt; task is never truncated")
         working, transcript = copy.deepcopy(fixed), copy.deepcopy(fixed)
@@ -95,6 +96,7 @@ async def process_item(item, context):
                      supo_discarded_observation_tokens=0, observation_budget_truncations=0,
                      observation_budget_skips=0)
         pending, feedback, used, iteration = False, "", 0, 0
+        rejected, consecutive_invalid = "", 0
         reason = "max_turn"
         input_ids, output_ids, logprobs = [], [], []
         while iteration < max_turn:
@@ -103,6 +105,8 @@ async def process_item(item, context):
                                            or iteration == max_turn - 1))
             phase = "final" if finish_only else ("summary" if pending else "action")
             messages = copy.deepcopy(working)
+            if rejected:
+                messages.append({"role": "assistant", "content": rejected})
             if phase == "summary":
                 instruction = SUMMARY_REQUEST
             elif phase == "final":
@@ -172,9 +176,14 @@ async def process_item(item, context):
                     action, _ = parse_response(text, [], finish_only=finish_only)
                 except (ValueError, TypeError) as exc:
                     stats["invalid_tool"] += 1
-                    feedback = record["format_error"] = str(exc)
+                    record["format_error"] = str(exc)
+                    consecutive_invalid += 1
+                    if consecutive_invalid >= MAX_FORMAT_ERRORS:
+                        reason = "invalid_tool_limit"
+                        break
+                    rejected, feedback = retry_context(text, str(exc), tokenizer)
                     continue
-                feedback = ""
+                feedback, rejected, consecutive_invalid = "", "", 0
                 record["action"] = action
                 result = await asyncio.wait_for(env.run_action(action),
                     timeout=max(0, deadline - time.monotonic()))
@@ -221,6 +230,7 @@ async def process_item(item, context):
                      total_token=sum(len(r["input_ids"]) + len(r["output_ids"]) for r in audit),
                      hit_token_limit=int(reason == "token_limit"), hit_max_turn=int(reason == "max_turn"),
                      hit_summary_limit=int(reason == "summary_limit"), hit_timeout=int(reason == "timeout"))
+        stats["hit_format_retry_limit"] = int(reason == "invalid_tool_limit")
         return AgentLoopOutput(prompt_ids=input_ids, response_ids=output_ids,
             response_mask=[0] * len(output_ids), response_logprobs=logprobs,
             reward_score=float(reward), num_turns=iteration, metrics=AgentLoopMetrics(),

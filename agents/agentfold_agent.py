@@ -17,11 +17,12 @@ import numpy as np
 
 from .environment_lifecycle import managed_environment
 from .prompts import create_chat
+from .single_tool_protocol import MAX_FORMAT_ERRORS, PROTOCOL, retry_context
 from .utils import AgentLoopMetrics, AgentLoopOutput, _apply_chat_template, select_env
 
 
 PROVENANCE = {
-    "method": "agentfold", "variant": "zero_shot_adaptation_v1",
+    "method": "agentfold", "variant": "zero_shot_adaptation_v2", **PROTOCOL,
     "upstream_revision": "f72f75d8c3eb842f2bbbab096a12206ff66e270f",
     "upstream_source": "Alibaba-NLP/DeepResearch/WebAgent/AgentFold/infer.py",
     "trained_agentfold_checkpoint": False,
@@ -153,7 +154,7 @@ async def process_item(item, context):
     env.raise_judge_errors = True
     async with managed_environment(env):
         await env.init_env(item)
-        fixed = create_chat(env.instance_info["problem_statement"], "search", item)
+        fixed = create_chat(env.instance_info["problem_statement"], "search_single", item)
         fixed[0]["content"] += "\n\n" + FOLD_PROMPT
         transcript = copy.deepcopy(fixed)
         steps, audit = [], []
@@ -161,7 +162,8 @@ async def process_item(item, context):
                  "invalid_tool": 0, "generated_tokens": 0, "observation_tokens": 0, "feedback_tokens": 0,
                  "observation_budget_truncations": 0, "observation_budget_skips": 0}
         used, iteration, next_step = 0, 0, 1
-        feedback, reason = "", "max_turn"
+        feedback, rejected, reason = "", "", "max_turn"
+        consecutive_invalid = 0
         input_ids, output_ids, logprobs = [], [], []
         while iteration < max_turn:
             remaining = budget - used
@@ -171,7 +173,8 @@ async def process_item(item, context):
             history = "\n\n".join(step.render() for step in steps)
             messages[-1]["content"] += "\n\nWorking history:\n" + (history or "(No completed steps.)")
             if feedback:
-                messages[-1]["content"] += "\n\nFormat correction: " + feedback
+                messages.extend([{"role": "assistant", "content": rejected},
+                                 {"role": "user", "content": feedback}])
             if finish_only:
                 messages[-1]["content"] += "\nBudget ending: submit one finish call now; no compression needed."
             candidate_ids = list(_apply_chat_template(tokenizer, messages, config,
@@ -211,12 +214,17 @@ async def process_item(item, context):
                 except (ValueError, TypeError) as exc:
                     stats["invalid_tool"] += 1
                     record["format_error"] = str(exc)
-                    feedback = _fit_observation(str(exc), tokenizer, max(0, budget - used))
+                    consecutive_invalid += 1
+                    if consecutive_invalid >= MAX_FORMAT_ERRORS:
+                        reason = "invalid_tool_limit"
+                        break
+                    rejected, correction = retry_context(text, str(exc), tokenizer)
+                    feedback = _fit_observation(correction, tokenizer, max(0, budget - used))
                     cost = len(tokenizer.encode(feedback, add_special_tokens=False))
                     used += cost
                     stats["feedback_tokens"] += cost
                     continue
-                feedback = ""
+                feedback, rejected, consecutive_invalid = "", "", 0
                 if replacement is not steps:
                     stats["agentfold_folds"] += 1
                     stats["agentfold_deep_folds"] += int(replacement[-1].start != replacement[-1].end)
@@ -258,6 +266,7 @@ async def process_item(item, context):
                      working_context_limit=window, main_context_tokens=len(input_ids),
                      hit_token_limit=int(reason == "token_limit"), hit_max_turn=int(reason == "max_turn"),
                      hit_timeout=int(reason == "timeout"))
+        stats["hit_format_retry_limit"] = int(reason == "invalid_tool_limit")
         return AgentLoopOutput(prompt_ids=input_ids, response_ids=output_ids,
             response_mask=[0] * len(output_ids), response_logprobs=logprobs,
             reward_score=float(reward), num_turns=iteration, metrics=AgentLoopMetrics(),

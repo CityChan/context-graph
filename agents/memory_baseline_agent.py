@@ -10,6 +10,7 @@ from . import graph_memory_baselines as memory
 from .agentfold_agent import _fit_observation, _get, parse_response
 from .environment_lifecycle import managed_environment
 from .prompts import create_chat
+from .single_tool_protocol import MAX_FORMAT_ERRORS, PROTOCOL, retry_context
 from .utils import AgentLoopMetrics, AgentLoopOutput, _apply_chat_template, select_env
 
 
@@ -18,8 +19,8 @@ class BudgetEnd(Exception):
 
 
 def provenance(method, options):
-    return {**memory.PROVENANCE[method], **options, "method": method,
-            "variant": "zero_shot_bcp_adaptation_v1", "trained_checkpoint": False,
+    return {**memory.PROVENANCE[method], **options, **PROTOCOL, "method": method,
+            "variant": "zero_shot_bcp_adaptation_v2", "trained_checkpoint": False,
             "memory_scope": "one task; no cross-task state", "helper_model": "same actor endpoint",
             "budget": "all actor/helper generated tokens + visible observations + control instructions; no refunds",
             "turns": "all actor and memory model requests; final answer slot reserved"}
@@ -111,12 +112,13 @@ async def process_item(item, context):
     async with managed_environment(env):
         await env.init_env(item)
         task = env.instance_info["problem_statement"]
-        fixed = create_chat(task, "search", item)
+        fixed = create_chat(task, "search_single", item)
         if len(render(fixed)) + max(reserve, 10) >= window:
             raise ValueError("Original task does not fit; never truncate it")
         store = memory.MemoBrainMemory(task) if method == "memobrain" else memory.AMemMemory()
         transcript, episodes, working = copy.deepcopy(fixed), [], copy.deepcopy(fixed)
         feedback, reason, force_final = "", "max_turn", False
+        rejected, consecutive_invalid = "", 0
         try:
             while iteration < max_turn:
                 finish_only = force_final or iteration == max_turn - 1 or budget - used <= reserve + margin + max(turn_cap, 10)
@@ -143,6 +145,8 @@ async def process_item(item, context):
                     working.extend(recent)
                 instruction = ("Budget ending: submit one finish call now using available evidence."
                                if finish_only else feedback)
+                if rejected:
+                    working.append({"role": "assistant", "content": rejected})
                 if instruction:
                     working.append({"role": "user", "content": instruction})
                 text = await request(working, "final" if finish_only else "action", finish_only, instruction)
@@ -151,9 +155,14 @@ async def process_item(item, context):
                     action, _ = parse_response(text, [], finish_only=finish_only)
                 except (ValueError, TypeError) as exc:
                     stats["invalid_tool"] += 1
-                    feedback = audit[-1]["format_error"] = str(exc)
+                    audit[-1]["format_error"] = str(exc)
+                    consecutive_invalid += 1
+                    if consecutive_invalid >= MAX_FORMAT_ERRORS:
+                        reason = "invalid_tool_limit"
+                        break
+                    rejected, feedback = retry_context(text, str(exc), tokenizer)
                     continue
-                feedback = ""
+                feedback, rejected, consecutive_invalid = "", "", 0
                 audit[-1]["action"] = action
                 result = await asyncio.wait_for(env.run_action(action), timeout=max(0, deadline - time.monotonic()))
                 stats["environment_steps"] += 1
@@ -220,6 +229,7 @@ async def process_item(item, context):
                      amem_evolutions=sum(bool(r.get("decision", {}).get("should_evolve")) for r in memory_audit if r["applied"]),
                      hit_token_limit=int(reason == "token_limit"), hit_max_turn=int(reason == "max_turn"),
                      hit_timeout=int(reason == "timeout"))
+        stats["hit_format_retry_limit"] = int(reason == "invalid_tool_limit")
         return AgentLoopOutput(prompt_ids=last_ids, response_ids=last_outputs,
             response_mask=[0] * len(last_outputs), response_logprobs=last_logprobs,
             reward_score=float(reward), num_turns=iteration, metrics=AgentLoopMetrics(),

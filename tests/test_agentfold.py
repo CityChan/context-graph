@@ -125,7 +125,8 @@ def test_invalid_fold_is_charged_without_tool_or_memory_mutation(monkeypatch):
     assert env.actions == [SEARCH, OPEN, FINISH]
     assert out.extra_fields["env_stats"]["invalid_tool"] == 1
     assert "Format correction" in client.calls[2][1]["messages"][-1]["content"]
-    assert "[Step 1]" in client.calls[2][1]["messages"][-1]["content"]
+    assert "[Step 1]" in client.calls[2][1]["messages"][1]["content"]
+    assert client.calls[2][1]["messages"][-2]["role"] == "assistant"
     assert out.num_turns == 4
 
 

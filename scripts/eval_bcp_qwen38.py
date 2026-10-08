@@ -167,6 +167,8 @@ def summarize(root):
     (root / "summary.json").write_text(json.dumps(summary, indent=2))
     print(json.dumps(summary, indent=2))
     require_generation_quality(summary)
+    if summary["format_retry_failures"]:
+        raise RuntimeError("Evaluation contains tool-format retry failures; do not treat as a clean score")
     if summary["execution_errors"] or summary["judge_parse_failures"]:
         raise RuntimeError("Evaluation contains execution/judge failures; do not treat as a clean score")
 

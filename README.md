@@ -109,6 +109,18 @@ exact model inputs/outputs, fold errors and final working history are retained i
 trajectory artifacts; manifests identify the adaptation and pinned source.
 CPU tests validate execution contracts, not zero-shot model performance.
 
+The `zero_shot_adaptation_v2` protocol fixes a conflicting parallel-search
+example inherited by the original adapter. AgentFold, SUPO, MemoBrain and A-MEM
+now use `search_single_v1`: one tool call per reply, with a bounded excerpt of
+the rejected reply included in format-correction requests. Three consecutive
+invalid tool replies stop the task as `invalid_tool_limit`; a valid call resets
+the counter. The summary reports `format_retry_failures` and `zero_tool_tasks`,
+and a format-retry failure makes the evaluation command fail after saving its
+artifacts. Existing ReAct, FoldAgent and ContextGraph prompts are unchanged.
+The eight-task AgentFold run at `f63bc6f` rejected every tool call and therefore
+does not measure AgentFold memory performance. Rerun it with the corrected
+adapter; do not combine its results with v2 runs.
+
 ## SUPO-style zero-shot baseline
 
 The independent `supo` / `search_supo` executor reimplements the rollout in

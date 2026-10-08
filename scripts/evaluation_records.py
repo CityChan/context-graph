@@ -42,6 +42,8 @@ def read_evaluation(root):
         "task_accuracy": sum(row["task_reward"] for row in results) / len(results),
         "finished": sum(row["is_finish"] for row in results),
         "execution_errors": sum(row["status"] != "ok" for row in results),
+        "format_retry_failures": sum(bool(row.get("env_stats", {}).get("hit_format_retry_limit", 0)) for row in results),
+        "zero_tool_tasks": sum(row.get("env_stats", {}).get("environment_steps") == 0 for row in results),
         "judge_parse_failures": sum(row.get("env_stats", {}).get("judge_parse_failure", 0) for row in results),
     }
     return manifests, sorted(results, key=lambda row: row["source_index"]), summary

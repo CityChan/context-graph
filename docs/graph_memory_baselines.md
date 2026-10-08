@@ -3,8 +3,8 @@
 These are independent, source-guided implementations of the public memory
 mechanisms, evaluated with our Qwen3.5-9B actor, local BC-P tools and judge.
 They are not results from the authors' trained checkpoints or original benchmark
-stacks. No RL training or cross-task memory is enabled. Existing ContextGraph,
-FoldAgent, AgentFold and SUPO defaults are unchanged.
+stacks. No RL training or cross-task memory is enabled. Existing ContextGraph
+and FoldAgent defaults are unchanged.
 
 | Method | Pinned official source | Implemented mechanism |
 | --- | --- | --- |
@@ -40,6 +40,13 @@ Adaptations are explicit:
   keep the raw episode; failed A-MEM analysis retains a raw note without inferred
   metadata. Format failures are counted and fail the strict smoke audit. Transport,
   embedding and judge failures propagate as evaluation errors, not zero rewards.
+- The v2 adaptation uses the shared `search_single_v1` actor prompt, also used by
+  AgentFold and SUPO. It removes the inherited parallel-search example that
+  conflicted with the single-call parser. A rejected actor reply is shown as a
+  bounded excerpt on retry, followed by a correction; no rejected tool executes.
+  Three consecutive failures stop as `invalid_tool_limit` and fail the evaluation
+  summary audit. A valid call resets this counter. Memory-JSON validation remains
+  separate. The prompt and retry policy are recorded in `baseline_protocol`.
 
 ## Budget and evidence
 

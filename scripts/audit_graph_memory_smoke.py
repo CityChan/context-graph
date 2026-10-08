@@ -48,6 +48,7 @@ def audit(root):
         "memory_was_updated": counts["memory_updates"] > 0,
         "memory_nodes_created": counts["memory_nodes"] > 0,
         "memory_format_valid": counts["invalid_memory"] == 0,
+        "tool_format_recovered": summary["format_retry_failures"] == 0,
     }
     if method == "amem":
         checks["semantic_retrieval_exercised"] = counts["embedding_calls"] > 0

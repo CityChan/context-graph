@@ -44,10 +44,20 @@ I've uploaded a python code repository in the directory /testbed. Consider the f
     elif workflow == 'code_parallel':
         # TODO
         return None
-    elif workflow == 'search':
-        tool_description = PARALLEL_TOOL_PROMPT.format(description=convert_tools_to_description(search_tool()))
+    elif workflow in {'search', 'search_single'}:
+        tool_format = TOOL_PROMPT if workflow == 'search_single' else PARALLEL_TOOL_PROMPT
+        tool_description = tool_format.format(description=convert_tools_to_description(search_tool()))
         system_prompt = SEARCH_SYSTEM_PROMPT + '\n\n' + tool_description
-        problem_statement = SEARCH_USER_PROMPT.format(Question=problem_statement)
+        user_template = SEARCH_USER_PROMPT
+        if workflow == 'search_single':
+            # Transform the template, never the actual question. Other search
+            # executors continue using the original parallel-call protocol.
+            start = user_template.index('* Or you can search multiple queries')
+            end = user_template.index('* Use open_page', start)
+            user_template = user_template[:start] + (
+                'Choose exactly one tool call per response, then wait for its result.\n'
+                'Submit your final answer with the finish tool.\n\n') + user_template[end:]
+        problem_statement = user_template.format(Question=problem_statement)
         user_prompt = SEARCH_EXAMPLE + '\n\n' + problem_statement
         chat = [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}]
         return chat
