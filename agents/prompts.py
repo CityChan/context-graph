@@ -44,10 +44,17 @@ I've uploaded a python code repository in the directory /testbed. Consider the f
     elif workflow == 'code_parallel':
         # TODO
         return None
-    elif workflow in {'search', 'search_single'}:
-        tool_format = TOOL_PROMPT if workflow == 'search_single' else PARALLEL_TOOL_PROMPT
+    elif workflow in {'search', 'search_single', 'search_agentfold'}:
+        tool_format = PARALLEL_TOOL_PROMPT if workflow == 'search' else TOOL_PROMPT
         tool_description = tool_format.format(description=convert_tools_to_description(search_tool()))
         system_prompt = SEARCH_SYSTEM_PROMPT + '\n\n' + tool_description
+        if workflow == 'search_agentfold':
+            # Ordinary search demonstrations omit folds and conflict with this
+            # executor. Its live state-specific contract supplies the example.
+            return [{'role': 'system', 'content': system_prompt},
+                    {'role': 'user', 'content': 'Question:\n' + problem_statement +
+                     '\n\nChoose exactly one tool call per response, then wait for its result. '
+                     'Submit your final answer with the finish tool.'}]
         user_template = SEARCH_USER_PROMPT
         if workflow == 'search_single':
             # Transform the template, never the actual question. Other search

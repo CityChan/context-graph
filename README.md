@@ -99,7 +99,7 @@ the GAIA evaluator dispatches `--workflow search_agentfold`.
 
 Defaults retain the shared 32K working window, 100 model turns and 24K response
 allowance. The allowance charges cumulative generated token IDs (including
-compression/retries) and tokenized observation/format-feedback text; folding
+compression/retries) and tokenized observation/format-feedback/state-instruction text; folding
 does not refund it. This explicit adaptation budget does not reproduce the
 upstream 100K context/500-step setup, and chat-wrapper accounting can differ from
 the older executors. Final-answer reservation may truncate observations, with a
@@ -109,9 +109,9 @@ exact model inputs/outputs, fold errors and final working history are retained i
 trajectory artifacts; manifests identify the adaptation and pinned source.
 CPU tests validate execution contracts, not zero-shot model performance.
 
-The `zero_shot_adaptation_v2` protocol fixes a conflicting parallel-search
-example inherited by the original adapter. AgentFold, SUPO, MemoBrain and A-MEM
-now use `search_single_v1`: one tool call per reply, with a bounded excerpt of
+The v2 protocol fixed a conflicting parallel-search example inherited by the
+original adapter. SUPO, MemoBrain and A-MEM use `search_single_v1`;
+AgentFold v3 uses `agentfold_state_contract_v1`. All require one tool call per reply, with a bounded excerpt of
 the rejected reply included in format-correction requests. Three consecutive
 invalid tool replies stop the task as `invalid_tool_limit`; a valid call resets
 the counter. The summary reports `format_retry_failures` and `zero_tool_tasks`,
@@ -119,7 +119,32 @@ and a format-retry failure makes the evaluation command fail after saving its
 artifacts. Existing ReAct, FoldAgent and ContextGraph prompts are unchanged.
 The eight-task AgentFold run at `f63bc6f` rejected every tool call and therefore
 does not measure AgentFold memory performance. Rerun it with the corrected
-adapter; do not combine its results with v2 runs.
+adapter; do not combine its results with corrected runs.
+
+AgentFold v3 removes the ordinary search demonstration (which never folds) and
+provides the live suffix boundaries and a JSON shape at each decision and retry.
+It accepts `[n]` as a singleton, `[start,end]` as inclusive endpoints, and a
+consecutive list of IDs. The pinned upstream implementation also takes the first
+and last entries; we additionally validate whole-block boundaries and the latest
+end ID before executing tools. Missing folds and malformed JSON remain failures.
+Working history retains validated calls and actual shown observations, plus
+model-written folded summaries; full thinking remains in the audit rather than
+being replayed as evidence. Budget and decoding limits remain unchanged; the
+new per-step instructions are charged, and format errors at the output cap are
+counted separately. This is still an untrained zero-shot adaptation.
+
+For a three-question integration smoke inside an existing four-node allocation:
+
+```bash
+bash scripts/smoke_bcp_agentfold_qwen35_9b_4node_idev.sh
+```
+
+The wrapper saves a new scratch run, audits tool execution, folding and finish,
+and prints recent format failures even when evaluation fails. It does not gate
+on answer accuracy. `SAMPLES=8` runs the original eight-question selection.
+The saved `agentfold-smoke-audit.json` is a mechanics check, not a performance
+claim. Existing runs can be inspected with
+`python scripts/audit_agentfold_smoke.py /path/to/run`.
 
 ## SUPO-style zero-shot baseline
 

@@ -22,11 +22,14 @@ from .utils import AgentLoopMetrics, AgentLoopOutput, _apply_chat_template, sele
 
 
 PROVENANCE = {
-    "method": "agentfold", "variant": "zero_shot_adaptation_v2", **PROTOCOL,
+    "method": "agentfold", "variant": "zero_shot_adaptation_v3", **PROTOCOL,
+    "tool_prompt_profile": "agentfold_state_contract_v1",
+    "compression_range": "inclusive endpoints, singleton, or consecutive step IDs",
+    "working_history": "validated tool calls and shown observations; model-written folded summaries",
     "upstream_revision": "f72f75d8c3eb842f2bbbab096a12206ff66e270f",
     "upstream_source": "Alibaba-NLP/DeepResearch/WebAgent/AgentFold/infer.py",
     "trained_agentfold_checkpoint": False,
-    "budget": "cumulative generated IDs plus tokenized observations/feedback; folding never refunds tokens",
+    "budget": "cumulative generated IDs plus tokenized observations/feedback/state instructions; folding never refunds tokens",
 }
 
 FOLD_PROMPT = """
@@ -40,7 +43,11 @@ a compressed block. Summarize only observed information, preserving source IDs,
 evidence, failed searches and unresolved questions. A singleton range condenses
 the latest step; a larger suffix can combine earlier summaries with new evidence.
 The first call has no compress block. A finish call needs no compression.
+For a single step use [1,1] (or [1]); for steps 1 through 3 use [1,3].
+Write valid JSON with a brief summary, escaping quotes inside strings.
 You may reason before the compress block; do not put tool calls inside summaries.
+Keep reasoning brief so the complete compression and function call fit in the
+response. Do not generate tool observations yourself; wait for the environment.
 The original question stays available. Compressed history replaces the selected
 steps in future inputs; the discarded details cannot be retrieved from history.
 """.strip()
@@ -63,9 +70,12 @@ def fold_suffix(steps: list[Step], decision: dict) -> list[Step]:
     if not isinstance(decision, dict) or set(decision) != {"compress_range", "compress_text"}:
         raise ValueError("compress requires exactly compress_range and compress_text")
     span, summary = decision["compress_range"], decision["compress_text"]
-    if (not isinstance(span, list) or len(span) != 2
+    if (not isinstance(span, list) or not span
             or any(type(v) is not int for v in span)):
-        raise ValueError("compress_range must contain two integer step IDs")
+        raise ValueError("compress_range must contain integer step IDs: [1,1] or [1] for a single step")
+    if len(span) > 2 and any(b != a + 1 for a, b in zip(span, span[1:])):
+        raise ValueError("listed step IDs must be consecutive")
+    span = [span[0], span[-1]]
     if not isinstance(summary, str) or not summary.strip():
         raise ValueError("compress_text must be a nonempty string")
     if not steps or span[1] != steps[-1].end:
@@ -74,6 +84,24 @@ def fold_suffix(steps: list[Step], decision: dict) -> list[Step]:
     if index is None or any(a.end + 1 != b.start for a, b in zip(steps, steps[1:])):
         raise ValueError("compression must select contiguous whole blocks")
     return steps[:index] + [Step(span[0], span[1], summary.strip(), True)]
+
+
+def step_contract(steps, finish_only=False):
+    """Describe the live suffix domain without selecting or writing its summary."""
+    if finish_only:
+        return "Budget ending: submit one finish call now; no compression needed."
+    if not steps:
+        return ("No completed steps: emit one search/open_page call without compression, "
+                "then stop and wait for its observation. Do not invent tool results.")
+    starts = ','.join(str(s.start) for s in steps)
+    latest = steps[-1].end
+    example = json.dumps({"compress_range": [steps[-1].start, latest],
+                          "compress_text": "REPLACE with a brief faithful summary of the selected evidence"})
+    return (f"Next response: before any search/open_page, emit a <compress> block followed by ONE function call. "
+            f"Valid start IDs: [{starts}]; end ID must be {latest}. Choose one start; never split a block. "
+            f"Example shape for the latest block: <compress>{example}</compress>. "
+            "Write your own summary, not the placeholder. A finish call needs no compression. "
+            "Keep reasoning brief; close every JSON string and tag. Do not repeat or invent tool observations.")
 
 
 def parse_response(text: str, steps: list[Step], *, finish_only=False):
@@ -154,12 +182,13 @@ async def process_item(item, context):
     env.raise_judge_errors = True
     async with managed_environment(env):
         await env.init_env(item)
-        fixed = create_chat(env.instance_info["problem_statement"], "search_single", item)
+        fixed = create_chat(env.instance_info["problem_statement"], "search_agentfold", item)
         fixed[0]["content"] += "\n\n" + FOLD_PROMPT
         transcript = copy.deepcopy(fixed)
         steps, audit = [], []
         stats = {"environment_steps": 0, "agentfold_folds": 0, "agentfold_deep_folds": 0,
                  "invalid_tool": 0, "generated_tokens": 0, "observation_tokens": 0, "feedback_tokens": 0,
+                 "instruction_tokens": 0, "format_errors_at_output_limit": 0,
                  "observation_budget_truncations": 0, "observation_budget_skips": 0}
         used, iteration, next_step = 0, 0, 1
         feedback, rejected, reason = "", "", "max_turn"
@@ -175,11 +204,15 @@ async def process_item(item, context):
             if feedback:
                 messages.extend([{"role": "assistant", "content": rejected},
                                  {"role": "user", "content": feedback}])
-            if finish_only:
-                messages[-1]["content"] += "\nBudget ending: submit one finish call now; no compression needed."
+            contract = step_contract(steps, finish_only)
+            contract_cost = len(tokenizer.encode(contract, add_special_tokens=False))
+            if contract_cost + 10 > remaining:
+                reason = "token_limit"
+                break
+            messages[-1]["content"] += "\n\n" + contract
             candidate_ids = list(_apply_chat_template(tokenizer, messages, config,
                                  tokenize=True, add_generation_prompt=True))
-            limit = min(window - len(candidate_ids), remaining - (reserve + margin if reserve and not finish_only else 0))
+            limit = min(window - len(candidate_ids), remaining - contract_cost - (reserve + margin if reserve and not finish_only else 0))
             if cap > 0:
                 limit = min(limit, cap)
             if limit < 10:
@@ -190,6 +223,8 @@ async def process_item(item, context):
                 reason = "timeout"
                 break
             iteration += 1
+            used += contract_cost
+            stats["instruction_tokens"] += contract_cost
             try:
                 result = await asyncio.wait_for(context.llm_client.create_completion(
                     candidate_ids, messages=messages, max_new_tokens=limit,
@@ -214,6 +249,8 @@ async def process_item(item, context):
                 except (ValueError, TypeError) as exc:
                     stats["invalid_tool"] += 1
                     record["format_error"] = str(exc)
+                    record["format_error_at_output_limit"] = len(output_ids) >= limit
+                    stats["format_errors_at_output_limit"] += int(record["format_error_at_output_limit"])
                     consecutive_invalid += 1
                     if consecutive_invalid >= MAX_FORMAT_ERRORS:
                         reason = "invalid_tool_limit"
@@ -249,9 +286,9 @@ async def process_item(item, context):
                 stats["observation_tokens"] += cost
                 transcript.append({"role": "user", "content": shown})
                 record["shown_observation"] = shown
-                # Keep reasoning/action, but do not duplicate the submitted compression text.
-                interaction = re.sub(r"<compress>.*?</compress>", "", text, flags=re.S)
-                steps.append(Step(next_step, next_step, interaction + "\nObservation:\n" + shown))
+                # Upstream retains tool calls/results, not the entire thinking
+                # trace. Full model text still lives in transcript and audit.
+                steps.append(Step(next_step, next_step, action + "\nObservation:\n" + shown))
                 next_step += 1
             except asyncio.TimeoutError:
                 reason = "timeout"

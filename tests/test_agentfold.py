@@ -33,7 +33,7 @@ def test_suffix_folds_preserve_prefix_and_cannot_split_summaries():
 
 @pytest.mark.parametrize("span,summary", [([2, 3], "x"), ([1, 2], "x"),
     ([1, 4], "x"), ([0, 3], "x"), ([True, 3], "x"), ([1., 3], "x"),
-    ([3, 1], "x"), ([1], "x"), ([1, 3], ""), ([1, 3], None)])
+    ([3, 1], "x"), ([1], "x"), ([], "x"), ([1, 1, 3], "x"), ([1, 3], ""), ([1, 3], None)])
 def test_reject_invalid_ranges_and_summaries(span, summary):
     with pytest.raises(ValueError):
         af.fold_suffix([af.Step(1, 2, "a", True), af.Step(3, 3, "b")],
@@ -111,7 +111,8 @@ def test_loop_folds_actual_input_keeps_raw_audit_and_budget(monkeypatch):
     assert "RAW_ONLY" in audit[0]["raw_observation"]
     stats = out.extra_fields["env_stats"]
     assert stats["agentfold_folds"] == 2 and stats["agentfold_deep_folds"] == 1
-    assert stats["main_len"] == stats["generated_tokens"] + stats["observation_tokens"]
+    assert stats["main_len"] == sum(stats[k] for k in
+        ("generated_tokens", "observation_tokens", "instruction_tokens", "feedback_tokens"))
     assert stats["generated_tokens"] == sum(len(r["output_ids"]) for r in audit)
     assert out.prompt_ids == audit[-1]["input_ids"]
     assert out.response_ids == audit[-1]["output_ids"]
