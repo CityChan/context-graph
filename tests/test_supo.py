@@ -236,7 +236,7 @@ def test_supo_batch_wrapper_dispatches_only_supo():
     from pathlib import Path
     root = Path(__file__).resolve().parents[1]
     script = (root / "scripts/eval_bcp_supo_qwen35_9b_4node.sbatch").read_text()
-    assert "#SBATCH --time=24:00:00" in script
+    assert "#SBATCH --time=06:00:00" in script
     assert "#SBATCH --nodes=4" in script
     assert 'eval_bcp_qwen35_9b_4node_idev.sh" supo' in script
     assert "SAMPLES=${SAMPLES:-8}" in script

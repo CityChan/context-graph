@@ -2,7 +2,8 @@
 
 Reference: https://arxiv.org/abs/2510.06727v1, Algorithm 2. A threshold-crossing
 action/observation is omitted from working context, but its tool side effects
-are NOT rolled back. This adapter is consequently limited to local search.
+are NOT rolled back. Stateful environments retain that round after summarizing
+the preceding context; this explicit adaptation avoids stale-world execution.
 """
 from __future__ import annotations
 
@@ -13,6 +14,7 @@ import time
 
 from .agentfold_agent import _fit_observation, _get, parse_response
 from .environment_lifecycle import managed_environment
+from .baseline_task_protocol import task_kind, task_chat, provenance
 from .prompts import create_chat
 from .single_tool_protocol import MAX_FORMAT_ERRORS, PROTOCOL, retry_context
 from .utils import AgentLoopMetrics, AgentLoopOutput, _apply_chat_template, select_env
@@ -99,8 +101,7 @@ async def process_item(item, context):
     if context.is_train:
         raise ValueError("SUPO rollout adaptation is evaluation-only; joint RL is not implemented")
     ability = _get(item.non_tensor_batch["ability"])
-    if ability not in {"LocalSearch", "GAIA"}:
-        raise ValueError("SUPO adaptation supports only local search / text-only GAIA")
+    kind = task_kind(ability)
     config = copy.deepcopy(context.config.actor_rollout_ref.rollout)
     plugin, tokenizer = config.plugin, context.tokenizer
     options = settings(plugin)
@@ -112,6 +113,13 @@ async def process_item(item, context):
     max_turn = int(getattr(plugin, "val_max_turn", plugin.max_turn))
     turn_cap = int(getattr(plugin, "turn_max_new_tokens", 2048))
     reserve = max(0, int(getattr(plugin, "final_answer_reserve", 0)))
+    if kind == 'discoveryworld':
+        reserve = 0
+    final_system = FINAL_SYSTEM.replace('parameter=answer', 'parameter=message') if kind == 'swe' else FINAL_SYSTEM
+    summary_request = SUMMARY_REQUEST if kind == 'search' else (
+        'Summarize the completed task history. Preserve observed state, identifiers, file edits, '
+        'test results, failed actions and unresolved work. Do not invent results or execute tools. '
+        'Return only <summary>concise task-relevant notes</summary>.')
     margin = max(0, int(getattr(plugin, "final_answer_safety_margin", 64)))
     encode = lambda text: tokenizer.encode(text, add_special_tokens=False)
     render = lambda messages, control=False: list(_apply_chat_template(tokenizer, messages, config,
@@ -128,7 +136,7 @@ async def process_item(item, context):
     async with managed_environment(env):
         await env.init_env(item)
         task = env.instance_info["problem_statement"]
-        fixed = create_chat(task, "search_single", item)
+        fixed = task_chat(kind, task, item, 'supo', create_chat)
         if len(render(fixed)) >= threshold:
             raise ValueError("SUPO threshold must exceed the full initial prompt; task is never truncated")
         working, transcript = copy.deepcopy(fixed), copy.deepcopy(fixed)
@@ -140,6 +148,7 @@ async def process_item(item, context):
                      observation_budget_skips=0)
         pending, feedback, used, iteration = False, "", 0, 0
         previous_summary = ''
+        pending_round = []
         rejected, consecutive_invalid = "", 0
         reason = "max_turn"
         input_ids, output_ids, logprobs = [], [], []
@@ -150,9 +159,10 @@ async def process_item(item, context):
             phase = "final" if finish_only else ("summary" if pending else "action")
             messages = (summary_context(task, previous_summary, working[len(fixed):])
                         if phase == 'summary' else copy.deepcopy(working))
-            phase_system = SUMMARY_SYSTEM if phase == 'summary' else (FINAL_SYSTEM if phase == 'final' else '')
+            phase_system = SUMMARY_SYSTEM if phase == 'summary' else (final_system if phase == 'final' else '')
             if phase == 'final':
-                messages[0]['content'] = FINAL_SYSTEM
+                messages[0]['content'] = final_system
+                messages.extend(pending_round)
             role_cost = len(encode(phase_system))
             if role_cost + 10 > remaining:
                 reason = 'token_limit'
@@ -162,7 +172,7 @@ async def process_item(item, context):
             if rejected:
                 messages.append({"role": "assistant", "content": rejected})
             if phase == "summary":
-                instruction = SUMMARY_REQUEST
+                instruction = summary_request
             elif phase == "final":
                 instruction = "Budget ending: submit one finish call now using the available evidence."
             else:
@@ -184,6 +194,8 @@ async def process_item(item, context):
                 reason = "token_limit"
                 break
             constraint = control_output(phase, limit)
+            if constraint and phase == 'final' and kind == 'swe':
+                constraint['regex'] = constraint['regex'].replace('parameter=answer', 'parameter=message')
             if phase != 'action' and constraint is None:
                 reason = 'token_limit'
                 break
@@ -223,6 +235,7 @@ async def process_item(item, context):
                         summary = parse_summary(text)
                         resumed = copy.deepcopy(fixed)
                         resumed[-1]["content"] += "\n\nPrevious research summary:\n" + summary
+                        resumed.extend(pending_round)
                         if len(render(resumed)) >= threshold:
                             raise ValueError("Summary does not reduce context below the threshold")
                     except ValueError as exc:
@@ -231,6 +244,7 @@ async def process_item(item, context):
                         reason = "invalid_summary"
                         break
                     working, pending, feedback = resumed, False, ""
+                    pending_round = []
                     previous_summary = summary
                     stats["summary_restarts"] += 1
                     record["resumed_context_tokens"] = len(render(working))
@@ -239,7 +253,7 @@ async def process_item(item, context):
                     if constraint and not re.fullmatch(constraint['regex'], text):
                         raise ValueError('Final answer violated bounded XML output contract')
                     # Shared XML validation only; AgentFold compression is not enabled.
-                    action, _ = parse_response(text, [], finish_only=finish_only)
+                    action, _ = parse_response(text, [], finish_only=finish_only, kind=kind)
                 except (ValueError, TypeError) as exc:
                     stats["invalid_tool"] += 1
                     record["format_error"] = str(exc)
@@ -264,8 +278,28 @@ async def process_item(item, context):
                 transcript.append({"role": "user", "content": raw})
                 candidate = working + [{"role": "assistant", "content": text},
                                        {"role": "user", "content": raw}]
+                if kind != 'search':
+                    # Keep actual dispatched calls, not unverified reasoning, as history.
+                    candidate[-2]['content'] = action
                 record["candidate_context_tokens"] = len(render(candidate))
                 if record["candidate_context_tokens"] >= threshold:
+                    if kind != 'search':
+                        # The world/files changed. Retain and charge the latest round once;
+                        # summarizing memory never replays, resets or undoes an action.
+                        shown = _fit_observation(raw, tokenizer, max(0, budget - used - reserve - margin))
+                        used += len(encode(shown))
+                        stats['observation_tokens'] += len(encode(shown))
+                        stats['observation_budget_truncations'] += int(bool(shown) and shown != raw)
+                        stats['observation_budget_skips'] += int(not shown)
+                        record['shown_observation'] = shown
+                        record['retained_after_summary'] = True
+                        pending_round = [{'role': 'assistant', 'content': action},
+                                         {'role': 'user', 'content': shown}]
+                        if stats['summary_restarts'] >= max_summaries:
+                            reason = 'summary_limit'
+                            break
+                        pending = True
+                        continue
                     # Algorithm 2 line 11: retain s_t, not (s_t, a_t, o_t).
                     # The real tool has already run and is never replayed/undone.
                     record["discarded_from_working_context"] = True
@@ -303,4 +337,7 @@ async def process_item(item, context):
             extra_fields={"messages": transcript, "model_contexts": audit, "env_stats": stats,
                           "is_finish": bool(getattr(env, "is_finish", False)), "termination_reason": reason,
                           "judge_audit": copy.deepcopy(getattr(env, "judge_audit", [])),
-                          "supo": {**PROVENANCE, **options}, "working_history": working})
+                          "supo": {**PROVENANCE, **options, **({**provenance(kind),
+                              'overflow': 'retain crossing action/observation after prefix summary',
+                              'stateful_overflow_profile': 'retained_round_v1'} if kind != 'search' else {})},
+                          "working_history": working})

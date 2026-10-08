@@ -133,7 +133,7 @@ def main():
     p.add_argument("--endpoint", required=True)
     p.add_argument("--inventory", type=Path, default=REPO / "configs/swe_lite_arm_images.json")
     p.add_argument("--context-length", type=int, default=65536)
-    p.add_argument("--method", choices=("contextgraph", "foldagent", "react"), default="contextgraph")
+    p.add_argument("--method", choices=("contextgraph", "foldagent", "react", "agentfold", "supo"), default="contextgraph")
     p.add_argument("--shard-index", type=int, default=0)
     p.add_argument("--shard-count", type=int, default=1)
     p.add_argument("--limit", type=int, default=-1)

@@ -25,7 +25,7 @@ from scripts.prepare_agent_benchmarks import SCIENCEWORLD_VERSION
 from scripts.generation_audit import combine_degeneration_stats, degeneration_stats, require_generation_quality
 
 BENCHMARKS = ("scienceworld", "discoveryworld")
-METHODS = ("contextgraph", "foldagent")
+METHODS = ("contextgraph", "foldagent", "agentfold", "supo")
 MEMORY_PROFILES = ("legacy", "turns", "repaired")
 PROMPT_PROFILES = ("legacy", "focus_v2", "discoveryworld_v1")
 DEFAULT_MEMORY_PROFILES = {"scienceworld": "turns", "discoveryworld": "repaired"}
@@ -34,6 +34,8 @@ DEFAULT_MEMORY_PROFILES = {"scienceworld": "turns", "discoveryworld": "repaired"
 def config_for(benchmark, method, context_length, max_steps=100, memory_profile=None, prompt_profile="legacy", observation_profile="full"):
     if benchmark not in BENCHMARKS:
         raise ValueError("Unknown benchmark")
+    if method not in METHODS or (method in ('agentfold', 'supo') and benchmark != 'discoveryworld'):
+        raise ValueError('AgentFold/SUPO environment adaptation supports DiscoveryWorld only')
     if observation_profile not in ("full", "compact_v1") or (benchmark != "discoveryworld" and observation_profile != "full"):
         raise ValueError("Compact observations are only supported for DiscoveryWorld")
     if memory_profile is None:
@@ -45,9 +47,15 @@ def config_for(benchmark, method, context_length, max_steps=100, memory_profile=
     if (benchmark == "discoveryworld") != (prompt_profile == "discoveryworld_v1"):
         raise ValueError("DiscoveryWorld requires discoveryworld_v1; ScienceWorld requires legacy or focus_v2")
     from scripts.eval_discoverybench_qwen35 import config_for as base_config
-    config = base_config(method, context_length)
+    config = base_config(method if method in ('contextgraph', 'foldagent') else 'foldagent', context_length)
     plugin = config.actor_rollout_ref.rollout.plugin
     plugin.workflow = benchmark + ("_graph" if method == "contextgraph" else "_branch")
+    if method in ('agentfold', 'supo'):
+        plugin.workflow = benchmark + '_' + method
+        plugin.supo_context_threshold = context_length // 2
+        plugin.supo_max_summaries = 2
+        plugin.supo_summary_max_tokens = 1024
+        plugin.baseline_task_protocol = 'discoveryworld_v1'
     if benchmark == "discoveryworld":
         plugin.discoveryworld_max_steps = max_steps
         plugin.max_turn = plugin.val_max_turn = max_steps
@@ -71,6 +79,22 @@ def config_for(benchmark, method, context_length, max_steps=100, memory_profile=
     plugin.final_answer_safety_margin = 128
     plugin.turn_max_new_tokens = 2048
     return config
+
+
+def agent_for(method):
+    if method in ('agentfold', 'supo'):
+        from agents import agentfold_agent, supo_agent
+        agent = agentfold_agent if method == 'agentfold' else supo_agent
+        async def run(item, context):
+            return [await agent.process_item(item, context)]
+        return run
+    if method == 'contextgraph':
+        from agents.graph_agent_isolated import process_item
+    elif method == 'foldagent':
+        from agents.fold_agent import process_item
+    else:
+        raise ValueError('Unknown method')
+    return process_item
 
 
 def load_tasks(path, benchmark, samples):
@@ -116,6 +140,7 @@ def summary(root, ids, benchmark):
              "mean_score": sum(r["score"] for r in graded) / len(ids) if ids and len(graded) == len(ids) else None}
     value["score_scale"] = "0..100; negative terminal scores clipped to 0; raw scores retained per task"
     value["successes"] = sum(r["success"] for r in graded)
+    value['format_failures'] = sum(r.get('termination_reason') in ('invalid_tool_limit', 'invalid_summary') for r in graded)
     if benchmark == "discoveryworld":
         value["score_scale"] = "official normalized procedural task score multiplied by 100"
         value["knowledge_score"] = None
@@ -158,10 +183,7 @@ async def generate(args, task, directory):
     from verl import DataProto
     from agents.utils import TaskContext
     from scripts.eval_bcp_qwen38 import TokenClient, tokenizer_preflight
-    if args.method == "contextgraph":
-        from agents.graph_agent_isolated import process_item
-    else:
-        from agents.fold_agent import process_item
+    process_item = agent_for(args.method)
     config = config_for(args.benchmark, args.method, args.context_length, args.max_steps, args.memory_profile, args.prompt_profile, getattr(args, "discoveryworld_observation_profile", "full"))
     rollout_config = config.actor_rollout_ref.rollout
     tokenizer = AutoTokenizer.from_pretrained(args.model_path, local_files_only=True)
@@ -287,7 +309,7 @@ def run(args):
             save(result_path, result)
             summary(root, ids, args.benchmark)
         final = summary(root, ids, args.benchmark)
-        return 2 if final["infrastructure_errors"] else 0
+        return 2 if final["infrastructure_errors"] or final.get('format_failures', 0) else 0
 
 
 def main():

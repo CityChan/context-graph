@@ -23,7 +23,24 @@ from envs.swebench_env import PUBLIC_FIELDS, public_instance
 DATASET = "princeton-nlp/SWE-bench_Verified"
 DATASETS = {"verified": (DATASET, 500), "lite": ("princeton-nlp/SWE-bench_Lite", 300)}
 HARNESS_COMMIT = "3f01bd622c0a22c00406139f69a234ef08225f22"  # v3.0.17
-WORKFLOWS = {"react": "code", "foldagent": "code_branch", "contextgraph": "code_graph"}
+WORKFLOWS = {"react": "code", "foldagent": "code_branch", "contextgraph": "code_graph",
+             "agentfold": "code_agentfold", "supo": "code_supo"}
+
+
+def agent_for(method):
+    if method in ('agentfold', 'supo'):
+        from agents import agentfold_agent, supo_agent
+        agent = agentfold_agent if method == 'agentfold' else supo_agent
+        async def run(item, context):
+            return [await agent.process_item(item, context)]
+        return run
+    if method == 'contextgraph':
+        from agents.graph_agent_code_isolated import process_item
+    elif method in ('foldagent', 'react'):
+        from agents.fold_agent_code import process_item
+    else:
+        raise ValueError('Unknown method')
+    return process_item
 
 
 def write_json(path, value):
@@ -103,7 +120,7 @@ def config_for(args):
         raise ValueError("SWE context length must be between 32768 and 65536")
     prompt_length = 8192
     response_length = context_length - prompt_length
-    return OmegaConf.create({"algorithm": {"adv_estimator": ""}, "actor_rollout_ref": {"rollout": {
+    config = OmegaConf.create({"algorithm": {"adv_estimator": ""}, "actor_rollout_ref": {"rollout": {
         "prompt_length": prompt_length, "response_length": response_length, "plugin": {
             "workflow": WORKFLOWS[args.method], "max_turn": args.max_turn,
             "max_session": 10, "val_max_session": 10, "session_timeout": args.task_timeout,
@@ -118,6 +135,15 @@ def config_for(args):
             "swe_apptainer_root": getattr(args, "apptainer_root", None),
             "apply_chat_template_kwargs": {"enable_thinking": True, "preserve_thinking": True},
         }}}})
+    if args.method in ('agentfold', 'supo'):
+        plugin = config.actor_rollout_ref.rollout.plugin
+        plugin.final_answer_reserve = 1024
+        plugin.final_answer_safety_margin = 128
+        plugin.supo_context_threshold = context_length // 2
+        plugin.supo_max_summaries = 2
+        plugin.supo_summary_max_tokens = 1024
+        plugin.baseline_task_protocol = 'swe_v1'
+    return config
 
 
 def make_item(task, workflow):
@@ -174,7 +200,8 @@ async def generate_one(task, args, config, tokenizer, root, process_item):
             write_json(output / "trajectory.json", extra)
             prediction["model_patch"] = env.model_patch
             result.update(status="generated", is_finish=bool(env.is_finish),
-                patch_bytes=len(env.model_patch.encode()), env_stats=non_scoring_stats(env.stats),
+                patch_bytes=len(env.model_patch.encode()),
+                env_stats=non_scoring_stats(extra.get('env_stats', env.stats) if args.method in ('agentfold', 'supo') else env.stats),
                 image=env.sandbox.provenance, seed=seed)
         except Exception as exc:
             result["error"] = repr(exc)
@@ -205,8 +232,7 @@ async def generate(args):
     from transformers import AutoTokenizer
     from omegaconf import OmegaConf
     from scripts.eval_bcp_qwen38 import TokenClient, tokenizer_preflight
-    from agents.fold_agent_code import process_item as fold_process
-    from agents.graph_agent_code_isolated import process_item as graph_process
+    process_item = agent_for(args.method)
     rows, dataset_manifest = load_public(Path(args.data_dir))
     if getattr(args, "dataset", None) and dataset_manifest["dataset"] != DATASETS[args.dataset][0]:
         raise ValueError("Prepared dataset does not match requested benchmark")
@@ -249,6 +275,11 @@ async def generate(args):
             answer = await probe.create_completion(ids, max_new_tokens=64, structured_outputs={"json": schema})
             if not isinstance(json.loads(answer["choices"][0]["message"]["content"])["ok"], bool):
                 raise RuntimeError("Model server failed structured output preflight")
+        if args.method in ('agentfold', 'supo'):
+            regex = '<summary>OK</summary>' if args.method == 'supo' else '<function=finish><parameter=message>OK</parameter></function>'
+            answer = await probe.create_completion(ids, max_new_tokens=64, structured_outputs={'regex': regex})
+            if answer['choices'][0]['message']['content'] != regex:
+                raise RuntimeError('Model server failed baseline control-output preflight')
     finally:
         await probe.client.aclose()
     creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
@@ -259,7 +290,8 @@ async def generate(args):
         "backend": getattr(args, "backend", "docker"),
         "instance_ids": [task["instance_id"] for task in selected], "commit": commit,
         "harness_commit": HARNESS_COMMIT, "config": OmegaConf.to_container(config),
-        "agent_loop": "graph_agent_code_isolated" if args.method == "contextgraph" else "fold_agent_code",
+        "agent_loop": {'contextgraph': 'graph_agent_code_isolated', 'agentfold': 'agentfold_agent',
+                       'supo': 'supo_agent'}.get(args.method, 'fold_agent_code'),
         "protocol": "python_exec; network disabled; shared files across sequential branches; no gold hints",
         "tokenizer_files": {p.name: file_hash(p) for p in Path(args.model_path).iterdir()
                             if p.is_file() and p.suffix in (".json", ".jinja", ".txt")},
@@ -268,7 +300,7 @@ async def generate(args):
     async def one(task):
         async with semaphore:
             result, pred = await generate_one(task, args, config, tokenizer, root,
-                graph_process if args.method == "contextgraph" else fold_process)
+                process_item)
             # Append immediately; interrupted runs retain completed work.
             for filename, value in (("results.jsonl", result), ("predictions.jsonl", pred)):
                 with (root / filename).open("a", encoding="utf-8") as handle:

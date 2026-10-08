@@ -6,7 +6,7 @@ set -euo pipefail
 case "$(hostname -s)" in login*) echo 'Run this on the compute node'; exit 2;; esac
 cd "${PROJECT_ROOT:-/work/09281/chc_1996/vista/context-graph}"
 method=${1:-contextgraph}
-case "$method" in contextgraph|foldagent|react|calibrate) ;; *) echo 'Expected contextgraph, foldagent, react, or calibrate'; exit 2;; esac
+case "$method" in contextgraph|foldagent|react|agentfold|supo|calibrate) ;; *) echo 'Expected contextgraph, foldagent, react, agentfold, supo, or calibrate'; exit 2;; esac
 benchmark=${SWE_BENCHMARK:-verified}
 case "$benchmark" in verified|lite) ;; *) echo 'SWE_BENCHMARK must be verified or lite'; exit 2;; esac
 root="$(realpath -e "$SCRATCH")/context-graph-swe"

@@ -5,7 +5,7 @@ set -euo pipefail
 : "${SCRATCH:?SCRATCH must be set}"
 : "${SWE_AGENT_ENV:?Set SWE_AGENT_ENV to the existing dedicated agent environment}"
 method=${SWE_METHOD:-contextgraph}
-case "$method" in contextgraph|foldagent|react) ;; *) echo 'Invalid SWE_METHOD'; exit 2;; esac
+case "$method" in contextgraph|foldagent|react|agentfold|supo) ;; *) echo 'Invalid SWE_METHOD'; exit 2;; esac
 cd "${PROJECT_ROOT:-/work/09281/chc_1996/vista/context-graph}"
 mapfile -t nodes < <(scontrol show hostnames "$SLURM_JOB_NODELIST")
 (( ${#nodes[@]} >= 2 )) || { echo 'Requires two allocated nodes: server and evaluator'; exit 2; }

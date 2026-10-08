@@ -14,7 +14,7 @@
 set -euo pipefail
 : "${SLURM_JOB_ID:?Submit this script with sbatch}"
 method=${1:-${SWE_METHOD:-contextgraph}}
-case "$method" in contextgraph|foldagent|react) ;; *) echo 'Expected contextgraph, foldagent or react' >&2; exit 2;; esac
+case "$method" in contextgraph|foldagent|react|agentfold|supo) ;; *) echo 'Expected contextgraph, foldagent, react, agentfold or supo' >&2; exit 2;; esac
 export PROJECT_ROOT=${PROJECT_ROOT:-/work/09281/chc_1996/vista/context-graph}
 export SWE_AGENT_ENV=${SWE_AGENT_ENV:-/scratch/09281/chc_1996/context-graph-swe/envs/agent-direct-Rs4ngP}
 export SWE_CONTEXT_LENGTH=${SWE_CONTEXT_LENGTH:-65536}

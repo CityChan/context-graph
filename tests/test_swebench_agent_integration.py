@@ -11,7 +11,7 @@ pytest.importorskip("tensordict")
 
 from agents.fold_agent_code import process_item as fold_process
 from agents.graph_agent_code_isolated import process_item as graph_process
-from scripts.eval_swebench_verified import config_for, generate_one
+from scripts.eval_swebench_verified import config_for, generate_one, agent_for
 
 
 class CharacterTokenizer:
@@ -54,12 +54,12 @@ class Sandbox:
         self.closed = True
 
 
-@pytest.mark.parametrize("method", ["react", "foldagent", "contextgraph"])
+@pytest.mark.parametrize("method", ["react", "foldagent", "contextgraph", "agentfold", "supo"])
 def test_real_code_loop_exports_patch_and_cleans_container(method, tmp_path, monkeypatch):
     tokenizer = CharacterTokenizer()
     tool = "<function=python_exec><parameter=code>print('test')</parameter></function>"
     responses = [tool, "<function=finish><parameter=message>done</parameter></function>"]
-    if method != "react":
+    if method in ('foldagent', 'contextgraph'):
         responses = ["<function=branch><parameter=description>inspect</parameter><parameter=prompt>inspect code</parameter></function>",
                      tool, "<function=return><parameter=message>inspected and tested</parameter></function>",
                      responses[-1]]
@@ -84,8 +84,10 @@ def test_real_code_loop_exports_patch_and_cleans_container(method, tmp_path, mon
             "problem_statement": "Fix a bug mentioning GAIA and LocalSearch"}
     args = SimpleNamespace(method=method, max_turn=100, task_timeout=60, memory="8g", cpus=4,
                            seed=42, endpoint="http://unused", model="test")
+    if method in ('agentfold', 'supo'):
+        args.max_turn = 2  # Exercise native finish(message), including final constraints.
     result, prediction = asyncio.run(generate_one(task, args, config_for(args), tokenizer, tmp_path,
-                                                graph_process if method == "contextgraph" else fold_process))
+                                                agent_for(method)))
     assert result["status"] == "generated", (result, list(tmp_path.rglob("error.txt")))
     assert prediction["model_patch"].startswith("diff")
     assert result["grading_status"] == "pending"
@@ -93,7 +95,15 @@ def test_real_code_loop_exports_patch_and_cleans_container(method, tmp_path, mon
     assert Sandbox.instances[-1].closed
     assert len(Sandbox.instances[-1].calls) == 1
     trajectory = json.loads(next(tmp_path.rglob("trajectory.json")).read_text(encoding="utf-8"))
-    assert trajectory["num_branches"] == (0 if method == "react" else 1)
+    if method in ('agentfold', 'supo'):
+        assert trajectory[method]['task_protocol'] == 'swe_v1'
+        assert trajectory['env_stats']['environment_steps'] == 2
+        final = trajectory['model_contexts'][-1]
+        assert final['phase'] == 'final'
+        assert 'parameter=message' in final['structured_outputs']['regex']
+        assert final['control_enable_thinking'] is False
+    else:
+        assert trajectory["num_branches"] == (0 if method == "react" else 1)
     assert not responses
     tool_trace = [json.loads(line) for line in next(tmp_path.rglob("tool_trace.jsonl")).read_text().splitlines()]
     assert tool_trace == [{"call": 1, "code": "print('test')", "status": "completed",

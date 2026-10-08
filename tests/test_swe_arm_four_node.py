@@ -8,7 +8,7 @@ import pytest
 
 @pytest.mark.skipif(not shutil.which("bash"), reason="Bash required")
 @pytest.mark.parametrize("occupied", [False, True])
-@pytest.mark.parametrize("method", ["foldagent", "contextgraph"])
+@pytest.mark.parametrize("method", ["foldagent", "contextgraph", "agentfold", "supo"])
 def test_four_node_pairs_and_occupied_server_guard(tmp_path, occupied, method):
     root = Path(__file__).resolve().parents[1]
     scripts = tmp_path / "scripts"
@@ -55,7 +55,7 @@ srun() {
 
 
 @pytest.mark.skipif(not shutil.which("bash"), reason="Bash required")
-@pytest.mark.parametrize("method", ["contextgraph", "foldagent", "invalid"])
+@pytest.mark.parametrize("method", ["contextgraph", "foldagent", "agentfold", "supo", "invalid"])
 @pytest.mark.parametrize("missing_env", [False, True])
 def test_batch_dispatch_preserves_resume_and_budget(tmp_path, method, missing_env):
     root = Path(__file__).resolve().parents[1]

@@ -5,7 +5,7 @@ set -euo pipefail
 : "${SCRATCH:?SCRATCH must be set}"
 : "${SWE_AGENT_ENV:?Set the existing dedicated SWE agent environment}"
 method=${1:-foldagent}
-case "$method" in foldagent|contextgraph|react) ;; *) echo 'Expected foldagent, contextgraph or react'; exit 2;; esac
+case "$method" in foldagent|contextgraph|react|agentfold|supo) ;; *) echo 'Expected foldagent, contextgraph, react, agentfold or supo'; exit 2;; esac
 cd "${PROJECT_ROOT:-/work/09281/chc_1996/vista/context-graph}"
 case "$(hostname -s)" in login*) echo 'Run from the idev compute shell'; exit 2;; esac
 mapfile -t nodes < <(scontrol show hostnames "$SLURM_JOB_NODELIST")

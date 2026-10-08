@@ -1,8 +1,8 @@
 #!/bin/bash
 # End-to-end SWE-bench Lite evaluation on a Linux x86_64 Docker host.
 set -euo pipefail
-method=${1:?Expected react, foldagent, or contextgraph}
-case "$method" in react|foldagent|contextgraph) ;; *) echo "Invalid method: $method" >&2; exit 2;; esac
+method=${1:?Expected react, foldagent, contextgraph, agentfold or supo}
+case "$method" in react|foldagent|contextgraph|agentfold|supo) ;; *) echo "Invalid method: $method" >&2; exit 2;; esac
 case "$(uname -sm)" in "Linux x86_64"|"Linux amd64") ;; *) echo "Official SWE-bench images require a Linux x86_64 Docker host" >&2; exit 2;; esac
 cd "$(dirname "$0")/.."
 agent_python=${SWE_AGENT_PYTHON:-.venv-swe-agent/bin/python}

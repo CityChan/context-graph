@@ -75,6 +75,11 @@ while it is running.
 
 ## AgentFold-style zero-shot baseline
 
+AgentFold and SUPO also support the native SWE-bench Lite and DiscoveryWorld
+evaluation runners. See [stateful baseline setup and smoke commands](docs/stateful_memory_baselines.md)
+for their tool contracts, SUPO's state-preserving overflow adaptation, and the
+four-node idev/sbatch entry points. These adapters still require live smoke validation.
+
 The independent `agentfold` method implements model-written suffix compression:
 the latest step can be condensed, or a contiguous suffix of earlier summaries
 and new evidence can be replaced by one summary. It is different from the existing
@@ -210,7 +215,8 @@ are not undone. Raw results and discarded rounds remain in audit artifacts.
 
 This is a **paper-based zero-shot rollout adaptation**, not SUPO joint RL training
 or evaluation of an official SUPO checkpoint. Training calls are rejected. It
-currently supports BC-P and our local text-only GAIA setup. It does not change
+supports BC-P and our local text-only GAIA setup, plus the explicitly versioned
+SWE/DiscoveryWorld stateful adaptation described below. It does not change
 the existing ReAct, FoldAgent, AgentFold or ContextGraph protocols.
 
 For an existing four-node Vista idev allocation:
@@ -220,7 +226,7 @@ BENCHMARK=bcp SAMPLES=8 bash scripts/eval_bcp_qwen35_9b_4node_idev.sh supo
 ```
 
 Alternatively, `sbatch scripts/eval_bcp_supo_qwen35_9b_4node.sbatch` requests four
-nodes for 24 hours. Both default to Qwen3.5-9B and an eight-task smoke. Threshold
+nodes for six hours. Both default to Qwen3.5-9B and an eight-task smoke. Threshold
 `SUPO_CONTEXT_THRESHOLD=16384`, `SUPO_MAX_SUMMARIES=2` and
 `SUPO_SUMMARY_MAX_TOKENS=1024` are configurable and saved in the manifest. The
 Python equivalents are `--supo-context-threshold`, `--supo-max-summaries`, and
