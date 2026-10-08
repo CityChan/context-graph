@@ -72,6 +72,42 @@ Submission, dependency preflight and rollout progress do not prove a completed
 optimizer step. Preserve the run's commit and do not update its shared checkout
 while it is running.
 
+## AgentFold-style zero-shot baseline
+
+The independent `agentfold` method implements model-written suffix compression:
+the latest step can be condensed, or a contiguous suffix of earlier summaries
+and new evidence can be replaced by one summary. It is different from the existing
+`foldagent` branch/return executor. No training or change to other methods is required.
+
+This is a **zero-shot adaptation**, not a reproduction of the trained AgentFold
+checkpoint. Its mechanism follows the [official inference implementation](https://github.com/Alibaba-NLP/DeepResearch/blob/f72f75d8c3eb842f2bbbab096a12206ff66e270f/WebAgent/AgentFold/infer.py),
+using our existing XML search/open_page/finish tools, local corpus, backbone and
+judge. Current support is BC-P and the local, text-only GAIA comparison; the latter
+is not official GAIA evaluation. Other simulator/code environments are not wired.
+
+On Vista, submit the saved four-node, 24-hour, eight-task smoke script:
+
+```bash
+sbatch scripts/eval_bcp_agentfold_qwen35_9b_4node.sbatch
+```
+
+Inside an existing four-node allocation, run
+`bash scripts/eval_bcp_qwen35_9b_4node_idev.sh agentfold` instead. Set `SAMPLES=-1`
+for a full evaluation. The Python entry point accepts `--method agentfold`;
+the GAIA evaluator dispatches `--workflow search_agentfold`.
+
+Defaults retain the shared 32K working window, 100 model turns and 24K response
+allowance. The allowance charges cumulative generated token IDs (including
+compression/retries) and tokenized observation/format-feedback text; folding
+does not refund it. This explicit adaptation budget does not reproduce the
+upstream 100K context/500-step setup, and chat-wrapper accounting can differ from
+the older executors. Final-answer reservation may truncate observations, with a
+visible marker and counters. Invalid folding consumes a model turn but cannot
+execute a tool. The original question is never truncated. Raw observations,
+exact model inputs/outputs, fold errors and final working history are retained in
+trajectory artifacts; manifests identify the adaptation and pinned source.
+CPU tests validate execution contracts, not zero-shot model performance.
+
 ## Runtime and code layout
 
 | Directory | Responsibility |

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Existing allocation only. Run once per allocation: react, foldagent or contextgraph.
+# Existing allocation only. Run once per allocation with one evaluation method.
 set -euo pipefail
 server_stage() {
   printf 'SERVER_STARTUP time=%(%FT%T%z)T pid=%s node=%s stage=%s\n' -1 "$$" "${HOSTNAME:-unknown}" "$1"
@@ -137,8 +137,8 @@ case "${1:-}" in
     ;;
 esac
 
-export METHOD=${1:?Usage: bash scripts/eval_bcp_qwen38_4node_idev.sh react|foldagent|contextgraph}
-case "$METHOD" in react|foldagent|contextgraph) ;; *) echo "Invalid method: $METHOD"; exit 2 ;; esac
+export METHOD=${1:?Usage: bash scripts/eval_bcp_qwen38_4node_idev.sh react|foldagent|contextgraph|agentfold}
+case "$METHOD" in react|foldagent|contextgraph|agentfold) ;; *) echo "Invalid method: $METHOD"; exit 2 ;; esac
 : "${SLURM_JOB_ID:?Run inside an existing four-node idev}"
 : "${SLURM_JOB_NODELIST:?Missing allocation nodes}"
 : "${SCRATCH:?Missing Vista scratch directory}"

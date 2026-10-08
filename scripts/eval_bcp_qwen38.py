@@ -102,7 +102,7 @@ class TokenClient:
 
 def config_for(args):
     from omegaconf import OmegaConf
-    workflow = {"react": "search", "foldagent": "search_branch",
+    workflow = {"react": "search", "foldagent": "search_branch", "agentfold": "search_agentfold",
                 "contextgraph": "search_graph"}[args.method]
     # The graph executor reads this even for inference. An empty estimator
     # explicitly leaves training-only GraphRPO credit assignment disabled.
@@ -188,6 +188,9 @@ async def evaluate(args):
         "server_execution": {"requested_enforce_eager": os.environ.get("SERVER_ENFORCE_EAGER", "1") == "1"},
         "transformers": transformers.__version__, "config": OmegaConf.to_container(config),
         "commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()}
+    if args.method == "agentfold":
+        from agents.agentfold_agent import PROVENANCE
+        manifest["baseline_protocol"] = PROVENANCE
     (root / f"manifest-{args.rank}.json").write_text(json.dumps(manifest, indent=2))
 
     # Keep the same server preflight across all methods.
@@ -245,7 +248,7 @@ def main():
     parser.add_argument("--merge", action="store_true")
     parser.add_argument("--benchmark", choices=["bcp", "gaia"], default="bcp")
     parser.add_argument("--output", required=True)
-    parser.add_argument("--method", choices=["react", "foldagent", "contextgraph"])
+    parser.add_argument("--method", choices=["react", "foldagent", "contextgraph", "agentfold"])
     parser.add_argument("--memory-mode", choices=["legacy", "repaired"], default="repaired")
     parser.add_argument("--model", default="Qwen/Qwen3.8-27B")
     parser.add_argument("--model-path")
