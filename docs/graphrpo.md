@@ -1,10 +1,16 @@
 # GraphRPO implementation
 
+The alternating E+M variant is now named **[EM-RPO](em_rpo.md)**. GraphRPO
+configuration keys and metrics remain compatible; older experimental backends
+retain their existing names.
+
 This implementation follows Section 4.2 of the ContextGraph manuscript. It is
 enabled only when `algorithm.adv_estimator=graphrpo` and
 `actor_rollout_ref.actor.policy_loss.loss_mode=graphrpo`.
 
 ## Alternating executor and memory training (E+M, opt-in)
+
+This is the EM-RPO variant; the heading is retained for existing links.
 
 Set `algorithm.graphrpo_alternating_roles=True`,
 `algorithm.graphrpo_memory_only=False` and keep the
@@ -41,7 +47,7 @@ attempt, K=2 for both roles and per-group concurrency 2. It uses five nodes and
 a 24-hour allocation, reusing the existing model/data setup:
 
 ```bash
-sbatch scripts/train_bcp_graphrpo_em.sh
+sbatch scripts/train_bcp_em_rpo.sh
 ```
 
 `GRAPH_RPO_EXECUTOR_SAMPLES` and `GRAPH_RPO_CONTINUATION_SAMPLES` control the two
