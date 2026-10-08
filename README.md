@@ -86,7 +86,7 @@ using our existing XML search/open_page/finish tools, local corpus, backbone and
 judge. Current support is BC-P and the local, text-only GAIA comparison; the latter
 is not official GAIA evaluation. Other simulator/code environments are not wired.
 
-On Vista, submit the saved four-node, 24-hour, eight-task smoke script:
+On Vista, submit the saved four-node, six-hour, eight-task smoke script:
 
 ```bash
 sbatch scripts/eval_bcp_agentfold_qwen35_9b_4node.sbatch
@@ -162,7 +162,7 @@ claim. Existing runs can be inspected with
 After both adaptation smoke runs pass, submit their complete BC-P evaluations
 from the Vista login node with
 `bash scripts/submit_bcp_agentfold_supo_full.sh`. It submits two independent
-four-node, 24-hour jobs, all dataset rows (`SAMPLES=-1`), seed 42 and one worker
+four-node, six-hour jobs, all dataset rows (`SAMPLES=-1`), seed 42 and one worker
 per evaluation shard, matching smoke concurrency. A detached worktree and copied
 dataset pin the code/data for both jobs. Results, Slurm logs, commit, dataset
 checksum and `jobs.tsv` live under

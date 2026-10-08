@@ -4,7 +4,7 @@
 #SBATCH --nodes=4
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=72
-#SBATCH --time=24:00:00
+#SBATCH --time=06:00:00
 #SBATCH --account=AST24021
 #SBATCH --chdir=/work/09281/chc_1996/vista/context-graph
 #SBATCH --output=supo-9b.%j.out

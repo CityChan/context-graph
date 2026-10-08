@@ -68,6 +68,6 @@ fi
         assert 'earlier jobs remain active' in result.stderr
     calls = (tmp_path / 'calls').read_text().splitlines()
     assert len(calls) == 2
-    assert all('--time=24:00:00' in call and '--nodes=4' in call for call in calls)
+    assert all('--time=06:00:00' in call and '--nodes=4' in call for call in calls)
     assert (submission / 'commit.txt').read_text().strip() == run(
         ['git', '-C', str(submission / 'code'), 'rev-parse', 'HEAD']).stdout.strip()

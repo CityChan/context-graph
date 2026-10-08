@@ -29,7 +29,7 @@ echo "BCP_FULL_SUBMISSION commit=$REV artifacts=$SUBMISSION"
 for method in agentfold supo; do
   mkdir "$SUBMISSION/$method"
   export RUN_ROOT="$SUBMISSION/$method/run"
-  if job=$(sbatch --parsable --export=ALL --nodes=4 --time=24:00:00 \
+  if job=$(sbatch --parsable --export=ALL --nodes=4 --time=06:00:00 \
       --chdir="$PROJECT_ROOT" --output="$SUBMISSION/$method/slurm-%j.out" \
       --error="$SUBMISSION/$method/slurm-%j.err" \
       "$PROJECT_ROOT/scripts/eval_bcp_${method}_qwen35_9b_4node.sbatch"); then
