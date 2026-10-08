@@ -1,10 +1,73 @@
 import asyncio
 import json
+import re
 
 import pytest
 
 from agents import agentfold_agent as af, prompts
 from tests.test_agentfold import setup, SEARCH, OPEN, FINISH, compress
+
+
+def test_final_phase_isolated_and_constrained_without_changing_folding(monkeypatch):
+    env, context, item, client = setup(monkeypatch, [SEARCH, compress(1, 1) + OPEN, FINISH])
+    plugin = context.config.actor_rollout_ref.rollout.plugin
+    plugin.val_max_turn = 3
+    plugin.apply_chat_template_kwargs = dict(enable_thinking=True)
+    renders = []
+    original = context.tokenizer.apply_chat_template
+    def render(messages, **kwargs):
+        renders.append((messages, kwargs.copy()))
+        return original(messages, **kwargs)
+    monkeypatch.setattr(context.tokenizer, 'apply_chat_template', render)
+    out = asyncio.run(af.process_item(item, context))
+    records = out.extra_fields['model_contexts']
+    assert [r['phase'] for r in records] == ['action', 'action', 'final']
+    for record in records:
+        kwargs = next(k for m, k in renders if m == record['messages'])
+        assert kwargs['enable_thinking'] is (record['phase'] == 'action')
+    assert all('structured_outputs' not in kw for _, kw in client.calls[:2])
+    final = records[-1]
+    assert final['messages'][0]['content'] == af.FINAL_SYSTEM
+    assert af.FOLD_PROMPT not in str(final['messages'])
+    assert 'Find gold.' in str(final['messages'])
+    assert '[Compressed Step 1]' in str(final['messages'])
+    constraint = client.calls[-1][1]['structured_outputs']
+    assert constraint == final['structured_outputs']
+    assert re.fullmatch(constraint['regex'], FINISH)
+    assert not re.fullmatch(constraint['regex'], SEARCH)
+    assert not re.fullmatch(constraint['regex'], FINISH.replace('gold', 'x' * 385))
+    assert env.actions == [SEARCH, OPEN, FINISH]
+    assert plugin.apply_chat_template_kwargs.enable_thinking is True
+    stats = out.extra_fields['env_stats']
+    assert stats['agentfold_folds'] == 1
+    assert stats['main_len'] == sum(stats[k] for k in
+        ('generated_tokens', 'observation_tokens', 'instruction_tokens', 'feedback_tokens'))
+    assert stats['main_len'] <= 24576
+
+
+def test_ignored_final_constraint_never_dispatches_or_folds(monkeypatch):
+    env, context, item, client = setup(monkeypatch, [SEARCH, compress(1, 1) + OPEN])
+    context.config.actor_rollout_ref.rollout.plugin.val_max_turn = 2
+    out = asyncio.run(af.process_item(item, context))
+    assert env.actions == [SEARCH] and env.closed
+    assert not out.extra_fields['is_finish']
+    assert out.extra_fields['env_stats']['agentfold_folds'] == 0
+    assert out.extra_fields['env_stats']['invalid_tool'] == 1
+    assert out.extra_fields['model_contexts'][-1]['format_error'] == 'Final answer violated bounded XML output contract'
+
+
+def test_unsupported_final_constraint_surfaces_without_fallback(monkeypatch):
+    env, context, item, client = setup(monkeypatch, [])
+    context.config.actor_rollout_ref.rollout.plugin.val_max_turn = 1
+    calls = []
+    async def reject(*args, **kwargs):
+        calls.append(kwargs)
+        raise RuntimeError('structured outputs unavailable')
+    client.create_completion = reject
+    with pytest.raises(RuntimeError, match='structured outputs unavailable'):
+        asyncio.run(af.process_item(item, context))
+    assert len(calls) == 1 and calls[0]['structured_outputs']
+    assert env.closed and not env.actions
 
 
 def test_upstream_singleton_and_consecutive_ranges_preserve_whole_blocks():

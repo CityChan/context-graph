@@ -111,7 +111,7 @@ CPU tests validate execution contracts, not zero-shot model performance.
 
 The v2 protocol fixed a conflicting parallel-search example inherited by the
 original adapter. SUPO, MemoBrain and A-MEM use `search_single_v1`;
-AgentFold v3 uses `agentfold_state_contract_v1`. All require one tool call per reply, with a bounded excerpt of
+AgentFold v4 retains `agentfold_state_contract_v1`. All require one tool call per reply, with a bounded excerpt of
 the rejected reply included in format-correction requests. Three consecutive
 invalid tool replies stop the task as `invalid_tool_limit`; a valid call resets
 the counter. The summary reports `format_retry_failures` and `zero_tool_tasks`,
@@ -132,6 +132,17 @@ model-written folded summaries; full thinking remains in the audit rather than
 being replayed as evidence. Budget and decoding limits remain unchanged; the
 new per-step instructions are charged, and format errors at the output cap are
 counted separately. This is still an untrained zero-shot adaptation.
+
+AgentFold v4 additionally isolates budget-finalization from the search/folding
+system prompt, disables thinking for that request, and requires a single finish
+call through regex-constrained decoding. Its answer is bounded to
+`min(384, request token limit - 96)` characters; character bounds do not guarantee
+token fit. The original token/turn budgets remain active, and final instructions
+are charged. Strict validation rejects tools or folds if the server ignores the
+constraint, and unsupported constraints fail visibly. Ordinary research and
+folding are unchanged. Requests record phase, constraint and thinking override;
+provenance identifies `bounded_finish_xml_v1`. Keep v3/v4 results separate.
+This addresses final-submission formatting, not answer correctness.
 
 For a three-question integration smoke inside an existing four-node allocation:
 
