@@ -48,12 +48,13 @@ else
 fi
 ''', encoding='utf-8')
     scheduler.chmod(0o755)
-    env = dict(os.environ, PROJECT_ROOT=project.as_posix(),
+    env = dict(os.environ, PROJECT_ROOT=(tmp_path / 'stale swe checkout').as_posix(),
+               DATA_PATH=(tmp_path / 'stale swe data').as_posix(),
                PATH=str(stub) + os.pathsep + os.environ['PATH'],
                TEST_LOG=(tmp_path / 'calls').as_posix(), FAIL_SECOND=str(int(fail_second)),
                SAMPLES='3', WORKERS='9', RUN_ROOT='must-not-reuse', EXPECTED_JOB_ID='old')
     env.pop('OUTPUT_BASE', None)
-    env.pop('DATA_PATH', None)
+    env.pop('BCP_DATA_PATH', None)
     result = run([bash, str(project / 'scripts' / script)], env=env)
     assert result.returncode == int(fail_second), result.stdout + result.stderr
     submission, = (project / 'output').glob('bcp-agentfold-supo-full-*')

@@ -1,11 +1,11 @@
 #!/bin/bash
 # Submit the two smoke-validated zero-shot adaptations from one pinned checkout.
 set -euo pipefail
-PROJECT_ROOT=${PROJECT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}
+PROJECT_ROOT=$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)
 cd "$PROJECT_ROOT"
 command -v sbatch >/dev/null
 git diff --quiet HEAD -- agents envs scripts verl || { echo 'Commit tracked code changes before submitting.' >&2; exit 2; }
-DATA_SOURCE=${DATA_PATH:-$PROJECT_ROOT/data/bc_test.parquet}
+DATA_SOURCE=${BCP_DATA_PATH:-$PROJECT_ROOT/data/bc_test.parquet}
 [[ -s "$DATA_SOURCE" ]] || { echo "Missing BC-P data: $DATA_SOURCE" >&2; exit 2; }
 OUTPUT_BASE=${OUTPUT_BASE:-$PROJECT_ROOT/output}
 mkdir -p "$OUTPUT_BASE"

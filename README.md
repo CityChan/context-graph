@@ -168,6 +168,8 @@ dataset pin the code/data for both jobs. Results, Slurm logs, commit, dataset
 checksum and `jobs.tsv` live under
 `output/bcp-agentfold-supo-full-XXXXXX/`; each method's results are in its `run/`
 subdirectory. The script does not cancel earlier jobs if a later submission fails.
+It resolves the repository from its own script location, ignoring inherited
+`PROJECT_ROOT` and `DATA_PATH`; use `BCP_DATA_PATH` for an intentional data override.
 These are zero-shot adaptations, not evaluations of the papers' trained policies.
 
 The v4 adapter uses an isolated summarizer system prompt, the original task,
