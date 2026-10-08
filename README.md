@@ -148,6 +148,23 @@ claim. Existing runs can be inspected with
 
 ## SUPO-style zero-shot baseline
 
+The v3 adapter uses an isolated summarizer system prompt, the original task,
+the previous summary, and retained research messages presented as data. It does
+not carry executor tool definitions or search demonstrations into summarization.
+Summary and budget-finalization requests explicitly render the chat template with
+`enable_thinking=False`; research requests retain the configured thinking mode.
+This phase-specific decoding adaptation is recorded in provenance and per-request
+audit, and is not a claim about the paper's trained policy. Request/token caps
+are unchanged; added role instructions are charged. Invalid summaries remain
+atomic failures and now increment `summary_format_failures`, causing the batch
+summary command to fail after saving its results.
+
+For a three-task smoke in an existing four-node allocation, run
+`bash scripts/smoke_bcp_supo_qwen35_9b_4node_idev.sh`. The saved
+`supo-smoke-audit.json` checks tool execution, summary/resume and finish, prints
+failure details, and does not require a correct answer. This verifies mechanics
+only. Use `SAMPLES=8` to repeat the original eight selected questions.
+
 The independent `supo` / `search_supo` executor reimplements the rollout in
 [SUPO Algorithm 2](https://arxiv.org/abs/2510.06727v1). After a tool call crosses
 the context threshold, its action/observation pair is excluded from working
