@@ -8,6 +8,7 @@ wandb/
 logs/
 log_exports/
 outputs/
+output/
 paper/
 *.tgz
 *.pt

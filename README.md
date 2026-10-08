@@ -159,6 +159,17 @@ claim. Existing runs can be inspected with
 
 ## SUPO-style zero-shot baseline
 
+After both adaptation smoke runs pass, submit their complete BC-P evaluations
+from the Vista login node with
+`bash scripts/submit_bcp_agentfold_supo_full.sh`. It submits two independent
+four-node, 24-hour jobs, all dataset rows (`SAMPLES=-1`), seed 42 and one worker
+per evaluation shard, matching smoke concurrency. A detached worktree and copied
+dataset pin the code/data for both jobs. Results, Slurm logs, commit, dataset
+checksum and `jobs.tsv` live under
+`output/bcp-agentfold-supo-full-XXXXXX/`; each method's results are in its `run/`
+subdirectory. The script does not cancel earlier jobs if a later submission fails.
+These are zero-shot adaptations, not evaluations of the papers' trained policies.
+
 The v4 adapter uses an isolated summarizer system prompt, the original task,
 the previous summary, and retained research messages presented as data. It does
 not carry executor tool definitions or search demonstrations into summarization.
