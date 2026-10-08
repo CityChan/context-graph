@@ -87,7 +87,8 @@ def test_budget_preserves_finalizer_override_without_exceeding_context():
 
 
 @pytest.mark.parametrize("model", ["Qwen/Qwen3.8-27B", "Qwen/Qwen3.5-9B"])
-def test_token_client_keeps_exact_ids_and_uses_no_judge_credentials(tmp_path, monkeypatch, model):
+@pytest.mark.parametrize("constraint", [{"json": {"type": "object"}}, {"regex": "<summary>[^<>]{1,928}</summary>"}])
+def test_token_client_keeps_exact_ids_and_uses_no_judge_credentials(tmp_path, monkeypatch, model, constraint):
     monkeypatch.setenv("OPENAI_API_KEY", "judge-secret-must-not-be-sent")
     requests = []
     def handle(request):
@@ -103,7 +104,7 @@ def test_token_client_keeps_exact_ids_and_uses_no_judge_credentials(tmp_path, mo
         await client.client.aclose()
         client.client = httpx.AsyncClient(transport=httpx.MockTransport(handle), base_url="http://local-model")
         try:
-            result = await client.create_completion([1, 2, 3], structured_outputs={"json": {"type": "object"}})
+            result = await client.create_completion([1, 2, 3], structured_outputs=constraint)
             assert result["choices"][0]["message"]["raw_output_ids"] == [9, 8, 7]
             assert "reason" in result["choices"][0]["message"]["content"]
         finally:
@@ -112,7 +113,8 @@ def test_token_client_keeps_exact_ids_and_uses_no_judge_credentials(tmp_path, mo
     assert requests[0]["prompt"] == [1, 2, 3]
     assert requests[0]["model"] == model
     assert requests[0]["return_token_ids"] is True
-    assert requests[0]["structured_outputs"] == {"json": {"type": "object"}}
+    assert requests[0]["structured_outputs"] == constraint
+    assert json.loads((tmp_path / "audit.jsonl").read_text())["structured_outputs"] == constraint
 
 
 def test_summary_rejects_missing_rows_and_judge_errors(tmp_path):

@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 
 import pytest
 
@@ -27,6 +28,11 @@ def test_control_roles_override_thinking_without_changing_research(monkeypatch):
     for record in records:
         kwargs = next(k for m, k in renders if m == record['messages'])
         assert kwargs['enable_thinking'] is (record['phase'] == 'action')
+    assert 'structured_outputs' not in client.calls[0][1]
+    for idx in (1, 2):
+        constraint = client.calls[idx][1]['structured_outputs']
+        assert constraint == records[idx]['structured_outputs']
+        assert re.fullmatch(constraint['regex'], records[idx]['response'])
     assert records[1]['messages'][0]['content'] == supo.SUMMARY_SYSTEM
     assert 'Find gold.' in str(records[1]['messages'])
     assert 'Use search tools.' not in str(records[1]['messages'])
@@ -41,6 +47,35 @@ def test_later_summary_sees_previous_summary_and_only_retained_history():
         dict(role='assistant', content=SEARCH), dict(role='user', content='new evidence [2]')])
     assert messages[0] == dict(role='system', content=supo.SUMMARY_SYSTEM)
     assert all(s in messages[1]['content'] for s in ['original task', 'known evidence [1]', 'new evidence [2]'])
+
+
+def test_bounded_control_format_rejects_loops_and_extra_tools():
+    summary = supo.control_output('summary', 1024)['regex']
+    assert re.fullmatch(summary, '<summary>Evidence René [1]\nStill unknown.</summary>')
+    assert not re.fullmatch(summary, '<summary>' + 'The Age of Winter ' * 100 + '</summary>')
+    assert not re.fullmatch(summary, '<summary>notes</summary>' + SEARCH)
+    final = supo.control_output('final', 1024)['regex']
+    assert re.fullmatch(final, FINISH)
+    assert not re.fullmatch(final, 'Explanation: unverified story\n' + FINISH)
+    assert not re.fullmatch(final, SEARCH)
+    assert not re.fullmatch(final, FINISH[:-11])
+    assert supo.control_output('final', 96) is None
+    assert supo.control_output('action', 1024) is None
+
+
+def test_summary_contract_ignoring_server_cannot_change_memory(monkeypatch):
+    env, context, item, client = setup(monkeypatch, [SEARCH, '<summary>' + 'x' * 470 + '</summary>'],
+                                       observation='overflow ' * 500)
+    out = asyncio.run(supo.process_item(item, context))
+    assert out.extra_fields['termination_reason'] == 'invalid_summary'
+    assert out.extra_fields['env_stats']['summary_restarts'] == 0
+    assert env.actions == [SEARCH]
+
+
+def test_text_repetition_warning_does_not_redefine_token_zero_audit():
+    from scripts.audit_supo_smoke import repetitive_text
+    assert repetitive_text('or "The Age of Winter" or "The Age of Spring" ' * 8)
+    assert not repetitive_text('Evidence [1] contradicts [2]; the answer remains unknown.')
 
 
 def test_summary_failure_is_saved_and_fails_batch_summary(tmp_path):

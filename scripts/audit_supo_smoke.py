@@ -1,11 +1,18 @@
 """Inspect SUPO summary/resume/finish mechanics, independently of answer accuracy."""
 import argparse
 import json
+import re
 from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.evaluation_records import read_evaluation
+
+
+def repetitive_text(text):
+    # Diagnostic only: a multiword block repeated four times without interruption.
+    # This does not replace correctness grading or the token-zero audit.
+    return bool(re.search(r'(.{20,300})\1{3,}', text, re.S))
 
 
 def audit(root):
@@ -24,6 +31,8 @@ def audit(root):
                                  'summary_restarts', 'invalid_summary', 'hit_token_limit', 'hit_summary_limit']},
                           errors=[dict(phase=r.get('phase'), error=r['format_error'])
                                   for r in records if r.get('format_error')],
+                          text_repetition_warnings=[dict(request=i, phase=r.get('phase'))
+                              for i, r in enumerate(records) if repetitive_text(r.get('response', ''))],
                           last_response=records[-1].get('response', '')[-1200:] if records else None))
     checks = dict(no_execution_errors=summary['execution_errors'] == 0,
                   no_judge_errors=summary['judge_parse_failures'] == 0,
@@ -33,6 +42,7 @@ def audit(root):
                   summary_resumed=any((t['stats']['summary_restarts'] or 0) > 0 for t in tasks),
                   finish_exercised=any(t['stop'] == 'finish' for t in tasks))
     report = dict(scope='integration smoke only, not benchmark performance', passed=all(checks.values()),
+                  generation_quality_scope='shared generation_quality_passed checks token-zero runs only; text repetition warnings are separate',
                   checks=checks, summary=summary, tasks=tasks)
     (root / 'supo-smoke-audit.json').write_text(json.dumps(report, indent=2), encoding='utf-8')
     return report

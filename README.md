@@ -148,7 +148,7 @@ claim. Existing runs can be inspected with
 
 ## SUPO-style zero-shot baseline
 
-The v3 adapter uses an isolated summarizer system prompt, the original task,
+The v4 adapter uses an isolated summarizer system prompt, the original task,
 the previous summary, and retained research messages presented as data. It does
 not carry executor tool definitions or search demonstrations into summarization.
 Summary and budget-finalization requests explicitly render the chat template with
@@ -158,6 +158,18 @@ audit, and is not a claim about the paper's trained policy. Request/token caps
 are unchanged; added role instructions are charged. Invalid summaries remain
 atomic failures and now increment `summary_format_failures`, causing the batch
 summary command to fail after saving its results.
+
+Control requests additionally use vLLM regex-constrained XML: one closed summary
+block, or one finish call containing only the answer. Summary text is capped at
+1,200 characters and final answers at 384, further reduced to the request token
+limit minus 96. Character bounds do not guarantee token fit (especially for
+Unicode); the unchanged token limit and strict post-validation remain active.
+The adapter never repairs incomplete output or supplies an answer itself. These
+constraints are recorded as `bounded_xml_v1` in provenance and in each request,
+and change the adaptation protocol; do not pool v3 and v4 runs. Server errors
+must surface rather than silently disabling constraints. Format validity does
+not establish factuality. The smoke audit reports repeated-text warnings
+separately: the shared generation-quality flag only detects token-zero runs.
 
 For a three-task smoke in an existing four-node allocation, run
 `bash scripts/smoke_bcp_supo_qwen35_9b_4node_idev.sh`. The saved

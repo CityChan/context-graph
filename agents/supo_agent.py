@@ -19,10 +19,13 @@ from .utils import AgentLoopMetrics, AgentLoopOutput, _apply_chat_template, sele
 
 
 PROVENANCE = {
-    "method": "supo", "variant": "zero_shot_rollout_adaptation_v3", **PROTOCOL,
+    "method": "supo", "variant": "zero_shot_rollout_adaptation_v4", **PROTOCOL,
     "control_prompt_profile": "supo_phase_roles_v1",
     "control_enable_thinking": False,
     "action_thinking": "inherited evaluation configuration",
+    "control_output_profile": "bounded_xml_v1",
+    "control_text_max_chars": {"summary": 1200, "final": 384},
+    "control_char_budget": "min(phase cap, request token limit - 96); not a token guarantee",
     "paper": "https://arxiv.org/abs/2510.06727v1", "algorithm": 2,
     "implementation": "paper_based_reimplementation",
     "supo_rl_training": False, "trained_supo_checkpoint": False,
@@ -53,6 +56,23 @@ def summary_context(task, previous_summary, history):
     text += '\n\nRetained research transcript:\n'
     text += '\n\n'.join(m['role'] + ':\n' + m['content'] for m in history)
     return [dict(role='system', content=SUMMARY_SYSTEM), dict(role='user', content=text)]
+
+
+def control_output(phase, limit):
+    """Bound control text and force closing tags; ordinary research is unchanged.
+
+    Character and token lengths differ, so the original token limit and strict
+    post-validation still apply. Unsupported server constraints fail visibly.
+    """
+    if phase == 'action':
+        return None
+    if limit <= 96:
+        return None  # Caller stops; never send an unconstrained control request.
+    max_chars = min(1200 if phase == 'summary' else 384, limit - 96)
+    body = r'[^<>]{1,' + str(max_chars) + '}'
+    if phase == 'summary':
+        return {'regex': '<summary>' + body + '</summary>'}
+    return {'regex': '<function=finish><parameter=answer>' + body + '</parameter></function>'}
 
 
 def settings(plugin):
@@ -163,6 +183,10 @@ async def process_item(item, context):
             if limit < 10:
                 reason = "token_limit"
                 break
+            constraint = control_output(phase, limit)
+            if phase != 'action' and constraint is None:
+                reason = 'token_limit'
+                break
             if deadline <= time.monotonic():
                 reason = "timeout"
                 break
@@ -170,7 +194,8 @@ async def process_item(item, context):
             try:
                 result = await asyncio.wait_for(context.llm_client.create_completion(
                     candidate_ids, messages=messages, max_new_tokens=limit,
-                    max_len=len(candidate_ids) + limit), timeout=deadline - time.monotonic())
+                    max_len=len(candidate_ids) + limit,
+                    **({'structured_outputs': constraint} if constraint else {})), timeout=deadline - time.monotonic())
                 if result is None:
                     reason = "token_limit"
                     break
@@ -184,6 +209,7 @@ async def process_item(item, context):
                 text = response["content"]
                 record = dict(phase=phase, input_ids=input_ids, output_ids=output_ids,
                               messages=messages, response=text, max_tokens=limit,
+                              structured_outputs=constraint,
                               control_enable_thinking=False if phase != 'action' else None)
                 audit.append(record)
                 if instruction:
@@ -192,6 +218,8 @@ async def process_item(item, context):
                 if phase == "summary":
                     stats["summary_attempts"] += 1
                     try:
+                        if not re.fullmatch(constraint['regex'], text):
+                            raise ValueError('Summary violated bounded XML output contract')
                         summary = parse_summary(text)
                         resumed = copy.deepcopy(fixed)
                         resumed[-1]["content"] += "\n\nPrevious research summary:\n" + summary
@@ -208,6 +236,8 @@ async def process_item(item, context):
                     record["resumed_context_tokens"] = len(render(working))
                     continue
                 try:
+                    if constraint and not re.fullmatch(constraint['regex'], text):
+                        raise ValueError('Final answer violated bounded XML output contract')
                     # Shared XML validation only; AgentFold compression is not enabled.
                     action, _ = parse_response(text, [], finish_only=finish_only)
                 except (ValueError, TypeError) as exc:
