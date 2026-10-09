@@ -8,6 +8,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+from .scienceworld_protocol import FOCUS_V3_REMINDER
+
 
 class ScienceWorldEnv:
     """Async-compatible wrapper around the local ScienceWorld JVM simulator."""
@@ -25,6 +27,7 @@ class ScienceWorldEnv:
         self._completed = False
         self._step_count = 0
         plugin = getattr(config, "plugin", None)
+        self._focus_reminder = getattr(plugin, "scienceworld_prompt_profile", "legacy") == "focus_v3"
         max_steps = getattr(plugin, "scienceworld_max_steps", 100)
         self._max_steps = 100 if max_steps is None else int(max_steps)
         if self._max_steps < 1:
@@ -122,6 +125,8 @@ class ScienceWorldEnv:
                 message = "Task completed successfully." if self._completed else f"Episode ended with score {score:g}/100."
                 observation = f"{observation}\n\n{message}"
                 return {"action": "finish", "observation": str(observation)}
+            if self._focus_reminder:
+                observation = f"{observation}\n\n{FOCUS_V3_REMINDER}"
             return {"observation": str(observation)}
         except Exception as exc:
             print(f"[ScienceWorld] Action failed: {exc}")

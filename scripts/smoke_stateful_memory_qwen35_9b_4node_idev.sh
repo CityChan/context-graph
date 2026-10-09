@@ -24,7 +24,7 @@ if [[ "$benchmark" != swe-lite ]]; then
         export BENCH_DISCOVERYWORLD_OBSERVATION_PROFILE=compact_v1
         bash scripts/eval_discoveryworld_qwen35_9b_4node.sbatch "$method" || rc=1
     else
-        export BENCH_MAX_STEPS=100 BENCH_MEMORY_PROFILE=turns BENCH_PROMPT_PROFILE=focus_v2
+        export BENCH_MAX_STEPS=100 BENCH_MEMORY_PROFILE=turns BENCH_PROMPT_PROFILE=focus_v3
         export BENCH_REQUIREMENTS=requirements_agent_benchmarks.txt
         unset BENCH_DISCOVERYWORLD_OBSERVATION_PROFILE BENCH_DIFFICULTY
         bash scripts/eval_agent_benchmarks_qwen35_9b_4node.sbatch scienceworld "$method" || rc=1

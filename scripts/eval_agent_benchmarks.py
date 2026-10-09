@@ -27,7 +27,7 @@ from scripts.generation_audit import combine_degeneration_stats, degeneration_st
 BENCHMARKS = ("scienceworld", "discoveryworld")
 METHODS = ("contextgraph", "foldagent", "agentfold", "supo")
 MEMORY_PROFILES = ("legacy", "turns", "repaired")
-PROMPT_PROFILES = ("legacy", "focus_v2", "discoveryworld_v1")
+PROMPT_PROFILES = ("legacy", "focus_v2", "focus_v3", "discoveryworld_v1")
 DEFAULT_MEMORY_PROFILES = {"scienceworld": "turns", "discoveryworld": "repaired"}
 
 
@@ -45,7 +45,7 @@ def config_for(benchmark, method, context_length, max_steps=100, memory_profile=
     if prompt_profile not in PROMPT_PROFILES:
         raise ValueError("Unknown prompt profile")
     if (benchmark == "discoveryworld") != (prompt_profile == "discoveryworld_v1"):
-        raise ValueError("DiscoveryWorld requires discoveryworld_v1; ScienceWorld requires legacy or focus_v2")
+        raise ValueError("DiscoveryWorld requires discoveryworld_v1; ScienceWorld requires legacy, focus_v2 or focus_v3")
     from scripts.eval_discoverybench_qwen35 import config_for as base_config
     config = base_config(method if method in ('contextgraph', 'foldagent') else 'foldagent', context_length)
     plugin = config.actor_rollout_ref.rollout.plugin

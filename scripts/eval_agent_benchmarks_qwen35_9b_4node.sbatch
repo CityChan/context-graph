@@ -21,7 +21,7 @@ default_memory_profile=turns
 if [[ ${1:-} == discoveryworld || ( ${1:-} == _eval && ${BENCHMARK:-} == discoveryworld ) ]]; then default_memory_profile=repaired; fi
 export BENCH_MEMORY_PROFILE=${BENCH_MEMORY_PROFILE:-$default_memory_profile}
 export BENCH_PROMPT_PROFILE=${BENCH_PROMPT_PROFILE:-legacy}
-case "$BENCH_PROMPT_PROFILE" in legacy|focus_v2|discoveryworld_v1) ;; *) echo 'Unknown BENCH_PROMPT_PROFILE'; exit 2 ;; esac
+case "$BENCH_PROMPT_PROFILE" in legacy|focus_v2|focus_v3|discoveryworld_v1) ;; *) echo 'Unknown BENCH_PROMPT_PROFILE'; exit 2 ;; esac
 case "$BENCH_MEMORY_PROFILE" in legacy|turns|repaired) ;; *) echo 'Expected BENCH_MEMORY_PROFILE=legacy, turns or repaired'; exit 2 ;; esac
 export SERVER_ENFORCE_EAGER=${SERVER_ENFORCE_EAGER:-1}
 case "$SERVER_ENFORCE_EAGER" in 0|1) ;; *) echo 'SERVER_ENFORCE_EAGER must be 0 or 1'; exit 2 ;; esac

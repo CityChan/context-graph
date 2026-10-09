@@ -124,7 +124,7 @@ def test_subprocess_timeout_and_nonzero_are_errors(tmp_path):
 
 
 @pytest.mark.parametrize("method", ["contextgraph", "foldagent"])
-@pytest.mark.parametrize("profile", ["legacy", "focus_v2"])
+@pytest.mark.parametrize("profile", ["legacy", "focus_v2", "focus_v3"])
 def test_real_agent_loop_stops_on_environment_finish(monkeypatch, method, profile):
     benchmark = "scienceworld"
     import importlib
@@ -155,7 +155,7 @@ def test_real_agent_loop_stops_on_environment_finish(monkeypatch, method, profil
     assert out[0].extra_fields["is_finish"]
     assert out[0].extra_fields["env_stats"]["environment_score"] == 100
     system = out[0].extra_fields["messages"][0]["content"]
-    assert ("not an inspection or exploration command" in system) == (profile == "focus_v2")
+    assert ("not an inspection or exploration command" in system) == (profile != "legacy")
     assert ("You may provide optional reasoning" in system) == (profile == "legacy")
     if profile == "legacy":
         legacy_config = config_for(benchmark, method, 65536, memory_profile="legacy")

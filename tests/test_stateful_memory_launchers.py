@@ -57,7 +57,7 @@ def test_wrapper_dispatches_native_launchers_and_ignores_stale_roots(tmp_path, b
     for name in ('eval_discoveryworld_qwen35_9b_4node.sbatch', 'eval_swe_lite_arm_4node.sbatch',
                  'eval_agent_benchmarks_qwen35_9b_4node.sbatch'):
         (scripts / name).write_text('set -eu\nif [[ "$1" == scienceworld ]]; then '
-            '[[ "$BENCH_PROMPT_PROFILE" == focus_v2 && "$BENCH_MAX_STEPS" == 100 && '
+            '[[ "$BENCH_PROMPT_PROFILE" == focus_v3 && "$BENCH_MAX_STEPS" == 100 && '
             '"$BENCH_REQUIREMENTS" == requirements_agent_benchmarks.txt ]]; shift; fi\n'
             'printf "%s|%s|%s\\n" "$1" "${BENCH_RUN_DIR:-$SWE_RUN_DIR}" "$SAMPLES" > "$PROJECT_ROOT/dispatched"\n', newline='\n')
     python = tmp_path / 'env/bin/python'

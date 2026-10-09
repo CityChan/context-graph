@@ -1,7 +1,26 @@
 """Audit native task grading and memory mechanics; correctness is not a smoke gate."""
 import argparse
+from collections import deque
 import json
 from pathlib import Path
+
+
+def scienceworld_tail(attempt):
+    path = attempt / 'tools.jsonl'
+    if not path.is_file():
+        return []
+    steps = deque(maxlen=6)
+    with path.open(encoding='utf8') as stream:
+        for line in stream:
+            if not line.strip():
+                continue
+            record = json.loads(line)
+            if record.get('event') == 'step':
+                steps.append({'command': record.get('command'),
+                              'observation': str(record.get('observation', ''))[:600],
+                              'score': (record.get('info') or {}).get('score'),
+                              'done': record.get('done')})
+    return list(steps)
 
 
 def audit(root, benchmark, method, expected):
@@ -24,6 +43,8 @@ def audit(root, benchmark, method, expected):
                           'stop': trajectory.get('termination_reason'), 'stats': stats,
                           'provenance': trajectory.get(method),
                           'trajectory_present': bool(trajectory)})
+            if benchmark == 'scienceworld':
+                tasks[-1]['last_environment_steps'] = scienceworld_tail(attempt)
     selected = sum(s.get('selected', 0) for s in summaries)
     checks = {
         'complete': len(parts) == len(summaries) == 2 and selected > 0

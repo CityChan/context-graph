@@ -21,7 +21,8 @@ ACTION = '<function=action><parameter=command>look around</parameter></function>
 
 @pytest.mark.parametrize('method', ['supo', 'agentfold'])
 @pytest.mark.parametrize('score', [100, -100])
-def test_native_scienceworld_memory_and_terminal_scores(monkeypatch, tmp_path, method, score):
+@pytest.mark.parametrize('profile', ['focus_v2', 'focus_v3'])
+def test_native_scienceworld_memory_and_terminal_scores(monkeypatch, tmp_path, method, score, profile):
     instances = []
 
     class Simulator:
@@ -43,7 +44,7 @@ def test_native_scienceworld_memory_and_terminal_scores(monkeypatch, tmp_path, m
             self.closed = True
 
     monkeypatch.setitem(sys.modules, 'scienceworld', SimpleNamespace(ScienceWorldEnv=Simulator))
-    config = config_for('scienceworld', method, 65536, 100, prompt_profile='focus_v2')
+    config = config_for('scienceworld', method, 65536, 100, prompt_profile=profile)
     plugin = config.actor_rollout_ref.rollout.plugin
     plugin.final_answer_reserve = 1024  # Must not introduce a finish tool.
     tokenizer = Tokenizer()
@@ -52,7 +53,7 @@ def test_native_scienceworld_memory_and_terminal_scores(monkeypatch, tmp_path, m
         'extra_info': np.array([{'task_name': 'boil', 'variation_idx': 21,
                                 'tool_log': str(tmp_path / 'tools.jsonl')}], dtype=object)})
     fixed = task_chat('scienceworld', 'Boil the requested substance.\n\nInitial observation:\nroom',
-                      task, method, create_chat, prompt_profile='focus_v2')
+                      task, method, create_chat, prompt_profile=profile)
     base = len(_apply_chat_template(tokenizer, fixed, config.actor_rollout_ref.rollout,
                                     tokenize=True, add_generation_prompt=True))
     plugin.supo_context_threshold = base + 6000
@@ -69,6 +70,7 @@ def test_native_scienceworld_memory_and_terminal_scores(monkeypatch, tmp_path, m
     records = output.extra_fields['model_contexts']
     assert all(r['phase'] != 'final' for r in records)
     assert 'not an inspection or exploration command' in records[0]['messages'][0]['content']
+    assert ('[Action guidance, not simulator observation]' in str(records[-1]['messages'])) == (profile == 'focus_v3')
     if method == 'supo':
         assert stats['summary_restarts'] == 1 and stats['supo_discarded_rounds'] == 0
         assert records[1]['retained_after_summary']

@@ -268,9 +268,9 @@ I've uploaded a python code repository in the directory /testbed. Consider the f
         return [{'role': 'system', 'content': system + '\n\n' + description},
                 {'role': 'user', 'content': problem_statement}]
     elif workflow in ('scienceworld', 'scienceworld_branch', 'scienceworld_graph'):
-        if scienceworld_prompt_profile not in ("legacy", "focus_v2"):
+        if scienceworld_prompt_profile not in ("legacy", "focus_v2", "focus_v3"):
             raise ValueError("Unknown ScienceWorld prompt profile")
-        tools = scienceworld_tool(focus_guidance=scienceworld_prompt_profile == "focus_v2")
+        tools = scienceworld_tool(focus_guidance=scienceworld_prompt_profile != "legacy")
         if 'branch' in workflow:
             tools = tools + branch_tool()
         if 'graph' in workflow:
@@ -278,7 +278,7 @@ I've uploaded a python code repository in the directory /testbed. Consider the f
             if expose_graph_tools:
                 tools = tools + graph_tool()
         tool_description = PARALLEL_TOOL_PROMPT.format(description=convert_tools_to_description(tools))
-        if scienceworld_prompt_profile == "focus_v2":
+        if scienceworld_prompt_profile != "legacy":
             tool_description = tool_description.replace(
                 "You may provide optional reasoning for your function call in natural language BEFORE the function call, but NOT after.",
                 "Output exactly one function call, with no prose or markdown before or after it.",
@@ -294,7 +294,7 @@ I've uploaded a python code repository in the directory /testbed. Consider the f
             "`put <object> in <container>`, `activate <device>`, `connect <object> to <object>`, "
             "`pour <container> into <container>`, and `focus on <object>`. "
         )
-        if scienceworld_prompt_profile == "focus_v2":
+        if scienceworld_prompt_profile != "legacy":
             system_prompt += (
                 " `focus on <object>` selects a task target; it is not an inspection or exploration command. "
                 "Focusing on the wrong object can immediately fail the task and end the episode. "
@@ -305,6 +305,9 @@ I've uploaded a python code repository in the directory /testbed. Consider the f
             )
         else:
             system_prompt += "Focus on the relevant object when the task asks you to identify, measure, or test it."
+        if scienceworld_prompt_profile == "focus_v3":
+            from envs.scienceworld_protocol import FOCUS_V3_GUIDANCE
+            system_prompt += "\n" + FOCUS_V3_GUIDANCE
         if workflow == 'scienceworld_graph':
             if expose_graph_tools:
                 system_prompt += (

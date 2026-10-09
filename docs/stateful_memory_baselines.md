@@ -30,8 +30,14 @@ single-line text command, not DiscoveryWorld JSON. No finish tool is exposed;
 success, terminal task failure or the step limit terminates the episode. Raw negative
 scores remain in task artifacts and are clipped to zero only by the existing
 score aggregator. Simulator exceptions propagate as infrastructure errors. The
-launcher explicitly uses `focus_v2`: focus selects a task target, not an inspection
-action. This prompt differs from historical `legacy` runs and must be reported.
+launcher explicitly uses `focus_v3`: focus selects a task target, not an inspection
+action. It distinguishes `look at`/`look in` from target selection and adds a
+short, labeled reminder after each nonterminal observation. Reminders enter the
+visible token budget; raw simulator logs and terminal scores remain unchanged.
+No action is blocked, corrected, retried or undone by this guidance. It uses no
+gold targets or action lists. This profile differs from historical `legacy` and
+`focus_v2` runs and must be reported for all compared methods. Both older profiles
+remain available through the generic evaluator. Model adherence needs live validation.
 Summary restarts preserve the latest executed action and observation, just as in
 DiscoveryWorld. The simulator is never reset or replayed by memory maintenance.
 
@@ -113,3 +119,8 @@ exercised, and no terminal format failures. It does not require a correct answer
 or resolved patch. A task that finishes without needing memory is valid but does
 not by itself validate memory mechanics. Raw per-request and per-tool logs remain
 in the native runner layouts. Do not pool these runs with BC-P or earlier adapters.
+
+ScienceWorld audits also show the last six commands, bounded raw observations,
+scores and terminal flags, omitting the simulator's large `valid` action lists.
+If `memory_exercised` is false after an early task failure, the memory path remains
+untested; neither a prompt change nor a completed grading result establishes it.
