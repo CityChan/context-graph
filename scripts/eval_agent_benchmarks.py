@@ -31,11 +31,13 @@ PROMPT_PROFILES = ("legacy", "focus_v2", "focus_v3", "discoveryworld_v1")
 DEFAULT_MEMORY_PROFILES = {"scienceworld": "turns", "discoveryworld": "repaired"}
 
 
-def config_for(benchmark, method, context_length, max_steps=100, memory_profile=None, prompt_profile="legacy", observation_profile="full"):
+def config_for(benchmark, method, context_length, max_steps=100, memory_profile=None, prompt_profile="legacy", observation_profile="full", *, memory_smoke=False):
     if benchmark not in BENCHMARKS:
         raise ValueError("Unknown benchmark")
     if method not in METHODS:
         raise ValueError('Unknown method')
+    if memory_smoke and (benchmark != 'scienceworld' or method != 'supo'):
+        raise ValueError('Memory smoke is only for ScienceWorld SUPO')
     if observation_profile not in ("full", "compact_v1") or (benchmark != "discoveryworld" and observation_profile != "full"):
         raise ValueError("Compact observations are only supported for DiscoveryWorld")
     if memory_profile is None:
@@ -56,6 +58,9 @@ def config_for(benchmark, method, context_length, max_steps=100, memory_profile=
         plugin.supo_max_summaries = 2
         plugin.supo_summary_max_tokens = 1024
         plugin.baseline_task_protocol = benchmark + '_v1'
+    if memory_smoke:
+        plugin.supo_context_threshold = 4096
+        plugin.evaluation_scope = 'memory_smoke_4k_not_benchmark'
     if benchmark == "discoveryworld":
         plugin.discoveryworld_max_steps = max_steps
         plugin.max_turn = plugin.val_max_turn = max_steps
@@ -184,7 +189,7 @@ async def generate(args, task, directory):
     from agents.utils import TaskContext
     from scripts.eval_bcp_qwen38 import TokenClient, tokenizer_preflight
     process_item = agent_for(args.method)
-    config = config_for(args.benchmark, args.method, args.context_length, args.max_steps, args.memory_profile, args.prompt_profile, getattr(args, "discoveryworld_observation_profile", "full"))
+    config = config_for(args.benchmark, args.method, args.context_length, args.max_steps, args.memory_profile, args.prompt_profile, getattr(args, "discoveryworld_observation_profile", "full"), memory_smoke=getattr(args, 'memory_smoke', False))
     rollout_config = config.actor_rollout_ref.rollout
     tokenizer = AutoTokenizer.from_pretrained(args.model_path, local_files_only=True)
     tokenizer_preflight(tokenizer, rollout_config)
@@ -236,7 +241,7 @@ def preflight(args):
                 "model_path": str(Path(args.model_path).resolve()), "seed": 42,
                 "decoding": {"temperature": 0, "top_p": 1, "thinking": True},
                 "server_execution": {"requested_enforce_eager": os.environ.get("SERVER_ENFORCE_EAGER", "1") == "1"},
-                "config": OmegaConf.to_container(config_for(args.benchmark, args.method, args.context_length, args.max_steps, args.memory_profile, args.prompt_profile, getattr(args, "discoveryworld_observation_profile", "full"))),
+                "config": OmegaConf.to_container(config_for(args.benchmark, args.method, args.context_length, args.max_steps, args.memory_profile, args.prompt_profile, getattr(args, "discoveryworld_observation_profile", "full"), memory_smoke=getattr(args, 'memory_smoke', False))),
                 "task_timeout": args.task_timeout,
                 "versions": {p: importlib.metadata.version(p) for p in ("torch", "transformers", "httpx", "pandas", "numpy", "omegaconf")},
                 "commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()}
@@ -298,7 +303,8 @@ def run(args):
                              "--context-length", str(args.context_length), "--max-steps", str(args.max_steps),
                              "--memory-profile", args.memory_profile,
                              "--prompt-profile", args.prompt_profile,
-                             "--discoveryworld-observation-profile", getattr(args, "discoveryworld_observation_profile", "full")],
+                             "--discoveryworld-observation-profile", getattr(args, "discoveryworld_observation_profile", "full")]
+                            + (['--memory-smoke'] if getattr(args, 'memory_smoke', False) else []),
                             attempt / "generation.log", args.task_timeout)
                 result = json.loads((attempt / "result.json").read_text(encoding="utf8"))
             except Exception as exc:
@@ -330,12 +336,16 @@ def main():
     parser.add_argument("--prompt-profile", choices=PROMPT_PROFILES, default="legacy")
     parser.add_argument("--discoveryworld-observation-profile", choices=("full", "compact_v1"), default="full")
     parser.add_argument("--samples", type=int, default=-1)
+    parser.add_argument('--memory-smoke', action='store_true', help='ScienceWorld SUPO only: 4K summary threshold, two-task mechanics diagnostic, not benchmark performance')
     parser.add_argument("--shard-index", type=int, default=0)
     parser.add_argument("--shard-count", type=int, default=1)
     parser.add_argument("--task-timeout", type=int, default=3900)
     parser.add_argument("--retry-errors", action="store_true")
     parser.add_argument("--task", type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.memory_smoke and (args.benchmark != 'scienceworld' or args.method != 'supo'
+                             or (not args.task and args.samples != 2)):
+        parser.error('--memory-smoke requires ScienceWorld SUPO and --samples 2')
     if args.benchmark != "discoveryworld" and args.discoveryworld_observation_profile != "full":
         parser.error("--discoveryworld-observation-profile is only supported for DiscoveryWorld")
     if args.memory_profile is None:

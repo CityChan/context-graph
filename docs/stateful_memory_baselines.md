@@ -136,3 +136,20 @@ scores and terminal flags, omitting the simulator's large `valid` action lists.
 If `memory_exercised` is false after an early task failure, the memory path remains
 untested; neither a prompt change nor a completed grading result establishes it.
 All native audits include the last three format errors and bounded response tails.
+
+### ScienceWorld SUPO memory-path diagnostic
+
+ScienceWorld observations can stay below the normal 32K summary threshold for the
+entire episode. A graded run with no summary does not test summary recovery. Use
+the dedicated two-task diagnostic to lower only the summary threshold to 4096:
+
+```bash
+bash scripts/smoke_scienceworld_supo_memory_4node_idev.sh
+```
+
+This retains 64K context, the cumulative token budget, focus_v3 and environment
+scoring. Config records `evaluation_scope=memory_smoke_4k_not_benchmark`, and
+trajectory provenance records the actual threshold. The summary itself can still
+fail or a task can end before the threshold; the strict audit remains unchanged.
+These scores are not comparable to the regular 32K-threshold benchmark. The
+ordinary launcher still uses 32K; do not lower it to improve full-run smoke status.

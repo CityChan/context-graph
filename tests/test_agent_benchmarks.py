@@ -175,12 +175,14 @@ def test_real_agent_loop_stops_on_environment_finish(monkeypatch, method, profil
         }
 
 
-def test_resume_skips_completed_and_retries_only_errors(monkeypatch, tmp_path):
+@pytest.mark.parametrize('memory_smoke', [False, True])
+def test_resume_skips_completed_and_retries_only_errors(monkeypatch, tmp_path, memory_smoke):
     import scripts.eval_agent_benchmarks as runner
     tasks = [{"task_id": "a"}, {"task_id": "b"}]
     monkeypatch.setattr(runner, "preflight", lambda _: (tasks, {"revision": "one"}))
     calls = []
     def command(argv, log, timeout):
+        assert ('--memory-smoke' in argv) == memory_smoke
         assert argv[argv.index("--memory-profile") + 1] == "repaired"
         assert argv[argv.index("--prompt-profile") + 1] == "focus_v2"
         attempt = Path(argv[argv.index("--task") + 1])
@@ -190,7 +192,7 @@ def test_resume_skips_completed_and_retries_only_errors(monkeypatch, tmp_path):
             raise RuntimeError("JVM failed")
         save(attempt / "result.json", {"status": "graded", "score": 100, "success": True})
     monkeypatch.setattr(runner, "run_command", command)
-    args = SimpleNamespace(output=tmp_path, benchmark="scienceworld", method="foldagent", endpoint="unused",
+    args = SimpleNamespace(output=tmp_path, benchmark="scienceworld", method="supo" if memory_smoke else "foldagent", endpoint="unused", memory_smoke=memory_smoke,
                            model_path="unused", context_length=65536, max_steps=100, task_timeout=30,
                            shard_index=0, shard_count=1, retry_errors=False, memory_profile="repaired", prompt_profile="focus_v2")
     assert runner.run(args) == 2

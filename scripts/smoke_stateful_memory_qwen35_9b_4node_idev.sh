@@ -11,6 +11,12 @@ export PROJECT_ROOT=$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-t
 cd "$PROJECT_ROOT"
 export SAMPLES=${SAMPLES:-2} SERVER_ENFORCE_EAGER=1
 [[ "$SAMPLES" == -1 || "$SAMPLES" =~ ^[1-9][0-9]*$ ]] || { echo 'Invalid SAMPLES'; exit 2; }
+unset BENCH_MEMORY_SMOKE
+if [[ ${STATEFUL_MEMORY_SMOKE:-0} == 1 ]]; then
+    [[ "$benchmark" == scienceworld && "$method" == supo && "$SAMPLES" == 2 ]] || { echo 'Memory diagnostic requires ScienceWorld SUPO with two tasks'; exit 2; }
+    export BENCH_MEMORY_SMOKE=1
+    echo 'MEMORY_DIAGNOSTIC scope=mechanics_only context=65536 summary_threshold=4096 not_benchmark_performance=true'
+fi
 mkdir -p "$PROJECT_ROOT/output"
 run=$(mktemp -d "$PROJECT_ROOT/output/$benchmark-$method-${SLURM_JOB_ID}-XXXXXX")
 echo "STATEFUL_MEMORY_START benchmark=$benchmark method=$method samples=$SAMPLES artifacts=$run"
