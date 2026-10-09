@@ -85,7 +85,7 @@ def test_upstream_singleton_and_consecutive_ranges_preserve_whole_blocks():
 
 def test_missing_fold_recovers_from_live_contract_without_repeating_tool(monkeypatch):
     env, context, item, client = setup(monkeypatch, [SEARCH, OPEN,
-        '<compress>{"compress_range":[1],"compress_text":"gold evidence [1]"}</compress>' + OPEN,
+        '<compress>{"compress_range":[1,1],"compress_text":"gold evidence [1]"}</compress>' + OPEN,
         compress(1, 2) + SEARCH, FINISH], observation='ACTUAL_EVIDENCE')
     out = asyncio.run(af.process_item(item, context))
     assert env.actions == [SEARCH, OPEN, SEARCH, FINISH]

@@ -23,7 +23,9 @@ from .utils import AgentLoopMetrics, AgentLoopOutput, _apply_chat_template, sele
 
 
 PROVENANCE = {
-    "method": "agentfold", "variant": "zero_shot_adaptation_v4", **PROTOCOL,
+    "method": "agentfold", "variant": "zero_shot_adaptation_v5", **PROTOCOL,
+    "search_format_retry_profile": "live_suffix_regex_v1",
+    "search_format_retry_enable_thinking": False,
     "final_output_profile": "bounded_finish_xml_v1",
     "final_enable_thinking": False,
     "final_text_max_chars": 384,
@@ -114,6 +116,42 @@ def step_contract(steps, finish_only=False):
             f"Example shape for the latest block: <compress>{example}</compress>. "
             "Write your own summary, not the placeholder. A finish call needs no compression. "
             "Keep reasoning brief; close every JSON string and tag. Do not repeat or invent tool observations.")
+
+
+def search_retry_constraint(steps):
+    """Constrain syntax on rejected search turns; the model still chooses the fold.
+
+    Use only current block starts and the current end. Never repair a rejected
+    range or reuse its summary for a different range. The strict parser remains
+    authoritative even if the serving backend ignores the constraint.
+    """
+    ws = r'[ \t\r\n]*'
+    value = r'[^<>]+'
+
+    def param(name, body=value):
+        return '<parameter=' + name + '>' + body + '</parameter>' + ws
+
+    def call(name, body):
+        return '<function=' + name + '>' + ws + body + '</function>'
+
+    search = call('search', param('query') + '(?:' + param('topk', r'[0-9]+') + ')?')
+    page = call('open_page', '(?:' + param('docid') + '(?:' + param('url') + ')?|'
+                + param('url') + '(?:' + param('docid') + ')?)')
+    finish = call('finish', param('answer') + '(?:' + param('explanation') + ')?'
+                  + '(?:' + param('confidence') + ')?')
+    fold = ''
+    if steps:
+        starts = '|'.join(str(step.start) for step in steps)
+        # JSON string characters or escapes; literal quotes/control characters
+        # cannot terminate a summary early. No model-written tool tags inside it.
+        string = r'"(?:[^"\\\x00-\x1f<>]|\\(?:["\\/bfnrt]|u[0-9a-fA-F]{4}))+"'
+        fold = ('<compress>' + ws + r'\{' + ws + '"compress_range"' + ws + ':' + ws
+                + r'\[' + ws + '(?:' + starts + ')' + ws + ',' + ws
+                + str(steps[-1].end) + ws + r'\]' + ws + ',' + ws
+                + '"compress_text"' + ws + ':' + ws + string + ws + r'\}'
+                + ws + '</compress>' + ws)
+    return {'regex': ws + '(?:' + fold + '(?:' + search + '|' + page + ')|'
+            + finish + ')' + ws}
 
 
 def parse_response(text: str, steps: list[Step], *, finish_only=False, kind='search'):
@@ -208,6 +246,7 @@ async def process_item(item, context):
             remaining = budget - used
             finish_only = bool(reserve and (remaining <= reserve + margin + max(cap, 10)
                                            or iteration == max_turn - 1))
+            constrained_retry = kind == 'search' and bool(feedback) and not finish_only
             messages = copy.deepcopy(fixed)
             if finish_only:
                 messages[0] = {"role": "system", "content": final_system}
@@ -217,6 +256,11 @@ async def process_item(item, context):
                 messages.extend([{"role": "assistant", "content": rejected},
                                  {"role": "user", "content": feedback}])
             contract = adapt_fold_text(step_contract(steps, finish_only), kind)
+            if constrained_retry:
+                contract += ("\nFormat retry: output only the required blocks above. "
+                             "No reasoning or prose. When compression is required, use [START,END] endpoints "
+                             "and put compress_range before compress_text. Put query before optional "
+                             "integer topk; answer before optional explanation then confidence.")
             contract_cost = len(tokenizer.encode(contract, add_special_tokens=False))
             if finish_only:
                 contract_cost += len(tokenizer.encode(final_system, add_special_tokens=False))
@@ -226,14 +270,14 @@ async def process_item(item, context):
             messages[-1]["content"] += "\n\n" + contract
             candidate_ids = list(_apply_chat_template(tokenizer, messages, config,
                                  tokenize=True, add_generation_prompt=True,
-                                 **({'enable_thinking': False} if finish_only else {})))
+                                 **({'enable_thinking': False} if finish_only or constrained_retry else {})))
             limit = min(window - len(candidate_ids), remaining - contract_cost - (reserve + margin if reserve and not finish_only else 0))
             if cap > 0:
                 limit = min(limit, cap)
             if limit < 10:
                 reason = "token_limit"
                 break
-            constraint = None
+            constraint = search_retry_constraint(steps) if constrained_retry else None
             if finish_only:
                 if limit <= 96:
                     reason = "token_limit"
@@ -270,13 +314,14 @@ async def process_item(item, context):
                 transcript.append({"role": "assistant", "content": text})
                 record = {"input_ids": input_ids, "output_ids": output_ids, "messages": messages,
                           "max_tokens": limit, "response": text,
-                          "phase": "final" if finish_only else "action",
+                          "phase": "final" if finish_only else "format_retry" if constrained_retry else "action",
                           "structured_outputs": constraint,
-                          "control_enable_thinking": False if finish_only else None}
+                          "control_enable_thinking": False if finish_only or constrained_retry else None}
                 audit.append(record)
                 try:
                     if constraint and not re.fullmatch(constraint['regex'], text):
-                        raise ValueError('Final answer violated bounded XML output contract')
+                        raise ValueError('Final answer violated bounded XML output contract' if finish_only
+                                         else 'Format retry violated live suffix output contract')
                     action, replacement = parse_response(text, steps, finish_only=finish_only, kind=kind)
                 except (ValueError, TypeError) as exc:
                     stats["invalid_tool"] += 1

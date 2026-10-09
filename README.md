@@ -116,7 +116,7 @@ CPU tests validate execution contracts, not zero-shot model performance.
 
 The v2 protocol fixed a conflicting parallel-search example inherited by the
 original adapter. SUPO, MemoBrain and A-MEM use `search_single_v1`;
-AgentFold v4 retains `agentfold_state_contract_v1`. All require one tool call per reply, with a bounded excerpt of
+AgentFold v5 retains `agentfold_state_contract_v1`. All require one tool call per reply, with a bounded excerpt of
 the rejected reply included in format-correction requests. Three consecutive
 invalid tool replies stop the task as `invalid_tool_limit`; a valid call resets
 the counter. The summary reports `format_retry_failures` and `zero_tool_tasks`,
@@ -125,6 +125,16 @@ artifacts. Existing ReAct, FoldAgent and ContextGraph prompts are unchanged.
 The eight-task AgentFold run at `f63bc6f` rejected every tool call and therefore
 does not measure AgentFold memory performance. Rerun it with the corrected
 adapter; do not combine its results with corrected runs.
+
+AgentFold v5 adds `live_suffix_regex_v1` only on format retries for LocalSearch/GAIA.
+The retry disables thinking and constrains the current whole-block start IDs,
+latest end ID, closed JSON summary and single tool call. The model chooses the
+suffix and writes the summary; rejected folds are never repaired or applied.
+Ordinary turns retain their decoding settings. The three-error limit, cumulative
+budget, strict parser, and SWE/DiscoveryWorld retry paths stay unchanged. Audit
+records label these requests `format_retry` and retain their exact constraint.
+This changes the decoding protocol: keep new full runs separate from v4 results;
+CPU regression tests do not establish live vLLM compatibility or success rate.
 
 AgentFold v3 removes the ordinary search demonstration (which never folds) and
 provides the live suffix boundaries and a JSON shape at each decision and retry.
