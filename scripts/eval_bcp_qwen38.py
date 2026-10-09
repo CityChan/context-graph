@@ -22,7 +22,16 @@ from scripts.evaluation_records import read_evaluation
 from scripts.generation_audit import degeneration_stats, has_degenerate_run, require_generation_quality
 
 
-def select_indices(size, samples, seed):
+def select_indices(size, samples, seed, indices_file=None):
+    if indices_file:
+        if samples != -1:
+            raise ValueError("Explicit indices require samples=-1")
+        indices = json.loads(Path(indices_file).read_text(encoding="utf-8"))
+        if (not isinstance(indices, list) or not indices
+                or any(type(i) is not int or not 0 <= i < size for i in indices)
+                or len(set(indices)) != len(indices)):
+            raise ValueError("Indices must be a nonempty list of unique in-range integers")
+        return sorted(indices)
     if samples == -1:
         return list(range(size))
     if not 1 <= samples <= size:
@@ -186,7 +195,7 @@ async def evaluate(args):
         raise RuntimeError("Real judge credentials are required; local model uses a separate endpoint")
     frame = pd.read_parquet(args.data)
     validate_dataset(frame.to_dict("records"), args.benchmark)
-    indices = select_indices(len(frame), args.samples, args.seed)
+    indices = select_indices(len(frame), args.samples, args.seed, getattr(args, "indices_file", None))
     config = config_for(args)
     tokenizer = transformers.AutoTokenizer.from_pretrained(args.model_path, local_files_only=True)
     tokenizer_preflight(tokenizer, config.actor_rollout_ref.rollout)
@@ -200,6 +209,8 @@ async def evaluate(args):
         "server_execution": {"requested_enforce_eager": os.environ.get("SERVER_ENFORCE_EAGER", "1") == "1"},
         "transformers": transformers.__version__, "config": OmegaConf.to_container(config),
         "commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()}
+    if getattr(args, "indices_file", None):
+        manifest["selection"] = {"kind": "explicit_source_indices", "path": str(Path(args.indices_file).resolve())}
     if args.method == "agentfold":
         from agents.agentfold_agent import PROVENANCE
         manifest["baseline_protocol"] = PROVENANCE
@@ -282,6 +293,7 @@ def main():
     parser.add_argument("--endpoint")
     parser.add_argument("--data", default="data/bc_test.parquet")
     parser.add_argument("--samples", type=int, default=8)
+    parser.add_argument("--indices-file", help="JSON list of original dataset row indices; requires --samples=-1")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--rank", type=int, choices=range(3), default=0)
     parser.add_argument("--workers", type=int, default=2)

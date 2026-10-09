@@ -140,6 +140,7 @@ case "${1:-}" in
       BASELINE_ARGS=(--memory-helper-max-tokens "${MEMORY_HELPER_MAX_TOKENS:-1024}" --memobrain-recall-interval "${MEMOBRAIN_RECALL_INTERVAL:-5}" --memobrain-context-threshold "${MEMOBRAIN_CONTEXT_THRESHOLD:-16384}" --amem-topk "${AMEM_TOPK:-5}" --amem-memory-tokens "${AMEM_MEMORY_TOKENS:-4096}")
       if [[ "$METHOD" == amem ]]; then python scripts/prepare_amem_embedding.py --offline; fi
     fi
+    if [[ -n ${EVAL_INDICES_FILE:-} ]]; then BASELINE_ARGS+=(--indices-file "$EVAL_INDICES_FILE"); fi
     exec python -u scripts/eval_bcp_qwen38.py --benchmark "$BENCHMARK" --method "$METHOD" --memory-mode "$MEMORY_MODE" --model "$MODEL_ID" --model-path "$MODEL_PATH" --endpoint "$2" --rank "$3" --data "$DATA_PATH" --samples "$SAMPLES" --seed "$SEED" --workers "$WORKERS" --output "$RUN_ROOT" "${BASELINE_ARGS[@]}"
     ;;
 esac
@@ -188,7 +189,7 @@ MODEL_PATH=$(python -c 'import os,json; from pathlib import Path; from huggingfa
 export MODEL_PATH
 echo "Resolved HF checkpoint: $MODEL_PATH"
 python -c 'import os,pandas as pd; from scripts.eval_bcp_qwen38 import validate_dataset; f=pd.read_parquet(os.environ["DATA_PATH"]); validate_dataset(f.to_dict("records"),os.environ["BENCHMARK"]); print("Dataset protocol preflight passed:",len(f),"rows")'
-python -c 'import os,pandas as pd; from scripts.eval_bcp_qwen38 import select_indices; from scripts.eval_gaia import _process_item_for_workflow; from transformers import AutoTokenizer; f=pd.read_parquet(os.environ["DATA_PATH"]); ids=select_indices(len(f),int(os.environ["SAMPLES"]),int(os.environ["SEED"])); assert len(ids)>=3; t=AutoTokenizer.from_pretrained(os.environ["MODEL_PATH"],local_files_only=True); [_process_item_for_workflow(w) for w in ("search_branch","search_graph")]; print("Preflight rows:",len(f),"selected:",ids,"tokenizer:",type(t).__name__)'
+python -c 'import os,pandas as pd; from scripts.eval_bcp_qwen38 import select_indices; from scripts.eval_gaia import _process_item_for_workflow; from transformers import AutoTokenizer; f=pd.read_parquet(os.environ["DATA_PATH"]); ids=select_indices(len(f),int(os.environ["SAMPLES"]),int(os.environ["SEED"]),os.environ.get("EVAL_INDICES_FILE")); assert len(ids)>=1; t=AutoTokenizer.from_pretrained(os.environ["MODEL_PATH"],local_files_only=True); [_process_item_for_workflow(w) for w in ("search_branch","search_graph")]; print("Preflight rows:",len(f),"selected:",ids,"tokenizer:",type(t).__name__)'
 python -c 'import os; from types import SimpleNamespace; from transformers import AutoTokenizer; from scripts.eval_bcp_qwen38 import config_for,tokenizer_preflight; os.environ.pop("QWEN_ENABLE_THINKING",None); t=AutoTokenizer.from_pretrained(os.environ["MODEL_PATH"],local_files_only=True); c=config_for(SimpleNamespace(method=os.environ["METHOD"],memory_mode=os.environ["MEMORY_MODE"])); tokenizer_preflight(t,c.actor_rollout_ref.rollout); print("Observation tokenizer preflight passed")'
 python -c 'import os; from openai import OpenAI; c=OpenAI(timeout=60,max_retries=1); r=c.chat.completions.create(model=os.environ["JUDGE_MODEL"],messages=[{"role":"user","content":"Reply OK."}]); assert r.choices; c.close(); print("Judge API preflight passed")'
 sha256sum "$DATA_PATH" > "$RUN_ROOT/data.sha256"

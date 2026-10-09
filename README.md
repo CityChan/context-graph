@@ -136,6 +136,15 @@ records label these requests `format_retry` and retain their exact constraint.
 This changes the decoding protocol: keep new full runs separate from v4 results;
 CPU regression tests do not establish live vLLM compatibility or success rate.
 
+To diagnose only a previous BC-P AgentFold run's `invalid_tool_limit` tasks inside
+a four-node idev allocation, run
+`bash scripts/rerun_bcp_agentfold_failed_4node_idev.sh ORIGINAL_AGENTFOLD_RUN`.
+It verifies the original manifests and dataset hash, keeps original row indices,
+per-task seeds, checkpoint and judge model, and writes a fresh directory under
+`output/bcp-agentfold-retry-*/`. `retry-plan.json` records the selected failures.
+This is a failure-selected diagnostic subset, not a replacement full-benchmark
+score. The original run is read-only; successful tasks are not rerun.
+
 AgentFold v3 removes the ordinary search demonstration (which never folds) and
 provides the live suffix boundaries and a JSON shape at each decision and retry.
 It accepts `[n]` as a singleton, `[start,end]` as inclusive endpoints, and a
