@@ -1,9 +1,15 @@
 # AgentFold and SUPO on SWE-bench Lite, DiscoveryWorld and ScienceWorld
 
 Both are evaluation-only adaptations using Qwen3.5-9B, not the papers' trained
-policies. SUPO's BC-P/GAIA behavior is unchanged; AgentFold v5's constrained
-search retries do not apply to these native environments. No live GPU run for these
-new environments has been completed by the implementation tests.
+policies. SUPO's BC-P/GAIA behavior is unchanged; AgentFold's search v5 behavior
+is also unchanged. Native AgentFold v6 adds constrained format retries for SWE,
+DiscoveryWorld and ScienceWorld. It constrains suffix boundaries and native XML
+tool structure, disables thinking only during recovery, and validates JSON and
+tool arguments before dispatch. Python comparisons/indentation remain literal.
+Rejected actions never execute, and the model still chooses and writes the fold.
+Retries consume the existing turn/token budget and retain the three-error limit.
+The supplied Vista logs verified SUPO mechanics on SWE and DiscoveryWorld; native
+AgentFold v6 recovery and the focus_v3 prompt still require live GPU validation.
 
 ## Native environment contracts
 
@@ -70,6 +76,11 @@ preparation/grading sub-environments must already exist; `SWE_AGENT_ENV` can sel
 the previously validated installation. DiscoveryWorld uses the existing private
 Python 3.10 overlay selected from `cxtgraph`.
 
+Launchers signal only their own jobs, then wait up to 60 seconds for those jobs
+and their server health endpoints to stop. `SERVER_CLEANUP_COMPLETE` precedes
+return to the smoke wrapper. A cleanup timeout returns failure; inspect it before
+starting another benchmark. A pre-existing service is still rejected, never killed.
+
 ```bash
 bash scripts/smoke_stateful_memory_qwen35_9b_4node_idev.sh discoveryworld agentfold
 bash scripts/smoke_stateful_memory_qwen35_9b_4node_idev.sh discoveryworld supo
@@ -124,3 +135,4 @@ ScienceWorld audits also show the last six commands, bounded raw observations,
 scores and terminal flags, omitting the simulator's large `valid` action lists.
 If `memory_exercised` is false after an early task failure, the memory path remains
 untested; neither a prompt change nor a completed grading result establishes it.
+All native audits include the last three format errors and bounded response tails.

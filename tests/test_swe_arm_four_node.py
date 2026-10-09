@@ -35,7 +35,7 @@ srun() {
         shift
     done
     touch "$PROJECT_ROOT/started-$node"
-    trap 'exit 0' TERM
+    trap 'command sleep 0.3; rm -f "$PROJECT_ROOT/started-$node"; exit 0' TERM
     while :; do command sleep 0.1; done
 }
 ''', newline="\n")
@@ -46,6 +46,8 @@ srun() {
                           env=env, capture_output=True, text=True, timeout=20,
                           creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
     assert proc.returncode == (2 if occupied else 0), proc.stdout + proc.stderr
+    assert 'SERVER_CLEANUP_COMPLETE' in proc.stdout
+    assert not list(tmp_path.glob('started-*'))
     if occupied:
         assert "already responds" in proc.stdout
         assert not list(tmp_path.glob("pair-*.txt"))

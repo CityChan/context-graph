@@ -119,7 +119,11 @@ def step_contract(steps, finish_only=False):
 
 
 def search_retry_constraint(steps):
-    """Constrain syntax on rejected search turns; the model still chooses the fold.
+    return format_retry_constraint(steps, 'search')
+
+
+def format_retry_constraint(steps, kind):
+    """Constrain rejected turns to live suffix boundaries and native tool syntax.
 
     Use only current block starts and the current end. Never repair a rejected
     range or reuse its summary for a different range. The strict parser remains
@@ -139,6 +143,19 @@ def search_retry_constraint(steps):
                 + param('url') + '(?:' + param('docid') + ')?)')
     finish = call('finish', param('answer') + '(?:' + param('explanation') + ')?'
                   + '(?:' + param('confidence') + ')?')
+    actions = search + '|' + page
+    if kind == 'swe':
+        # Python comparisons must remain literal; never HTML-escape executable code.
+        # Exclude closing XML tags from the value. The native parser still checks
+        # for nested/ambiguous tool markup before any execution.
+        actions = call('python_exec', param('code', r'(?:[^<]|<[^/])+'))
+        finish = call('finish', param('message'))
+    elif kind in ('scienceworld', 'discoveryworld'):
+        command = r'[^<>\r\n]+' if kind == 'scienceworld' else r'\{[^<>]+\}'
+        actions = call('action', param('command', command))
+        finish = ''  # Simulator termination only. Never offer an invented finish.
+    elif kind != 'search':
+        raise ValueError(f'Unsupported retry protocol: {kind}')
     fold = ''
     if steps:
         starts = '|'.join(str(step.start) for step in steps)
@@ -150,8 +167,8 @@ def search_retry_constraint(steps):
                 + str(steps[-1].end) + ws + r'\]' + ws + ',' + ws
                 + '"compress_text"' + ws + ':' + ws + string + ws + r'\}'
                 + ws + '</compress>' + ws)
-    return {'regex': ws + '(?:' + fold + '(?:' + search + '|' + page + ')|'
-            + finish + ')' + ws}
+    return {'regex': ws + '(?:' + fold + '(?:' + actions + ')'
+            + ('|' + finish if finish else '') + ')' + ws}
 
 
 def parse_response(text: str, steps: list[Step], *, finish_only=False, kind='search'):
@@ -247,7 +264,7 @@ async def process_item(item, context):
             remaining = budget - used
             finish_only = bool(reserve and (remaining <= reserve + margin + max(cap, 10)
                                            or iteration == max_turn - 1))
-            constrained_retry = kind == 'search' and bool(feedback) and not finish_only
+            constrained_retry = bool(feedback) and not finish_only
             messages = copy.deepcopy(fixed)
             if finish_only:
                 messages[0] = {"role": "system", "content": final_system}
@@ -260,8 +277,12 @@ async def process_item(item, context):
             if constrained_retry:
                 contract += ("\nFormat retry: output only the required blocks above. "
                              "No reasoning or prose. When compression is required, use [START,END] endpoints "
-                             "and put compress_range before compress_text. Put query before optional "
-                             "integer topk; answer before optional explanation then confidence.")
+                             "and put compress_range before compress_text.")
+                if kind == 'search':
+                    contract += (" Put query before optional integer topk; answer before optional "
+                                 "explanation then confidence.")
+                else:
+                    contract += " Then emit one native tool call. Follow the tool schema in the system prompt."
             contract_cost = len(tokenizer.encode(contract, add_special_tokens=False))
             if finish_only:
                 contract_cost += len(tokenizer.encode(final_system, add_special_tokens=False))
@@ -278,7 +299,7 @@ async def process_item(item, context):
             if limit < 10:
                 reason = "token_limit"
                 break
-            constraint = search_retry_constraint(steps) if constrained_retry else None
+            constraint = format_retry_constraint(steps, kind) if constrained_retry else None
             if finish_only:
                 if limit <= 96:
                     reason = "token_limit"
@@ -388,5 +409,8 @@ async def process_item(item, context):
             extra_fields={"messages": transcript, "model_contexts": audit, "env_stats": stats,
                           "is_finish": is_finish, "termination_reason": reason,
                           "judge_audit": copy.deepcopy(getattr(env, "judge_audit", [])),
-                          "agentfold": PROVENANCE if kind == 'search' else {**PROVENANCE, **provenance(kind)},
+                          "agentfold": PROVENANCE if kind == 'search' else {
+                              **PROVENANCE, **provenance(kind), "variant": "zero_shot_adaptation_v6",
+                              "native_format_retry_profile": "live_suffix_native_xml_v1",
+                              "native_format_retry_enable_thinking": False},
                           "working_history": [s.__dict__ for s in steps]})

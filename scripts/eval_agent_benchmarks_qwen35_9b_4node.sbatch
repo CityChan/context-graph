@@ -125,17 +125,39 @@ mkdir -p "$(dirname "$BENCH_DATA")"
 ) 7>"$BENCH_DATA.prepare.lock"
 
 pids=()
+server_pids=()
 cleanup() {
-    local running pid
+    local status=$? running pid pair active deadline
+    trap - EXIT
     running=" $(jobs -pr | tr '\n' ' ') "
     for pid in "${pids[@]}"; do
         if [[ "$running" == *" $pid "* ]]; then kill -TERM "$pid" 2>/dev/null || true; fi
     done
+    deadline=$((SECONDS + 60))
+    while :; do
+        active=0
+        running=" $(jobs -pr | tr '\n' ' ') "
+        for pid in "${pids[@]}"; do
+            [[ "$running" != *" $pid "* ]] || active=1
+        done
+        # Probe only endpoints we launched, not those rejected by preflight.
+        for ((pair=0; pair<${#server_pids[@]}; pair++)); do
+            if curl --connect-timeout 1 --max-time 2 -fsS "http://${nodes[$((pair * 2))]}:18000/health" >/dev/null 2>&1; then active=1; fi
+        done
+        (( active )) || break
+        if (( SECONDS >= deadline )); then
+            echo 'SERVER_CLEANUP_TIMEOUT: owned jobs/endpoints still active; do not start another benchmark yet.'
+            exit 2
+        fi
+        sleep 1
+    done
+    for pid in "${pids[@]}"; do wait "$pid" 2>/dev/null || true; done
+    echo 'SERVER_CLEANUP_COMPLETE'
+    exit "$status"
 }
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
-server_pids=()
 for pair in 0 1; do
     server=${nodes[$((pair * 2))]}
     if curl --connect-timeout 3 --max-time 5 -fsS "http://$server:18000/health" >/dev/null 2>&1; then

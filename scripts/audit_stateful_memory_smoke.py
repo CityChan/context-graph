@@ -39,10 +39,17 @@ def audit(root, benchmark, method, expected):
             if isinstance(trajectory, list):
                 trajectory = trajectory[0] if len(trajectory) == 1 else {}
             stats = trajectory.get('env_stats', {})
+            errors = [r for r in trajectory.get('model_contexts', []) if r.get('format_error')]
             tasks.append({'task': path.parent.name, 'status': result['status'],
                           'stop': trajectory.get('termination_reason'), 'stats': stats,
                           'provenance': trajectory.get(method),
-                          'trajectory_present': bool(trajectory)})
+                          'trajectory_present': bool(trajectory),
+                          'format_error_events': len(errors),
+                          'last_format_errors': [
+                              {'phase': r.get('phase'), 'error': r['format_error'],
+                               'at_output_limit': r.get('format_error_at_output_limit'),
+                               'response_tail': r.get('response', '')[-1200:]}
+                              for r in errors[-3:]]})
             if benchmark == 'scienceworld':
                 tasks[-1]['last_environment_steps'] = scienceworld_tail(attempt)
     selected = sum(s.get('selected', 0) for s in summaries)
