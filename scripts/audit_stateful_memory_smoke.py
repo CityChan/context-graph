@@ -44,7 +44,7 @@ def audit(root, benchmark, method, expected):
 if __name__ == '__main__':
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('root', type=Path)
-    p.add_argument('benchmark', choices=['swe-lite', 'discoveryworld'])
+    p.add_argument('benchmark', choices=['swe-lite', 'discoveryworld', 'scienceworld'])
     p.add_argument('method', choices=['agentfold', 'supo'])
     p.add_argument('--expected', type=int, default=2)
     args = p.parse_args()

@@ -34,8 +34,8 @@ DEFAULT_MEMORY_PROFILES = {"scienceworld": "turns", "discoveryworld": "repaired"
 def config_for(benchmark, method, context_length, max_steps=100, memory_profile=None, prompt_profile="legacy", observation_profile="full"):
     if benchmark not in BENCHMARKS:
         raise ValueError("Unknown benchmark")
-    if method not in METHODS or (method in ('agentfold', 'supo') and benchmark != 'discoveryworld'):
-        raise ValueError('AgentFold/SUPO environment adaptation supports DiscoveryWorld only')
+    if method not in METHODS:
+        raise ValueError('Unknown method')
     if observation_profile not in ("full", "compact_v1") or (benchmark != "discoveryworld" and observation_profile != "full"):
         raise ValueError("Compact observations are only supported for DiscoveryWorld")
     if memory_profile is None:
@@ -55,7 +55,7 @@ def config_for(benchmark, method, context_length, max_steps=100, memory_profile=
         plugin.supo_context_threshold = context_length // 2
         plugin.supo_max_summaries = 2
         plugin.supo_summary_max_tokens = 1024
-        plugin.baseline_task_protocol = 'discoveryworld_v1'
+        plugin.baseline_task_protocol = benchmark + '_v1'
     if benchmark == "discoveryworld":
         plugin.discoveryworld_max_steps = max_steps
         plugin.max_turn = plugin.val_max_turn = max_steps

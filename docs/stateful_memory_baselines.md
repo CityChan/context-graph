@@ -1,14 +1,15 @@
-# AgentFold and SUPO on SWE-bench Lite and DiscoveryWorld
+# AgentFold and SUPO on SWE-bench Lite, DiscoveryWorld and ScienceWorld
 
 Both are evaluation-only adaptations using Qwen3.5-9B, not the papers' trained
-policies. BC-P/GAIA retain the validated v4 behavior. No live GPU run for these
+policies. SUPO's BC-P/GAIA behavior is unchanged; AgentFold v5's constrained
+search retries do not apply to these native environments. No live GPU run for these
 new environments has been completed by the implementation tests.
 
 ## Native environment contracts
 
 AgentFold keeps the same model-selected contiguous suffix folding and strict
 whole-block validation. Only the tool contract changes: `python_exec(code)` and
-`finish(message)` for SWE, or `action(command)` for DiscoveryWorld. No local
+`finish(message)` for SWE, or `action(command)` for DiscoveryWorld and ScienceWorld. No local
 search, branch or graph tools are added to these environments. Model-generated
 folds never reset or fork the environment.
 
@@ -24,6 +25,16 @@ step limit ends the episode. Procedural scores and task success are retained;
 knowledge evaluation is still not implemented. Private scorecards stay in grading
 artifacts, not observations or memory prompts.
 
+ScienceWorld uses its existing JVM adapter with `action(command)` containing a
+single-line text command, not DiscoveryWorld JSON. No finish tool is exposed;
+success, terminal task failure or the step limit terminates the episode. Raw negative
+scores remain in task artifacts and are clipped to zero only by the existing
+score aggregator. Simulator exceptions propagate as infrastructure errors. The
+launcher explicitly uses `focus_v2`: focus selects a task target, not an inspection
+action. This prompt differs from historical `legacy` runs and must be reported.
+Summary restarts preserve the latest executed action and observation, just as in
+DiscoveryWorld. The simulator is never reset or replayed by memory maintenance.
+
 ## SUPO stateful overflow adaptation
 
 BC-P continues to exclude a threshold-crossing round from working memory, as
@@ -35,12 +46,13 @@ are charged once and any budget truncation is explicit. If that retained round
 plus summary cannot fit below the threshold, the adapter fails visibly; it never
 silently drops current state. Provenance records this deviation from the paper.
 
-Both environments use 64K context in the supplied launcher. SUPO defaults to
+All three environments use 64K context in the supplied launcher. SUPO defaults to
 a 32K working-context threshold, two summaries and 1024 output tokens per summary.
 The bounded summary format retains the existing v4 character cap. Summary requests
 consume model turns, tokens and time but do not advance the simulator or execute
 repository commands. Memory compression does not refund cumulative token budget.
-DiscoveryWorld allows 200 model turns and at most 200 environment steps. SWE uses
+DiscoveryWorld allows 200 model turns and at most 200 environment steps.
+ScienceWorld allows 100 model turns and at most 100 environment steps. SWE uses
 the existing runner's 100-turn default. These choices are recorded in task config.
 
 ## Four-node Vista smoke
@@ -64,6 +76,12 @@ bash scripts/smoke_stateful_memory_qwen35_9b_4node_idev.sh swe-lite agentfold
 bash scripts/smoke_stateful_memory_qwen35_9b_4node_idev.sh swe-lite supo
 ```
 
+For ScienceWorld (Java must be on PATH, or set `JAVA_HOME`):
+
+```bash
+bash scripts/smoke_stateful_memory_qwen35_9b_4node_idev.sh scienceworld supo
+```
+
 Each command defaults to two tasks split across two server/evaluator pairs. The
 DiscoveryWorld catalogue is all difficulties (120 tasks in full). Vista SWE uses
 the pinned ARM image-available Lite subset, not the official 300-task x86 suite.
@@ -81,6 +99,7 @@ sbatch scripts/eval_stateful_memory_qwen35_9b_4node.sbatch discoveryworld agentf
 sbatch scripts/eval_stateful_memory_qwen35_9b_4node.sbatch discoveryworld supo
 sbatch scripts/eval_stateful_memory_qwen35_9b_4node.sbatch swe-lite agentfold
 sbatch scripts/eval_stateful_memory_qwen35_9b_4node.sbatch swe-lite supo
+sbatch scripts/eval_stateful_memory_qwen35_9b_4node.sbatch scienceworld supo
 ```
 
 `SAMPLES=-1` selects the full catalogue/subset after smoke validation. Six hours

@@ -221,7 +221,7 @@ async def process_item(item, context):
     max_turn = int(getattr(plugin, "val_max_turn", plugin.max_turn))
     cap = int(getattr(plugin, "turn_max_new_tokens", 2048))
     reserve = max(0, int(getattr(plugin, "final_answer_reserve", 0)))
-    if kind == 'discoveryworld':
+    if kind in ('discoveryworld', 'scienceworld'):
         reserve = 0  # The simulator owns termination; there is no finish tool.
     final_system = FINAL_SYSTEM.replace('parameter=answer', 'parameter=message') if kind == 'swe' else FINAL_SYSTEM
     margin = max(0, int(getattr(plugin, "final_answer_safety_margin", 64)))
@@ -230,7 +230,8 @@ async def process_item(item, context):
     env.raise_judge_errors = True
     async with managed_environment(env):
         await env.init_env(item)
-        fixed = task_chat(kind, env.instance_info["problem_statement"], item, 'agentfold', create_chat)
+        fixed = task_chat(kind, env.instance_info["problem_statement"], item, 'agentfold', create_chat,
+                          prompt_profile=getattr(plugin, 'scienceworld_prompt_profile', 'legacy'))
         fixed[0]["content"] += "\n\n" + adapt_fold_text(FOLD_PROMPT, kind)
         transcript = copy.deepcopy(fixed)
         steps, audit = [], []

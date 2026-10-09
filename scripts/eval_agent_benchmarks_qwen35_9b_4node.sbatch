@@ -61,8 +61,8 @@ esac
 mode=${2:-both}
 case "$mode" in
     both) methods=(contextgraph foldagent); labels=(contextgraph foldagent); shard_indices=(0 0); shard_count=1 ;;
-    baselines) [[ "$BENCHMARK" == discoveryworld ]] || exit 2; methods=(agentfold supo); labels=(agentfold supo); shard_indices=(0 0); shard_count=1 ;;
-    agentfold|supo) [[ "$BENCHMARK" == discoveryworld ]] || exit 2; methods=("$mode" "$mode"); labels=("$mode-0" "$mode-1"); shard_indices=(0 1); shard_count=2 ;;
+    baselines) methods=(agentfold supo); labels=(agentfold supo); shard_indices=(0 0); shard_count=1 ;;
+    agentfold|supo) methods=("$mode" "$mode"); labels=("$mode-0" "$mode-1"); shard_indices=(0 1); shard_count=2 ;;
     contextgraph|foldagent) methods=("$mode" "$mode"); labels=("$mode-0" "$mode-1"); shard_indices=(0 1); shard_count=2 ;;
     *) echo 'Expected both, baselines, contextgraph, foldagent, agentfold or supo'; exit 2 ;;
 esac

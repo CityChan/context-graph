@@ -75,7 +75,7 @@ while it is running.
 
 ## AgentFold-style zero-shot baseline
 
-AgentFold and SUPO also support the native SWE-bench Lite and DiscoveryWorld
+AgentFold and SUPO also support the native SWE-bench Lite, DiscoveryWorld and ScienceWorld
 evaluation runners. See [stateful baseline setup and smoke commands](docs/stateful_memory_baselines.md)
 for their tool contracts, SUPO's state-preserving overflow adaptation, and the
 four-node idev/sbatch entry points. These adapters still require live smoke validation.

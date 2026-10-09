@@ -91,6 +91,9 @@ def test_prompts_expose_only_native_tools(kind):
     assert 'python_exec' in str(chat) if kind == 'swe' else 'chosen_dialog_option_int' in str(chat)
 
 
-def test_scienceworld_is_not_silently_enabled():
-    with pytest.raises(ValueError):
-        config_for('scienceworld', 'supo', 65536)
+def test_scienceworld_uses_native_protocol_and_recorded_prompt_profile():
+    plugin = config_for('scienceworld', 'supo', 65536, prompt_profile='focus_v2').actor_rollout_ref.rollout.plugin
+    assert plugin.workflow == 'scienceworld_supo'
+    assert plugin.baseline_task_protocol == 'scienceworld_v1'
+    assert plugin.scienceworld_prompt_profile == 'focus_v2'
+    assert plugin.final_answer_reserve == 0

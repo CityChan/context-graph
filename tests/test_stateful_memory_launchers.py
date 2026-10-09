@@ -20,7 +20,7 @@ def test_discoveryworld_summary_keeps_format_failures_distinct_from_infrastructu
     assert report['mean_score'] == 25
 
 
-@pytest.mark.parametrize('benchmark', ['swe-lite', 'discoveryworld'])
+@pytest.mark.parametrize('benchmark', ['swe-lite', 'discoveryworld', 'scienceworld'])
 @pytest.mark.parametrize('method', ['supo', 'agentfold'])
 def test_smoke_audit_requires_grading_complete_and_memory(tmp_path, benchmark, method):
     for i in range(2):
@@ -43,7 +43,7 @@ def test_smoke_audit_requires_grading_complete_and_memory(tmp_path, benchmark, m
     assert not audit(tmp_path, benchmark, method, 2)['passed']
 
 
-@pytest.mark.parametrize('benchmark', ['swe-lite', 'discoveryworld'])
+@pytest.mark.parametrize('benchmark', ['swe-lite', 'discoveryworld', 'scienceworld'])
 @pytest.mark.parametrize('method', ['supo', 'agentfold'])
 def test_wrapper_dispatches_native_launchers_and_ignores_stale_roots(tmp_path, benchmark, method):
     bash = 'C:/Program Files/Git/bin/bash.exe' if os.name == 'nt' else shutil.which('bash')
@@ -54,8 +54,12 @@ def test_wrapper_dispatches_native_launchers_and_ignores_stale_roots(tmp_path, b
     scripts.mkdir()
     mocks = tmp_path / 'mocks.sh'
     mocks.write_text('git() { echo "$TEST_ROOT"; }\n', newline='\n')
-    for name in ('eval_discoveryworld_qwen35_9b_4node.sbatch', 'eval_swe_lite_arm_4node.sbatch'):
-        (scripts / name).write_text('set -eu\nprintf "%s|%s|%s\\n" "$1" "${BENCH_RUN_DIR:-$SWE_RUN_DIR}" "$SAMPLES" > "$PROJECT_ROOT/dispatched"\n', newline='\n')
+    for name in ('eval_discoveryworld_qwen35_9b_4node.sbatch', 'eval_swe_lite_arm_4node.sbatch',
+                 'eval_agent_benchmarks_qwen35_9b_4node.sbatch'):
+        (scripts / name).write_text('set -eu\nif [[ "$1" == scienceworld ]]; then '
+            '[[ "$BENCH_PROMPT_PROFILE" == focus_v2 && "$BENCH_MAX_STEPS" == 100 && '
+            '"$BENCH_REQUIREMENTS" == requirements_agent_benchmarks.txt ]]; shift; fi\n'
+            'printf "%s|%s|%s\\n" "$1" "${BENCH_RUN_DIR:-$SWE_RUN_DIR}" "$SAMPLES" > "$PROJECT_ROOT/dispatched"\n', newline='\n')
     python = tmp_path / 'env/bin/python'
     python.parent.mkdir(parents=True)
     python.write_text('#!/bin/bash\nprintf "%s\\n" "$*" > "$TEST_ROOT/audited"\n', newline='\n')

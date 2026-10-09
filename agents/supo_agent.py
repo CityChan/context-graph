@@ -113,7 +113,7 @@ async def process_item(item, context):
     max_turn = int(getattr(plugin, "val_max_turn", plugin.max_turn))
     turn_cap = int(getattr(plugin, "turn_max_new_tokens", 2048))
     reserve = max(0, int(getattr(plugin, "final_answer_reserve", 0)))
-    if kind == 'discoveryworld':
+    if kind in ('discoveryworld', 'scienceworld'):
         reserve = 0
     final_system = FINAL_SYSTEM.replace('parameter=answer', 'parameter=message') if kind == 'swe' else FINAL_SYSTEM
     summary_request = SUMMARY_REQUEST if kind == 'search' else (
@@ -136,7 +136,8 @@ async def process_item(item, context):
     async with managed_environment(env):
         await env.init_env(item)
         task = env.instance_info["problem_statement"]
-        fixed = task_chat(kind, task, item, 'supo', create_chat)
+        fixed = task_chat(kind, task, item, 'supo', create_chat,
+                          prompt_profile=getattr(plugin, 'scienceworld_prompt_profile', 'legacy'))
         if len(render(fixed)) >= threshold:
             raise ValueError("SUPO threshold must exceed the full initial prompt; task is never truncated")
         working, transcript = copy.deepcopy(fixed), copy.deepcopy(fixed)
