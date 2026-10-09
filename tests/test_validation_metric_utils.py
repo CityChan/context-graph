@@ -30,6 +30,27 @@ def _load_validation_metric_functions():
 process_validation_metrics = _load_validation_metric_functions()
 
 
+def test_validation_grouping_normalizes_wrappers_without_splitting_prompts():
+    metrics = process_validation_metrics(
+        data_sources=["bcp", ["bcp"], np.array(["bcp"]), np.array("bcp")],
+        sample_uids=["q1", ["q1"], np.array(["q1"]), np.array("q2")],
+        infos_dict={"reward": [1.0, 0.0, 1.0, 0.0]},
+    )
+    assert set(metrics) == {"bcp"}
+    assert metrics["bcp"]["reward"]["mean@3"] == pytest.approx(2 / 3)
+    assert metrics["bcp"]["reward"]["mean@1"] == 0.0
+
+
+def test_validation_grouping_preserves_distinct_composite_ids():
+    metrics = process_validation_metrics(
+        data_sources=[["bcp"]] * 3,
+        sample_uids=[["q", 1], np.array(["q", 1], dtype=object), ["q", 2]],
+        infos_dict={"reward": [1.0, 0.0, 1.0]},
+    )
+    assert metrics["bcp"]["reward"]["mean@2"] == 0.5
+    assert metrics["bcp"]["reward"]["mean@1"] == 1.0
+
+
 def test_process_validation_metrics_skips_missing_auxiliary_values():
     metrics = process_validation_metrics(
         data_sources=["browsecomp", "browsecomp", "browsecomp"],

@@ -423,10 +423,21 @@ def process_validation_metrics(
         >>> result = process_validation_metrics(data_sources, sample_uids, infos_dict)
         >>> # result will contain statistics for each data source and variable
     """
+    def group_key(value):
+        # Collation may wrap scalar identifiers or supply composite IDs.
+        if isinstance(value, np.ndarray):
+            value = value.tolist()
+        if isinstance(value, (list, tuple)):
+            if len(value) == 1:
+                return group_key(value[0])
+            return tuple(group_key(part) for part in value)
+        return value
+
     # Group metrics by data source, prompt and variable
     data_src2uid2var2vals = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
     for sample_idx, data_source in enumerate(data_sources):
-        uid = sample_uids[sample_idx]
+        data_source = group_key(data_source)
+        uid = group_key(sample_uids[sample_idx])
         var2vals = data_src2uid2var2vals[data_source][uid]
         for var_name, var_vals in infos_dict.items():
             var2vals[var_name].append(var_vals[sample_idx])

@@ -59,3 +59,35 @@ def test_scope_judge_does_not_penalize_transport_or_parse_failure(monkeypatch, r
     spec.loader.exec_module(module)
     score, _ = asyncio.run(module.judge_scope("task", "result"))
     assert score == expected
+
+
+@pytest.mark.parametrize("scope_model,judge_model,expected", [
+    ("scope-deployment", "task-deployment", "scope-deployment"),
+    (None, "task-deployment", "task-deployment"),
+    ("", "task-deployment", "task-deployment"),
+    (None, None, "gpt-5-nano"),
+])
+def test_scope_reward_uses_configured_model(monkeypatch, caplog, scope_model, judge_model, expected):
+    import importlib.util
+    from pathlib import Path
+
+    calls = []
+
+    async def fake_call(messages, **kwargs):
+        calls.append(kwargs["model"])
+        return "Error: deployment unavailable"
+
+    monkeypatch.setitem(sys.modules, "agents.utils", SimpleNamespace(call_openai=fake_call))
+    monkeypatch.setenv("OPENAI_API_KEY", "test-only")
+    for key, value in [("SCOPE_JUDGE_MODEL", scope_model), ("JUDGE_MODEL", judge_model)]:
+        if value is None:
+            monkeypatch.delenv(key, raising=False)
+        else:
+            monkeypatch.setenv(key, value)
+    spec = importlib.util.spec_from_file_location("agents._scope_model_test", Path("agents/verifier.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    score, message = asyncio.run(module.judge_scope("task", "result"))
+    assert calls == [expected]
+    assert score == 0 and "ungraded" in message
+    assert "Scope judge ungraded" in caplog.text and expected in caplog.text

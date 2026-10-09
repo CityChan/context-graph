@@ -47,6 +47,12 @@ Controller temperature must equal rollout temperature for continuation PPO, and
 controller top-p must be 1. The launcher now uses the rollout temperature by
 default. The evidence backend is accepted by configuration validation.
 
+Scope process-reward calls select `SCOPE_JUDGE_MODEL`, then `JUDGE_MODEL`, then
+the existing `gpt-5-nano` default. Ungraded responses are logged and remain neutral;
+this selects a model, not a new authentication or Papyrus transport backend.
+The trainer's validation groups normalize array/list identifiers before grouping,
+preserving composite IDs and merging scalar wrappers with their scalar IDs.
+
 NaNs on masked tokens are removed *before* loss arithmetic. NaNs on active tokens
 produce an explicit metric and nonfinite loss, retaining the existing all-rank
 finite-loss guard. We do not silently zero corrupt gradients. Dummy masks and
