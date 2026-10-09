@@ -1,4 +1,4 @@
-# GraphRPO training and evaluation hardening
+# GraphRPO training hardening
 
 These are new implementations based on the other device's change description,
 not a reconstruction of its unavailable patch. Existing inference defaults stay
@@ -79,22 +79,3 @@ a separate reward ablation. This adds no new environment or graph action.
   scoring/backward if reserved-minus-allocated exceeds the threshold. Default 0
   disables it. This does not free live tensors or guarantee OOM avoidance.
 - Peak allocation statistics reset per actor update when these controls are used.
-
-## Evaluation and judges
-
-`scripts/eval_bcp_qwen38.py` accepts `--temperature` (or `EVAL_TEMPERATURE`, default
-0) and `--resume`. Resume uses a per-rank lock, requires an identical manifest,
-skips recorded tasks, repairs only a torn final JSONL write, and archives
-interrupted request/trajectory artifacts before rerunning that task. It does not
-retry recorded errors. Use the existing evaluator CLI with the same arguments;
-the four-node launcher's fresh-directory behavior is unchanged.
-
-Snapshots without `.git` require `SOURCE_COMMIT`; temperature is recorded in the
-manifest config and request audit. Scope judges choose `SCOPE_JUDGE_MODEL`, then
-`JUDGE_MODEL`, then the existing default. Client creation failures follow the
-same strict/non-strict error policy as request failures. Array/list validation
-identifiers can be grouped without unhashable-key crashes.
-
-Papyrus routing/managed identity and AML submission infrastructure are not
-implemented here: the screenshots do not specify their API/authentication and
-cluster contracts. Existing judge endpoints and platform scripts remain in use.

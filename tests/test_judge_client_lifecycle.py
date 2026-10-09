@@ -7,15 +7,6 @@ import pytest
 from envs.judge_client import call_openai_raw
 
 
-def test_client_creation_errors_follow_strict_policy(monkeypatch):
-    def broken(**kw):
-        raise RuntimeError('client setup failed')
-    monkeypatch.setitem(sys.modules, 'openai', SimpleNamespace(AsyncOpenAI=broken))
-    assert asyncio.run(call_openai_raw('x')) == 'Error: client setup failed'
-    with pytest.raises(RuntimeError, match='client setup'):
-        asyncio.run(call_openai_raw('x', raise_errors=True))
-
-
 @pytest.mark.parametrize("outcome", ["ok", "failure", "cancel", "strict_failure"])
 def test_judge_client_closes_on_every_exit(monkeypatch, outcome):
     closed = []

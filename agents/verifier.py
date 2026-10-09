@@ -1,5 +1,4 @@
 import os
-import logging
 from .utils import call_openai
 
 
@@ -42,15 +41,13 @@ The completion may include tasks completed before this agent or plans for the ne
 
 Now give me your judge of <good> or <error>, and a one-sentence, very brief explanation.:
 '''
-    model = os.getenv('SCOPE_JUDGE_MODEL') or os.getenv('JUDGE_MODEL') or 'gpt-5-nano'
-    judge_results = await call_openai(scope_judge_prompt, model=model)
+    judge_results = await call_openai(scope_judge_prompt)
     if '<good>' in judge_results:
         return 1, judge_results
     elif '<fine>' in judge_results:
         return 0, judge_results
     elif '<error>' in judge_results:
         return -1, judge_results
-    logging.getLogger(__name__).warning('Scope judge ungraded (model=%s)', model)
     return 0, f"[scope check ungraded] {judge_results}"
 
 
