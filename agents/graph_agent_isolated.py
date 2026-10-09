@@ -253,6 +253,9 @@ async def process_item(
         if process_reward is not None and isinstance(process_reward, str) and process_reward.lower() == "none":
             process_reward = None
         adv_estimator = str(getattr(context.config.algorithm, "adv_estimator", "")).lower()
+        compress_enabled = bool(process_reward and 'compress' in process_reward) and is_train
+        if compress_enabled and _continuation is not None:
+            raise ValueError('compress process shaping is for ordinary GraphRPO; E/M continuation uses terminal credit only')
         graph_rpo_enabled = adv_estimator in {"graphrpo", "advantageestimator.graphrpo"}
         graph_rpo_backend = graph_rpo_credit_backend(config.plugin) if graph_rpo_enabled else None
         evidence_training = graph_rpo_enabled and is_train and graph_rpo_backend == "evidence"
@@ -2031,6 +2034,11 @@ async def process_item(
                 score = ('', 0)
 
         # ── Process rewards (parallel logic to graph_agent.py) ──
+        if compress_enabled:
+            from .compress_penalties import apply_compress_penalties
+            env.stats.update(apply_compress_penalties(agent,
+                context_limit=config.prompt_length + config.response_length, branch_limit=max_session - 1))
+
         if process_reward and is_train:
             mask_rollout = False
 
@@ -2278,6 +2286,7 @@ async def process_item(
                     'hit_token_limit': rollout_status['hit_token_limit'],
                     'hit_max_turn': rollout_status['hit_max_turn'],
                     'hit_timeout': rollout_status['hit_timeout'],
+                    'policy_time_budget_exhausted': bool(timed_out),
                     'unfolded_main': rollout_status['unfolded_main'],
                     'termination_reason': rollout_status['termination_reason'],
                     'is_finish': is_finish,

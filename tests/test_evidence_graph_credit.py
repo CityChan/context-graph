@@ -124,7 +124,7 @@ def test_training_rollout_routes_branch_credit_and_keeps_oracle_out_of_prompts(m
                 return {"observation": "Done"}
             self.evidence_documents.append({"docid": "SECRET_GOLD_ID", "text": SOURCE})
             return {"observation": SOURCE}
-        async def get_reward(self): return ("wrong", 0.0)
+        async def get_reward(self, *args): return ("wrong", 0.0)
         async def close(self): pass
 
     monkeypatch.setattr(module, "select_env", lambda *args: Env)
@@ -136,6 +136,7 @@ def test_training_rollout_routes_branch_credit_and_keeps_oracle_out_of_prompts(m
     plugin.graph_branch_history = True
     plugin.consolidation_interval = 1
     plugin.graph_controller_temperature = 0.8
+    plugin.controller_allow_pass = True
     plugin.max_turn = 12
     plugin.final_answer_reserve = 0
     config.actor_rollout_ref.rollout.response_length = 100000

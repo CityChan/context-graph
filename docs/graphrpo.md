@@ -1,5 +1,9 @@
 # GraphRPO implementation
 
+Optional dynamic sampling, decision scaling, compression process penalties,
+ROCm allocation controls, and strict evaluation resume are documented in
+[training hardening](training_hardening.md).
+
 The alternating E+M variant is now named **[EM-RPO](em_rpo.md)**. GraphRPO
 configuration keys and metrics remain compatible; older experimental backends
 retain their existing names.

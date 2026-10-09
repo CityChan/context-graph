@@ -208,6 +208,7 @@ def validate_config(
             plugin.get("graph_rpo_credit_backend", "old_policy_counterfactual_qa")
         ).strip().lower()
         assert graph_credit_backend in {
+            "evidence",
             "external_evaluator",
             "old_policy_counterfactual_qa",
             "old_policy_continuation",
@@ -228,6 +229,12 @@ def validate_config(
             choose_checkpoint(plugin, seed=0)
             assert int(plugin.get("graph_rpo_continuation_concurrency", 2)) >= 1
             assert float(plugin.get("graph_controller_temperature", 0)) > 0
+            assert float(plugin.get("graph_controller_temperature", 0)) == float(config.actor_rollout_ref.rollout.temperature), (
+                "Continuation controller and rollout temperature must match for PPO log-prob recomputation"
+            )
+            assert float(plugin.get("graph_controller_top_p", 1.0)) == 1.0, (
+                "Continuation controller top_p must be 1; truncated sampling is not corrected by PPO"
+            )
             if alternating:
                 assert int(plugin.get("graph_rpo_executor_samples", 2)) >= 2
         if graph_credit_backend == "external_evaluator":

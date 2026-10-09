@@ -20,6 +20,7 @@ implement PPO-like algorithms.
 
 __all__ = ["register_adv_est", "get_adv_estimator_fn", "AdvantageEstimator"]
 
+import math
 from collections import defaultdict
 from enum import Enum
 from typing import Any, Callable, Optional
@@ -667,9 +668,9 @@ def compute_graphrpo_advantage(
             raise ValueError("GraphRPO identifiers must match response batch size")
         active = torch.tensor([uid not in (excluded_gen_uids or set()) for uid in episode_ids],
                               dtype=torch.bool, device=response_mask.device)
-        if not torch.equal(graph_decision_mask[active], response_mask[active]):
+        if not torch.equal(graph_decision_mask[active] * response_mask[active], response_mask[active]):
             raise ValueError("Memory-only GraphRPO may optimize only selected M tokens")
-        credit = graph_edit_credit_mask.to(torch.float32)
+        credit = torch.where(response_mask.bool(), graph_edit_credit_mask.to(torch.float32), 0.0)
         if not torch.isfinite(credit[active]).all() or torch.any((credit[active] != 0) & (response_mask[active] == 0)):
             raise ValueError("Memory-only credit must be finite and confined to M tokens")
         advantages = torch.where(active[:, None], credit, 0.0) * response_mask
@@ -756,10 +757,16 @@ def compute_graphrpo_advantage(
     process_labels = (
         torch.zeros_like(token_level_rewards, dtype=torch.float32)
         if process_reward_mask is None
-        else process_reward_mask.to(torch.float32).clamp(min=-1.0, max=0.0)
+        else process_reward_mask.to(torch.float32)
     )
     if graph_credit.shape != token_level_rewards.shape or process_labels.shape != token_level_rewards.shape:
         raise ValueError("GraphRPO token-credit tensors must match token rewards")
+    # Rollout rejection and dummy padding can remove formerly creditable tokens.
+    graph_credit = torch.where(response_mask.bool(), graph_credit, 0.0)
+    process_labels = torch.where(response_mask.bool(), process_labels, 0.0)
+    if not torch.isfinite(graph_credit).all() or not torch.isfinite(process_labels).all():
+        raise ValueError('Nonfinite GraphRPO credit on active tokens')
+    process_labels = process_labels.clamp(min=-1.0, max=0.0)
     if config is not None and config.get("graphrpo_normalize_decision_tokens", False):
         if graph_decision_mask is None or graph_decision_mask.shape != response_mask.shape:
             raise ValueError("Decision normalization requires a graph_decision_mask matching responses")
@@ -777,7 +784,13 @@ def compute_graphrpo_advantage(
             rows = [i for i, value in enumerate(episode_ids) if value == episode_id]
             count = decisions[rows].sum()
             if count > 0:
-                graph_credit[rows] *= response_mask[rows].sum() / count
+                scale = response_mask[rows].sum() / count
+                cap = float(config.get("graphrpo_decision_scale_max", 0.0))
+                if cap < 0 or not math.isfinite(cap):
+                    raise ValueError("Decision scale cap must be finite and nonnegative")
+                if cap:
+                    scale = scale.clamp(max=cap)
+                graph_credit[rows] *= scale
 
     advantages = torch.zeros_like(token_level_rewards, dtype=torch.float32)
     for row, episode_id in enumerate(episode_ids):
@@ -788,7 +801,8 @@ def compute_graphrpo_advantage(
             + alpha * graph_credit[row]
             + beta * process_labels[row]
         ) * response_mask[row]
-    advantages = torch.nan_to_num(advantages, nan=0.0)
+    if not torch.isfinite(advantages).all():
+        raise ValueError('Nonfinite GraphRPO advantages')
     return advantages, advantages
 
 
@@ -1504,10 +1518,19 @@ def compute_policy_loss_graphrpo(
     if graphrpo_loss_weights is None:
         raise ValueError("GraphRPO policy loss requires graphrpo_loss_weights")
 
-    weights = graphrpo_loss_weights.to(torch.float32) * response_mask.to(torch.float32)
-    negative_approx_kl = torch.nan_to_num(
-        torch.clamp(log_prob - old_log_prob, min=-20.0, max=20.0), nan=0.0
-    )
+    weights = torch.where(response_mask.bool(), graphrpo_loss_weights.to(torch.float32), 0.0)
+    # Mask BEFORE arithmetic: NaN * 0 still poisons backward. Invalid active
+    # tokens stay visible to the actor's existing cross-rank finite-loss guard.
+    active = weights != 0
+    bad = active & (~torch.isfinite(log_prob) | ~torch.isfinite(old_log_prob)
+                    | ~torch.isfinite(advantages) | ~torch.isfinite(weights))
+    if rollout_is_weights is not None:
+        bad |= active & ~torch.isfinite(rollout_is_weights)
+        rollout_is_weights = torch.where(active, rollout_is_weights, 0.0)
+    log_prob = torch.where(active, log_prob, 0.0)
+    old_log_prob = torch.where(active, old_log_prob, 0.0)
+    advantages = torch.where(active, advantages, 0.0)
+    negative_approx_kl = torch.clamp(log_prob - old_log_prob, min=-20.0, max=20.0)
     ratio = torch.exp(negative_approx_kl)
     clip_ratio = config.clip_ratio
     clip_ratio_low = config.clip_ratio_low if config.clip_ratio_low is not None else clip_ratio
@@ -1530,6 +1553,7 @@ def compute_policy_loss_graphrpo(
         weights.bool(), pg_losses_float * weights, torch.zeros_like(pg_losses_float)
     )
     pg_loss = weighted_losses.sum() * dp_size
+    pg_loss = torch.where(bad.any(), pg_loss.new_tensor(float('nan')), pg_loss)
 
     local_weight = weights.sum().clamp_min(torch.finfo(weights.dtype).eps)
     pg_clipfrac = (
@@ -1537,6 +1561,7 @@ def compute_policy_loss_graphrpo(
     ).sum() / local_weight
     ppo_kl = ((-negative_approx_kl) * weights).sum() / local_weight
     return pg_loss, {
+        "actor/pg_nonfinite_tokens": bad.sum().detach().item(),
         "actor/pg_clipfrac": pg_clipfrac.detach().item(),
         "actor/ppo_kl": ppo_kl.detach().item(),
         "actor/pg_clipfrac_lower": 0.0,

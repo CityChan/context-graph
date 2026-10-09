@@ -479,6 +479,13 @@ class AlgoConfig(BaseConfig):
     graphrpo_memory_only: bool = False
     graphrpo_alternating_roles: bool = False
     graphrpo_normalize_decision_tokens: bool = False
+    graphrpo_decision_scale_max: float = 0.0
+    graphrpo_dynamic_sampling: bool = False
+    graphrpo_dynamic_max_gen_batches: int = 4
+    graphrpo_dynamic_min_groups: int = 1
+    foldgrpo_dynamic_sampling: bool = False
+    foldgrpo_dynamic_max_gen_batches: int = 4
+    foldgrpo_dynamic_min_groups: int = 1
     graphrpo_beta: float = 1.0
     graphrpo_epsilon: float = 1e-6
     graphrpo_require_binary_reward: bool = True

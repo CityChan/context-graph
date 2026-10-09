@@ -92,7 +92,21 @@ class DataParallelPPOActor(BasePPOActor):
         else:
             self.scaler = None
 
-    def _forward_micro_batch(
+    def _forward_micro_batch(self, micro_batch, temperature, calculate_entropy=False):
+        from verl.utils.padding_trim import trim_micro_batch
+        bucket = int(os.getenv('VERL_PAD_TRIM_BUCKET', '0'))
+        if self.use_remove_padding:
+            bucket = 0
+        inputs, original_width = trim_micro_batch(micro_batch, bucket)
+        entropy, log_probs = self._forward_micro_batch_untrimmed(inputs, temperature, calculate_entropy)
+        pad = original_width - log_probs.shape[-1]
+        if pad:
+            log_probs = torch.nn.functional.pad(log_probs, (0, pad))
+            if entropy is not None:
+                entropy = torch.nn.functional.pad(entropy, (0, pad))
+        return entropy, log_probs
+
+    def _forward_micro_batch_untrimmed(
         self, micro_batch, temperature, calculate_entropy=False
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """
@@ -389,6 +403,8 @@ class DataParallelPPOActor(BasePPOActor):
                     model_inputs, temperature=temperature, calculate_entropy=calculate_entropy
                 )
             log_probs_lst.append(log_probs)
+            from verl.utils.padding_trim import release_fragmented_cache
+            release_fragmented_cache()
             if calculate_entropy:
                 entropy_lst.append(entropy)
 
@@ -607,6 +623,8 @@ class DataParallelPPOActor(BasePPOActor):
                         self.scaler.scale(loss).backward()
                     else:
                         loss.backward()
+                    from verl.utils.padding_trim import release_fragmented_cache
+                    release_fragmented_cache()
 
                     micro_batch_metrics["actor/pg_loss"] = pg_loss.detach().item() * loss_scale_factor
                     append_to_dict(metrics, micro_batch_metrics)

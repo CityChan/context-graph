@@ -30,6 +30,13 @@ def _load_validation_metric_functions():
 process_validation_metrics = _load_validation_metric_functions()
 
 
+def test_array_and_list_identifiers_group_like_scalar_identifiers():
+    infos = {'reward':[1.,0.], 'pred':['a','b']}
+    expected = process_validation_metrics(['bcp','bcp'],['q','q'],infos)
+    actual = process_validation_metrics([np.array(['bcp']),['bcp']], [np.array(['q']),['q']], infos)
+    assert actual == expected
+
+
 def test_process_validation_metrics_skips_missing_auxiliary_values():
     metrics = process_validation_metrics(
         data_sources=["browsecomp", "browsecomp", "browsecomp"],

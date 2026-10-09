@@ -239,7 +239,7 @@ def test_memory_advantages_do_not_include_episode_or_process_rewards():
     assert weights.sum(dim=1).tolist() == pytest.approx([0.5, 0.5, 0])
     assert not compute_graphrpo_loss_weights(mask * 0, kwargs['index'], kwargs['gen_uid'], allow_empty=True).any()
     with pytest.raises(ValueError, match='only selected M'):
-        compute_graphrpo_advantage(**{**kwargs, 'graph_decision_mask': torch.ones_like(mask)})
+        compute_graphrpo_advantage(**{**kwargs, 'graph_decision_mask': torch.zeros_like(mask)})
     # The driver pads by copying row 0 and zeroing only its response mask.
     padded_credit = credit.clone()
     padded_credit[2] = credit[0]
@@ -497,7 +497,7 @@ def test_driver_skips_empty_batches_without_entering_model_or_optimizer_workers(
     tree = ast.parse(source.read_text(encoding='utf8'))
     cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'RayPPOTrainer')
     cls.body = [n for n in cls.body if isinstance(n, ast.FunctionDef)
-                and n.name in {'fit', '_skip_empty_memory_batch'}]
+                and n.name in {'fit', '_skip_empty_memory_batch', '_prepare_gen_batch', '_generate_train_batch'}]
     cls.decorator_list = []
     helper = next(n for n in tree.body if isinstance(n, ast.FunctionDef)
                   and n.name == '_configured_rollout_workflow')
@@ -511,7 +511,8 @@ def test_driver_skips_empty_batches_without_entering_model_or_optimizer_workers(
         log=lambda **kw: logs.append(kw), finish=lambda: closed.append(True)))
     trainer = object.__new__(RayPPOTrainer)
     trainer.config = OmegaConf.create({
-        'algorithm': {'graphrpo_memory_only': not alternating, 'graphrpo_alternating_roles': alternating},
+        'algorithm': {'adv_estimator': 'graphrpo', 'graphrpo_memory_only': not alternating, 'graphrpo_alternating_roles': alternating},
+        'data': {'train_batch_size': 1},
         'trainer': {'project_name': 'test', 'experiment_name': 'test', 'logger': [],
                     'total_epochs': 1, 'rollout_data_dir': 'audit'},
         'global_profiler': {'steps': None, 'profile_continuous_steps': False},

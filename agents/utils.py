@@ -252,6 +252,7 @@ class CallLLM(LLMClass):  # Call LLM in Verl RL env
 
         return {
             "choices": [{
+                "finish_reason": getattr(output, 'finish_reason', None),
                 "message": {
                     "content": response_text,
                     "raw_output_ids": output.token_ids,
@@ -260,7 +261,7 @@ class CallLLM(LLMClass):  # Call LLM in Verl RL env
                         if getattr(output, 'log_probs', None) is not None
                         else [0.0] * len(output.token_ids)
                     ),
-                    "extra_data": {"input_ids": input_ids},
+                    "extra_data": {"input_ids": input_ids, "max_tokens": sampling_params['max_tokens']},
                     "metrics": {}
                 }
             }]

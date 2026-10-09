@@ -634,6 +634,56 @@ class RayPPOTrainer:
 
         print(f"Dumped generations to {filename}")
 
+    def _prepare_gen_batch(self, batch_dict):
+        batch: DataProto = DataProto.from_single_dict(batch_dict)
+        batch.meta_info["temperature"] = self.config.actor_rollout_ref.rollout.temperature
+
+        # add uid to batch
+        import numpy as np
+        batch.non_tensor_batch["uid"] = np.array(
+            [str(uuid.uuid4()) for _ in range(len(batch.batch))], dtype=object
+        )
+
+        batch.meta_info["global_steps"] = self.global_steps
+        batch = batch.repeat(
+            repeat_times=self.config.actor_rollout_ref.rollout.n, interleave=True
+        )
+
+        # Each sampled episode needs an identifier distinct from the question uid.
+        # - "uid" -> question level (unique id for each question, repeated by self.config.actor_rollout_ref.rollout.n)
+        # - "gen_uid" -> sample level (unique id for each sample)
+
+        batch.non_tensor_batch["gen_uid"] = np.array(
+            [str(uuid.uuid4()) for _ in range(len(batch.batch))], dtype=object
+        )
+
+        workflow = _configured_rollout_workflow(self.config)
+        if workflow is not None:
+            batch.non_tensor_batch["workflow"] = np.full(
+                len(batch.batch), workflow, dtype=object
+            )
+
+        return batch
+
+    def _generate_train_batch(self, first, following, metrics, timing_raw):
+        from verl.trainer.ppo.dynamic_groups import sample_groups
+        from verl.trainer.ppo.graph_rpo_roles import graph_rpo_update_role
+
+        def generate(batch_dict):
+            batch = self._prepare_gen_batch(batch_dict)
+            worker = self.async_rollout_manager if self.async_rollout_mode else self.actor_rollout_wg
+            batch = worker.generate_sequences(batch)
+            for key, value in batch.meta_info.pop("timing", {}).items():
+                timing_raw[key] = timing_raw.get(key, 0) + value
+            batch.meta_info["global_steps"] = self.global_steps
+            if "response_mask" not in batch.batch:
+                batch.batch["response_mask"] = compute_response_mask(batch)
+            return batch
+
+        role = graph_rpo_update_role(self.config.algorithm, self.global_steps)
+        return sample_groups(first, following, generate, self.config.algorithm, role,
+                             int(self.config.data.train_batch_size), metrics)
+
     def _skip_empty_memory_batch(self, batch, metrics, timing_raw):
         """No trainable role tokens: log the audit without invoking model workers."""
         from verl.trainer.ppo.graph_rpo_roles import graph_rpo_update_role
@@ -654,7 +704,7 @@ class RayPPOTrainer:
             metrics[f"graphrpo/{role}/mean_abs_advantage"] = sum(abs(row.get("advantage", 0)) for row in valid) / max(1, len(valid))
             if valid:
                 metrics[f"graphrpo/{role}/mean_reward"] = sum(row["rewards"][row["candidate"]] for row in valid) / len(valid)
-        if not (self.config.algorithm.get("graphrpo_memory_only", False) or role):
+        if not (self.config.algorithm.get("graphrpo_memory_only", False) or role or batch.meta_info.get("dynamic_empty")):
             return False
         if batch.batch["response_mask"].any():
             return False
@@ -1148,6 +1198,9 @@ class RayPPOTrainer:
         dataloader_local_path = os.path.join(local_global_step_folder, "data.pt")
         dataloader_state_dict = self.train_dataloader.state_dict()
         torch.save(dataloader_state_dict, dataloader_local_path)
+        import json
+        with open(os.path.join(local_global_step_folder, 'trainer_progress.json'), 'w') as handle:
+            json.dump({'epoch': self._training_epoch, 'global_step': self.global_steps}, handle)
 
         # latest checkpointed iteration tracker (for atomic usage)
         if (
@@ -1197,6 +1250,19 @@ class RayPPOTrainer:
         print(f"Load from checkpoint folder: {global_step_folder}")
         # set global step
         self.global_steps = int(global_step_folder.split("global_step_")[-1])
+        import json
+        progress_path = os.path.join(global_step_folder, 'trainer_progress.json')
+        if os.path.exists(progress_path):
+            with open(progress_path) as handle:
+                progress = json.load(handle)
+            if progress['global_step'] != self.global_steps:
+                raise ValueError('Checkpoint trainer progress does not match saved step')
+            self._training_epoch = int(progress['epoch'])
+        elif any(self.config.algorithm.get(key + '_dynamic_sampling', False) for key in ('graphrpo', 'foldgrpo')):
+            raise ValueError('Dynamic resume requires trainer_progress.json; use an explicit fresh run for legacy checkpoints')
+        if any(self.config.algorithm.get(key + '_dynamic_sampling', False) for key in ('graphrpo', 'foldgrpo')):
+            if not os.path.isfile(os.path.join(global_step_folder, 'data.pt')):
+                raise ValueError('Dynamic resume requires the saved dataloader state')
 
         print(f"Setting global step to {self.global_steps}")
         print(f"Resuming from {global_step_folder}")
@@ -1293,6 +1359,9 @@ class RayPPOTrainer:
         # Dummy tokens must not contribute to policy, entropy, or KL losses.
         # Keep this zero independently of overlong_mask as defense in depth.
         dummy_sample.batch["response_mask"] = torch.zeros_like(dummy_sample.batch["response_mask"])
+        for key in ("graph_edit_credit_mask", "graph_decision_mask", "process_reward_mask"):
+            if key in dummy_sample.batch:
+                dummy_sample.batch[key] = torch.zeros_like(dummy_sample.batch[key])
         if "overlong_mask" in dummy_sample.batch:
             dummy_sample.batch["overlong_mask"] = torch.zeros_like(dummy_sample.batch["overlong_mask"])
         dummy_sample.batch["attention_mask"] = torch.zeros_like(dummy_sample.batch["attention_mask"])
@@ -1418,7 +1487,7 @@ class RayPPOTrainer:
         # load checkpoint before doing anything
         self._load_checkpoint()
 
-        current_epoch = self.global_steps // len(self.train_dataloader)
+        current_epoch = getattr(self, '_training_epoch', self.global_steps // len(self.train_dataloader))
 
         # perform validation before training
         # currently, we only support validation using the reward_function.
@@ -1452,7 +1521,9 @@ class RayPPOTrainer:
         next_step_profile = False
 
         for epoch in range(current_epoch, self.config.trainer.total_epochs):
-            for batch_dict in self.train_dataloader:
+            self._training_epoch = epoch
+            epoch_batches = iter(self.train_dataloader)
+            for batch_dict in epoch_batches:
                 if hasattr(self.actor_rollout_wg, "async_calls_finalize_fn_exec"):
                     self.actor_rollout_wg.async_calls_finalize_fn_exec(blocking=False)
                 metrics = {}
@@ -1464,47 +1535,11 @@ class RayPPOTrainer:
                         if self.config.global_profiler.profile_continuous_steps
                         else curr_step_profile
                     )
-                batch: DataProto = DataProto.from_single_dict(batch_dict)
-                batch.meta_info["temperature"] = self.config.actor_rollout_ref.rollout.temperature
-
-                # add uid to batch
-                import numpy as np
-                batch.non_tensor_batch["uid"] = np.array(
-                    [str(uuid.uuid4()) for _ in range(len(batch.batch))], dtype=object
-                )
-
-                batch.meta_info["global_steps"] = self.global_steps
-                batch = batch.repeat(
-                    repeat_times=self.config.actor_rollout_ref.rollout.n, interleave=True
-                )
-
-                # TODO@Miao[DONE]: add uid for each sample in batch. The key to the uid need to be different from "uid" 
-                # - "uid" -> question level (unique id for each question, repeated by self.config.actor_rollout_ref.rollout.n)
-                # - "gen_uid" -> sample level (unique id for each sample)
-
-                batch.non_tensor_batch["gen_uid"] = np.array(
-                    [str(uuid.uuid4()) for _ in range(len(batch.batch))], dtype=object
-                )
-
-                workflow = _configured_rollout_workflow(self.config)
-                if workflow is not None:
-                    batch.non_tensor_batch["workflow"] = np.full(
-                        len(batch.batch), workflow, dtype=object
-                    )
-
                 is_last_step = self.global_steps >= self.total_training_steps
                 with marked_timer("step", timing_raw):
                     # generate a batch
                     with marked_timer("gen", timing_raw, color="red"):
-                        if not self.async_rollout_mode:
-                            batch = self.actor_rollout_wg.generate_sequences(batch)
-                        else:
-                            # TODO@Miao: revise fold_agent_loop.py
-                            batch = self.async_rollout_manager.generate_sequences(batch)
-
-                        timing_raw.update(batch.meta_info["timing"])
-                        batch.meta_info.pop("timing", None)
-                        batch.meta_info["global_steps"] = self.global_steps
+                        batch = self._generate_train_batch(batch_dict, epoch_batches, metrics, timing_raw)
 
                     if "response_mask" not in batch.batch.keys():
                         batch.batch["response_mask"] = compute_response_mask(batch)
@@ -1833,3 +1868,15 @@ class RayPPOTrainer:
                 if hasattr(self.train_dataset, "on_batch_end"):
                     # The dataset may be changed after each training batch
                     self.train_dataset.on_batch_end(batch=batch)
+            self._training_epoch = epoch + 1
+
+        # Dynamic sampling may exhaust the epoch budget before nominal update
+        # count. Preserve the actual policy/dataloader position and close logging.
+        if self.global_steps > 1 and self.config.trainer.get('save_freq', 0) > 0:
+            self.global_steps -= 1
+            try:
+                self._save_checkpoint()
+            finally:
+                self.global_steps += 1
+        progress_bar.close()
+        logger.finish()

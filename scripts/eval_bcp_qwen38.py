@@ -9,6 +9,7 @@ import argparse
 import asyncio
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import random
@@ -74,7 +75,7 @@ class TokenClient:
         if limit < 10:
             return None
         body = dict(model=self.model, prompt=list(input_ids), max_tokens=limit,
-                    temperature=0.0, top_p=1.0, seed=self.seed,
+                    temperature=float(getattr(self.config.plugin, 'eval_temperature', 0.0)), top_p=1.0, seed=self.seed,
                     return_token_ids=True, skip_special_tokens=False)
         if kwargs.get("structured_outputs") is not None:
             body["structured_outputs"] = normalize_structured_outputs(kwargs["structured_outputs"])
@@ -90,6 +91,7 @@ class TokenClient:
             with self.audit_path.open("a", encoding="utf-8") as handle:
                 handle.write(json.dumps({"input_ids": list(input_ids), "output_ids": ids,
                     "max_tokens": limit, "structured_outputs": body.get("structured_outputs"),
+                    "temperature": body['temperature'], "top_p": body['top_p'],
                     "usage": data.get("usage"), "finish_reason": choice.get("finish_reason")}) + "\n")
             return {"choices": [{"message": {"content": text, "raw_output_ids": ids,
                 "response_log_probs": [0.0] * len(ids),
@@ -110,6 +112,7 @@ def config_for(args):
     config = OmegaConf.create({"algorithm": {"adv_estimator": ""}, "actor_rollout_ref": {"rollout": {
         "prompt_length": 8192, "response_length": 24576,
         "plugin": {
+            "eval_temperature": float(getattr(args, 'temperature', 0.0)),
             "workflow": workflow, "max_turn": 100, "val_max_turn": 100,
             "max_session": 10, "val_max_session": 10, "session_timeout": 3600,
             "branch_len": 24576, "turn_max_new_tokens": 2048,
@@ -176,11 +179,20 @@ def summarize(root):
 
 
 async def evaluate(args):
+    from filelock import FileLock
+    root = Path(args.output)
+    root.mkdir(parents=True, exist_ok=True)
+    with FileLock(str(root / f'evaluator-{args.rank}.lock'), timeout=0):
+        return await _evaluate_locked(args)
+
+
+async def _evaluate_locked(args):
     import pandas as pd
     import transformers
     from omegaconf import OmegaConf
     from agents.utils import TaskContext
     from scripts.eval_gaia import _make_dataproto, _metrics_from_output, _process_item_for_workflow
+    from scripts.evaluation_resume import source_commit, prepare_resume, preserve_interrupted_artifacts
 
     if not os.environ.get("OPENAI_API_KEY") or os.environ["OPENAI_API_KEY"] == "dummy":
         raise RuntimeError("Real judge credentials are required; local model uses a separate endpoint")
@@ -199,7 +211,7 @@ async def evaluate(args):
         "judge_model": os.environ.get("JUDGE_MODEL", "gpt-5-nano"),
         "server_execution": {"requested_enforce_eager": os.environ.get("SERVER_ENFORCE_EAGER", "1") == "1"},
         "transformers": transformers.__version__, "config": OmegaConf.to_container(config),
-        "commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()}
+        "commit": source_commit()}
     if args.method == "agentfold":
         from agents.agentfold_agent import PROVENANCE
         manifest["baseline_protocol"] = PROVENANCE
@@ -210,7 +222,10 @@ async def evaluate(args):
         from agents.memory_baseline_agent import provenance
         from agents.graph_memory_baselines import settings
         manifest["baseline_protocol"] = provenance(args.method, settings(config.actor_rollout_ref.rollout.plugin))
-    (root / f"manifest-{args.rank}.json").write_text(json.dumps(manifest, indent=2))
+    completed = prepare_resume(root, args.rank, manifest, getattr(args, 'resume', False))
+    pending = [i for i in indices[args.rank::3] if i not in completed]
+    if not pending:
+        return
 
     # Keep the same server preflight across all methods.
     probe = TokenClient(args.endpoint, args.model, tokenizer, config.actor_rollout_ref.rollout,
@@ -228,10 +243,9 @@ async def evaluate(args):
 
     semaphore = asyncio.Semaphore(args.workers)
     output_path = root / f"results-{args.rank}.jsonl"
-    with output_path.open("x", encoding="utf-8"):
-        pass
     async def one(index):
         async with semaphore:
+            preserve_interrupted_artifacts(root, index)
             row = frame.iloc[index].to_dict()
             workflow = config.actor_rollout_ref.rollout.plugin.workflow
             item = _make_dataproto(row, workflow)
@@ -259,12 +273,14 @@ async def evaluate(args):
             with output_path.open("a", encoding="utf-8") as handle:
                 handle.write(json.dumps(result, default=str) + "\n")
             print(json.dumps(result, default=str), flush=True)
-    await asyncio.gather(*(one(index) for index in indices[args.rank::3]))
+    await asyncio.gather(*(one(index) for index in pending))
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--merge", action="store_true")
+    parser.add_argument("--resume", action="store_true", help="Skip recorded tasks only after exact manifest verification")
+    parser.add_argument("--temperature", type=float, default=float(os.getenv('EVAL_TEMPERATURE', '0')))
     parser.add_argument("--benchmark", choices=["bcp", "gaia"], default="bcp")
     parser.add_argument("--output", required=True)
     parser.add_argument("--method", choices=["react", "foldagent", "contextgraph", "agentfold", "supo", "memobrain", "amem"])
@@ -286,6 +302,8 @@ def main():
     parser.add_argument("--rank", type=int, choices=range(3), default=0)
     parser.add_argument("--workers", type=int, default=2)
     args = parser.parse_args()
+    if not math.isfinite(args.temperature) or args.temperature < 0:
+        parser.error('temperature must be finite and nonnegative')
     if args.merge:
         summarize(Path(args.output))
     else:

@@ -320,6 +320,10 @@ if [ "$ADV_ESTIMATOR" = "graphrpo" ]; then
   GRAPH_RPO_OPERATION_COSTS=${GRAPH_RPO_OPERATION_COSTS:-'{merge:0.0,prune:0.0,add_edge:0.0,select:0.0}'}
   GRAPH_RPO_ARGS+=(
     "algorithm.graphrpo_alpha=$GRAPH_RPO_ALPHA"
+    "algorithm.graphrpo_decision_scale_max=${GRAPH_RPO_DECISION_SCALE_MAX:-0}"
+    "algorithm.graphrpo_dynamic_sampling=${GRAPH_RPO_DYNAMIC_SAMPLING:-False}"
+    "algorithm.graphrpo_dynamic_max_gen_batches=${GRAPH_RPO_DYNAMIC_MAX_GEN_BATCHES:-4}"
+    "algorithm.graphrpo_dynamic_min_groups=${GRAPH_RPO_DYNAMIC_MIN_GROUPS:-1}"
     "algorithm.graphrpo_beta=$GRAPH_RPO_BETA"
     "algorithm.graphrpo_epsilon=$GRAPH_RPO_EPSILON"
     "+actor_rollout_ref.rollout.plugin.graph_rpo_credit_backend=$GRAPH_RPO_CREDIT_BACKEND"
@@ -341,11 +345,13 @@ if [ "$ADV_ESTIMATOR" = "graphrpo" ]; then
         "algorithm.rollout_correction.rollout_is=token"
         "algorithm.rollout_correction.rollout_is_threshold=2.0"
         "+actor_rollout_ref.rollout.plugin.graph_rpo_continuation_samples=${GRAPH_RPO_CONTINUATION_SAMPLES:-4}"
+        "+actor_rollout_ref.rollout.plugin.graph_rpo_timeout_as_failure=${GRAPH_RPO_TIMEOUT_AS_FAILURE:-False}"
         "+actor_rollout_ref.rollout.plugin.graph_rpo_executor_samples=${GRAPH_RPO_EXECUTOR_SAMPLES:-2}"
         "+actor_rollout_ref.rollout.plugin.graph_rpo_continuation_checkpoint=${GRAPH_RPO_CONTINUATION_CHECKPOINT:-1}"
         "+actor_rollout_ref.rollout.plugin.graph_rpo_continuation_checkpoint_max=${GRAPH_RPO_CONTINUATION_CHECKPOINT_MAX:-4}"
         "+actor_rollout_ref.rollout.plugin.graph_rpo_continuation_concurrency=${GRAPH_RPO_CONTINUATION_CONCURRENCY:-2}"
-        "+actor_rollout_ref.rollout.plugin.graph_controller_temperature=${GRAPH_CONTROLLER_TEMPERATURE:-0.8}"
+        "+actor_rollout_ref.rollout.plugin.graph_controller_temperature=${GRAPH_CONTROLLER_TEMPERATURE:-${ROLLOUT_TEMPERATURE:-1.0}}"
+        "+actor_rollout_ref.rollout.plugin.graph_controller_top_p=1.0"
         "+actor_rollout_ref.rollout.plugin.graph_rpo_scope_process_reward=False"
       )
       ;;

@@ -45,6 +45,13 @@ def recoverable(error):
         return True
     if isinstance(error, (httpx.HTTPStatusError, openai.APIStatusError)):
         status = error.response.status_code
+        if status == 400:
+            try:
+                detail = error.response.json().get("error", {})
+                codes = {detail.get("code"), (detail.get("innererror") or {}).get("code")}
+                return bool(codes & {"content_filter", "ResponsibleAIPolicyViolation"})
+            except (ValueError, AttributeError, TypeError):
+                return False
         return status in {408, 429} or status >= 500
     return False
 
@@ -272,8 +279,16 @@ async def _checked_episode(item, context, run_episode, session):
         raise session.error
     main = next(out for out in outputs if out.extra_fields["agent_name"] == "main")
     stats = main.extra_fields.get("env_stats", {})
-    if session.env.env_fail or stats.get("call_fail") or stats.get("hit_timeout") or stats.get("judge_parse_failure"):
+    if session.env.env_fail or stats.get("call_fail") or stats.get("judge_parse_failure"):
         raise ContinuationUnavailable("Continuation environment, timeout or judge failure")
+    if stats.get("hit_timeout") or main.extra_fields.get("hit_timeout"):
+        plugin = context.config.actor_rollout_ref.rollout.plugin
+        if not (plugin.get("graph_rpo_timeout_as_failure", False)
+                and main.extra_fields.get("policy_time_budget_exhausted")):
+            raise ContinuationUnavailable("Unattributed or excluded continuation timeout")
+        for output in outputs:
+            output.reward_score = 0.0
+            output.extra_fields.setdefault("env_stats", {})["graph_rpo_budget_failure"] = 1
     return outputs
 
 
@@ -286,6 +301,7 @@ def _failed_group(session, context, group, error, checkpoint=None, role="M"):
     limit = int(context.config.actor_rollout_ref.rollout.prompt_length)
     output = AgentLoopOutput(prompt_ids=prompt[-limit:], response_ids=[context.tokenizer.eos_token_id],
         response_mask=[0], response_logprobs=[0.0], reward_score=0.0,
+        multi_modal_data={},
         metrics=AgentLoopMetrics(), extra_fields={
             "is_finish": False, "termination_reason": "continuation_unavailable"})
     result = _memory_output(output, None, group=group, candidate=0, advantage=0,
