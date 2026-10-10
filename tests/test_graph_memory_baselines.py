@@ -183,7 +183,8 @@ def test_helpers_leave_final_request_slot(monkeypatch, method, patch):
 def test_no_budget_refund_and_helper_cannot_consume_final_reserve(monkeypatch):
     env, context, item, client = setup(monkeypatch, "memobrain", [SEARCH, FINISH], observation="E " * 1600)
     plugin = context.config.actor_rollout_ref.rollout.plugin
-    plugin.val_response_length, plugin.turn_max_new_tokens, plugin.final_answer_reserve = 2000, 500, 250
+    # This fake tokenizer counts characters; reserve room for the explicit final-role prompt.
+    plugin.val_response_length, plugin.turn_max_new_tokens, plugin.final_answer_reserve = 2000, 500, 600
     out = asyncio.run(runner.process_item(item, context))
     assert out.extra_fields["env_stats"]["main_len"] <= 2000
     assert out.extra_fields["termination_reason"] == "finish"

@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
+import re
 import time
 
 from . import graph_memory_baselines as memory
@@ -11,6 +12,7 @@ from .agentfold_agent import _fit_observation, _get, parse_response
 from .environment_lifecycle import managed_environment
 from .prompts import create_chat
 from .single_tool_protocol import MAX_FORMAT_ERRORS, PROTOCOL, retry_context
+from .memory_baseline_control import FINAL_SYSTEM, HELPER_CONTROL, helper_schema, final_constraint
 from .utils import AgentLoopMetrics, AgentLoopOutput, _apply_chat_template, select_env
 
 
@@ -20,7 +22,12 @@ class BudgetEnd(Exception):
 
 def provenance(method, options):
     return {**memory.PROVENANCE[method], **options, **PROTOCOL, "method": method,
-            "variant": "zero_shot_bcp_adaptation_v2", "trained_checkpoint": False,
+            "variant": "zero_shot_bcp_adaptation_v3", "trained_checkpoint": False,
+            "helper_output_profile": "memory_json_schema_v1", "helper_enable_thinking": False,
+            "final_output_profile": "bounded_finish_xml_v1", "final_enable_thinking": False,
+            "final_text_max_chars": 384,
+            "final_char_budget": "min(384, request token limit - 96); not a token guarantee",
+            "action_thinking": "inherited evaluation configuration",
             "memory_scope": "one task; no cross-task state", "helper_model": "same actor endpoint",
             "budget": "all actor/helper generated tokens + visible observations + control instructions; no refunds",
             "turns": "all actor and memory model requests; final answer slot reserved"}
@@ -45,7 +52,8 @@ async def process_item(item, context):
     reserve = max(0, int(getattr(plugin, "final_answer_reserve", 0)))
     margin = max(0, int(getattr(plugin, "final_answer_safety_margin", 64)))
     encode = lambda s: tokenizer.encode(s, add_special_tokens=False)
-    render = lambda m: list(_apply_chat_template(tokenizer, m, config, tokenize=True, add_generation_prompt=True))
+    render = lambda m, control=False: list(_apply_chat_template(tokenizer, m, config,
+        tokenize=True, add_generation_prompt=True, **({"enable_thinking": False} if control else {})))
     started = time.monotonic()
     deadline = started + float(getattr(plugin, "session_timeout", 3600))
     stats = dict(environment_steps=0, invalid_tool=0, invalid_memory=0, memory_requests=0,
@@ -60,7 +68,8 @@ async def process_item(item, context):
         nonlocal used, iteration, last_ids, last_outputs, last_logprobs
         if iteration >= max_turn or (phase.startswith("memory") and iteration >= max_turn - 1):
             raise BudgetEnd("max_turn")
-        candidate = render(messages)
+        control = final or phase.startswith("memory")
+        candidate = render(messages, control=control)
         instruction_cost = len(encode(instruction))
         limit = min(window - len(candidate), budget - used - instruction_cost
                     - (reserve + margin if not final else 0))
@@ -70,9 +79,15 @@ async def process_item(item, context):
             limit = min(limit, options["memory_helper_max_tokens"])
         if limit < 10:
             raise BudgetEnd("token_limit")
+        constraint = {"json": helper_schema(phase)} if phase.startswith("memory") else None
+        if final:
+            constraint = final_constraint(limit)
+            if constraint is None:
+                raise BudgetEnd("token_limit")
         iteration += 1
         result = await asyncio.wait_for(context.llm_client.create_completion(
-            candidate, messages=messages, max_new_tokens=limit, max_len=len(candidate) + limit),
+            candidate, messages=messages, max_new_tokens=limit, max_len=len(candidate) + limit,
+            **({"structured_outputs": constraint} if constraint else {})),
             timeout=max(0, deadline - time.monotonic()))
         if result is None:
             raise BudgetEnd("token_limit")
@@ -87,10 +102,12 @@ async def process_item(item, context):
         stats["memory_requests"] += int(phase.startswith("memory"))
         last_ids, last_outputs, last_logprobs = candidate, outputs, logprobs
         audit.append(dict(phase=phase, input_ids=candidate, output_ids=outputs,
-                          messages=copy.deepcopy(messages), response=response["content"], max_tokens=limit))
+                          messages=copy.deepcopy(messages), response=response["content"], max_tokens=limit,
+                          structured_outputs=constraint, control_enable_thinking=False if control else None))
         return response["content"]
 
     async def helper(prompt, data, phase, apply):
+        prompt += HELPER_CONTROL
         text = await request([{"role": "system", "content": prompt},
                               {"role": "user", "content": json.dumps(data, ensure_ascii=False)}],
                              phase, instruction=prompt)
@@ -143,19 +160,29 @@ async def process_item(item, context):
                     if selected:
                         working.append({"role": "user", "content": "Retrieved A-MEM notes (observed evidence):\n" + "\n".join(selected)})
                     working.extend(recent)
-                instruction = ("Budget ending: submit one finish call now using available evidence."
-                               if finish_only else feedback)
+                instruction = feedback
+                control_cost_text = ""
+                if finish_only:
+                    working[0] = {"role": "system", "content": FINAL_SYSTEM}
+                    instruction = "Budget ending: submit one finish call now using available evidence."
+                    if feedback:
+                        instruction += "\n" + feedback
+                    control_cost_text = FINAL_SYSTEM
                 if rejected:
                     working.append({"role": "assistant", "content": rejected})
                 if instruction:
                     working.append({"role": "user", "content": instruction})
-                text = await request(working, "final" if finish_only else "action", finish_only, instruction)
+                text = await request(working, "final" if finish_only else "action", finish_only,
+                                     instruction + control_cost_text)
                 transcript.append({"role": "assistant", "content": text})
                 try:
+                    if finish_only and not re.fullmatch(audit[-1]["structured_outputs"]["regex"], text):
+                        raise ValueError("Final answer violated bounded finish output contract")
                     action, _ = parse_response(text, [], finish_only=finish_only)
                 except (ValueError, TypeError) as exc:
                     stats["invalid_tool"] += 1
                     audit[-1]["format_error"] = str(exc)
+                    audit[-1]["format_error_at_output_limit"] = len(audit[-1]["output_ids"]) >= audit[-1]["max_tokens"]
                     consecutive_invalid += 1
                     if consecutive_invalid >= MAX_FORMAT_ERRORS:
                         reason = "invalid_tool_limit"

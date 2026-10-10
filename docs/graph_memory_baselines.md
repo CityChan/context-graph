@@ -47,6 +47,24 @@ Adaptations are explicit:
   Three consecutive failures stop as `invalid_tool_limit` and fail the evaluation
   summary audit. A valid call resets this counter. Memory-JSON validation remains
   separate. The prompt and retry policy are recorded in `baseline_protocol`.
+- The v3 adaptation fixes two observed control failures: memory helpers spending
+  all 1,024 tokens on reasoning before emitting JSON, and final requests continuing
+  to search despite the exhausted research budget. Memory helpers now render with
+  thinking disabled and use phase-specific JSON schemas (including subtask/evidence
+  node kinds). They still pass the existing atomic graph/neighbor validators;
+  invalid semantic edits remain failures, and empty valid patches remain allowed.
+  There are no added helper retries or extra token/turn allowances. Concise helper
+  instructions discourage copied example placeholders; schema validity does not
+  establish summary faithfulness.
+- Budget-ending actor requests use a separate finish-only system prompt, thinking
+  disabled, and bounded finish XML (at most 384 answer characters, further reduced
+  for small remaining budgets). A character bound is not a token guarantee. Local
+  validation still rejects a server response that violates the contract, with the
+  same three-consecutive-error limit. Final retries now retain the specific error
+  feedback. Normal research decoding and memory operations are unchanged. The new
+  instructions and every rejected response are charged to the cumulative budget;
+  manifests record `zero_shot_bcp_adaptation_v3`, `memory_json_schema_v1`, and the
+  final-output profile. Re-run smoke before treating this revision as GPU-validated.
 
 ## Budget and evidence
 
