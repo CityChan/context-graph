@@ -23,7 +23,14 @@ def array(items, **limits):
     return {"type": "array", "items": items, **limits}
 
 
-def helper_schema(phase):
+def editable_node_ids(state):
+    """Targets allowed by MemoBrain's current protection and activity rules."""
+    protected = set(state["protected"])
+    return sorted(int(nid) for nid, node in state["nodes"].items()
+                  if node["active"] and int(nid) not in protected)
+
+
+def helper_schema(phase, *, state=None):
     text = {"type": "string"}
     integer = {"type": "integer"}
     notes = array(obj(role={"type": "string", "enum": ["assistant", "user"]},
@@ -34,8 +41,16 @@ def helper_schema(phase):
                        kind={"type": "string", "enum": ["subtask", "evidence"]}, thought=notes)),
                    add_edges=array(obj(src=endpoint, dst=endpoint, rationale=text)))
     if phase == "memory_recall":
-        return obj(flush_ops=array(obj(id=integer, rationale=text)),
-                   fold_ops=array(obj(ids=array(integer, minItems=1), rationale=text, notes=notes)))
+        if state is None:
+            raise ValueError("MemoBrain recall requires the current graph state")
+        eligible = editable_node_ids(state)
+        # Empty enums are invalid schemas. With no targets, only empty operations
+        # are allowed; the item schemas are unreachable.
+        target = {**integer, "enum": eligible} if eligible else integer
+        limits = {"maxItems": len(eligible)}
+        return obj(flush_ops=array(obj(id=target, rationale=text), **limits),
+                   fold_ops=array(obj(ids=array(target, minItems=1), rationale=text,
+                                      notes=notes), **limits))
     if phase == "memory_analyze":
         return obj(keywords=array(text), context=text, tags=array(text))
     if phase == "memory_evolve":

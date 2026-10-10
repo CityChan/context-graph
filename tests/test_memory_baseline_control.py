@@ -7,15 +7,15 @@ import pytest
 from jsonschema import Draft202012Validator
 
 from agents import memory_baseline_agent as runner
-from agents.memory_baseline_control import FINAL_SYSTEM, helper_schema, final_constraint
-from tests.test_graph_memory_baselines import setup, PATCH, ANALYSIS, EVOLUTION, NOOP
+from agents.memory_baseline_control import FINAL_SYSTEM, helper_schema, final_constraint, editable_node_ids
+from tests.test_graph_memory_baselines import setup, graph, PAIR, PATCH, ANALYSIS, EVOLUTION, NOOP
 from tests.test_agentfold import SEARCH, OPEN, FINISH
 
 
 @pytest.mark.parametrize("phase,value", [("memory_memorize", PATCH), ("memory_recall", NOOP),
     ("memory_analyze", ANALYSIS), ("memory_evolve", EVOLUTION)])
 def test_helper_contracts_accept_expected_decisions(phase, value):
-    schema = helper_schema(phase)
+    schema = helper_schema(phase, state=graph().state() if phase == "memory_recall" else None)
     Draft202012Validator.check_schema(schema)
     Draft202012Validator(schema).validate(value)
 
@@ -116,3 +116,64 @@ def test_no_unconstrained_final_when_budget_cannot_fit_contract(monkeypatch):
     out = asyncio.run(runner.process_item(item, context))
     assert out.extra_fields["termination_reason"] == "token_limit"
     assert not client.calls and not env.actions
+
+
+def test_recall_targets_refresh_after_folding_and_protection_changes():
+    store = graph()
+    before = helper_schema("memory_recall", state=store.state())
+    assert editable_node_ids(store.state()) == [3, 4, 5]
+    check = Draft202012Validator(before)
+    fold = dict(flush_ops=[], fold_ops=[dict(ids=[3, 4], rationale="done", notes=PAIR)])
+    check.validate(fold)
+    for nid in (1, 2, 6, 7, 999):
+        assert not check.is_valid(dict(flush_ops=[dict(id=nid, rationale="done")], fold_ops=[]))
+        assert not check.is_valid(dict(flush_ops=[], fold_ops=[dict(ids=[nid], rationale="done", notes=PAIR)]))
+    store.maintain(fold)
+    store.append(PAIR)
+    store.patch(PATCH)
+    state = json.loads(json.dumps(store.state()))  # Serialized node keys are strings.
+    assert editable_node_ids(state) == [5, 6, 8]
+    after = helper_schema("memory_recall", state=state)
+    assert after["properties"]["flush_ops"]["items"]["properties"]["id"]["enum"] == [5, 6, 8]
+    assert before["properties"]["flush_ops"]["items"]["properties"]["id"]["enum"] == [3, 4, 5]
+    assert not Draft202012Validator(after).is_valid(fold)
+
+
+def test_recall_without_editable_nodes_only_allows_noop():
+    schema = helper_schema("memory_recall", state=graph(2).state())
+    Draft202012Validator.check_schema(schema)
+    check = Draft202012Validator(schema)
+    check.validate(NOOP)
+    assert not check.is_valid(dict(flush_ops=[dict(id=1, rationale="done")], fold_ops=[]))
+    assert not check.is_valid(dict(flush_ops=[], fold_ops=[dict(ids=[1], rationale="done", notes=PAIR)]))
+    with pytest.raises(ValueError, match="current graph state"):
+        helper_schema("memory_recall")
+
+
+def test_recall_snapshot_is_sent_and_illegal_server_response_still_rejected(monkeypatch):
+    invalid = dict(flush_ops=[dict(id=2, rationale="done")], fold_ops=[])
+    env, context, item, _ = setup(monkeypatch, "memobrain",
+        [SEARCH, json.dumps(PATCH), json.dumps(invalid), FINISH])
+    context.config.actor_rollout_ref.rollout.plugin.memobrain_recall_interval = 1
+    out = asyncio.run(runner.process_item(item, context))
+    records = out.extra_fields["model_contexts"]
+    recall = next(r for r in records if r["phase"] == "memory_recall")
+    state = json.loads(recall["messages"][1]["content"])
+    assert "Editable node IDs: []" in recall["messages"][0]["content"]
+    assert recall["structured_outputs"] == {"json": helper_schema("memory_recall", state=state)}
+    assert out.extra_fields["env_stats"]["invalid_memory"] == 1
+    assert out.extra_fields["env_stats"]["memory_requests"] == 2  # No hidden retries.
+    assert json.loads(json.dumps(out.extra_fields["memory_state"])) == state
+    assert env.actions == [SEARCH, FINISH]
+
+
+def test_recall_overlap_remains_transactionally_rejected():
+    store = graph()
+    before = copy.deepcopy(store.state())
+    overlap = dict(flush_ops=[dict(id=3, rationale="old")],
+                   fold_ops=[dict(ids=[3, 4], rationale="done", notes=PAIR)])
+    # Per-ID legality does not establish cross-operation consistency.
+    Draft202012Validator(helper_schema("memory_recall", state=before)).validate(overlap)
+    with pytest.raises(ValueError, match="overlapping"):
+        store.maintain(overlap)
+    assert store.state() == before

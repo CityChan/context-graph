@@ -164,6 +164,21 @@ configuration is saved in the manifests. Supported overrides are
 
 ## Local regression
 
+MemoBrain `zero_shot_bcp_adaptation_v4` adds the recall target profile
+`active_unprotected_ids_v1`. Each recall request builds its JSON target enums
+from the same graph snapshot shown to the helper: only active, unprotected
+node IDs are selectable. With no editable nodes, both operation lists must be
+empty. The prompt lists eligible IDs and forbids reusing a target across
+operations. A-MEM remains on v3.
+
+This addresses valid JSON that requests illegal maintenance targets, as seen
+in the v3 three-task smoke (all tasks finished, two maintenance rejections).
+It does not choose operations or rewrite decisions. Overlap, graph cycles,
+and all existing transactional checks remain enforced; any rejection still
+fails the strict smoke audit. The request budget is unchanged and the added
+instructions are charged. Local tests do not establish live decoder behavior
+or task accuracy; rerun the same smoke in a fresh output directory.
+
 ```bash
 python -m pytest tests/test_graph_memory_baselines.py tests/test_agentfold.py tests/test_supo.py tests/test_bcp_qwen38_eval.py tests/test_emergency_finalizer.py tests/test_audit_bcp_pair.py -q
 ```
