@@ -131,7 +131,10 @@ case "${1:-}" in
   _eval)
     activate "$AGENT_CONDA_ENV"
     EVAL_PYTHON=python
-    if [[ "$METHOD" == amem ]]; then EVAL_PYTHON=${AMEM_AGENT_PYTHON:-python}; fi
+    if [[ "$METHOD" == amem ]]; then
+      EVAL_PYTHON=${AMEM_AGENT_PYTHON:-python}
+      export USE_TF=0 USE_TORCH=1 USE_FLAX=0 FORCE_TF_AVAILABLE=0
+    fi
     export HF_HOME="$SCRATCH/hf_cache" HF_HUB_CACHE="$SCRATCH/hf_cache/hub"
     export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 STRUCTURED_MEMORY_ENABLED=0
     unset QWEN_ENABLE_THINKING

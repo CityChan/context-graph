@@ -26,6 +26,7 @@ if [[ "$METHOD" == amem || "$METHOD" == both ]]; then
     AMEM_AGENT_PYTHON=$(cat "$SMOKE_ROOT/amem-python.txt")
   fi
   export AMEM_AGENT_PYTHON
+  printf '%s\n' "$AMEM_AGENT_PYTHON" > "$SMOKE_ROOT/amem-python.txt"
   env -u HF_HUB_OFFLINE -u TRANSFORMERS_OFFLINE HF_HOME="$SCRATCH/hf_cache" HF_HUB_CACHE="$SCRATCH/hf_cache/hub" "$AMEM_AGENT_PYTHON" scripts/prepare_amem_embedding.py
 fi
 METHODS=("$METHOD")

@@ -14,11 +14,13 @@ import tempfile
 
 
 SENTENCE_TRANSFORMERS = "sentence-transformers==5.3.0"
+PYTORCH_ENV = {"USE_TF": "0", "USE_TORCH": "1", "USE_FLAX": "0", "FORCE_TF_AVAILABLE": "0"}
 
 
 def run(args):
     options = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
-    subprocess.run(args, check=True, **options)
+    # Transformers reads these once at import; set them before Python starts.
+    subprocess.run(args, check=True, env={**os.environ, **PYTORCH_ENV}, **options)
 
 
 def constraints():

@@ -1,6 +1,7 @@
 """Cache and probe the pinned CPU A-MEM embedder; never install into cxtgraph."""
 import argparse
 import json
+import os
 from pathlib import Path
 import sys
 
@@ -8,6 +9,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
 def main():
+    # MiniLM uses PyTorch only. Do not import inherited TensorFlow/Keras stacks.
+    os.environ.update(USE_TF="0", USE_TORCH="1", USE_FLAX="0", FORCE_TF_AVAILABLE="0")
     parser = argparse.ArgumentParser()
     parser.add_argument("--offline", action="store_true")
     args = parser.parse_args()

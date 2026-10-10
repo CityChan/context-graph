@@ -101,6 +101,14 @@ A-MEM interpreter is saved in `amem-python.txt` and forwarded to every evaluator
 each evaluator probes the pinned embedding offline before starting its tasks.
 Existing installations are import-tested and reused without pip installation.
 
+A-MEM preparation and evaluator processes explicitly select PyTorch before
+importing Transformers (`USE_TF=0`, `USE_TORCH=1`, `USE_FLAX=0`,
+`FORCE_TF_AVAILABLE=0`). This avoids importing an inherited incompatible Keras 3
+installation; installing `tf-keras` is unnecessary for this CPU embedding path.
+These settings do not modify the installed TensorFlow/Keras packages. If setup
+installed dependencies but failed its import probe, reuse that venv by setting
+`AMEM_AGENT_PYTHON` to its `bin/python` on the next smoke invocation.
+
 The wrapper downloads pinned MiniLM files to `$SCRATCH/hf_cache` if needed and
 checks actual embedding inference and semantic retrieval. If compute-node internet
 is unavailable, prepare the environment and cache once on the login node:
