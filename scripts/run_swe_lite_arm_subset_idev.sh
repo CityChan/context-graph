@@ -5,7 +5,7 @@ set -euo pipefail
 : "${SCRATCH:?SCRATCH must be set}"
 : "${SWE_AGENT_ENV:?Set SWE_AGENT_ENV to the existing dedicated agent environment}"
 method=${SWE_METHOD:-contextgraph}
-case "$method" in contextgraph|foldagent|react|agentfold|supo) ;; *) echo 'Invalid SWE_METHOD'; exit 2;; esac
+case "$method" in contextgraph|foldagent|react|agentfold|supo|memobrain|amem) ;; *) echo 'Invalid SWE_METHOD'; exit 2;; esac
 cd "${PROJECT_ROOT:-/work/09281/chc_1996/vista/context-graph}"
 mapfile -t nodes < <(scontrol show hostnames "$SLURM_JOB_NODELIST")
 (( ${#nodes[@]} >= 2 )) || { echo 'Requires two allocated nodes: server and evaluator'; exit 2; }
@@ -31,6 +31,11 @@ export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 TOKENIZERS_PAR
 root="$(realpath -e "$SCRATCH")/context-graph-swe"
 data="$root/data/lite"
 agent="$SWE_AGENT_ENV/bin/python"
+if [[ "$method" == amem ]]; then
+    : "${AMEM_NATIVE_PYTHON:?Use the four-node launcher to prepare native A-MEM}"
+    agent="$AMEM_NATIVE_PYTHON"
+    export USE_TF=0 USE_TORCH=1 USE_FLAX=0 FORCE_TF_AVAILABLE=0
+fi
 grade="$SWE_AGENT_ENV/grading/bin/python"
 prepare="$SWE_AGENT_ENV/preparation/bin/python"
 [[ -x "$agent" && -x "$grade" && -x "$prepare" ]] || { echo 'Missing agent/grading/preparation environments; reuse the successful pilot setup'; exit 2; }

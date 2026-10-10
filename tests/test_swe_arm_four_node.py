@@ -8,11 +8,12 @@ import pytest
 
 @pytest.mark.skipif(not shutil.which("bash"), reason="Bash required")
 @pytest.mark.parametrize("occupied", [False, True])
-@pytest.mark.parametrize("method", ["foldagent", "contextgraph", "agentfold", "supo"])
+@pytest.mark.parametrize("method", ["foldagent", "contextgraph", "agentfold", "supo", "memobrain", "amem"])
 def test_four_node_pairs_and_occupied_server_guard(tmp_path, occupied, method):
     root = Path(__file__).resolve().parents[1]
     scripts = tmp_path / "scripts"
     scripts.mkdir()
+    (scripts / 'native_amem_environment.sh').write_text('prepare_native_amem() { export AMEM_NATIVE_PYTHON=fixture-python; }\n', newline='\n')
     (tmp_path / "context-graph-swe/data/lite").mkdir(parents=True)
     (scripts / "run_swe_lite_arm_subset_idev.sh").write_text(
         'printf "%s %s %s %s %s\\n" "$SWE_METHOD" "$SWE_SERVER_NODE" "$SWE_EVAL_NODE" '
@@ -57,7 +58,7 @@ srun() {
 
 
 @pytest.mark.skipif(not shutil.which("bash"), reason="Bash required")
-@pytest.mark.parametrize("method", ["contextgraph", "foldagent", "agentfold", "supo", "invalid"])
+@pytest.mark.parametrize("method", ["contextgraph", "foldagent", "agentfold", "supo", "memobrain", "amem", "invalid"])
 @pytest.mark.parametrize("missing_env", [False, True])
 def test_batch_dispatch_preserves_resume_and_budget(tmp_path, method, missing_env):
     root = Path(__file__).resolve().parents[1]

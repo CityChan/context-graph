@@ -46,11 +46,17 @@ agent_preload() {
 
 if [[ ${1:-} == _eval ]]; then
     agent_preload
+    agent_python="$BENCH_AGENT_ENV/bin/python"
+    if [[ "$2" == amem ]]; then
+        : "${AMEM_NATIVE_PYTHON:?Native A-MEM environment was not prepared}"
+        agent_python="$AMEM_NATIVE_PYTHON"
+        export USE_TF=0 USE_TORCH=1 USE_FLAX=0 FORCE_TF_AVAILABLE=0
+    fi
     extra=()
     [[ ${BENCH_MEMORY_SMOKE:-0} == 1 ]] && extra+=(--memory-smoke)
     if [[ "$BENCHMARK" == discoveryworld ]]; then extra+=(--discoveryworld-observation-profile "${BENCH_DISCOVERYWORLD_OBSERVATION_PROFILE:-full}"); fi
     [[ ${BENCH_RETRY_ERRORS:-0} == 1 ]] && extra+=(--retry-errors)
-    exec "$BENCH_AGENT_ENV/bin/python" -u scripts/eval_agent_benchmarks.py "$BENCHMARK" --method "$2" --endpoint "$3" --output "$BENCH_RUN_DIR/$4" --shard-index "$5" --shard-count "$6" --data "$BENCH_DATA" --model-path "$MODEL_PATH" --context-length "$BENCH_CONTEXT_LENGTH" --samples "$BENCH_SAMPLES" --max-steps "$BENCH_MAX_STEPS" --memory-profile "$BENCH_MEMORY_PROFILE" --prompt-profile "$BENCH_PROMPT_PROFILE" "${extra[@]}"
+    exec "$agent_python" -u scripts/eval_agent_benchmarks.py "$BENCHMARK" --method "$2" --endpoint "$3" --output "$BENCH_RUN_DIR/$4" --shard-index "$5" --shard-count "$6" --data "$BENCH_DATA" --model-path "$MODEL_PATH" --context-length "$BENCH_CONTEXT_LENGTH" --samples "$BENCH_SAMPLES" --max-steps "$BENCH_MAX_STEPS" --memory-profile "$BENCH_MEMORY_PROFILE" --prompt-profile "$BENCH_PROMPT_PROFILE" "${extra[@]}"
 fi
 
 export BENCHMARK=${1:?Expected scienceworld}
@@ -63,9 +69,9 @@ mode=${2:-both}
 case "$mode" in
     both) methods=(contextgraph foldagent); labels=(contextgraph foldagent); shard_indices=(0 0); shard_count=1 ;;
     baselines) methods=(agentfold supo); labels=(agentfold supo); shard_indices=(0 0); shard_count=1 ;;
-    agentfold|supo) methods=("$mode" "$mode"); labels=("$mode-0" "$mode-1"); shard_indices=(0 1); shard_count=2 ;;
+    agentfold|supo|memobrain|amem) methods=("$mode" "$mode"); labels=("$mode-0" "$mode-1"); shard_indices=(0 1); shard_count=2 ;;
     contextgraph|foldagent) methods=("$mode" "$mode"); labels=("$mode-0" "$mode-1"); shard_indices=(0 1); shard_count=2 ;;
-    *) echo 'Expected both, baselines, contextgraph, foldagent, agentfold or supo'; exit 2 ;;
+    *) echo 'Expected both, baselines, contextgraph, foldagent, agentfold, supo, memobrain or amem'; exit 2 ;;
 esac
 case "$BENCH_CONTEXT_LENGTH" in 32768|65536) ;; *) echo 'Expected 32768 or 65536 context'; exit 2;; esac
 mapfile -t nodes < <(scontrol show hostnames "$SLURM_JOB_NODELIST")
@@ -109,6 +115,10 @@ mkdir -p "$(dirname "$BENCH_AGENT_ENV")"
     fi
 ) 7>"$BENCH_AGENT_ENV.setup.lock"
 cp "$BENCH_AGENT_ENV/installed.txt" "$BENCH_RUN_DIR/environment.txt"
+if [[ "$mode" == amem ]]; then
+    source scripts/native_amem_environment.sh
+    prepare_native_amem "$BENCH_AGENT_ENV/bin/python" "$BENCH_RUN_DIR"
+fi
 if [[ "$BENCHMARK" == discoveryworld ]]; then
     (
         echo 'DISCOVERYWORLD_AGENT_DEPENDENCY_CHECK (normal Python startup)'

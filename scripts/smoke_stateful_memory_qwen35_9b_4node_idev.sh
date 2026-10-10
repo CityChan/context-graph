@@ -2,9 +2,9 @@
 # One native benchmark/method per allocation; defaults to two globally selected tasks.
 set -euo pipefail
 benchmark=${1:?Expected discoveryworld, scienceworld or swe-lite}
-method=${2:?Expected agentfold or supo}
+method=${2:?Expected agentfold, supo, memobrain or amem}
 case "$benchmark" in discoveryworld|scienceworld|swe-lite) ;; *) exit 2;; esac
-case "$method" in agentfold|supo) ;; *) exit 2;; esac
+case "$method" in agentfold|supo|memobrain|amem) ;; *) exit 2;; esac
 : "${SLURM_JOB_ID:?Use a four-node idev or the saved sbatch entry}"
 : "${SCRATCH:?Missing SCRATCH}"
 export PROJECT_ROOT=$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)

@@ -1,5 +1,9 @@
 # AgentFold and SUPO on SWE-bench Lite, DiscoveryWorld and ScienceWorld
 
+MemoBrain and A-MEM also use these native environment contracts through their
+own memory runner. Their entry points, budget conventions and validation status
+are documented in [graph_memory_baselines.md](graph_memory_baselines.md#native-swe-bench-lite-scienceworld-and-discoveryworld).
+
 Both are evaluation-only adaptations using Qwen3.5-9B, not the papers' trained
 policies. SUPO's BC-P/GAIA behavior is unchanged; AgentFold's search v5 behavior
 is also unchanged. Native AgentFold v6 adds constrained format retries for SWE,

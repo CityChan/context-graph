@@ -24,10 +24,16 @@ DATASET = "princeton-nlp/SWE-bench_Verified"
 DATASETS = {"verified": (DATASET, 500), "lite": ("princeton-nlp/SWE-bench_Lite", 300)}
 HARNESS_COMMIT = "3f01bd622c0a22c00406139f69a234ef08225f22"  # v3.0.17
 WORKFLOWS = {"react": "code", "foldagent": "code_branch", "contextgraph": "code_graph",
-             "agentfold": "code_agentfold", "supo": "code_supo"}
+             "agentfold": "code_agentfold", "supo": "code_supo",
+             "memobrain": "code_memobrain", "amem": "code_amem"}
 
 
 def agent_for(method):
+    if method in ('memobrain', 'amem'):
+        from agents import memory_baseline_agent
+        async def run(item, context):
+            return [await memory_baseline_agent.process_item(item, context)]
+        return run
     if method in ('agentfold', 'supo'):
         from agents import agentfold_agent, supo_agent
         agent = agentfold_agent if method == 'agentfold' else supo_agent
@@ -135,7 +141,7 @@ def config_for(args):
             "swe_apptainer_root": getattr(args, "apptainer_root", None),
             "apply_chat_template_kwargs": {"enable_thinking": True, "preserve_thinking": True},
         }}}})
-    if args.method in ('agentfold', 'supo'):
+    if args.method in ('agentfold', 'supo', 'memobrain', 'amem'):
         plugin = config.actor_rollout_ref.rollout.plugin
         plugin.final_answer_reserve = 1024
         plugin.final_answer_safety_margin = 128
@@ -201,7 +207,7 @@ async def generate_one(task, args, config, tokenizer, root, process_item):
             prediction["model_patch"] = env.model_patch
             result.update(status="generated", is_finish=bool(env.is_finish),
                 patch_bytes=len(env.model_patch.encode()),
-                env_stats=non_scoring_stats(extra.get('env_stats', env.stats) if args.method in ('agentfold', 'supo') else env.stats),
+                env_stats=non_scoring_stats(extra.get('env_stats', env.stats) if args.method in ('agentfold', 'supo', 'memobrain', 'amem') else env.stats),
                 image=env.sandbox.provenance, seed=seed)
         except Exception as exc:
             result["error"] = repr(exc)
@@ -275,7 +281,7 @@ async def generate(args):
             answer = await probe.create_completion(ids, max_new_tokens=64, structured_outputs={"json": schema})
             if not isinstance(json.loads(answer["choices"][0]["message"]["content"])["ok"], bool):
                 raise RuntimeError("Model server failed structured output preflight")
-        if args.method in ('agentfold', 'supo'):
+        if args.method in ('agentfold', 'supo', 'memobrain', 'amem'):
             regex = '<summary>OK</summary>' if args.method == 'supo' else '<function=finish><parameter=message>OK</parameter></function>'
             answer = await probe.create_completion(ids, max_new_tokens=64, structured_outputs={'regex': regex})
             if answer['choices'][0]['message']['content'] != regex:
@@ -291,7 +297,8 @@ async def generate(args):
         "instance_ids": [task["instance_id"] for task in selected], "commit": commit,
         "harness_commit": HARNESS_COMMIT, "config": OmegaConf.to_container(config),
         "agent_loop": {'contextgraph': 'graph_agent_code_isolated', 'agentfold': 'agentfold_agent',
-                       'supo': 'supo_agent'}.get(args.method, 'fold_agent_code'),
+                       'supo': 'supo_agent', 'memobrain': 'memory_baseline_agent',
+                       'amem': 'memory_baseline_agent'}.get(args.method, 'fold_agent_code'),
         "protocol": "python_exec; network disabled; shared files across sequential branches; no gold hints",
         "tokenizer_files": {p.name: file_hash(p) for p in Path(args.model_path).iterdir()
                             if p.is_file() and p.suffix in (".json", ".jinja", ".txt")},

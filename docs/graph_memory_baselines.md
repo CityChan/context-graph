@@ -1,7 +1,8 @@
-# MemoBrain and A-MEM: BC-P zero-shot adapters
+# MemoBrain and A-MEM: search and native-task zero-shot adapters
 
 These are independent, source-guided implementations of the public memory
-mechanisms, evaluated with our Qwen3.5-9B actor, local BC-P tools and judge.
+mechanisms, using our Qwen3.5-9B actor. BC-P uses local retrieval and its judge;
+the native adapters use each environment's tools and grading (see below).
 They are not results from the authors' trained checkpoints or original benchmark
 stacks. No RL training or cross-task memory is enabled. Existing ContextGraph
 and FoldAgent defaults are unchanged.
@@ -187,7 +188,7 @@ smoke audit. The request budget is unchanged and the added instructions are
 charged. Local tests do not establish live decoder behavior or task accuracy;
 rerun the same smoke in a fresh output directory.
 
-A-MEM `zero_shot_bcp_adaptation_v4` adds the evolution profile
+A-MEM `zero_shot_bcp_adaptation_v4` introduced the evolution profile
 `neighbor_aligned_json_v1`. The v3 live smoke finished 3/3 tasks and applied six
 evolutions, but reported ten invalid memory requests; the displayed errors were
 `Evolution arrays must align with neighbor IDs`. The output schema now uses the
@@ -214,7 +215,80 @@ Mocked-model tests validate operations, input projection, budgets, failure
 isolation and dispatch. The pinned MiniLM probe validates real CPU embeddings.
 Neither is a substitute for a Vista Qwen GPU smoke run.
 
+## A-MEM bounded metadata and current live evidence
+
+The supplied MemoBrain run at `f73edd0` passed the strict BC-P smoke: three
+finished tasks, 26 valid memory requests, six folds, no invalid decisions. It
+scored 0/3; this is evidence of mechanics, not accuracy or flush coverage.
+The supplied A-MEM run at `9f8e472` finished all three tasks with 15 evolutions,
+but one of 35 memory requests repeated tags until its 1024-token output limit.
+It remains a failed smoke. The previous neighbor-array errors were absent in
+that run; the remaining JSON was truncated, not an embedding failure.
+
+A-MEM `zero_shot_bcp_adaptation_v5` adds `bounded_metadata_v1`: each context is
+limited to 240 characters, each label to 32 characters, each tag list to four
+items, and analysis keywords to eight items. Both analysis and evolution
+schemas carry these limits. Raw note content remains unchanged. These are
+character/item bounds, not token guarantees; all rejected decisions still fail
+the strict audit. No output is silently repaired and no budget is increased.
+This revision needs a fresh BC-P smoke on Vista.
+
+## Native SWE-bench Lite, ScienceWorld and DiscoveryWorld
+
+Both methods now have `zero_shot_native_adaptation_v1` adapters and four-node
+launchers. This is implemented and locally tested, **not yet a live native
+smoke pass**. Use `scripts/smoke_stateful_memory_qwen35_9b_4node_idev.sh` with
+`memobrain` or `amem` and one of `swe-lite`, `scienceworld`, `discoveryworld`.
+
+SWE retains the existing ARM-compatible instance subset, sandbox, patch export
+and grading environments. Actor calls are `python_exec(code)` and
+`finish(message)`. ScienceWorld uses `action(command)` and `focus_v3`;
+DiscoveryWorld uses JSON actions, `discoveryworld_v1` and `compact_v1` in the
+smoke launcher. Both simulators determine termination and keep native scores,
+including failures. Neither exposes a finish tool. Private scorecards and gold
+solutions do not enter memory prompts.
+
+Memory helpers receive dispatched calls and shown observations, with explicit
+instructions to preserve object IDs, file changes, failures and unresolved
+goals. Recent observations supersede older notes. Memory never resets, replays
+or forks the environment. All actor and helper requests count toward the model
+turn cap; a 100-request cap therefore does not promise 100 environment actions.
+Generated tokens, shown observations and control instructions share the
+cumulative budget without refunds. Simulators do not reserve a final-answer
+slot. SWE retains the bounded finish call. Per-task trajectories save the
+memory state, request audit, actual method settings and native protocol.
+
+A-MEM setup starts from the benchmark's own agent/simulator Python and, if
+needed, creates a private sentence-transformers overlay inheriting that
+environment's package paths. It probes pinned MiniLM embeddings before starting
+model services. The BC-P `AMEM_AGENT_PYTHON` override is not reused for native
+tasks; native setup selects `AMEM_NATIVE_PYTHON` and records its interpreter and
+package versions in the run directory. SWE preparation/grading keep their
+original interpreters. Existing environments and running jobs are preserved.
+
+After the BC-P smoke passes, run the following in one four-node idev allocation
+for MemoBrain, and the second command in the other allocation for A-MEM:
+
+```bash
+git pull --ff-only
+for benchmark in swe-lite scienceworld discoveryworld; do SAMPLES=2 bash scripts/smoke_stateful_memory_qwen35_9b_4node_idev.sh "$benchmark" memobrain || break; done
+```
+
+```bash
+git pull --ff-only
+for benchmark in swe-lite scienceworld discoveryworld; do SAMPLES=2 bash scripts/smoke_stateful_memory_qwen35_9b_4node_idev.sh "$benchmark" amem || break; done
+```
+
+Each command creates a fresh artifact directory. The native audit requires
+completed grading, native provenance, exercised tools, successful memory
+construction and at least one MemoBrain fold or A-MEM evolution across the
+selected tasks. It also checks memory errors, actor/helper request accounting,
+token accounting and A-MEM semantic retrieval. A short terminal failure that
+never exercises memory cannot alone establish a pass. Accuracy is reported by
+native grading, not used as the integration gate. Full experiments should wait
+for the corresponding native smoke evidence.
+
 The initial implementation check passed 111 focused tests plus 25 generation-audit
 tests. One additional ScienceWorld audit test has a pre-existing fixture missing
 `memory_profile`; the identical failure was reproduced on the untouched parent
-commit `5e2487c`. This change does not modify that test or ScienceWorld runner.
+commit `5e2487c`. That initial BC-P change did not modify the test or ScienceWorld runner.

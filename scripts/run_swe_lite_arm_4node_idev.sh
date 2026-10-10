@@ -5,7 +5,7 @@ set -euo pipefail
 : "${SCRATCH:?SCRATCH must be set}"
 : "${SWE_AGENT_ENV:?Set the existing dedicated SWE agent environment}"
 method=${1:-foldagent}
-case "$method" in foldagent|contextgraph|react|agentfold|supo) ;; *) echo 'Expected foldagent, contextgraph, react, agentfold or supo'; exit 2;; esac
+case "$method" in foldagent|contextgraph|react|agentfold|supo|memobrain|amem) ;; *) echo 'Unknown SWE method'; exit 2;; esac
 cd "${PROJECT_ROOT:-/work/09281/chc_1996/vista/context-graph}"
 case "$(hostname -s)" in login*) echo 'Run from the idev compute shell'; exit 2;; esac
 mapfile -t nodes < <(scontrol show hostnames "$SLURM_JOB_NODELIST")
@@ -25,6 +25,10 @@ echo "SWE_ARM_4NODE_START method=$method context=$context artifacts=$run"
 echo "Pairs: server=${nodes[0]} evaluator=${nodes[1]}; server=${nodes[2]} evaluator=${nodes[3]}"
 echo "Default: 126 tasks per pair; SWE_SAMPLES limits the global candidate list before splitting."
 echo "Resume: set SWE_RUN_DIR=$run with the same method, code and budget."
+if [[ "$method" == amem ]]; then
+    source scripts/native_amem_environment.sh
+    prepare_native_amem "$SWE_AGENT_ENV/bin/python" "$run"
+fi
 # Prepare shared metadata once before two evaluators use it.
 if [[ ! -e "$root/data/lite" ]]; then
     "$SWE_AGENT_ENV/preparation/bin/python" scripts/eval_swebench_verified.py prepare --dataset lite --revision 6ec7bb89b9342f664a54a6e0a6ea6501d3437cc2 --data-dir "$root/data/lite"

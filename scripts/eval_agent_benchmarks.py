@@ -25,7 +25,7 @@ from scripts.prepare_agent_benchmarks import SCIENCEWORLD_VERSION
 from scripts.generation_audit import combine_degeneration_stats, degeneration_stats, require_generation_quality
 
 BENCHMARKS = ("scienceworld", "discoveryworld")
-METHODS = ("contextgraph", "foldagent", "agentfold", "supo")
+METHODS = ("contextgraph", "foldagent", "agentfold", "supo", "memobrain", "amem")
 MEMORY_PROFILES = ("legacy", "turns", "repaired")
 PROMPT_PROFILES = ("legacy", "focus_v2", "focus_v3", "discoveryworld_v1")
 DEFAULT_MEMORY_PROFILES = {"scienceworld": "turns", "discoveryworld": "repaired"}
@@ -52,7 +52,7 @@ def config_for(benchmark, method, context_length, max_steps=100, memory_profile=
     config = base_config(method if method in ('contextgraph', 'foldagent') else 'foldagent', context_length)
     plugin = config.actor_rollout_ref.rollout.plugin
     plugin.workflow = benchmark + ("_graph" if method == "contextgraph" else "_branch")
-    if method in ('agentfold', 'supo'):
+    if method in ('agentfold', 'supo', 'memobrain', 'amem'):
         plugin.workflow = benchmark + '_' + method
         plugin.supo_context_threshold = context_length // 2
         plugin.supo_max_summaries = 2
@@ -87,6 +87,11 @@ def config_for(benchmark, method, context_length, max_steps=100, memory_profile=
 
 
 def agent_for(method):
+    if method in ('memobrain', 'amem'):
+        from agents import memory_baseline_agent
+        async def run(item, context):
+            return [await memory_baseline_agent.process_item(item, context)]
+        return run
     if method in ('agentfold', 'supo'):
         from agents import agentfold_agent, supo_agent
         agent = agentfold_agent if method == 'agentfold' else supo_agent

@@ -10,6 +10,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import sysconfig
 import tempfile
 
 
@@ -47,6 +48,14 @@ def prepare(root):
         constraint_file = target / "base-constraints.txt"
         constraint_file.write_text(constraints(), encoding="utf-8")
         run([sys.executable, "-m", "venv", "--system-site-packages", str(target)])
+        # A venv created from another venv does not inherit that parent's local
+        # simulator packages. Preserve its visible package paths in the new overlay.
+        site = target / ("Lib/site-packages" if os.name == "nt" else
+                         f"lib/python{sys.version_info.major}.{sys.version_info.minor}/site-packages")
+        site.mkdir(parents=True, exist_ok=True)
+        paths = list(dict.fromkeys([sysconfig.get_path('purelib')] +
+                     [p for p in sys.path if p and Path(p).name in ('site-packages', 'dist-packages')]))
+        (site / 'agent-parent.pth').write_text('\n'.join(paths) + '\n', encoding='utf8')
         python = target / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
         run([str(python), "-m", "pip", "--isolated", "install", "--only-binary=:all:",
              "--constraint", str(constraint_file), SENTENCE_TRANSFORMERS])

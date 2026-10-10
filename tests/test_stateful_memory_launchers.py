@@ -9,6 +9,39 @@ import pytest
 from scripts.audit_stateful_memory_smoke import audit
 
 
+@pytest.mark.parametrize('benchmark', ['swe-lite', 'scienceworld', 'discoveryworld'])
+@pytest.mark.parametrize('method', ['memobrain', 'amem'])
+def test_graph_native_audit_requires_real_memory_protocol_and_accounting(tmp_path, benchmark, method):
+    protocol = ('swe' if benchmark == 'swe-lite' else benchmark) + '_v1'
+    trajectory = dict(termination_reason='finish', memory_audit=[], **{method: dict(task_protocol=protocol)},
+        env_stats=dict(environment_steps=6, python_exec=6, memory_updates=5, memory_nodes=4,
+                       memobrain_folds=1, amem_evolutions=2, embedding_calls=10, memory_retrieval_calls=6,
+                       generated_tokens=50, observation_tokens=40, instruction_tokens=10, main_len=100,
+                       actor_requests=6, memory_requests=5, model_requests=11, invalid_memory=0))
+    for i in range(2):
+        part = tmp_path / (f'pair-{i}' if benchmark == 'swe-lite' else f'{method}-{i}')
+        attempt = part / 'instances/task/attempt-1'
+        attempt.mkdir(parents=True)
+        (part / 'summary.json').write_text(json.dumps(dict(selected=1, pending=0)))
+        (attempt.parent / 'result.json').write_text(json.dumps(dict(status='graded', attempt='attempt-1')))
+        target = attempt / ('generation/instances/task/trajectory.json' if benchmark == 'swe-lite' else 'trajectory.json')
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps(trajectory))
+    assert audit(tmp_path, benchmark, method, 2)['passed']
+    for field, value, check in [('invalid_memory', 1, 'memory_format_valid'),
+                               ('main_len', 99, 'budget_accounting'),
+                               ('model_requests', 12, 'budget_accounting')]:
+        old = trajectory['env_stats'][field]
+        trajectory['env_stats'][field] = value
+        target.write_text(json.dumps(trajectory))
+        report = audit(tmp_path, benchmark, method, 2)
+        assert not report['passed'] and not report['checks'][check]
+        trajectory['env_stats'][field] = old
+    trajectory[method]['task_protocol'] = 'search'
+    target.write_text(json.dumps(trajectory))
+    assert not audit(tmp_path, benchmark, method, 2)['checks']['native_protocol']
+
+
 def test_discoveryworld_summary_keeps_format_failures_distinct_from_infrastructure(tmp_path):
     from scripts.eval_agent_benchmarks import summary, task_key
     path = tmp_path / 'instances' / task_key('test')
@@ -44,7 +77,7 @@ def test_smoke_audit_requires_grading_complete_and_memory(tmp_path, benchmark, m
 
 
 @pytest.mark.parametrize('benchmark', ['swe-lite', 'discoveryworld', 'scienceworld'])
-@pytest.mark.parametrize('method', ['supo', 'agentfold'])
+@pytest.mark.parametrize('method', ['supo', 'agentfold', 'memobrain', 'amem'])
 def test_wrapper_dispatches_native_launchers_and_ignores_stale_roots(tmp_path, benchmark, method):
     bash = 'C:/Program Files/Git/bin/bash.exe' if os.name == 'nt' else shutil.which('bash')
     if not bash or not Path(bash).exists():

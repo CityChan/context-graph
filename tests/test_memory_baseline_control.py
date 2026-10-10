@@ -7,9 +7,9 @@ from itertools import combinations, product
 import pytest
 from jsonschema import Draft202012Validator
 
-from agents import memory_baseline_agent as runner
+from agents import memory_baseline_agent as runner, graph_memory_baselines as memory
 from agents.memory_baseline_control import FINAL_SYSTEM, helper_schema, final_constraint, editable_node_ids, recall_constraint
-from tests.test_graph_memory_baselines import setup, graph, PAIR, PATCH, ANALYSIS, EVOLUTION, NOOP
+from tests.test_graph_memory_baselines import setup, graph, PAIR, PATCH, ANALYSIS, EVOLUTION, NOOP, fake_embed
 from tests.test_agentfold import SEARCH, OPEN, FINISH
 
 
@@ -279,6 +279,31 @@ def test_evolution_schema_preserves_noop_and_independent_actions():
     assert not empty.is_valid(strengthen) and not empty.is_valid(update)
     with pytest.raises(ValueError, match="current neighbors"):
         helper_schema("memory_evolve")
+
+
+def test_amem_contract_rejects_repeated_tag_overflow_without_truncating_raw_notes():
+    from agents.memory_baseline_control import AMEM_TEXT_LIMITS
+    check = Draft202012Validator(helper_schema('memory_evolve', state=dict(neighbors=[dict(id='n1')])))
+    decision = copy.deepcopy(EVOLUTION)
+    check.validate(decision)
+    # Regression for the Vista 1024-token loop in repeated neighborhood tags.
+    bad = copy.deepcopy(decision)
+    bad['new_tags_neighborhood'] = [['puzzle', 'film_criticism', 'biography', 'uncertain_data'] * 20]
+    assert not check.is_valid(bad)
+    for field, value in [('tags_to_update', ['tag'] * 5),
+                         ('new_context_neighborhood', ['x' * 241]),
+                         ('new_tags_neighborhood', [['x' * 33]])]:
+        assert not check.is_valid({**decision, field: value})
+    analyze = Draft202012Validator(helper_schema('memory_analyze'))
+    analyze.validate(ANALYSIS)
+    for field, value in [('keywords', ['word'] * 9), ('tags', ['tag'] * 5),
+                         ('context', 'x' * 241), ('keywords', ['x' * 33])]:
+        assert not analyze.is_valid({**ANALYSIS, field: value})
+    store = memory.AMemMemory(fake_embed)
+    raw = 'original observation ' * 300
+    nid = store.add(raw, ANALYSIS)
+    assert store.nodes[nid]['content'] == raw
+    assert len(raw) > AMEM_TEXT_LIMITS['context_chars']
 
 
 def test_evolution_request_uses_ordered_snapshot_and_rejects_misalignment_atomically(monkeypatch):

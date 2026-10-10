@@ -12,6 +12,7 @@ HELPER_CONTROL = (
     "necessary update so the entire JSON fits. Replace example text with actual observed "
     "evidence; never copy placeholders. Empty operation lists are allowed when justified."
 )
+AMEM_TEXT_LIMITS = {"context_chars": 240, "label_chars": 32, "tags": 4, "keywords": 8}
 
 
 def obj(**properties):
@@ -93,7 +94,10 @@ def helper_schema(phase, *, state=None):
                    fold_ops=array(obj(ids=array(target, minItems=1), rationale=text,
                                       notes=notes), **limits))
     if phase == "memory_analyze":
-        return obj(keywords=array(text), context=text, tags=array(text))
+        label = {"type": "string", "maxLength": AMEM_TEXT_LIMITS["label_chars"]}
+        return obj(keywords=array(label, maxItems=AMEM_TEXT_LIMITS["keywords"]),
+                   context={"type": "string", "maxLength": AMEM_TEXT_LIMITS["context_chars"]},
+                   tags=array(label, maxItems=AMEM_TEXT_LIMITS["tags"]))
     if phase == "memory_evolve":
         if state is None:
             raise ValueError("A-MEM evolution requires the current neighbors")
@@ -101,6 +105,9 @@ def helper_schema(phase, *, state=None):
         if any(not isinstance(nid, str) or not nid for nid in ids) or len(set(ids)) != len(ids):
             raise ValueError("Expected unique nonempty neighbor IDs")
         empty = array(text, maxItems=0)
+        label = {"type": "string", "maxLength": AMEM_TEXT_LIMITS["label_chars"]}
+        tags = array(label, maxItems=AMEM_TEXT_LIMITS["tags"])
+        description = {"type": "string", "maxLength": AMEM_TEXT_LIMITS["context_chars"]}
 
         def branch(actions):
             update = "update_neighbor" in actions
@@ -108,10 +115,10 @@ def helper_schema(phase, *, state=None):
             count = len(ids) if update else 0
             return obj(should_evolve={"const": bool(actions)},
                        actions={"enum": [actions, actions[::-1]]} if len(actions) > 1 else {"const": actions},
-                       suggested_connections=array({"type": "string", "enum": ids}) if strengthen else empty,
-                       tags_to_update=array(text) if strengthen else empty,
-                       new_context_neighborhood=array(text, minItems=count, maxItems=count),
-                       new_tags_neighborhood=array(array(text), minItems=count, maxItems=count))
+                       suggested_connections=array({"type": "string", "enum": ids}, maxItems=len(ids)) if strengthen else empty,
+                       tags_to_update=tags if strengthen else empty,
+                       new_context_neighborhood=array(description, minItems=count, maxItems=count),
+                       new_tags_neighborhood=array(tags, minItems=count, maxItems=count))
 
         # Use disjoint branches so counts depend on the chosen action, without
         # if/then or uniqueItems features that decoding backends may ignore.

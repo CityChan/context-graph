@@ -1,4 +1,4 @@
-"""Shared, audited BC-P runner for the MemoBrain / A-MEM zero-shot adapters."""
+"""Audited search and native-task runner for MemoBrain / A-MEM zero-shot adapters."""
 from __future__ import annotations
 
 import asyncio
@@ -11,9 +11,10 @@ from . import graph_memory_baselines as memory
 from .agentfold_agent import _fit_observation, _get, parse_response
 from .environment_lifecycle import managed_environment
 from .prompts import create_chat
+from .baseline_task_protocol import task_kind, task_chat, provenance as task_provenance
 from .single_tool_protocol import MAX_FORMAT_ERRORS, PROTOCOL, retry_context
 from .memory_baseline_control import (
-    FINAL_SYSTEM, HELPER_CONTROL, helper_schema, final_constraint, editable_node_ids, recall_constraint,
+    FINAL_SYSTEM, HELPER_CONTROL, helper_schema, final_constraint, editable_node_ids, recall_constraint, AMEM_TEXT_LIMITS,
 )
 from .utils import AgentLoopMetrics, AgentLoopOutput, _apply_chat_template, select_env
 
@@ -24,9 +25,11 @@ class BudgetEnd(Exception):
 
 def provenance(method, options):
     return {**memory.PROVENANCE[method], **options, **PROTOCOL, "method": method,
-            "variant": "zero_shot_bcp_adaptation_v5" if method == "memobrain" else "zero_shot_bcp_adaptation_v4",
+            "variant": "zero_shot_bcp_adaptation_v5",
             **({"recall_target_profile": "active_unprotected_sorted_ids_regex_v2"} if method == "memobrain" else {}),
             **({"evolution_output_profile": "neighbor_aligned_json_v1"} if method == "amem" else {}),
+            **({"metadata_output_profile": "bounded_metadata_v1", "metadata_limits": AMEM_TEXT_LIMITS,
+                "metadata_char_budget": "character bounds are not token guarantees"} if method == "amem" else {}),
             "trained_checkpoint": False,
             "helper_output_profile": "memory_json_schema_v1", "helper_enable_thinking": False,
             "final_output_profile": "bounded_finish_xml_v1", "final_enable_thinking": False,
@@ -42,11 +45,11 @@ async def process_item(item, context):
     if context.is_train:
         raise ValueError("Graph memory baselines are evaluation-only")
     ability = _get(item.non_tensor_batch["ability"])
-    if ability not in {"LocalSearch", "GAIA"}:
-        raise ValueError("Graph memory baselines require LocalSearch or text-only GAIA")
+    kind = task_kind(ability)
+    simulator = kind in ('scienceworld', 'discoveryworld')
     config = copy.deepcopy(context.config.actor_rollout_ref.rollout)
     plugin, tokenizer = config.plugin, context.tokenizer
-    method = plugin.workflow.removeprefix("search_")
+    method = plugin.workflow.rsplit('_', 1)[-1]
     if method not in {"memobrain", "amem"}:
         raise ValueError(f"Unknown memory baseline: {method}")
     options = memory.settings(plugin)
@@ -55,6 +58,15 @@ async def process_item(item, context):
     max_turn = int(getattr(plugin, "val_max_turn", plugin.max_turn))
     turn_cap = int(getattr(plugin, "turn_max_new_tokens", 2048))
     reserve = max(0, int(getattr(plugin, "final_answer_reserve", 0)))
+    if simulator:
+        reserve = 0
+    final_system = FINAL_SYSTEM.replace('parameter=answer', 'parameter=message') if kind == 'swe' else FINAL_SYSTEM
+    protocol = provenance(method, options)
+    if kind != 'search':
+        protocol.update(**task_provenance(kind), variant='zero_shot_native_adaptation_v1', tool_prompt_profile=kind + '_v1',
+                        stateful_history='dispatched actions and observations; no replay or reset')
+        if simulator:
+            protocol['turns'] = 'all actor and memory model requests; no final answer slot'
     margin = max(0, int(getattr(plugin, "final_answer_safety_margin", 64)))
     encode = lambda s: tokenizer.encode(s, add_special_tokens=False)
     render = lambda m, control=False: list(_apply_chat_template(tokenizer, m, config,
@@ -71,7 +83,7 @@ async def process_item(item, context):
 
     async def request(messages, phase, final=False, instruction="", constraint=None):
         nonlocal used, iteration, last_ids, last_outputs, last_logprobs
-        if iteration >= max_turn or (phase.startswith("memory") and iteration >= max_turn - 1):
+        if iteration >= max_turn or (not simulator and phase.startswith("memory") and iteration >= max_turn - 1):
             raise BudgetEnd("max_turn")
         control = final or phase.startswith("memory")
         candidate = render(messages, control=control)
@@ -86,6 +98,8 @@ async def process_item(item, context):
             raise BudgetEnd("token_limit")
         if final:
             constraint = final_constraint(limit)
+            if constraint and kind == 'swe':
+                constraint['regex'] = constraint['regex'].replace('parameter=answer', 'parameter=message')
             if constraint is None:
                 raise BudgetEnd("token_limit")
         iteration += 1
@@ -113,6 +127,14 @@ async def process_item(item, context):
     async def helper(prompt, data, phase, apply):
         data = copy.deepcopy(data)
         prompt += HELPER_CONTROL
+        if kind != 'search':
+            prompt += ("\nThis is a stateful task. Preserve observed state, object IDs, file changes, "
+                       "failed actions and unresolved goals. Memory edits never replay or reset the environment. "
+                       "The latest observation supersedes conflicting historical state.")
+        if method == 'amem':
+            prompt += ("\nUse at most 4 tags per note and 8 keywords, each at most 32 characters; "
+                       "each context is at most 240 characters. Avoid repeated labels. These are output caps; "
+                       "do not fill them unnecessarily. Raw observations remain stored separately.")
         if phase == "memory_recall":
             prompt += (f"\nEditable node IDs: {editable_node_ids(data)}. "
                        "Within each fold, list IDs in strictly increasing order without duplicates. "
@@ -151,7 +173,8 @@ async def process_item(item, context):
     async with managed_environment(env):
         await env.init_env(item)
         task = env.instance_info["problem_statement"]
-        fixed = create_chat(task, "search_single", item)
+        fixed = task_chat(kind, task, item, method, create_chat,
+                          prompt_profile=getattr(plugin, 'scienceworld_prompt_profile', 'legacy'))
         if len(render(fixed)) + max(reserve, 10) >= window:
             raise ValueError("Original task does not fit; never truncate it")
         store = memory.MemoBrainMemory(task) if method == "memobrain" else memory.AMemMemory()
@@ -160,7 +183,7 @@ async def process_item(item, context):
         rejected, consecutive_invalid = "", 0
         try:
             while iteration < max_turn:
-                finish_only = force_final or iteration == max_turn - 1 or budget - used <= reserve + margin + max(turn_cap, 10)
+                finish_only = not simulator and (force_final or iteration == max_turn - 1 or budget - used <= reserve + margin + max(turn_cap, 10))
                 if method == "memobrain":
                     working = copy.deepcopy(fixed) + store.history()
                 else:
@@ -185,11 +208,11 @@ async def process_item(item, context):
                 instruction = feedback
                 control_cost_text = ""
                 if finish_only:
-                    working[0] = {"role": "system", "content": FINAL_SYSTEM}
+                    working[0] = {"role": "system", "content": final_system}
                     instruction = "Budget ending: submit one finish call now using available evidence."
                     if feedback:
                         instruction += "\n" + feedback
-                    control_cost_text = FINAL_SYSTEM
+                    control_cost_text = final_system
                 if rejected:
                     working.append({"role": "assistant", "content": rejected})
                 if instruction:
@@ -200,7 +223,7 @@ async def process_item(item, context):
                 try:
                     if finish_only and not re.fullmatch(audit[-1]["structured_outputs"]["regex"], text):
                         raise ValueError("Final answer violated bounded finish output contract")
-                    action, _ = parse_response(text, [], finish_only=finish_only)
+                    action, _ = parse_response(text, [], finish_only=finish_only, kind=kind)
                 except (ValueError, TypeError) as exc:
                     stats["invalid_tool"] += 1
                     audit[-1]["format_error"] = str(exc)
@@ -228,12 +251,12 @@ async def process_item(item, context):
                 stats["observation_budget_truncations"] += int(bool(shown) and shown != raw)
                 stats["observation_budget_skips"] += int(not shown)
                 audit[-1].update(raw_observation=raw, shown_observation=shown)
-                pair = [{"role": "assistant", "content": text}, {"role": "user", "content": shown}]
+                pair = [{"role": "assistant", "content": text if kind == 'search' else action}, {"role": "user", "content": shown}]
                 episodes.append(pair)
                 transcript.append(pair[1])
                 if method == "memobrain":
                     store.append(pair)
-                # Reserve a final actor request even when maintenance exhausts the budget.
+                # Search/SWE reserve a final call; simulators stop at their actual state.
                 try:
                     if method == "memobrain":
                         await helper(memory.MEMORIZE, dict(interaction=pair, graph=store.state()),
@@ -257,6 +280,8 @@ async def process_item(item, context):
                                 neighbors=[store.nodes[n] for n in neighbors]), "memory_evolve",
                                 lambda decision: store.evolve(nid, neighbors, decision))
                 except BudgetEnd:
+                    if simulator:
+                        raise
                     force_final = True
         except BudgetEnd as exc:
             reason = str(exc)
@@ -285,5 +310,5 @@ async def process_item(item, context):
             extra_fields={"messages": transcript, "model_contexts": audit, "env_stats": stats,
                           "is_finish": bool(getattr(env, "is_finish", False)), "termination_reason": reason,
                           "judge_audit": copy.deepcopy(getattr(env, "judge_audit", [])),
-                          "baseline_protocol": provenance(method, options), "memory_state": store.state(),
+                          "baseline_protocol": protocol, method: protocol, "memory_state": store.state(),
                           "memory_audit": memory_audit, "working_history": working})

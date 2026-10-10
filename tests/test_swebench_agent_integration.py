@@ -54,11 +54,17 @@ class Sandbox:
         self.closed = True
 
 
-@pytest.mark.parametrize("method", ["react", "foldagent", "contextgraph", "agentfold", "supo"])
+@pytest.mark.parametrize("method", ["react", "foldagent", "contextgraph", "agentfold", "supo", "memobrain", "amem"])
 def test_real_code_loop_exports_patch_and_cleans_container(method, tmp_path, monkeypatch):
     tokenizer = CharacterTokenizer()
     tool = "<function=python_exec><parameter=code>print('test')</parameter></function>"
     responses = [tool, "<function=finish><parameter=message>done</parameter></function>"]
+    if method in ('memobrain', 'amem'):
+        from agents import graph_memory_baselines as memory
+        from tests.test_graph_memory_baselines import PATCH, ANALYSIS, fake_embed
+        original = memory.AMemMemory
+        monkeypatch.setattr(memory, 'AMemMemory', lambda: original(fake_embed))
+        responses.insert(1, json.dumps(PATCH if method == 'memobrain' else ANALYSIS))
     if method in ('foldagent', 'contextgraph'):
         responses = ["<function=branch><parameter=description>inspect</parameter><parameter=prompt>inspect code</parameter></function>",
                      tool, "<function=return><parameter=message>inspected and tested</parameter></function>",
@@ -86,6 +92,8 @@ def test_real_code_loop_exports_patch_and_cleans_container(method, tmp_path, mon
                            seed=42, endpoint="http://unused", model="test")
     if method in ('agentfold', 'supo'):
         args.max_turn = 2  # Exercise native finish(message), including final constraints.
+    if method in ('memobrain', 'amem'):
+        args.max_turn = 3
     result, prediction = asyncio.run(generate_one(task, args, config_for(args), tokenizer, tmp_path,
                                                 agent_for(method)))
     assert result["status"] == "generated", (result, list(tmp_path.rglob("error.txt")))
@@ -95,7 +103,7 @@ def test_real_code_loop_exports_patch_and_cleans_container(method, tmp_path, mon
     assert Sandbox.instances[-1].closed
     assert len(Sandbox.instances[-1].calls) == 1
     trajectory = json.loads(next(tmp_path.rglob("trajectory.json")).read_text(encoding="utf-8"))
-    if method in ('agentfold', 'supo'):
+    if method in ('agentfold', 'supo', 'memobrain', 'amem'):
         assert trajectory[method]['task_protocol'] == 'swe_v1'
         assert trajectory['env_stats']['environment_steps'] == 2
         final = trajectory['model_contexts'][-1]

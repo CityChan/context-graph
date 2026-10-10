@@ -25,6 +25,9 @@ def test_missing_dependency_installs_only_in_unique_venv(monkeypatch, tmp_path):
     constraints = Path(calls[1][calls[1].index("--constraint") + 1])
     assert "torch==2.6.0" in constraints.read_text()
     assert calls[2][0] == first  # Verify the exact interpreter used by evaluators.
+    inherited = next(Path(first).parent.parent.rglob('agent-parent.pth')).read_text().splitlines()
+    assert setup.sysconfig.get_path('purelib') in inherited
+    assert len(inherited) == len(set(inherited))
 
 
 def test_existing_dependency_is_probed_without_install(monkeypatch, tmp_path):
@@ -127,3 +130,38 @@ def test_embedding_probe_selects_backend_before_dependency_import(monkeypatch):
     monkeypatch.setattr(builtins, "__import__", check_import)
     with pytest.raises(RuntimeError, match="backend checked"):
         probe.main()
+
+
+@pytest.mark.parametrize('method', ['memobrain', 'amem'])
+@pytest.mark.parametrize('benchmark', ['scienceworld', 'discoveryworld'])
+def test_native_evaluator_selects_method_specific_python(tmp_path, method, benchmark):
+    bash = 'C:/Program Files/Git/bin/bash.exe' if os.name == 'nt' else shutil.which('bash')
+    if not bash or not Path(bash).exists():
+        pytest.skip('Bash required')
+    root = Path(__file__).resolve().parents[1]
+    (tmp_path / 'torch.so').write_text('stub')
+    # The fixture is not a real shared library; inspect selection without loading it.
+    mocks = tmp_path / 'mocks.sh'
+    mocks.write_text('exec() { [[ -n "$LD_PRELOAD" ]] || return 3; unset LD_PRELOAD; builtin exec "$@"; }\n', newline='\n')
+    for name in ('base/bin/python', 'amem-python'):
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('#!/bin/bash\nif [[ "$1" == -c ]]; then echo "$PROJECT_ROOT/torch.so"; exit 0; fi\n'
+                        'printf "%s|%s|%s|%s|%s\\n" "$0" "$USE_TF" "$USE_TORCH" "$USE_FLAX" "$FORCE_TF_AVAILABLE" > "$PROJECT_ROOT/python-used"\n'
+                        'printf "%s\\n" "$*" > "$PROJECT_ROOT/eval-args"\n', newline='\n')
+        path.chmod(0o755)
+    env = dict(os.environ, PROJECT_ROOT=tmp_path.as_posix(), SCRATCH=tmp_path.as_posix(),
+               BENCH_AGENT_ENV=(tmp_path / 'base').as_posix(), AMEM_NATIVE_PYTHON=(tmp_path / 'amem-python').as_posix(),
+               BENCHMARK=benchmark, BENCH_RUN_DIR='native-run', BENCH_DATA='native-data', SLURM_JOB_ID='fixture',
+               BASH_ENV=mocks.as_posix(),
+               USE_TF='1', USE_TORCH='0', USE_FLAX='1', FORCE_TF_AVAILABLE='1')
+    result = subprocess.run([bash, (root / 'scripts/eval_agent_benchmarks_qwen35_9b_4node.sbatch').as_posix(),
+                             '_eval', method, 'http://fixture', method + '-1', '1', '2'],
+                            env=env, capture_output=True, text=True, timeout=15,
+                            creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+    assert result.returncode == 0, result.stdout + result.stderr
+    selected = (tmp_path / 'python-used').read_text().strip()
+    assert selected.endswith('amem-python|0|1|0|0' if method == 'amem' else 'base/bin/python|1|0|1|1')
+    args = (tmp_path / 'eval-args').read_text()
+    assert f'eval_agent_benchmarks.py {benchmark} --method {method}' in args
+    assert f'--output native-run/{method}-1 --shard-index 1 --shard-count 2' in args
