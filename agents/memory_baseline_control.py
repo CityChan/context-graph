@@ -13,16 +13,21 @@ HELPER_CONTROL = (
     "evidence; never copy placeholders. Empty operation lists are allowed when justified."
 )
 AMEM_TEXT_LIMITS = {"context_chars": 240, "label_chars": 32, "tags": 4, "keywords": 8}
+NATIVE_MEMOBRAIN_LIMITS = {"fold_groups": 4, "note_chars": 240, "rationale_chars": 64,
+                          "patch_nodes": 2, "patch_edges": 4, "notes_per_node": 2}
 NATIVE_RECALL = (
     'Maintain the reasoning graph using one decision per editable node. Return JSON only: '
-    '{"nodes":{"3":null,"4":{"flush":"superseded evidence"},'
-    '"5":{"fold":1,"rationale":"completed subtask","notes":[{"role":"assistant",'
-    '"content":"faithful summary of observed work"}]}}}. '
+    '{"nodes":{"3":null,"4":"flush","5":1},"flush_rationale":"superseded evidence",'
+    '"folds":{"1":{"rationale":"completed subtask","notes":[{"role":"assistant",'
+    '"content":"faithful summary of observed work"}]},"2":null,"3":null,"4":null}}. '
     'Use the actual editable IDs in their supplied order, once each. null keeps a node. '
-    'A flush object flushes only that node. A fold object assigns that node to a group: '
-    'equal fold numbers share one fold; different numbers create independent folds. '
-    'Fold numbers are group labels, not node IDs. Write concise notes for each assigned node; '
-    'notes from the same group are concatenated in node order. Preserve evidence, uncertainty, '
+    '"flush" flushes only that node, using the shared flush_rationale. An integer 1 to 4 '
+    'assigns the node to a fold group. Equal numbers share one fold. '
+    'Write each group summary ONCE under folds, covering all its assigned nodes. '
+    'Each used group needs one summary; unused groups must be null. Keep nodes that cannot '
+    'be faithfully summarized within these caps. At most four groups per call, one note '
+    'of at most 240 characters per group and 64 characters per rationale. '
+    'Preserve evidence, uncertainty, '
     'file changes and unresolved goals. Do not copy example facts. '
     'For no changes, {"nodes":{}} is allowed. Do not execute tools or answer the task.'
 )
@@ -45,30 +50,31 @@ def editable_node_ids(state):
 
 
 def native_recall_constraint(state):
-    """Fixed unique keys encode arbitrary disjoint fold groups in linear space."""
+    """Compact disjoint assignments; model writes each bounded group summary once."""
     ids = editable_node_ids(state)
     ws = r"[ \t\r\n]*"
     comma = ws + ',' + ws
     char = r'[^"\\\x00-\x1f]|\\(?:["\\/bfnrt]|u[0-9a-fA-F]{4})'
-    text = '"(?:' + char + ')*"'
-    content = '"(?:' + char + ')+"'
+    text = '"(?:' + char + '){0,' + str(NATIVE_MEMOBRAIN_LIMITS['rationale_chars']) + '}"'
+    content = '"(?:' + char + '){1,' + str(NATIVE_MEMOBRAIN_LIMITS['note_chars']) + '}"'
 
     def object_pattern(fields):
         return r'\{' + ws + comma.join('"' + k + '"' + ws + ':' + ws + v
                                        for k, v in fields) + ws + r'\}'
 
     empty = object_pattern([])
-    nodes = empty
+    body = object_pattern([('nodes', empty)])
     if ids:
         note = object_pattern([('role', '"(?:assistant|user)"'), ('content', content)])
-        notes = r'\[' + ws + note + '(?:' + comma + note + ')*' + ws + r'\]'
-        # Labels identify groups, not graph nodes; their count is bounded by slots.
-        groups = r'[1-9][0-9]{0,5}'
-        flush = object_pattern([('flush', text)])
-        fold = object_pattern([('fold', groups), ('rationale', text), ('notes', notes)])
-        value = '(?:null|' + flush + '|' + fold + ')'
-        nodes = '(?:' + empty + '|' + object_pattern([(str(n), value) for n in ids]) + ')'
-    return {'regex': ws + object_pattern([('nodes', nodes)]) + ws}
+        notes = r'\[' + ws + note + ws + r'\]'
+        fold = object_pattern([('rationale', text), ('notes', notes)])
+        slots = NATIVE_MEMOBRAIN_LIMITS['fold_groups']
+        value = '(?:null|"flush"|[1-' + str(slots) + '])'
+        nodes = object_pattern([(str(n), value) for n in ids])
+        folds = object_pattern([(str(n), '(?:null|' + fold + ')') for n in range(1, slots + 1)])
+        body = '(?:' + body + '|' + object_pattern([
+            ('nodes', nodes), ('flush_rationale', text), ('folds', folds)]) + ')'
+    return {'regex': ws + body + ws}
 
 
 def native_recall_decision(decision, state):
@@ -77,31 +83,61 @@ def native_recall_decision(decision, state):
     This is a wire-format conversion, not repair: reject malformed assignments;
     never deduplicate targets or invent operations/notes.
     """
-    ids = editable_node_ids(state)
-    if not isinstance(decision, dict) or set(decision) != {'nodes'} or not isinstance(decision['nodes'], dict):
-        raise ValueError('Expected node decisions')
+    import json
+    import re
+
+    # Also enforce bounds for direct callers; the runner validates raw JSON first
+    # so duplicate keys cannot disappear during parsing.
+    if not re.fullmatch(native_recall_constraint(state)['regex'], json.dumps(decision)):
+        raise ValueError('Invalid compact node maintenance decision')
+    if decision == {'nodes': {}}:
+        return dict(flush_ops=[], fold_ops=[])
     nodes = decision['nodes']
-    if nodes and list(nodes) != list(map(str, ids)):
-        raise ValueError('Expected every editable node exactly once in order')
     flush, groups = [], {}
     for key, value in nodes.items():
         if value is None:
             continue
-        if not isinstance(value, dict):
-            raise ValueError('Expected keep, flush or fold decision')
-        if set(value) == {'flush'} and isinstance(value['flush'], str):
-            flush.append(dict(id=int(key), rationale=value['flush']))
-        elif (set(value) == {'fold', 'rationale', 'notes'} and type(value['fold']) is int
-              and 1 <= value['fold'] <= 999999 and isinstance(value['rationale'], str)
-              and isinstance(value['notes'], list) and value['notes']):
-            group = groups.setdefault(value['fold'], dict(ids=[], rationales=[], notes=[]))
-            group['ids'].append(int(key))
-            group['rationales'].append(value['rationale'])
-            group['notes'].extend(value['notes'])
+        if value == 'flush':
+            flush.append(dict(id=int(key), rationale=decision['flush_rationale']))
         else:
-            raise ValueError('Invalid node maintenance decision')
-    return dict(flush_ops=flush, fold_ops=[dict(ids=g['ids'], rationale='; '.join(g['rationales']),
-                                               notes=g['notes']) for g in groups.values()])
+            groups.setdefault(str(value), []).append(int(key))
+    if set(groups) != {key for key, summary in decision['folds'].items() if summary is not None}:
+        raise ValueError('Fold summaries must match assigned groups exactly')
+    return dict(flush_ops=flush, fold_ops=[dict(ids=ids, **decision['folds'][key])
+                                         for key, ids in groups.items()])
+
+
+def native_memorize_schema():
+    """Bound native patches without changing the graph's atomic patch semantics."""
+    schema = helper_schema('memory_memorize')
+    nodes, edges = schema['properties']['add_nodes'], schema['properties']['add_edges']
+    nodes['maxItems'] = NATIVE_MEMOBRAIN_LIMITS['patch_nodes']
+    edges['maxItems'] = NATIVE_MEMOBRAIN_LIMITS['patch_edges']
+    props = nodes['items']['properties']
+    props['tmp_id']['maxLength'] = 16
+    notes = props['thought']
+    notes['maxItems'] = NATIVE_MEMOBRAIN_LIMITS['notes_per_node']
+    notes['items']['properties']['content']['maxLength'] = NATIVE_MEMOBRAIN_LIMITS['note_chars']
+    edges['items']['properties']['rationale']['maxLength'] = NATIVE_MEMOBRAIN_LIMITS['rationale_chars']
+    for name in ('src', 'dst'):
+        edges['items']['properties'][name]['anyOf'][1]['maxLength'] = 16
+    return schema
+
+
+def validate_native_patch_bounds(decision):
+    """Reject oversized patches even if a backend fails to enforce schema caps."""
+    limits = NATIVE_MEMOBRAIN_LIMITS
+    if len(decision['add_nodes']) > limits['patch_nodes'] or len(decision['add_edges']) > limits['patch_edges']:
+        raise ValueError('Native memory patch exceeds operation caps')
+    for node in decision['add_nodes']:
+        if len(node['tmp_id']) > 16 or len(node['thought']) > limits['notes_per_node']:
+            raise ValueError('Native memory patch exceeds note caps')
+        if any(len(note['content']) > limits['note_chars'] for note in node['thought']):
+            raise ValueError('Native memory patch exceeds text caps')
+    for edge in decision['add_edges']:
+        if len(edge['rationale']) > limits['rationale_chars'] or any(
+                isinstance(edge[k], str) and len(edge[k]) > 16 for k in ('src', 'dst')):
+            raise ValueError('Native memory patch exceeds edge caps')
 
 
 def recall_constraint(state):

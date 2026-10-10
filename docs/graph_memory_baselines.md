@@ -316,14 +316,13 @@ pending tasks and extra shard directories still fail the completeness check.
 The `max_turn` stops and zero scores are preserved; neither implies missing
 evaluation output. Regression fixtures cover this layout for both simulators.
 
-Re-audit these existing artifacts before continuing to DiscoveryWorld; no GPU
-rerun is needed to apply this audit fix. The corrected live ScienceWorld audit
-and the DiscoveryWorld run remain pending:
-
-```bash
-git pull --ff-only
-python scripts/audit_stateful_memory_smoke.py output/scienceworld-amem-1062642-gFEk76 scienceworld amem --expected 2 && SAMPLES=2 bash scripts/smoke_stateful_memory_qwen35_9b_4node_idev.sh discoveryworld amem
-```
+The supplied re-audit after `602573e` passed without rerunning ScienceWorld.
+The subsequent `discoveryworld-amem-1062642-UN4tIb` smoke also passed: two
+graded tasks, 66 valid memory updates, 32 evolutions and no memory errors.
+Both tasks exhausted the cumulative token budget with zero scores; 17 invalid
+environment actions and one actor format error remain in the artifacts.
+A-MEM therefore has supplied mechanics passes on BC-P and all three native
+benchmarks, without a task-performance claim.
 
 ### Native MemoBrain recall v2
 
@@ -334,7 +333,7 @@ v1 per-fold ID ordering did not guarantee disjoint operations across a request.
 The five displayed actor format errors recovered; they were not the failing
 smoke gate. ScienceWorld and DiscoveryWorld were not reached by the shell loop.
 
-Native MemoBrain now records `zero_shot_native_adaptation_v2` with
+Native MemoBrain at `73301fe` recorded `zero_shot_native_adaptation_v2` with
 `recall_target_profile=node_assignment_regex_v1`. The recall wire format is
 `{"nodes":{"3":null,"4":{"flush":"reason"},"5":{"fold":1,"rationale":"reason","notes":[{"role":"assistant","content":"observed findings"}]}}}`.
 Keys are exactly the sorted active, unprotected node IDs, each appearing once.
@@ -358,7 +357,48 @@ can still exhaust it. No request/token budget is increased and no extra retry
 is added. BC-P retains its previously validated v5 recall protocol; A-MEM is
 unchanged. Local tests cover disjoint partitions, state/protection changes,
 malformed outputs, atomic cycle rejection, native dispatch and budget accounting.
-A fresh native Vista smoke is required before claiming this revision passes.
+The supplied `swe-lite-memobrain-1062643-S5SgPE` smoke at `73301fe` finished
+and graded both tasks, but failed memory-format validation: the first task had
+10 invalid memory requests, the second had none. The displayed failures include
+two recalls repeating the same long note for many nodes and a memorize patch
+adding repeated nodes; all three outputs reached the 1024-token helper limit.
+
+### Native MemoBrain bounded group summaries v3
+
+`zero_shot_native_adaptation_v3` uses `group_summary_regex_v2`: each editable
+node maps to `null` (keep), `"flush"`, or a group number 1 through 4. A shared
+`flush_rationale` describes the flushes. The separate `folds` object contains
+slots `"1"` through `"4"`; each used slot contains one model-authored rationale
+and one note covering all assigned nodes, while unused slots are null. The
+minimal no-op remains `{"nodes":{}}`. For example:
+
+```json
+{"nodes":{"3":1,"4":1,"5":"flush"},"flush_rationale":"superseded evidence","folds":{"1":{"rationale":"completed investigation","notes":[{"role":"assistant","content":"Observed findings, file changes and unresolved goals for nodes 3 and 4."}]},"2":null,"3":null,"4":null}}
+```
+
+Each group note is capped at 240 characters and each rationale at 64. The
+model may choose any editable nodes, including interleaved groups, but may
+create at most four fold groups per request. Remaining nodes stay active.
+The adapter requires summaries to match assigned groups exactly, then maps
+each summary once to the unchanged atomic maintenance API. It does not merge,
+deduplicate, synthesize or truncate notes. Raw regex checks still reject
+duplicate node keys before parsing; graph protection and cycle checks remain.
+
+Native memorize requests use `bounded_patch_v1`: at most two new nodes and
+four edges, at most two 240-character notes per node, 64-character edge
+rationales and 16-character temporary IDs. Prompts ask for new evidence from
+the current interaction rather than copies of existing nodes. Decoder schema
+caps and runtime bounds reject oversized patches; raw episodes remain stored.
+
+These are versioned output restrictions recorded in provenance, not a claim
+of unchanged upstream prompts. Character bounds do not guarantee token fit,
+especially with many editable IDs or a nearly exhausted global budget. All
+outputs, including failures, retain existing token/turn charges and the
+1024-token helper cap; there are no extra retries or silent repairs. BC-P and
+A-MEM protocols are unchanged. Local tests cover group partitions, large
+shared summaries, missing/unused summaries, truncation, patch bounds, atomic
+cycle rejection, raw-episode preservation and request accounting. A fresh
+native Vista smoke is required to validate this version with the live decoder.
 
 The initial implementation check passed 111 focused tests plus 25 generation-audit
 tests. One additional ScienceWorld audit test has a pre-existing fixture missing

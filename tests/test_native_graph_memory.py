@@ -14,6 +14,7 @@ from scripts.eval_agent_benchmarks import config_for, agent_for
 from tests.test_session_restart import Client, Tokenizer
 from tests.test_discoveryworld import FakeAPI, call
 from tests.test_graph_memory_baselines import PATCH, ANALYSIS, NOOP, PAIR, fake_embed
+from tests.test_native_memobrain_recall import assignment
 
 
 def scripted(action, method):
@@ -24,8 +25,7 @@ def scripted(action, method):
             break
         responses.append(json.dumps(PATCH if method == 'memobrain' else ANALYSIS))
         if method == 'memobrain' and step % 2 == 0:
-            responses.append(json.dumps(dict(nodes={}) if step == 2 else dict(nodes={
-                '3': dict(fold=1, rationale='completed', notes=PAIR)})))
+            responses.append(json.dumps(dict(nodes={}) if step == 2 else assignment({'3': 1})))
         if method == 'amem' and step > 1:
             responses.append(json.dumps(dict(should_evolve=True, actions=['strengthen', 'update_neighbor'],
                 suggested_connections=['n1'], tags_to_update=['linked'],
