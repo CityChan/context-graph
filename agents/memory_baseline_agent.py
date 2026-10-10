@@ -12,7 +12,9 @@ from .agentfold_agent import _fit_observation, _get, parse_response
 from .environment_lifecycle import managed_environment
 from .prompts import create_chat
 from .single_tool_protocol import MAX_FORMAT_ERRORS, PROTOCOL, retry_context
-from .memory_baseline_control import FINAL_SYSTEM, HELPER_CONTROL, helper_schema, final_constraint, editable_node_ids
+from .memory_baseline_control import (
+    FINAL_SYSTEM, HELPER_CONTROL, helper_schema, final_constraint, editable_node_ids, recall_constraint,
+)
 from .utils import AgentLoopMetrics, AgentLoopOutput, _apply_chat_template, select_env
 
 
@@ -22,8 +24,8 @@ class BudgetEnd(Exception):
 
 def provenance(method, options):
     return {**memory.PROVENANCE[method], **options, **PROTOCOL, "method": method,
-            "variant": "zero_shot_bcp_adaptation_v4" if method == "memobrain" else "zero_shot_bcp_adaptation_v3",
-            **({"recall_target_profile": "active_unprotected_ids_v1"} if method == "memobrain" else {}),
+            "variant": "zero_shot_bcp_adaptation_v5" if method == "memobrain" else "zero_shot_bcp_adaptation_v3",
+            **({"recall_target_profile": "active_unprotected_sorted_ids_regex_v2"} if method == "memobrain" else {}),
             "trained_checkpoint": False,
             "helper_output_profile": "memory_json_schema_v1", "helper_enable_thinking": False,
             "final_output_profile": "bounded_finish_xml_v1", "final_enable_thinking": False,
@@ -112,9 +114,10 @@ async def process_item(item, context):
         prompt += HELPER_CONTROL
         if phase == "memory_recall":
             prompt += (f"\nEditable node IDs: {editable_node_ids(data)}. "
+                       "Within each fold, list IDs in strictly increasing order without duplicates. "
                        "Each ID may appear at most once across all flush and fold operations. "
                        "If no IDs are editable, return empty flush_ops and fold_ops.")
-        constraint = {"json": helper_schema(phase, state=data if phase == "memory_recall" else None)}
+        constraint = recall_constraint(data) if phase == "memory_recall" else {"json": helper_schema(phase)}
         text = await request([{"role": "system", "content": prompt},
                               {"role": "user", "content": json.dumps(data, ensure_ascii=False)}],
                              phase, instruction=prompt, constraint=constraint)

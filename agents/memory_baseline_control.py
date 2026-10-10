@@ -30,6 +30,47 @@ def editable_node_ids(state):
                   if node["active"] and int(nid) not in protected)
 
 
+def recall_constraint(state):
+    """Canonical JSON with strictly increasing IDs inside each fold.
+
+    XGrammar does not enforce JSON Schema uniqueItems. Use a regular language
+    over the finite editable set instead, without lookarounds or backreferences.
+    The alternatives select the last ID; earlier IDs are independently optional.
+    This represents every nonempty subset with quadratic, not exponential, size.
+    Cross-operation overlap and dependency cycles still require graph validation.
+    """
+    ids = editable_node_ids(state)
+    ws = r"[ \t\r\n]*"
+    comma = ws + "," + ws
+    char = r'[^"\\\x00-\x1f]|\\(?:["\\/bfnrt]|u[0-9a-fA-F]{4})'
+    text = '"(?:' + char + ')*"'
+    content = '"(?:' + char + ')+"'
+
+    def object_pattern(**fields):
+        return r"\{" + ws + comma.join('"' + k + '"' + ws + ':' + ws + v for k, v in fields.items()) + ws + r"\}"
+
+    def list_pattern(item, maximum=None):
+        if maximum == 0:
+            return r"\[" + ws + r"\]"
+        repeats = "*" if maximum is None else "{0," + str(maximum - 1) + "}"
+        return r"\[" + ws + "(?:" + item + "(?:" + comma + item + ")" + repeats + ")?" + ws + r"\]"
+
+    # No empty enum or impossible branch when all nodes are protected.
+    if not ids:
+        return {"regex": ws + object_pattern(flush_ops=list_pattern("", 0),
+                                             fold_ops=list_pattern("", 0)) + ws}
+    ordered = "(?:" + "|".join(
+        "".join("(?:" + str(prior) + comma + ")?" for prior in ids[:index]) + str(nid)
+        for index, nid in enumerate(ids)) + ")"
+    target = "(?:" + "|".join(map(str, ids)) + ")"
+    note = object_pattern(role='"(?:assistant|user)"', content=content)
+    notes = r"\[" + ws + note + "(?:" + comma + note + ")*" + ws + r"\]"
+    flush = object_pattern(id=target, rationale=text)
+    fold = object_pattern(ids=r"\[" + ws + ordered + ws + r"\]", rationale=text, notes=notes)
+    return {"regex": ws + object_pattern(flush_ops=list_pattern(flush, len(ids)),
+                                         fold_ops=list_pattern(fold, len(ids))) + ws}
+
+
 def helper_schema(phase, *, state=None):
     text = {"type": "string"}
     integer = {"type": "integer"}

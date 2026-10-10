@@ -2,12 +2,13 @@ import asyncio
 import copy
 import json
 import re
+from itertools import combinations, product
 
 import pytest
 from jsonschema import Draft202012Validator
 
 from agents import memory_baseline_agent as runner
-from agents.memory_baseline_control import FINAL_SYSTEM, helper_schema, final_constraint, editable_node_ids
+from agents.memory_baseline_control import FINAL_SYSTEM, helper_schema, final_constraint, editable_node_ids, recall_constraint
 from tests.test_graph_memory_baselines import setup, graph, PAIR, PATCH, ANALYSIS, EVOLUTION, NOOP
 from tests.test_agentfold import SEARCH, OPEN, FINISH
 
@@ -160,7 +161,7 @@ def test_recall_snapshot_is_sent_and_illegal_server_response_still_rejected(monk
     recall = next(r for r in records if r["phase"] == "memory_recall")
     state = json.loads(recall["messages"][1]["content"])
     assert "Editable node IDs: []" in recall["messages"][0]["content"]
-    assert recall["structured_outputs"] == {"json": helper_schema("memory_recall", state=state)}
+    assert recall["structured_outputs"] == recall_constraint(state)
     assert out.extra_fields["env_stats"]["invalid_memory"] == 1
     assert out.extra_fields["env_stats"]["memory_requests"] == 2  # No hidden retries.
     assert json.loads(json.dumps(out.extra_fields["memory_state"])) == state
@@ -177,3 +178,57 @@ def test_recall_overlap_remains_transactionally_rejected():
     with pytest.raises(ValueError, match="overlapping"):
         store.maintain(overlap)
     assert store.state() == before
+
+
+def test_recall_regex_exhaustively_accepts_only_sorted_nonempty_editable_subsets():
+    store = graph()
+    pattern = recall_constraint(store.state())["regex"]
+    for length in range(5):
+        for ids in product([1, 3, 4, 5, 7, 33], repeat=length):
+            decision = dict(flush_ops=[], fold_ops=[dict(ids=list(ids), rationale="done", notes=PAIR)])
+            valid = bool(ids) and list(ids) == sorted(set(ids)) and set(ids) <= {3, 4, 5}
+            assert bool(re.fullmatch(pattern, json.dumps(decision))) == valid, ids
+    # The exact observed regression, regardless of whitespace.
+    bad = dict(flush_ops=[], fold_ops=[dict(ids=[3, 4, 4], rationale="done", notes=PAIR)])
+    assert not re.fullmatch(pattern, json.dumps(bad, separators=(",", ":")))
+
+
+def test_recall_regex_supports_all_subsets_multidigit_ids_and_json_escapes():
+    state = dict(nodes={i: dict(active=True) for i in (3, 4, 14, 40)}, protected=[])
+    pattern = recall_constraint(state)["regex"]
+    notes = [dict(role="assistant", content='Evidence "quoted" \\path\n\t中文 😀')]
+    for length in range(1, 5):
+        for ids in combinations([3, 4, 14, 40], length):
+            decision = dict(flush_ops=[], fold_ops=[dict(ids=list(ids), rationale="done", notes=notes)])
+            for escaped in (True, False):
+                assert re.fullmatch(pattern, json.dumps(decision, ensure_ascii=escaped, indent=2))
+    assert re.fullmatch(pattern, json.dumps(NOOP))
+    empty = recall_constraint(graph(2).state())["regex"]
+    assert re.fullmatch(empty, json.dumps(NOOP))
+    assert not re.fullmatch(empty, json.dumps(decision))
+
+
+def test_recall_regex_keeps_multiple_operations_and_backend_overlap_check():
+    store = graph()
+    decision = dict(flush_ops=[dict(id=3, rationale="old")],
+                    fold_ops=[dict(ids=[4], rationale="done", notes=PAIR),
+                              dict(ids=[5], rationale="done", notes=PAIR)])
+    pattern = recall_constraint(store.state())["regex"]
+    assert re.fullmatch(pattern, json.dumps(decision))
+    overlap = copy.deepcopy(decision)
+    overlap["fold_ops"][0]["ids"] = [3, 4]
+    assert re.fullmatch(pattern, json.dumps(overlap))
+    before = copy.deepcopy(store.state())
+    with pytest.raises(ValueError, match="overlapping"):
+        store.maintain(overlap)
+    assert store.state() == before
+    store.maintain(decision)
+    assert all(not store.nodes[i]["active"] for i in (3, 4, 5))
+
+
+def test_recall_regex_size_is_quadratic_not_subset_enumeration():
+    state = dict(nodes={i: dict(active=True) for i in range(1, 101)}, protected=[1])
+    pattern = recall_constraint(state)["regex"]
+    assert len(pattern) < 400_000
+    decision = dict(flush_ops=[], fold_ops=[dict(ids=list(range(2, 101)), rationale="done", notes=PAIR)])
+    assert re.fullmatch(pattern, json.dumps(decision))
