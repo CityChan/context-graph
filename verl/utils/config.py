@@ -208,6 +208,7 @@ def validate_config(
             plugin.get("graph_rpo_credit_backend", "old_policy_counterfactual_qa")
         ).strip().lower()
         assert graph_credit_backend in {
+            "outcome_only",
             "evidence",
             "external_evaluator",
             "old_policy_counterfactual_qa",
@@ -215,7 +216,7 @@ def validate_config(
             "reference_answer_likelihood",
             "old_policy_answer_likelihood",
         }, (
-            "GraphRPO plugin.graph_rpo_credit_backend must be external_evaluator, "
+            "GraphRPO plugin.graph_rpo_credit_backend must be outcome_only, evidence, external_evaluator, "
             "old_policy_counterfactual_qa, old_policy_continuation, reference_answer_likelihood, or "
             "old_policy_answer_likelihood"
         )

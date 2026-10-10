@@ -643,8 +643,9 @@ def compute_graphrpo_advantage(
 
     Terminal rewards are deduplicated by ``gen_uid`` so branch streams cannot
     alter group statistics.  Unlike the legacy FoldGRPO path, this estimator
-    uses the population standard deviation and adds graph/process credit after
-    outcome normalization exactly as specified in Section 4.2. Binary rewards
+    uses the population standard deviation by default and adds graph/process
+    credit after outcome normalization. ``graphrpo_norm_adv_by_std=False``
+    explicitly selects mean centering only for ordinary GraphRPO. Binary rewards
     remain the default contract; finite scalar rewards require an explicit
     ablation opt-in through ``graphrpo_require_binary_reward=False``.
     """
@@ -728,6 +729,11 @@ def compute_graphrpo_advantage(
             # Deduplicate main/branch streams before the question-level LOO baseline.
             for episode_id in episodes:
                 episode_advantage[episode_id] = (len(episodes) * episode_reward[episode_id] - rewards.sum()) / (len(episodes) - 1)
+        elif config is not None and not config.get("graphrpo_norm_adv_by_std", True):
+            # Ordinary GraphRPO ablation: keep the reward's original scale.
+            # E/M objectives above are independent of this normalization switch.
+            for episode_id in episodes:
+                episode_advantage[episode_id] = episode_reward[episode_id] - mean
         elif not torch.isfinite(population_std) or population_std.item() == 0.0:
             for episode_id in episodes:
                 episode_advantage[episode_id] = torch.zeros_like(mean)

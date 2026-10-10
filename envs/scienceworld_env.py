@@ -79,6 +79,7 @@ class ScienceWorldEnv:
             )
             self.stats["variation_idx"] = variation_idx
             self.stats["environment_score"] = float((info or {}).get("score", 0))
+            self.stats["environment_peak_score"] = max(0.0, self.stats["environment_score"])
             self._audit({"event": "reset", "task_description": task_description,
                          "observation": observation, "info": info})
         except Exception as exc:
@@ -111,10 +112,16 @@ class ScienceWorldEnv:
             self.stats["environment_moves"] = int(info.get("moves", self._step_count))
             score = float(info["score"])
             self.stats["environment_score"] = score
+            self.stats["environment_peak_score"] = max(self.stats["environment_peak_score"], score)
             self._audit({"event": "step", "command": command, "observation": observation,
                          "reward": reward, "done": bool(completed), "info": info})
             self._completed = score >= 100
             step_limit = self._step_count >= self._max_steps
+            # Simulator done may also mean its step cap; do not award partial
+            # training credit to truncation. Negative scores identify failure.
+            self.stats["environment_natural_end"] = int(
+                self._completed or (completed and (not step_limit or score < 0))
+            )
             if completed or self._completed or step_limit:
                 self.is_finish = True
                 self.finish = True

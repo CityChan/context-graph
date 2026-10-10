@@ -91,6 +91,38 @@ def test_graphrpo_adds_edit_and_process_credit_after_group_normalization():
     assert advantages[1].tolist() == pytest.approx([1.0, 1.8, 1.65, 0.85])
 
 
+@pytest.mark.parametrize("training_role,expected", [(None, [-0.3, -0.3, 0.3]), ("E", [-0.6, -0.6, 0.6])])
+def test_mean_centered_graphrpo_preserves_episode_deduplication_and_e_role(training_role, expected):
+    torch = _torch()
+    from verl.trainer.ppo.core_algos import compute_graphrpo_advantage
+
+    advantages, _ = compute_graphrpo_advantage(
+        token_level_rewards=_terminal_rewards([-0.1, -0.1, 0.5]),
+        response_mask=torch.ones(3, 4),
+        index=np.array(["q", "q", "q"]),
+        gen_uid=np.array(["main-and-branch", "main-and-branch", "other"]),
+        training_role=training_role,
+        graph_decision_mask=torch.zeros(3, 4),
+        config={"graphrpo_norm_adv_by_std": False, "graphrpo_require_binary_reward": False},
+    )
+    assert advantages[:, 0].tolist() == pytest.approx(expected)
+
+
+def test_mean_centered_graphrpo_keeps_tied_outcome_process_labels_and_masks_padding():
+    torch = _torch()
+    from verl.trainer.ppo.core_algos import compute_graphrpo_advantage
+
+    mask = torch.tensor([[1., 1., 0., 0.], [1., 1., 1., 1.]])
+    advantages, _ = compute_graphrpo_advantage(
+        token_level_rewards=_terminal_rewards([0., 0.]), response_mask=mask,
+        index=np.array(["q", "q"]), gen_uid=np.array(["a", "b"]),
+        process_reward_mask=torch.tensor([[-1., -0.3, -1., -1.], [0., 0., 0., 0.]]),
+        config={"graphrpo_norm_adv_by_std": False, "graphrpo_alpha": 0.1, "graphrpo_beta": 0.25},
+    )
+    assert advantages[0].tolist() == pytest.approx([-0.25, -0.075, 0., 0.])
+    assert not advantages[1].any()
+
+
 def test_graphrpo_zero_variance_keeps_only_local_credit():
     torch = _torch()
     from verl.trainer.ppo.core_algos import compute_graphrpo_advantage

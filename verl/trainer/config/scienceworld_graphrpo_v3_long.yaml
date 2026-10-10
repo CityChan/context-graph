@@ -1,0 +1,113 @@
+# Screenshot-derived objective profile; hardware/budget defaults are explicit
+# implementation choices, not a reproduction of the unavailable source branch.
+defaults:
+  - ppo_trainer
+  - _self_
+
+scienceworld_profile_prepare_only: false
+
+algorithm:
+  adv_estimator: graphrpo
+  graphrpo_norm_adv_by_std: false
+  graphrpo_require_binary_reward: false
+  graphrpo_alpha: 0.1
+  graphrpo_beta: 0.25
+  graphrpo_memory_only: false
+  graphrpo_alternating_roles: false
+  graphrpo_normalize_decision_tokens: false
+  graphrpo_dynamic_sampling: true
+  graphrpo_dynamic_min_groups: 4
+  # One initial batch plus at most two additional batches.
+  graphrpo_dynamic_max_gen_batches: 3
+  # Exhausted episodes must retain their -0.1 outcome and process labels.
+  mask_overlong: false
+  use_kl_in_reward: false
+
+data:
+  train_files: data/scienceworld_graph_train.parquet
+  val_files: data/scienceworld_graph_val.parquet
+  train_batch_size: 8
+  max_prompt_length: 8192
+  max_response_length: 57344
+  return_raw_chat: true
+
+actor_rollout_ref:
+  model:
+    path: ???
+  actor:
+    strategy: fsdp
+    optim:
+      lr: 2.0e-6
+    grad_clip: 0.5
+    ppo_mini_batch_size: 8
+    ppo_micro_batch_size_per_gpu: 1
+    ppo_epochs: 1
+    use_rollout_log_probs: false
+    policy_loss:
+      loss_mode: graphrpo
+    clip_ratio_low: 0.2
+    clip_ratio_high: 0.28
+    use_kl_loss: true
+    kl_loss_coef: 0.0005
+    kl_loss_type: low_var_kl
+  ref:
+    log_prob_micro_batch_size_per_gpu: 1
+  rollout:
+    name: vllm
+    mode: async
+    n: 4
+    tensor_model_parallel_size: 1
+    log_prob_micro_batch_size_per_gpu: 1
+    calculate_log_probs: true
+    max_model_len: 65536
+    agent:
+      default_agent_loop: context_graph_isolated_agent
+      num_workers: 8
+    val_kwargs:
+      n: 1
+      do_sample: false
+      temperature: 0.0
+    plugin:
+      workflow: scienceworld_graph
+      scienceworld_prompt_profile: legacy
+      scienceworld_training_reward_profile: v3_long
+      scienceworld_max_steps: 100
+      contextgraph_memory_mode: legacy
+      structured_graph_controller: true
+      controller_action_policy: structural
+      graph_rpo_credit_backend: outcome_only
+      graph_controller_temperature: 1.0
+      graph_controller_top_p: 1.0
+      graph_rpo_scope_process_reward: false
+      process_reward: [graphrpo]
+      max_turn: 100
+      val_max_turn: 100
+      val_response_length: ${data.max_response_length}
+      max_session: 5
+      val_max_session: 5
+      # The executor permits max_session branches plus the main stream.
+      max_traj: 6
+      branch_len: 8192
+      turn_max_new_tokens: 2048
+      final_answer_reserve: 0
+      must_finish: false
+      must_branch: false
+      consolidation_interval: 5
+      initial_consolidation_turn: 5
+      graph_controller_counts_as_turn: true
+      capture_model_contexts: true
+
+trainer:
+  project_name: context-graph
+  experiment_name: scienceworld_graphrpo_v3_long
+  logger: [console]
+  n_gpus_per_node: 1
+  nnodes: 1
+  total_training_steps: 100
+  test_freq: 10
+  save_freq: 10
+  val_before_train: true
+  default_local_dir: output/scienceworld-graphrpo-v3-long
+  rollout_data_dir: ${trainer.default_local_dir}/rollouts
+  validation_data_dir: ${trainer.default_local_dir}/validation
+  resume_mode: disable

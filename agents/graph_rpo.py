@@ -45,6 +45,7 @@ ANSWER_LIKELIHOOD_BACKENDS = frozenset(
 )
 GRAPH_RPO_CREDIT_BACKENDS = frozenset(
     {
+        "outcome_only",
         "evidence",
         EXTERNAL_EVALUATOR_BACKEND,
         OLD_POLICY_COUNTERFACTUAL_QA_BACKEND,

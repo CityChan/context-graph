@@ -51,6 +51,7 @@ from .finalizer import (
     submit_emergency_final_answer,
 )
 from .rollout_status import classify_rollout_status, validate_session_summary
+from .scienceworld_training import NoToolGuard, training_reward, validate_reward_profile
 from .prompts import create_chat, BRANCH_MESSAGE_SEARCH, BRANCH_MESSAGE
 from .verifier import judge_scope
 from .context_graph import ContextGraph, GraphOpResult, NodeType, NodeStatus, EdgeRelation
@@ -213,6 +214,19 @@ async def process_item(
         return v.item() if v.ndim == 0 else v[0]
 
     ability = _get(item.non_tensor_batch['ability'])
+    scienceworld_reward_profile = getattr(config.plugin, "scienceworld_training_reward_profile", "binary")
+    validate_reward_profile(scienceworld_reward_profile, ability=ability,
+                            algorithm=context.config.algorithm, is_train=is_train)
+    no_tool_guard = NoToolGuard(limit=5 if scienceworld_reward_profile == "v3_long" else 0)
+
+    def observe_action_turn(response, acting_agent):
+        if not no_tool_guard.limit:
+            return True
+        has_tool = extract_fn_call(response) is not None
+        if not has_tool and is_train:
+            acting_agent.set_process_reward(len(acting_agent.chat) - 1, -1)
+        return no_tool_guard.observe(has_tool)
+
     uid = item.non_tensor_batch.get('uid', uuid4().hex)
     gen_uid = item.non_tensor_batch.get('gen_uid', None)
 
@@ -890,6 +904,8 @@ async def process_item(
 
             session_message.append({'role': 'assistant', 'content': response})
             fn_call = extract_fn_call(response)
+            if not observe_action_turn(response, agent['main']):
+                break
             repeat_hint = ""
             if diagnostic_fix == "repeat" and fn_call:
                 repeat_hint = repeat_advice.observe(fn_call['function'], fn_call.get('arguments', {}))
@@ -1056,7 +1072,10 @@ async def process_item(
                         max_turn=max(0, effective_max_turn - iteration),
                         max_tokens=getattr(config.plugin, "branch_len", None),
                         session_timeout=session_timeout - time.time() + session_start_time,
-                        should_continue=lambda resp: '<function=return>' not in resp,
+                        should_continue=lambda resp: (
+                            observe_action_turn(resp, agent[agent_name])
+                            and '<function=return>' not in resp
+                        ),
                         safe_finish=lambda
                             x: "You are in branch mode and cannot branch task or finish the task. Use the `return` tool to go back to the main agent." if '<function=finish>' in x or '<function=branch>' in x else None,
                         summary_prompt="The context limit has been exceeded for the branch. Please finish the sub task directly and clearly state the progress made and the pending jobs of the sub task. Only summarize the sub task progress, using the return tool.",
@@ -1400,6 +1419,8 @@ async def process_item(
             if getattr(env, 'is_finish', False) or getattr(env, 'finish', False):
                 natural_finish = True
                 break
+            if no_tool_guard.stopped:
+                break
 
             # ── Forced consolidation checkpoint ──
             # Every `consolidation_interval` main turns, inject a checkpoint
@@ -1512,6 +1533,8 @@ async def process_item(
                         'role': 'assistant', 'content': controller_response,
                     })
                     controller_turn_idx = len(agent['main'].chat) - 1
+                    if graph_rpo_backend == "outcome_only":
+                        agent['main'].add_graph_edit_credit(controller_turn_idx, 0.0)
                     consolidation_stats['attempts'] += 1
                     if graph_controller_counts_as_turn:
                         iteration += 1
@@ -1808,6 +1831,7 @@ async def process_item(
 
         finalizer_attempted = bool(
             final_answer_reserve
+            and not no_tool_guard.stopped
             and not (getattr(env, 'is_finish', False) or getattr(env, 'finish', False))
             and (not must_branch or bool(branches))
         )
@@ -1834,6 +1858,33 @@ async def process_item(
 
         env.stats['session_time'] = time.time() - session_start_time
 
+        main_response_tokens = agent['main'].response_tokens_used()
+        main_context_tokens = len(agent['main'].context())
+        working_context_limit = config.prompt_length + config.response_length
+        is_finish = getattr(env, 'is_finish', False) or getattr(env, 'finish', False)
+        rollout_status = classify_rollout_status(
+            response_tokens=main_response_tokens,
+            response_limit=config.response_length,
+            main_context_tokens=main_context_tokens,
+            working_context_limit=working_context_limit,
+            is_finish=is_finish,
+            iteration=iteration,
+            max_turn=effective_max_turn,
+            timed_out=timed_out,
+        )
+        if scienceworld_reward_profile == "v3_long":
+            # An adapter step-cap/error closes the simulator but is not a
+            # natural finish. Keep that distinction for process penalties too.
+            natural_finish = bool(env.stats.get('environment_natural_end', 0)) and not env.env_fail
+            rollout_status['no_finish'] = int(not natural_finish)
+            if no_tool_guard.stopped:
+                rollout_status['termination_reason'] = 'no_tool_limit'
+            elif env.stats.get('environment_step_limit', 0) and not natural_finish:
+                rollout_status['termination_reason'] = 'environment_step_limit'
+            elif env.env_fail:
+                rollout_status['termination_reason'] = 'environment_error'
+            env.stats['hit_no_tool_limit'] = int(no_tool_guard.stopped)
+
         # ── Reward computation ──
         print('[TASK] Task Finish, Start Reward [ISOLATED]')
         try:
@@ -1846,6 +1897,18 @@ async def process_item(
             if _continuation is not None:
                 raise  # A judge outage is not evidence against this M decision.
             score, reward_dict = ("", 0), {"ans_reward": 0.0, "format_reward": 0.0, "ref_reward": 0.0}
+
+        native_task_reward = float(score[1])
+        if scienceworld_reward_profile == "v3_long" and is_train:
+            score = (score[0], training_reward(
+                completed=env.stats.get('completed', 0),
+                peak_score=env.stats.get('environment_peak_score', 0),
+                natural_end=natural_finish,
+                token_limit=rollout_status['hit_token_limit'],
+                no_tool_limit=no_tool_guard.stopped,
+                env_failed=env.env_fail,
+            ))
+            env.stats['training_reward'] = score[1]
 
         graph_rewards = graph.compute_graph_reward(
             score[1],
@@ -1860,9 +1923,6 @@ async def process_item(
         env.stats['get_final_score'] = score[1]
         env.stats['summary_restarts'] = len(getattr(agent['main'], 'summary_sessions', []))
         env.stats['traj_num'] = len(agent)
-        main_response_tokens = agent['main'].response_tokens_used()
-        main_context_tokens = len(agent['main'].context())
-        working_context_limit = config.prompt_length + config.response_length
         env.stats['main_len'] = min(main_response_tokens, config.response_length)
         env.stats['main_context_tokens'] = main_context_tokens
         env.stats['working_context_limit'] = working_context_limit
@@ -1951,11 +2011,10 @@ async def process_item(
         env.stats['consol_valid_pass_rate'] = consolidation_stats['pass_valid'] / _ca
         env.stats['consol_invalid_pass_rate'] = consolidation_stats['pass_invalid'] / _ca
         env.stats['consol_invalid_rate'] = consolidation_stats['invalid'] / _ca
-        # Pure task accuracy + isolated shaping component, exposed so wandb
-        # can show CtxGraph's task hit-rate without graph_reward inflation.
-        # task_reward should match score[1] (LocalSearch judge), but read from
-        # graph_rewards dict for consistency with the breakdown.
-        env.stats['task_reward'] = float(graph_rewards.get('task_reward', score[1]))
+        # Native task reward remains separate from opt-in training shaping.
+        # For ScienceWorld, task_reward is binary completion even when the
+        # optimizer's terminal score includes partial progress or a cap penalty.
+        env.stats['task_reward'] = native_task_reward
         env.stats['graph_shaping'] = float(graph_rewards.get('graph_shaping', 0.0))
         # Isolated-variant specific stats: aggregate child subgraph sizes
         env.stats['isolated_n_subgraphs'] = len(branch_subgraph_stats)
@@ -2017,16 +2076,6 @@ async def process_item(
             mask_rollout = False
 
         is_finish = getattr(env, 'is_finish', False) or getattr(env, 'finish', False)
-        rollout_status = classify_rollout_status(
-            response_tokens=main_response_tokens,
-            response_limit=config.response_length,
-            main_context_tokens=main_context_tokens,
-            working_context_limit=working_context_limit,
-            is_finish=is_finish,
-            iteration=iteration,
-            max_turn=effective_max_turn,
-            timed_out=timed_out,
-        )
         env.stats.update({k: v for k, v in rollout_status.items() if k != 'termination_reason'})
         env.stats['concise_main'] = 1 - rollout_status['unfolded_main']
         if getattr(config.plugin, "must_finish", None):
@@ -2095,6 +2144,8 @@ async def process_item(
                 '[Error] The "search" function requires a "query" argument',
                 '[Error] The "open_page" function requires either a "docid" or a "url".',
                 '[Error] The function',
+                'Use exactly one action tool call with a command parameter.',
+                'The action command cannot be empty.',
             )
             for name in agent:
                 for i, turn in enumerate(agent[name].chat):
@@ -2140,7 +2191,15 @@ async def process_item(
 
         reference_edit_requests = []
         if graph_rpo_enabled and is_train:
-            if graph_rpo_backend == OLD_POLICY_CONTINUATION_BACKEND:
+            if graph_rpo_backend == "outcome_only":
+                # Ordinary task/process learning without evaluator calls or
+                # artificial local graph credit. Keep decision-span markers.
+                for acting_agent in agent.values():
+                    for info in acting_agent.additional_info:
+                        if isinstance(info, dict) and 'graph_edit_credit' in info:
+                            info['graph_edit_credit'] = 0.0
+                graph_rpo_metrics = {'graph_rpo_outcome_only': 1}
+            elif graph_rpo_backend == OLD_POLICY_CONTINUATION_BACKEND:
                 # Group credit is assigned after all real continuations finish.
                 graph_rpo_metrics = {}
             elif graph_rpo_backend == "evidence":
@@ -2289,6 +2348,11 @@ async def process_item(
                     'policy_time_budget_exhausted': bool(timed_out),
                     'unfolded_main': rollout_status['unfolded_main'],
                     'termination_reason': rollout_status['termination_reason'],
+                    'scienceworld_training_reward_profile': scienceworld_reward_profile,
+                    'graph_rpo_credit_backend': graph_rpo_backend,
+                    'native_task_reward': native_task_reward,
+                    'training_reward_applied': scienceworld_reward_profile == 'v3_long' and is_train,
+                    'hit_no_tool_limit': int(no_tool_guard.stopped),
                     'is_finish': is_finish,
                     'agent_name': name,
                     'summary_session_index': out.get('summary_session_index', 0),
