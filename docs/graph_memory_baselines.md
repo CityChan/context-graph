@@ -231,7 +231,17 @@ items, and analysis keywords to eight items. Both analysis and evolution
 schemas carry these limits. Raw note content remains unchanged. These are
 character/item bounds, not token guarantees; all rejected decisions still fail
 the strict audit. No output is silently repaired and no budget is increased.
-This revision needs a fresh BC-P smoke on Vista.
+
+The subsequent supplied Vista run at `29d2e6f`,
+`bcp-amem-smoke-1062642-wvtiIR/amem`, passed the strict BC-P smoke: three
+finished tasks, 32/32 valid memory updates, 14 evolutions and 55 embedding calls.
+Task accuracy remained 0/3. Its following SWE smoke stopped before evaluation:
+the newer Hub client rejected the offline full-repository snapshot because the
+preparation step intentionally downloaded only PyTorch assets. Preparation and
+runtime now share `embedding_snapshot()`, including the same JSON/TXT/safetensors
+filter and pinned revision. The runtime stays offline; missing required assets
+still fail, and unused ONNX/OpenVINO exports are not downloaded. This cache fix
+has local regression coverage; native Vista execution still needs validation.
 
 ## Native SWE-bench Lite, ScienceWorld and DiscoveryWorld
 

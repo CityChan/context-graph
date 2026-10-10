@@ -14,13 +14,10 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--offline", action="store_true")
     args = parser.parse_args()
-    from huggingface_hub import snapshot_download
-    from agents.graph_memory_baselines import EMBEDDING_MODEL, EMBEDDING_REVISION, embed, AMemMemory
+    from agents.graph_memory_baselines import EMBEDDING_MODEL, EMBEDDING_REVISION, embedding_snapshot, embed, AMemMemory
     # The smoke wrapper provisions missing ST in a separate scratch venv.
     import sentence_transformers
-    path = snapshot_download(EMBEDDING_MODEL, revision=EMBEDDING_REVISION,
-        local_files_only=args.offline,
-        allow_patterns=["*.json", "*.txt", "*.safetensors"])
+    path = embedding_snapshot(local_files_only=args.offline)
     vector = embed("Research evidence with source docids.")
     store = AMemMemory()
     metadata = dict(keywords=[], context="probe", tags=[])

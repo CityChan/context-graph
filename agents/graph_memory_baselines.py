@@ -14,6 +14,8 @@ import numpy as np
 
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 EMBEDDING_REVISION = "1110a243fdf4706b3f48f1d95db1a4f5529b4d41"
+# PyTorch SentenceTransformer assets only; ONNX/OpenVINO exports are not used.
+EMBEDDING_ALLOW_PATTERNS = ("*.json", "*.txt", "*.safetensors")
 PROVENANCE = {
     "memobrain": {"source": "https://github.com/qhjqhj00/MemoBrain",
                   "revision": "82f16e17c28313a57bf95d83340142b96507f3d1"},
@@ -203,11 +205,18 @@ class MemoBrainMemory:
         return copy.deepcopy(result)
 
 
+def embedding_snapshot(*, local_files_only=True):
+    """Use the same filtered snapshot contract during preparation and offline loading."""
+    from huggingface_hub import snapshot_download
+    return snapshot_download(EMBEDDING_MODEL, revision=EMBEDDING_REVISION,
+                             local_files_only=local_files_only,
+                             allow_patterns=list(EMBEDDING_ALLOW_PATTERNS))
+
+
 @lru_cache(maxsize=1)
 def embedding_model():
-    from huggingface_hub import snapshot_download
     from sentence_transformers import SentenceTransformer
-    path = snapshot_download(EMBEDDING_MODEL, revision=EMBEDDING_REVISION, local_files_only=True)
+    path = embedding_snapshot()
     return SentenceTransformer(path, device="cpu", local_files_only=True)
 
 
