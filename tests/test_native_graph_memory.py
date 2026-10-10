@@ -24,8 +24,8 @@ def scripted(action, method):
             break
         responses.append(json.dumps(PATCH if method == 'memobrain' else ANALYSIS))
         if method == 'memobrain' and step % 2 == 0:
-            responses.append(json.dumps(NOOP if step == 2 else dict(flush_ops=[], fold_ops=[
-                dict(ids=[3], rationale='completed', notes=PAIR)])))
+            responses.append(json.dumps(dict(nodes={}) if step == 2 else dict(nodes={
+                '3': dict(fold=1, rationale='completed', notes=PAIR)})))
         if method == 'amem' and step > 1:
             responses.append(json.dumps(dict(should_evolve=True, actions=['strengthen', 'update_neighbor'],
                 suggested_connections=['n1'], tags_to_update=['linked'],

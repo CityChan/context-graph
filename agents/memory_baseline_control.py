@@ -13,6 +13,19 @@ HELPER_CONTROL = (
     "evidence; never copy placeholders. Empty operation lists are allowed when justified."
 )
 AMEM_TEXT_LIMITS = {"context_chars": 240, "label_chars": 32, "tags": 4, "keywords": 8}
+NATIVE_RECALL = (
+    'Maintain the reasoning graph using one decision per editable node. Return JSON only: '
+    '{"nodes":{"3":null,"4":{"flush":"superseded evidence"},'
+    '"5":{"fold":1,"rationale":"completed subtask","notes":[{"role":"assistant",'
+    '"content":"faithful summary of observed work"}]}}}. '
+    'Use the actual editable IDs in their supplied order, once each. null keeps a node. '
+    'A flush object flushes only that node. A fold object assigns that node to a group: '
+    'equal fold numbers share one fold; different numbers create independent folds. '
+    'Fold numbers are group labels, not node IDs. Write concise notes for each assigned node; '
+    'notes from the same group are concatenated in node order. Preserve evidence, uncertainty, '
+    'file changes and unresolved goals. Do not copy example facts. '
+    'For no changes, {"nodes":{}} is allowed. Do not execute tools or answer the task.'
+)
 
 
 def obj(**properties):
@@ -29,6 +42,66 @@ def editable_node_ids(state):
     protected = set(state["protected"])
     return sorted(int(nid) for nid, node in state["nodes"].items()
                   if node["active"] and int(nid) not in protected)
+
+
+def native_recall_constraint(state):
+    """Fixed unique keys encode arbitrary disjoint fold groups in linear space."""
+    ids = editable_node_ids(state)
+    ws = r"[ \t\r\n]*"
+    comma = ws + ',' + ws
+    char = r'[^"\\\x00-\x1f]|\\(?:["\\/bfnrt]|u[0-9a-fA-F]{4})'
+    text = '"(?:' + char + ')*"'
+    content = '"(?:' + char + ')+"'
+
+    def object_pattern(fields):
+        return r'\{' + ws + comma.join('"' + k + '"' + ws + ':' + ws + v
+                                       for k, v in fields) + ws + r'\}'
+
+    empty = object_pattern([])
+    nodes = empty
+    if ids:
+        note = object_pattern([('role', '"(?:assistant|user)"'), ('content', content)])
+        notes = r'\[' + ws + note + '(?:' + comma + note + ')*' + ws + r'\]'
+        # Labels identify groups, not graph nodes; their count is bounded by slots.
+        groups = r'[1-9][0-9]{0,5}'
+        flush = object_pattern([('flush', text)])
+        fold = object_pattern([('fold', groups), ('rationale', text), ('notes', notes)])
+        value = '(?:null|' + flush + '|' + fold + ')'
+        nodes = '(?:' + empty + '|' + object_pattern([(str(n), value) for n in ids]) + ')'
+    return {'regex': ws + object_pattern([('nodes', nodes)]) + ws}
+
+
+def native_recall_decision(decision, state):
+    """Translate model assignments into the unchanged atomic maintenance API.
+
+    This is a wire-format conversion, not repair: reject malformed assignments;
+    never deduplicate targets or invent operations/notes.
+    """
+    ids = editable_node_ids(state)
+    if not isinstance(decision, dict) or set(decision) != {'nodes'} or not isinstance(decision['nodes'], dict):
+        raise ValueError('Expected node decisions')
+    nodes = decision['nodes']
+    if nodes and list(nodes) != list(map(str, ids)):
+        raise ValueError('Expected every editable node exactly once in order')
+    flush, groups = [], {}
+    for key, value in nodes.items():
+        if value is None:
+            continue
+        if not isinstance(value, dict):
+            raise ValueError('Expected keep, flush or fold decision')
+        if set(value) == {'flush'} and isinstance(value['flush'], str):
+            flush.append(dict(id=int(key), rationale=value['flush']))
+        elif (set(value) == {'fold', 'rationale', 'notes'} and type(value['fold']) is int
+              and 1 <= value['fold'] <= 999999 and isinstance(value['rationale'], str)
+              and isinstance(value['notes'], list) and value['notes']):
+            group = groups.setdefault(value['fold'], dict(ids=[], rationales=[], notes=[]))
+            group['ids'].append(int(key))
+            group['rationales'].append(value['rationale'])
+            group['notes'].extend(value['notes'])
+        else:
+            raise ValueError('Invalid node maintenance decision')
+    return dict(flush_ops=flush, fold_ops=[dict(ids=g['ids'], rationale='; '.join(g['rationales']),
+                                               notes=g['notes']) for g in groups.values()])
 
 
 def recall_constraint(state):

@@ -245,7 +245,7 @@ has local regression coverage; native Vista execution still needs validation.
 
 ## Native SWE-bench Lite, ScienceWorld and DiscoveryWorld
 
-Both methods now have `zero_shot_native_adaptation_v1` adapters and four-node
+Both methods have native adapters and four-node
 launchers. This is implemented and locally tested, **not yet a live native
 smoke pass**. Use `scripts/smoke_stateful_memory_qwen35_9b_4node_idev.sh` with
 `memobrain` or `amem` and one of `swe-lite`, `scienceworld`, `discoveryworld`.
@@ -297,6 +297,41 @@ token accounting and A-MEM semantic retrieval. A short terminal failure that
 never exercises memory cannot alone establish a pass. Accuracy is reported by
 native grading, not used as the integration gate. Full experiments should wait
 for the corresponding native smoke evidence.
+
+### Native MemoBrain recall v2
+
+The supplied SWE smoke at `29d2e6f` graded both tasks and exercised five folds
+and fourteen flushes, but rejected eight memory decisions. The displayed recall
+errors repeated flush targets and reused targets in both flush and fold. The
+v1 per-fold ID ordering did not guarantee disjoint operations across a request.
+The five displayed actor format errors recovered; they were not the failing
+smoke gate. ScienceWorld and DiscoveryWorld were not reached by the shell loop.
+
+Native MemoBrain now records `zero_shot_native_adaptation_v2` with
+`recall_target_profile=node_assignment_regex_v1`. The recall wire format is
+`{"nodes":{"3":null,"4":{"flush":"reason"},"5":{"fold":1,"rationale":"reason","notes":[{"role":"assistant","content":"observed findings"}]}}}`.
+Keys are exactly the sorted active, unprotected node IDs, each appearing once.
+Each value chooses keep, flush, or membership in a model-selected fold group.
+Equal positive integer group labels share one fold, including interleaved node
+groups; labels are not node IDs. An empty nodes object is a valid no-op.
+
+The adapter translates these assignments to the unchanged `maintain()` API.
+Within each group, model-written notes are concatenated in node order, with
+no host-written summary or automatic target repair. Both the raw assignment and
+translated operations are audited. The model still selects every target and
+group and writes the notes; arbitrary disjoint groups and concurrent flushes
+remain representable. The regex grows linearly with the editable-node count.
+Raw output is validated before JSON parsing so duplicate keys cannot collapse
+silently. Invalid output or graph cycles still reject the entire update.
+
+This changes native recall serialization and the granularity of summary notes;
+it is a versioned adaptation, not an identical prompt to native v1. Explicit
+per-node slots and notes consume the existing 1024-token helper allowance and
+can still exhaust it. No request/token budget is increased and no extra retry
+is added. BC-P retains its previously validated v5 recall protocol; A-MEM is
+unchanged. Local tests cover disjoint partitions, state/protection changes,
+malformed outputs, atomic cycle rejection, native dispatch and budget accounting.
+A fresh native Vista smoke is required before claiming this revision passes.
 
 The initial implementation check passed 111 focused tests plus 25 generation-audit
 tests. One additional ScienceWorld audit test has a pre-existing fixture missing

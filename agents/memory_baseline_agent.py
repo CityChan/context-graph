@@ -15,6 +15,7 @@ from .baseline_task_protocol import task_kind, task_chat, provenance as task_pro
 from .single_tool_protocol import MAX_FORMAT_ERRORS, PROTOCOL, retry_context
 from .memory_baseline_control import (
     FINAL_SYSTEM, HELPER_CONTROL, helper_schema, final_constraint, editable_node_ids, recall_constraint, AMEM_TEXT_LIMITS,
+    NATIVE_RECALL, native_recall_constraint, native_recall_decision,
 )
 from .utils import AgentLoopMetrics, AgentLoopOutput, _apply_chat_template, select_env
 
@@ -67,6 +68,10 @@ async def process_item(item, context):
                         stateful_history='dispatched actions and observations; no replay or reset')
         if simulator:
             protocol['turns'] = 'all actor and memory model requests; no final answer slot'
+        if method == 'memobrain':
+            protocol.update(variant='zero_shot_native_adaptation_v2',
+                            recall_target_profile='node_assignment_regex_v1',
+                            recall_notes='model-authored per-node notes concatenated within each model-selected fold group')
     margin = max(0, int(getattr(plugin, "final_answer_safety_margin", 64)))
     encode = lambda s: tokenizer.encode(s, add_special_tokens=False)
     render = lambda m, control=False: list(_apply_chat_template(tokenizer, m, config,
@@ -126,6 +131,9 @@ async def process_item(item, context):
 
     async def helper(prompt, data, phase, apply):
         data = copy.deepcopy(data)
+        native_recall = kind != 'search' and phase == 'memory_recall'
+        if native_recall:
+            prompt = NATIVE_RECALL
         prompt += HELPER_CONTROL
         if kind != 'search':
             prompt += ("\nThis is a stateful task. Preserve observed state, object IDs, file changes, "
@@ -135,7 +143,10 @@ async def process_item(item, context):
             prompt += ("\nUse at most 4 tags per note and 8 keywords, each at most 32 characters; "
                        "each context is at most 240 characters. Avoid repeated labels. These are output caps; "
                        "do not fill them unnecessarily. Raw observations remain stored separately.")
-        if phase == "memory_recall":
+        if native_recall:
+            ids = editable_node_ids(data)
+            prompt += f'\nEditable node IDs in output order: {ids}. Use positive integer fold group labels (1 to 999999).'
+        elif phase == "memory_recall":
             prompt += (f"\nEditable node IDs: {editable_node_ids(data)}. "
                        "Within each fold, list IDs in strictly increasing order without duplicates. "
                        "Each ID may appear at most once across all flush and fold operations. "
@@ -150,7 +161,8 @@ async def process_item(item, context):
                        "Without update_neighbor, both neighborhood arrays must be empty. "
                        "Without strengthen, suggested_connections and tags_to_update must be empty. "
                        "For no change, use should_evolve=false and all arrays empty.")
-        constraint = (recall_constraint(data) if phase == "memory_recall" else
+        constraint = (native_recall_constraint(data) if native_recall else
+                      recall_constraint(data) if phase == "memory_recall" else
                       {"json": helper_schema(phase, state=data if phase == "memory_evolve" else None)})
         text = await request([{"role": "system", "content": prompt},
                               {"role": "user", "content": json.dumps(data, ensure_ascii=False)}],
@@ -158,7 +170,12 @@ async def process_item(item, context):
         record = dict(phase=phase, request_index=len(audit) - 1, applied=False)
         memory_audit.append(record)
         try:
+            if native_recall and not re.fullmatch(constraint['regex'], text):
+                raise ValueError('Native recall violated unique node assignment contract')
             decision = memory.json_object(text)
+            if native_recall:
+                record['node_decision'] = copy.deepcopy(decision)
+                decision = native_recall_decision(decision, data)
             apply(decision)
         except (ValueError, TypeError, KeyError, IndexError) as exc:
             record["error"] = str(exc)
