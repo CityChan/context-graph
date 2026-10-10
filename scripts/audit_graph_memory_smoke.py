@@ -9,6 +9,30 @@ from scripts.evaluation_records import read_evaluation
 from scripts.generation_audit import require_generation_quality, degeneration_stats
 
 
+def task_diagnostics(idx, trajectory):
+    records = trajectory.get("model_contexts", [])
+    errors = [r for r in records if r.get("format_error")]
+    memory_errors = [r for r in trajectory.get("memory_audit", []) if r.get("error")]
+    stats = trajectory.get("env_stats", {})
+    def memory_detail(record):
+        index = record.get("request_index")
+        request = records[index] if type(index) is int and 0 <= index < len(records) else {}
+        return dict(phase=record.get("phase"), error=record["error"], request_index=index,
+                    output_tokens=len(request.get("output_ids", [])), max_tokens=request.get("max_tokens"),
+                    response_tail=request.get("response", "")[-1600:])
+    return dict(source_index=idx, stop=trajectory.get("termination_reason"),
+                stats={k: stats.get(k) for k in ("environment_steps", "main_turn", "main_len",
+                    "main_context_tokens", "actor_requests", "memory_requests", "invalid_tool",
+                    "invalid_memory", "memory_updates", "hit_token_limit", "hit_max_turn", "hit_timeout")},
+                format_error_events=len(errors),
+                last_format_errors=[dict(phase=r.get("phase"), error=r["format_error"],
+                    output_tokens=len(r.get("output_ids", [])), max_tokens=r.get("max_tokens"),
+                    at_output_limit=bool(r.get("max_tokens") and len(r.get("output_ids", [])) >= r["max_tokens"]),
+                    response_tail=r.get("response", "")[-1600:]) for r in errors[-3:]],
+                memory_error_events=len(memory_errors),
+                last_memory_errors=[memory_detail(r) for r in memory_errors[-3:]])
+
+
 def audit(root):
     root = Path(root)
     manifests, results, summary = read_evaluation(root)
@@ -20,10 +44,12 @@ def audit(root):
     counts = dict(memory_requests=0, memory_updates=0, memory_recalls=0, invalid_memory=0,
                   environment_steps=0, generated_tokens=0, total_token=0, embedding_calls=0,
                   memory_nodes=0, memory_edges=0, memobrain_folds=0, memobrain_flushes=0, amem_evolutions=0)
+    tasks = []
     for row in results:
         idx = row["source_index"]
         trajectory = json.loads((root / f"trajectory-{idx}.json").read_text(encoding="utf-8"))
         stats = trajectory["env_stats"]
+        tasks.append(task_diagnostics(idx, trajectory))
         requests = [json.loads(s) for s in (root / f"requests-{idx}.jsonl").read_text().splitlines() if s.strip()]
         records = trajectory["model_contexts"]
         if len(records) != len(requests):
@@ -52,7 +78,7 @@ def audit(root):
     }
     if method == "amem":
         checks["semantic_retrieval_exercised"] = counts["embedding_calls"] > 0
-    report = dict(method=method, summary=summary, costs=counts, checks=checks,
+    report = dict(method=method, summary=summary, costs=counts, checks=checks, tasks=tasks,
                   passed=all(checks.values()), scope="integration smoke, not benchmark performance")
     (root / "memory-smoke-audit.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     return report

@@ -34,12 +34,12 @@ METHODS=("$METHOD")
 rc=0
 for method in "${METHODS[@]}"; do
   export RUN_ROOT="$SMOKE_ROOT/$method"
-  if bash scripts/eval_bcp_qwen35_9b_4node_idev.sh "$method"; then
-    python scripts/audit_graph_memory_smoke.py "$RUN_ROOT" || rc=1
-  else
+  if ! bash scripts/eval_bcp_qwen35_9b_4node_idev.sh "$method"; then
     echo "GRAPH_MEMORY_SMOKE_FAILED method=$method; inspect $RUN_ROOT"
     rc=1
   fi
+  # Completed failed runs still have useful trajectories; never skip their audit.
+  python scripts/audit_graph_memory_smoke.py "$RUN_ROOT" || rc=1
 done
 echo "GRAPH_MEMORY_SMOKE_COMPLETE status=$rc artifacts=$SMOKE_ROOT"
 exit "$rc"

@@ -131,6 +131,14 @@ construction, and no invalid memory decisions. It reports fold/flush/link counts
 a model may legitimately choose no graph edits on a short task. Smoke success
 does not require a correct answer and does not establish benchmark performance.
 
+The wrapper also runs the audit when evaluation exits with a failure. Its `tasks`
+section shows each termination reason, actor/helper request counts, budget use,
+the last three rejected actor responses (bounded tails and output-limit flags),
+and memory-update errors. Inspect an existing completed run without starting any
+services with `python scripts/audit_graph_memory_smoke.py /path/to/memobrain`.
+The audit keeps its nonzero exit status when checks fail; diagnostics do not
+relax the pass criteria or change the saved scores.
+
 For eight questions, use `SAMPLES=8` with the same script. All substantive
 configuration is saved in the manifests. Supported overrides are
 `MEMORY_HELPER_MAX_TOKENS`, `MEMOBRAIN_RECALL_INTERVAL`,
