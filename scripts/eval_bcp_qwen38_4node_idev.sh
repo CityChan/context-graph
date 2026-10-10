@@ -130,6 +130,8 @@ case "${1:-}" in
     ;;
   _eval)
     activate "$AGENT_CONDA_ENV"
+    EVAL_PYTHON=python
+    if [[ "$METHOD" == amem ]]; then EVAL_PYTHON=${AMEM_AGENT_PYTHON:-python}; fi
     export HF_HOME="$SCRATCH/hf_cache" HF_HUB_CACHE="$SCRATCH/hf_cache/hub"
     export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 STRUCTURED_MEMORY_ENABLED=0
     unset QWEN_ENABLE_THINKING
@@ -138,10 +140,10 @@ case "${1:-}" in
       BASELINE_ARGS=(--supo-context-threshold "${SUPO_CONTEXT_THRESHOLD:-16384}" --supo-max-summaries "${SUPO_MAX_SUMMARIES:-2}" --supo-summary-max-tokens "${SUPO_SUMMARY_MAX_TOKENS:-1024}")
     elif [[ "$METHOD" == memobrain || "$METHOD" == amem ]]; then
       BASELINE_ARGS=(--memory-helper-max-tokens "${MEMORY_HELPER_MAX_TOKENS:-1024}" --memobrain-recall-interval "${MEMOBRAIN_RECALL_INTERVAL:-5}" --memobrain-context-threshold "${MEMOBRAIN_CONTEXT_THRESHOLD:-16384}" --amem-topk "${AMEM_TOPK:-5}" --amem-memory-tokens "${AMEM_MEMORY_TOKENS:-4096}")
-      if [[ "$METHOD" == amem ]]; then python scripts/prepare_amem_embedding.py --offline; fi
+      if [[ "$METHOD" == amem ]]; then "$EVAL_PYTHON" scripts/prepare_amem_embedding.py --offline; fi
     fi
     if [[ -n ${EVAL_INDICES_FILE:-} ]]; then BASELINE_ARGS+=(--indices-file "$EVAL_INDICES_FILE"); fi
-    exec python -u scripts/eval_bcp_qwen38.py --benchmark "$BENCHMARK" --method "$METHOD" --memory-mode "$MEMORY_MODE" --model "$MODEL_ID" --model-path "$MODEL_PATH" --endpoint "$2" --rank "$3" --data "$DATA_PATH" --samples "$SAMPLES" --seed "$SEED" --workers "$WORKERS" --output "$RUN_ROOT" "${BASELINE_ARGS[@]}"
+    exec "$EVAL_PYTHON" -u scripts/eval_bcp_qwen38.py --benchmark "$BENCHMARK" --method "$METHOD" --memory-mode "$MEMORY_MODE" --model "$MODEL_ID" --model-path "$MODEL_PATH" --endpoint "$2" --rank "$3" --data "$DATA_PATH" --samples "$SAMPLES" --seed "$SEED" --workers "$WORKERS" --output "$RUN_ROOT" "${BASELINE_ARGS[@]}"
     ;;
 esac
 

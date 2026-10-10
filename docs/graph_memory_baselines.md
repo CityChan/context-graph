@@ -89,16 +89,31 @@ bash scripts/smoke_bcp_graph_memory_qwen35_9b_4node_idev.sh memobrain
 bash scripts/smoke_bcp_graph_memory_qwen35_9b_4node_idev.sh amem
 ```
 
-The script uses `cxtgraph` for evaluation and `deepseek_v4` for serving. A-MEM
-requires `sentence_transformers` in the existing agent environment (already a
-retrieval-stack dependency); the script does not install into or replace it.
-It downloads only the pinned MiniLM files to `$SCRATCH/hf_cache` if needed and
-checks actual embedding inference. If compute-node internet is unavailable,
-prepare that cache once on the login node using the same environment:
+The script uses `cxtgraph` as the base agent environment and `deepseek_v4` for
+serving. A-MEM requires `sentence_transformers`; some `cxtgraph` installations
+do not contain it. The smoke wrapper now detects this and creates a unique
+`--system-site-packages` venv under `$SCRATCH/context-graph-agent-benchmarks/envs`.
+It installs `sentence-transformers==5.3.0` and missing dependencies there, while
+constraining every existing base distribution to its installed version. A version
+conflict fails setup instead of upgrading the existing Torch/Transformers stack.
+Search, serving, and MemoBrain still use their existing interpreters. The selected
+A-MEM interpreter is saved in `amem-python.txt` and forwarded to every evaluator;
+each evaluator probes the pinned embedding offline before starting its tasks.
+Existing installations are import-tested and reused without pip installation.
+
+The wrapper downloads pinned MiniLM files to `$SCRATCH/hf_cache` if needed and
+checks actual embedding inference and semantic retrieval. If compute-node internet
+is unavailable, prepare the environment and cache once on the login node:
 
 ```bash
-HF_HOME="$SCRATCH/hf_cache" HF_HUB_CACHE="$SCRATCH/hf_cache/hub" python scripts/prepare_amem_embedding.py
+python scripts/prepare_amem_environment.py --root "$SCRATCH/context-graph-agent-benchmarks/envs" --python-file "$SCRATCH/amem-python.txt"
+export AMEM_AGENT_PYTHON=$(cat "$SCRATCH/amem-python.txt")
+env -u HF_HUB_OFFLINE -u TRANSFORMERS_OFFLINE HF_HOME="$SCRATCH/hf_cache" HF_HUB_CACHE="$SCRATCH/hf_cache/hub" "$AMEM_AGENT_PYTHON" scripts/prepare_amem_embedding.py
 ```
+
+Export the printed interpreter as `AMEM_AGENT_PYTHON` in the idev shell to reuse
+it; otherwise the wrapper provisions its own environment. This setup path does
+not change the embedding model, memory mechanism, or evaluation budget.
 
 Outputs are under the printed `$SCRATCH/bcp-graph-memory-JOBID-XXXXXX/` directory:
 `memobrain/` and `amem/` each contain `summary.json` and

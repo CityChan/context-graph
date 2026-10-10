@@ -13,7 +13,7 @@ def main():
     args = parser.parse_args()
     from huggingface_hub import snapshot_download
     from agents.graph_memory_baselines import EMBEDDING_MODEL, EMBEDDING_REVISION, embed, AMemMemory
-    # Fail before model servers start if the existing agent environment lacks ST.
+    # The smoke wrapper provisions missing ST in a separate scratch venv.
     import sentence_transformers
     path = snapshot_download(EMBEDDING_MODEL, revision=EMBEDDING_REVISION,
         local_files_only=args.offline,
@@ -28,7 +28,7 @@ def main():
     print(json.dumps(dict(event="AMEM_EMBEDDING_OK", model=EMBEDDING_MODEL,
         revision=EMBEDDING_REVISION, path=path, dimension=len(vector),
         semantic_retrieval_passed=True,
-        sentence_transformers=sentence_transformers.__version__)))
+        sentence_transformers=sentence_transformers.__version__, python=sys.executable)))
 
 
 if __name__ == "__main__":

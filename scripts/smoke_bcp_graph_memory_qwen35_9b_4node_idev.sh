@@ -17,12 +17,17 @@ set -u
 cd "$PROJECT_ROOT"
 mapfile -t SMOKE_NODES < <(scontrol show hostnames "$SLURM_JOB_NODELIST")
 [[ ${#SMOKE_NODES[@]} == 4 ]] || { echo 'Exactly four nodes required'; exit 2; }
-# Uses the existing dependency, and caches only pinned MiniLM weights on scratch.
-if [[ "$METHOD" == amem || "$METHOD" == both ]]; then
-  env -u HF_HUB_OFFLINE -u TRANSFORMERS_OFFLINE HF_HOME="$SCRATCH/hf_cache" HF_HUB_CACHE="$SCRATCH/hf_cache/hub" python scripts/prepare_amem_embedding.py
-fi
 SMOKE_ROOT=${SMOKE_ROOT:-$(mktemp -d "$SCRATCH/bcp-graph-memory-${SLURM_JOB_ID}-XXXXXX")}
 mkdir -p "$SMOKE_ROOT"
+# Missing dependencies go into a scratch venv; keep the serving/search envs intact.
+if [[ "$METHOD" == amem || "$METHOD" == both ]]; then
+  if [[ -z ${AMEM_AGENT_PYTHON:-} ]]; then
+    python scripts/prepare_amem_environment.py --root "$SCRATCH/context-graph-agent-benchmarks/envs" --python-file "$SMOKE_ROOT/amem-python.txt"
+    AMEM_AGENT_PYTHON=$(cat "$SMOKE_ROOT/amem-python.txt")
+  fi
+  export AMEM_AGENT_PYTHON
+  env -u HF_HUB_OFFLINE -u TRANSFORMERS_OFFLINE HF_HOME="$SCRATCH/hf_cache" HF_HUB_CACHE="$SCRATCH/hf_cache/hub" "$AMEM_AGENT_PYTHON" scripts/prepare_amem_embedding.py
+fi
 METHODS=("$METHOD")
 [[ "$METHOD" != both ]] || METHODS=(memobrain amem)
 rc=0
