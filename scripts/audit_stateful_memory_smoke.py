@@ -36,7 +36,10 @@ def memory_error_tail(errors, contexts):
 
 def audit(root, benchmark, method, expected):
     root = Path(root)
-    parts = sorted(root.glob('pair-*' if benchmark == 'swe-lite' else method + '-*'))
+    # A-MEM setup also writes amem-native-*.txt into this root. Only
+    # directories can be evaluator shards; setup records are not missing runs.
+    parts = sorted(p for p in root.glob('pair-*' if benchmark == 'swe-lite' else method + '-*')
+                   if p.is_dir())
     tasks = []
     summaries = []
     for part in parts:

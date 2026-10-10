@@ -241,13 +241,14 @@ preparation step intentionally downloaded only PyTorch assets. Preparation and
 runtime now share `embedding_snapshot()`, including the same JSON/TXT/safetensors
 filter and pinned revision. The runtime stays offline; missing required assets
 still fail, and unused ONNX/OpenVINO exports are not downloaded. This cache fix
-has local regression coverage; native Vista execution still needs validation.
+has local regression coverage and passed the supplied native SWE A-MEM run at
+`f670711` (details below).
 
 ## Native SWE-bench Lite, ScienceWorld and DiscoveryWorld
 
-Both methods have native adapters and four-node
-launchers. This is implemented and locally tested, **not yet a live native
-smoke pass**. Use `scripts/smoke_stateful_memory_qwen35_9b_4node_idev.sh` with
+Both methods have native adapters and four-node launchers. A-MEM has a supplied
+live SWE smoke pass; the remaining native results are described below.
+Use `scripts/smoke_stateful_memory_qwen35_9b_4node_idev.sh` with
 `memobrain` or `amem` and one of `swe-lite`, `scienceworld`, `discoveryworld`.
 
 SWE retains the existing ARM-compatible instance subset, sandbox, patch export
@@ -297,6 +298,32 @@ token accounting and A-MEM semantic retrieval. A short terminal failure that
 never exercises memory cannot alone establish a pass. Accuracy is reported by
 native grading, not used as the integration gate. Full experiments should wait
 for the corresponding native smoke evidence.
+
+### A-MEM native smoke evidence and audit directory filtering
+
+The supplied `f670711` run `swe-lite-amem-1062642-V2B4sq` passed: both tasks
+were graded and finished, with 106 valid memory updates, 52 evolutions and no
+memory errors. Two actor output-format errors recovered. This establishes
+integration mechanics, not patch correctness.
+
+The following `scienceworld-amem-1062642-gFEk76` run graded both tasks, each
+with 34 actor requests and 66 valid memory requests, reaching the 100-request
+cap. Both scores remained zero. Every audit check except `complete` passed.
+The auditor incorrectly counted `amem-native-python.txt` and
+`amem-native-environment.txt` as shards because they matched `amem-*`.
+Shard discovery now counts directories only. Missing summaries, missing results,
+pending tasks and extra shard directories still fail the completeness check.
+The `max_turn` stops and zero scores are preserved; neither implies missing
+evaluation output. Regression fixtures cover this layout for both simulators.
+
+Re-audit these existing artifacts before continuing to DiscoveryWorld; no GPU
+rerun is needed to apply this audit fix. The corrected live ScienceWorld audit
+and the DiscoveryWorld run remain pending:
+
+```bash
+git pull --ff-only
+python scripts/audit_stateful_memory_smoke.py output/scienceworld-amem-1062642-gFEk76 scienceworld amem --expected 2 && SAMPLES=2 bash scripts/smoke_stateful_memory_qwen35_9b_4node_idev.sh discoveryworld amem
+```
 
 ### Native MemoBrain recall v2
 

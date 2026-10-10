@@ -53,6 +53,46 @@ def test_discoveryworld_summary_keeps_format_failures_distinct_from_infrastructu
     assert report['mean_score'] == 25
 
 
+@pytest.mark.parametrize('benchmark', ['scienceworld', 'discoveryworld'])
+def test_amem_setup_records_are_not_shards_and_incomplete_runs_still_fail(tmp_path, benchmark):
+    for name in ('amem-native-python.txt', 'amem-native-environment.txt'):
+        (tmp_path / name).write_text('setup provenance')
+    for i in range(2):
+        part = tmp_path / f'amem-{i}'
+        attempt = part / f'instances/task-{i}/attempt-1'
+        attempt.mkdir(parents=True)
+        (part / 'summary.json').write_text(json.dumps(dict(selected=1, pending=0)))
+        (attempt.parent / 'result.json').write_text(json.dumps(dict(status='graded', attempt='attempt-1')))
+        trajectory = dict(termination_reason='max_turn', amem=dict(task_protocol=benchmark + '_v1'),
+            env_stats=dict(environment_steps=34, actor_requests=34, memory_requests=66, model_requests=100,
+                           memory_updates=66, memory_nodes=34, amem_evolutions=32, invalid_memory=0,
+                           embedding_calls=100, memory_retrieval_calls=34, generated_tokens=10,
+                           observation_tokens=20, instruction_tokens=30, main_len=60,
+                           environment_score=0, completed=0, hit_max_turn=1))
+        (attempt / 'trajectory.json').write_text(json.dumps(trajectory))
+    report = audit(tmp_path, benchmark, 'amem', 2)
+    assert report['passed']
+    assert all(t['stop'] == 'max_turn' and t['stats']['environment_score'] == 0 for t in report['tasks'])
+    assert not audit(tmp_path, benchmark, 'amem', 3)['checks']['complete']
+
+    summary = part / 'summary.json'
+    summary.unlink()
+    assert not audit(tmp_path, benchmark, 'amem', 2)['checks']['complete']
+    summary.write_text(json.dumps(dict(selected=1, pending=1)))
+    assert not audit(tmp_path, benchmark, 'amem', 2)['checks']['complete']
+    summary.write_text(json.dumps(dict(selected=1, pending=0)))
+    extra = tmp_path / 'amem-2'
+    extra.mkdir()
+    assert not audit(tmp_path, benchmark, 'amem', 2)['checks']['complete']
+    extra.rmdir()
+    result = attempt.parent / 'result.json'
+    result.unlink()
+    assert not audit(tmp_path, benchmark, 'amem', 2)['checks']['complete']
+    # Removing a shard must still fail even with the setup files present.
+    shutil.rmtree(part)
+    assert not audit(tmp_path, benchmark, 'amem', 2)['checks']['complete']
+
+
 @pytest.mark.parametrize('benchmark', ['swe-lite', 'discoveryworld', 'scienceworld'])
 @pytest.mark.parametrize('method', ['supo', 'agentfold'])
 def test_smoke_audit_requires_grading_complete_and_memory(tmp_path, benchmark, method):
