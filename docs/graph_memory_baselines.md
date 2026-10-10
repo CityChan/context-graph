@@ -170,8 +170,8 @@ from the same graph snapshot shown to the helper: only active, unprotected
 node IDs are selectable, and IDs within each fold must be strictly increasing.
 Every nonempty subset remains available; single-node folds and multiple
 fold/flush operations remain supported. With no editable nodes, both operation
-lists must be empty. JSON keys follow the prompt's example order. A-MEM remains
-on v3 and other helpers retain their JSON schemas.
+lists must be empty. JSON keys follow the prompt's example order. Other helpers
+retain their JSON schemas.
 
 The v4 live smoke finished all three tasks with five folds, but one request
 emitted duplicate IDs `[3,4,4]`. ID enums alone do not prevent duplicates.
@@ -186,6 +186,25 @@ transactional checks remain enforced; any rejection still fails the strict
 smoke audit. The request budget is unchanged and the added instructions are
 charged. Local tests do not establish live decoder behavior or task accuracy;
 rerun the same smoke in a fresh output directory.
+
+A-MEM `zero_shot_bcp_adaptation_v4` adds the evolution profile
+`neighbor_aligned_json_v1`. The v3 live smoke finished 3/3 tasks and applied six
+evolutions, but reported ten invalid memory requests; the displayed errors were
+`Evolution arrays must align with neighbor IDs`. The output schema now uses the
+actual ordered neighbor snapshot, with separate branches for no change,
+strengthening links, updating neighbors, or both actions. `update_neighbor`
+requires exactly one context string and one tag list per supplied neighbor,
+including unchanged neighbors. `suggested_connections` only selects links from
+that neighbor set; it does not determine the update-array length. Inactive
+action fields are empty, and no change uses `should_evolve=false` with empty
+arrays. The prompt repeats the ordered IDs and required count.
+
+The model still chooses actions, links, and metadata. Array counts do not prove
+that summaries are faithful or assigned to the correct neighbor. There is no
+automatic padding, broadcasting, truncation, extra retry, or relaxation of the
+atomic update validator or strict smoke audit. Existing token and request
+limits still apply; the new instructions are charged. Local schema/runner
+tests must be followed by a fresh Vista smoke before claiming integration pass.
 
 ```bash
 python -m pytest tests/test_graph_memory_baselines.py tests/test_agentfold.py tests/test_supo.py tests/test_bcp_qwen38_eval.py tests/test_emergency_finalizer.py tests/test_audit_bcp_pair.py -q

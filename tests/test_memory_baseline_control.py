@@ -16,7 +16,9 @@ from tests.test_agentfold import SEARCH, OPEN, FINISH
 @pytest.mark.parametrize("phase,value", [("memory_memorize", PATCH), ("memory_recall", NOOP),
     ("memory_analyze", ANALYSIS), ("memory_evolve", EVOLUTION)])
 def test_helper_contracts_accept_expected_decisions(phase, value):
-    schema = helper_schema(phase, state=graph().state() if phase == "memory_recall" else None)
+    state = graph().state() if phase == "memory_recall" else (
+        dict(neighbors=[dict(id="n1")]) if phase == "memory_evolve" else None)
+    schema = helper_schema(phase, state=state)
     Draft202012Validator.check_schema(schema)
     Draft202012Validator(schema).validate(value)
 
@@ -232,3 +234,77 @@ def test_recall_regex_size_is_quadratic_not_subset_enumeration():
     assert len(pattern) < 400_000
     decision = dict(flush_ops=[], fold_ops=[dict(ids=list(range(2, 101)), rationale="done", notes=PAIR)])
     assert re.fullmatch(pattern, json.dumps(decision))
+
+
+@pytest.mark.parametrize("count", [1, 2, 5])
+def test_evolution_schema_binds_both_arrays_to_all_neighbors(count):
+    state = dict(neighbors=[dict(id=f"n{10 + i}") for i in range(count)])
+    schema = helper_schema("memory_evolve", state=state)
+    Draft202012Validator.check_schema(schema)
+    check = Draft202012Validator(schema)
+    decision = copy.deepcopy(EVOLUTION)
+    decision["suggested_connections"] = ["n10"]  # A subset of links, not array slots.
+    decision["new_context_neighborhood"] = [f"context {i}" for i in range(count)]
+    decision["new_tags_neighborhood"] = [[f"tag {i}"] for i in range(count)]
+    check.validate(decision)
+    reverse = copy.deepcopy(decision)
+    reverse["actions"].reverse()
+    check.validate(reverse)
+    for field in ("new_context_neighborhood", "new_tags_neighborhood"):
+        for wrong_count in (count - 1, count + 1):
+            bad = copy.deepcopy(decision)
+            bad[field] = [decision[field][0]] * wrong_count
+            assert not check.is_valid(bad)
+    bad = copy.deepcopy(decision)
+    bad["suggested_connections"] = ["n1"]
+    assert not check.is_valid(bad)
+
+
+def test_evolution_schema_preserves_noop_and_independent_actions():
+    state = dict(neighbors=[dict(id="n1")])
+    check = Draft202012Validator(helper_schema("memory_evolve", state=state))
+    noop = dict(should_evolve=False, actions=[], suggested_connections=[], tags_to_update=[],
+                new_context_neighborhood=[], new_tags_neighborhood=[])
+    check.validate(noop)
+    strengthen = {**noop, "should_evolve": True, "actions": ["strengthen"],
+                  "suggested_connections": ["n1"], "tags_to_update": ["linked"]}
+    update = {**noop, "should_evolve": True, "actions": ["update_neighbor"],
+              "new_context_neighborhood": ["context"], "new_tags_neighborhood": [["tag"]]}
+    check.validate(strengthen)
+    check.validate(update)
+    assert not check.is_valid({**update, "actions": ["update_neighbor", "update_neighbor"]})
+    assert not check.is_valid({**update, "should_evolve": False})
+    empty = Draft202012Validator(helper_schema("memory_evolve", state=dict(neighbors=[])))
+    empty.validate(noop)
+    assert not empty.is_valid(strengthen) and not empty.is_valid(update)
+    with pytest.raises(ValueError, match="current neighbors"):
+        helper_schema("memory_evolve")
+
+
+def test_evolution_request_uses_ordered_snapshot_and_rejects_misalignment_atomically(monkeypatch):
+    # Second evolution has two neighbors, but the mocked server updates only one.
+    responses = [SEARCH, json.dumps(ANALYSIS), OPEN, json.dumps(ANALYSIS),
+                 json.dumps(EVOLUTION), SEARCH, json.dumps(ANALYSIS), json.dumps(EVOLUTION), FINISH]
+    env, context, item, _ = setup(monkeypatch, "amem", responses)
+    out = asyncio.run(runner.process_item(item, context))
+    records = out.extra_fields["model_contexts"]
+    evolutions = [r for r in records if r["phase"] == "memory_evolve"]
+    assert len(evolutions) == 2
+    for count, record in enumerate(evolutions, start=1):
+        state = json.loads(record["messages"][1]["content"])
+        assert len(state["neighbors"]) == count
+        assert record["structured_outputs"] == {"json": helper_schema("memory_evolve", state=state)}
+        ids = [node["id"] for node in state["neighbors"]]
+        assert f"Neighbor order: {ids}" in record["messages"][0]["content"]
+        assert f"exactly {count} entries" in record["messages"][0]["content"]
+        assert record["control_enable_thinking"] is False
+    snapshot = json.loads(evolutions[-1]["messages"][1]["content"])
+    nodes = out.extra_fields["memory_state"]["nodes"]
+    for node in [snapshot["new_note"], *snapshot["neighbors"]]:
+        assert nodes[node["id"]] == node  # No partial strengthen before failed array update.
+    stats = out.extra_fields["env_stats"]
+    assert stats["invalid_memory"] == 1 and stats["amem_evolutions"] == 1
+    assert stats["memory_requests"] == 5 and stats["model_requests"] == 9
+    assert stats["main_len"] == sum(stats[k] for k in ("generated_tokens", "observation_tokens", "instruction_tokens"))
+    assert out.extra_fields["termination_reason"] == "finish"
+    assert out.extra_fields["baseline_protocol"]["evolution_output_profile"] == "neighbor_aligned_json_v1"

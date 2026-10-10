@@ -24,8 +24,9 @@ class BudgetEnd(Exception):
 
 def provenance(method, options):
     return {**memory.PROVENANCE[method], **options, **PROTOCOL, "method": method,
-            "variant": "zero_shot_bcp_adaptation_v5" if method == "memobrain" else "zero_shot_bcp_adaptation_v3",
+            "variant": "zero_shot_bcp_adaptation_v5" if method == "memobrain" else "zero_shot_bcp_adaptation_v4",
             **({"recall_target_profile": "active_unprotected_sorted_ids_regex_v2"} if method == "memobrain" else {}),
+            **({"evolution_output_profile": "neighbor_aligned_json_v1"} if method == "amem" else {}),
             "trained_checkpoint": False,
             "helper_output_profile": "memory_json_schema_v1", "helper_enable_thinking": False,
             "final_output_profile": "bounded_finish_xml_v1", "final_enable_thinking": False,
@@ -117,7 +118,18 @@ async def process_item(item, context):
                        "Within each fold, list IDs in strictly increasing order without duplicates. "
                        "Each ID may appear at most once across all flush and fold operations. "
                        "If no IDs are editable, return empty flush_ops and fold_ops.")
-        constraint = recall_constraint(data) if phase == "memory_recall" else {"json": helper_schema(phase)}
+        if phase == "memory_evolve":
+            ids = [node["id"] for node in data["neighbors"]]
+            prompt += (f"\nNeighbor order: {ids}. If actions includes update_neighbor, BOTH "
+                       f"new_context_neighborhood and new_tags_neighborhood must contain exactly {len(ids)} "
+                       "entries, one per neighbor in that order, including unchanged neighbors. "
+                       "suggested_connections selects links only; it does not select which neighbors "
+                       "need array entries. Keep each context concise and each tag list short. "
+                       "Without update_neighbor, both neighborhood arrays must be empty. "
+                       "Without strengthen, suggested_connections and tags_to_update must be empty. "
+                       "For no change, use should_evolve=false and all arrays empty.")
+        constraint = (recall_constraint(data) if phase == "memory_recall" else
+                      {"json": helper_schema(phase, state=data if phase == "memory_evolve" else None)})
         text = await request([{"role": "system", "content": prompt},
                               {"role": "user", "content": json.dumps(data, ensure_ascii=False)}],
                              phase, instruction=prompt, constraint=constraint)

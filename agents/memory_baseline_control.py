@@ -95,10 +95,31 @@ def helper_schema(phase, *, state=None):
     if phase == "memory_analyze":
         return obj(keywords=array(text), context=text, tags=array(text))
     if phase == "memory_evolve":
-        return obj(should_evolve={"type": "boolean"},
-                   actions=array({"type": "string", "enum": ["strengthen", "update_neighbor"]}),
-                   suggested_connections=array(text), tags_to_update=array(text),
-                   new_context_neighborhood=array(text), new_tags_neighborhood=array(array(text)))
+        if state is None:
+            raise ValueError("A-MEM evolution requires the current neighbors")
+        ids = [node["id"] for node in state["neighbors"]]
+        if any(not isinstance(nid, str) or not nid for nid in ids) or len(set(ids)) != len(ids):
+            raise ValueError("Expected unique nonempty neighbor IDs")
+        empty = array(text, maxItems=0)
+
+        def branch(actions):
+            update = "update_neighbor" in actions
+            strengthen = "strengthen" in actions
+            count = len(ids) if update else 0
+            return obj(should_evolve={"const": bool(actions)},
+                       actions={"enum": [actions, actions[::-1]]} if len(actions) > 1 else {"const": actions},
+                       suggested_connections=array({"type": "string", "enum": ids}) if strengthen else empty,
+                       tags_to_update=array(text) if strengthen else empty,
+                       new_context_neighborhood=array(text, minItems=count, maxItems=count),
+                       new_tags_neighborhood=array(array(text), minItems=count, maxItems=count))
+
+        # Use disjoint branches so counts depend on the chosen action, without
+        # if/then or uniqueItems features that decoding backends may ignore.
+        branches = [branch([])]
+        if ids:
+            branches += [branch(["strengthen"]), branch(["update_neighbor"]),
+                         branch(["strengthen", "update_neighbor"])]
+        return {"anyOf": branches}
     raise ValueError(f"Unknown memory phase: {phase}")
 
 
