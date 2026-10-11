@@ -16,6 +16,12 @@
 # needs the BrowseComp retrieval server used by the nine-node search pipeline.
 set -euo pipefail
 
+EXPLICIT_GRAPH_SFT=${EXPLICIT_GRAPH_SFT:-0}
+if [ "$EXPLICIT_GRAPH_SFT" = 1 ]; then
+  test "${DOMAIN:-}" = scienceworld || { echo "Explicit SFT requires DOMAIN=scienceworld"; exit 2; }
+  export STUDENT_TOKENIZER_ID=${STUDENT_TOKENIZER_ID:-Qwen/Qwen3.5-9B}
+fi
+
 PROJECT_ROOT=${PROJECT_ROOT:-/work/09281/chc_1996/vista/context-graph}
 MODEL_ID=${MODEL_ID:-deepseek-ai/DeepSeek-V4-Flash-0731}
 STUDENT_TOKENIZER_ID=${STUDENT_TOKENIZER_ID:-Qwen/Qwen3.6-27B}
@@ -283,6 +289,16 @@ else
   fi
   export PYTHONPATH="$SCIENCEWORLD_DEPS:$PROJECT_ROOT:${PYTHONPATH:-}"
   java -version
+  if [ "$EXPLICIT_GRAPH_SFT" = 1 ]; then
+    export DEEPSEEK_BASE_URL="http://$TEACHER_HEAD_IP:$TEACHER_PORT/v1"
+    export DEEPSEEK_MODEL="$MODEL_ID" TEACHER_CHECKPOINT_PATH="$MODEL_PATH"
+    export STUDENT_TOKENIZER_PATH
+    export RUN_DIR=${RUN_DIR:-$ARTIFACT_ROOT/explicit}
+    export SAMPLES=${SAMPLES:-$MAX_SAMPLES} WORKERS=${WORKERS:-$NUM_WORKERS}
+    export START_INDEX MAX_TURN PROMPT_LENGTH RESPONSE_LENGTH TURN_MAX_NEW_TOKENS
+    bash "$PROJECT_ROOT/scripts/generate_scienceworld_graph_sft.sh"
+    exit 0
+  fi
   python scripts/make_scienceworld_data.py --n-train "$((START_INDEX + MAX_SAMPLES))" --n-val 1 --seed 42
   DATA_PATH=data/scienceworld_graph_train.parquet
   WORKFLOW=scienceworld_graph

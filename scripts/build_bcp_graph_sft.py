@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from agents.action_contract import ActionContract
 from agents.graph_trace import validate_graph_trace
-from scripts.generate_bcp_graph_sft import PROFILE, TeacherClient, digest
+from scripts.generate_bcp_graph_sft import PROFILE, SCIENCEWORLD_PROFILE, TeacherClient, digest
 
 GRAPH_TOOLS = {"merge", "prune", "select", "add_edge", "graph_read", "graph_compact", "recall"}
 
@@ -35,6 +35,10 @@ def read_jsonl(path):
 
 def audit_episode(episode, trajectory, requests):
     stats = trajectory.get("env_stats", {})
+    scienceworld = episode.get("benchmark") == "scienceworld"
+    if scienceworld and (stats.get("completed") != 1 or stats.get("environment_natural_end") != 1
+                         or stats.get("env_fail") or stats.get("env_error") or stats.get("env_init_error")):
+        return "environment_not_solved", None
     if episode.get("status") != "ok" or episode.get("task_reward") != 1 or not episode.get("is_finish"):
         return "task_not_solved", None
     if trajectory.get("graph_action_protocol") != "explicit_tools":
@@ -59,7 +63,10 @@ def audit_episode(episode, trajectory, requests):
         if record.get("finish_reason") != "stop" or not record.get("messages"):
             return "incomplete_request", None
         try:
-            payload, _ = ActionContract("LocalSearch", None).decode(record["response"], record["schema"])
+            contract = ActionContract("ScienceWorld@real" if scienceworld else "LocalSearch", None)
+            payload, _ = contract.decode(record["response"], record["schema"])
+            if scienceworld and payload["tool"] == "finish":
+                return "invalid_action", None
         except (KeyError, TypeError, ValueError):
             return "invalid_action", None
         sampled.add(hashlib.sha256(record["response"].encode()).hexdigest())
@@ -70,7 +77,8 @@ def audit_episode(episode, trajectory, requests):
         return "unmatched_graph_action", None
     if Counter(e["op"] for e in events) != Counter(a for a in actions if a in GRAPH_TOOLS):
         return "missing_graph_event", None
-    if events and not any(a in {"search", "open_page", "finish", "return"}
+    continuation = {"action", "return"} if scienceworld else {"search", "open_page", "finish", "return"}
+    if events and not any(a in continuation
                           for a in actions[max(i for i, a in enumerate(actions) if a in GRAPH_TOOLS) + 1:]):
         return "no_post_graph_continuation", None
     return None, {"kind": "graph" if events else "control", "metrics": metrics, "events": events}
@@ -165,8 +173,8 @@ async def build(args, tokenizer):
     from omegaconf import OmegaConf
     root, output = Path(args.run), Path(args.output)
     manifest = read_json(root / "manifest.json")
-    if manifest.get("profile") != PROFILE:
-        raise ValueError("Expected the explicit BC-P teacher collector manifest")
+    if manifest.get("profile") not in {PROFILE, SCIENCEWORLD_PROFILE}:
+        raise ValueError("Expected an explicit graph teacher collector manifest")
     output.mkdir(parents=True, exist_ok=False)
     settings = SimpleNamespace(**manifest["settings"])
     settings.temperature = 0.0  # Review the evidence in a separate deterministic request.
@@ -181,6 +189,8 @@ async def build(args, tokenizer):
     try:
         for path in episode_paths:
             episode = read_json(path)
+            if manifest["profile"] == SCIENCEWORLD_PROFILE and episode.get("benchmark") != "scienceworld":
+                raise ValueError("ScienceWorld manifest/episode benchmark mismatch")
             trajectory, requests = read_json(root / episode["trajectory"]), read_jsonl(root / episode["requests"])
             reason, audit = audit_episode(episode, trajectory, requests)
             counts["episodes_seen"] += 1
@@ -213,6 +223,7 @@ async def build(args, tokenizer):
                 # A segment with no edit is not a no-graph episode control.
                 row_kind = audit["kind"]
                 row = {"messages": messages, "tools": [], "enable_thinking": False,
+                       "benchmark": episode.get("benchmark", "bcp"),
                        "trajectory_id": row_id, "task_id": episode["question_hash"],
                        "question_hash": episode["question_hash"], "source_index": episode["source_index"],
                        "candidate": episode["candidate"], "teacher_model": settings.teacher_model,
