@@ -5,10 +5,14 @@ training questions**. DeepSeek chooses ordinary research and graph tools; the
 framework executes them against the BC-P corpus. There is no automatic graph
 maintenance, graph-call quota, or synthetic successful tool feedback.
 
-The default teacher is the hosted `deepseek-flash` API, documented as
-DeepSeek-V4.1-Flash on 2026-10-11. The old V4-Flash-0731 launchers are not used.
-The collector also accepts an already-running V4.1 vLLM endpoint. It does not
-provision V4.1 weights or assume that the old V4 TP=4 configuration fits V4.1.
+The default shell transport is a **local vLLM teacher**, with no cloud API key.
+The existing DeepSeek Slurm launcher can start the checkpoint and retrieval
+service and then run this collector. It retains its `MODEL_PATH`, `MODEL_ID`,
+node layout and serving environment. Its existing default checkpoint is
+DeepSeek-V4-Flash-0731, not V4.1: a filename or served alias does not upgrade
+weights. Use the actual V4.1 path/model configuration when that is the teacher.
+Checkpoint path, configuration/index hashes and model architecture are recorded
+in the collection manifest; weight files themselves are not hashed.
 
 Sources: [model naming](https://api-docs.deepseek.com/api/responses),
 [JSON mode](https://api-docs.deepseek.com/guides/json_mode/),
@@ -16,21 +20,32 @@ Sources: [model naming](https://api-docs.deepseek.com/api/responses),
 
 ## Vista smoke
 
-Use an allocated compute node with one free GPU for corpus retrieval, or set
-`LOCAL_SEARCH_URL` to an existing BC-P retrieval service. The wrapper activates
-`cxtgraph` and only cleans up the retrieval process it starts. The teacher is
-remote; this path does not need a four-node model allocation.
-
-Set `DEEPSEEK_API_KEY` in the environment. `OPENAI_API_KEY`, `OPENAI_BASE_URL`
-and `JUDGE_MODEL` remain dedicated to the existing BC-P answer grader. Without
-a real judge key, scoring is explicitly **strict EM only**; this can reject
-correct aliases. Teacher credentials are never copied into the grader.
+With the existing local checkpoint configured in the DeepSeek sbatch launcher:
 
 ```bash
 cd /work/09281/chc_1996/vista/context-graph
 git pull --ff-only
-SAMPLES=3 CANDIDATES=2 bash scripts/generate_bcp_graph_sft_deepseek41.sh
+BCP_EXPLICIT_GRAPH_SFT=1 SAMPLES=3 CANDIDATES=2 sbatch scripts/generate_ctxgraph_sft_deepseek_v4_flash_0731_9node.sh
 ```
+
+This launcher defaults to nine nodes (eight for the teacher, one for retrieval).
+Keep the working `MODEL_PATH`/`MODEL_ID` and topology overrides from your existing
+submission. Do not assume the older model's node count or vLLM options fit a new
+checkpoint. The server uses `deepseek_v4`; collection uses `cxtgraph`. Local
+collection output defaults to `$ARTIFACT_ROOT/bcp-explicit`. `PREFLIGHT_ONLY=1`
+on this Slurm launcher checks local serving dependencies without starting services.
+The normal run also probes teacher action responses before collecting episodes.
+
+`OPENAI_API_KEY`, `OPENAI_BASE_URL`
+and `JUDGE_MODEL` remain dedicated to the existing BC-P answer grader. Without
+a real judge key, scoring is explicitly **strict EM only**; this can reject
+correct aliases. Teacher credentials are never copied into the grader.
+
+For already-running services, set `DEEPSEEK_BASE_URL`, `DEEPSEEK_MODEL` and
+`LOCAL_SEARCH_URL`, then run `scripts/generate_bcp_graph_sft_deepseek41.sh` with
+Bash. Without an existing search URL, this endpoint wrapper needs a free GPU
+and starts its own retrieval process. Hosted API use is optional and requires
+explicit `TEACHER_TRANSPORT=deepseek` and `DEEPSEEK_API_KEY`.
 
 Default inputs are `data/bc_train.parquet` and `data/bc_test.parquet`. The latter
 is only used to reject overlapping questions, never for generation. Selection
@@ -38,7 +53,7 @@ is seeded and deduplicated before `START_INDEX`/`SAMPLES` slicing. Validation
 is split from the training source by question hash, keeping all candidates,
 branches and compaction segments of a question together across shards.
 
-`DRY_RUN=1` validates datasets/configuration without retrieval or model calls.
+On the endpoint wrapper, `DRY_RUN=1` validates datasets/configuration without retrieval or model calls.
 `PREFLIGHT_ONLY=1` checks retrieval health and two teacher JSON action responses.
 `STUDENT_TOKENIZER_PATH` can point to a cached Qwen3.5-9B tokenizer. Defaults:
 32K total context, 24K cumulative response/observation allowance, 8K branch

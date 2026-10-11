@@ -203,6 +203,21 @@ async def collect(args, rows, indices, config, tokenizer, root):
     await asyncio.gather(*(one(i, c) for i in indices for c in range(args.candidates)))
 
 
+def checkpoint_provenance(path):
+    if not path:
+        return None
+    root = Path(path).resolve()
+    config = root / "config.json"
+    if not config.is_file():
+        raise ValueError(f"Teacher checkpoint has no config.json: {root}")
+    metadata = json.loads(config.read_text(encoding="utf-8"))
+    files = [config, *sorted(root.glob("*.index.json"))]
+    return {"path": str(root), "model_type": metadata.get("model_type"),
+            "architectures": metadata.get("architectures"),
+            "metadata_sha256": {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in files},
+            "weights_hashed": False}
+
+
 def parse_args():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--data", default="data/bc_train.parquet")
@@ -211,6 +226,7 @@ def parse_args():
     p.add_argument("--tokenizer", default="Qwen/Qwen3.5-9B")
     p.add_argument("--teacher-url", default=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"))
     p.add_argument("--teacher-model", default=os.getenv("DEEPSEEK_MODEL", "deepseek-flash"))
+    p.add_argument("--teacher-checkpoint", default=os.getenv("TEACHER_CHECKPOINT_PATH"))
     p.add_argument("--transport", choices=["deepseek", "vllm"], default="deepseek")
     p.add_argument("--search-url", default=os.getenv("LOCAL_SEARCH_URL"))
     p.add_argument("--samples", type=int, default=25)
@@ -249,6 +265,7 @@ def main():
                 "indices": indices, "settings": {k: v for k, v in vars(args).items()
                                                 if k not in {"dry_run", "preflight_only", "output"}},
                 "config": OmegaConf.to_container(config),
+                "local_teacher_checkpoint": checkpoint_provenance(args.teacher_checkpoint),
                 "commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
                 "grader": {"model": os.getenv("JUDGE_MODEL", "gpt-5-nano"),
                            "base_url": os.getenv("OPENAI_BASE_URL"),

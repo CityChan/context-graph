@@ -220,7 +220,8 @@ def test_real_executor_collects_and_exports_compacted_json_policy(tmp_path, monk
     asyncio.run(generator.collect(args, [row("What temperature?")], [0], config, tokenizer, root))
 
 
-def test_shell_dry_run_never_starts_services_or_requires_api_key(tmp_path):
+@pytest.mark.parametrize("transport", ["deepseek", "vllm"])
+def test_shell_dry_run_never_starts_services_or_requires_api_key(tmp_path, transport):
     import os
     from pathlib import Path
     import shutil
@@ -235,7 +236,8 @@ def test_shell_dry_run_never_starts_services_or_requires_api_key(tmp_path):
     env = {**os.environ, "CONDA_SH": str(conda), "PROJECT_ROOT": str(repo),
            "SCRATCH": str(tmp_path), "RUN_DIR": str(tmp_path / "raw"),
            "CAPTURE": str(capture), "DRY_RUN": "1", "SAMPLES": "3", "CANDIDATES": "2",
-           "DEEPSEEK_API_KEY": "", "TEACHER_TRANSPORT": "deepseek"}
+           "DEEPSEEK_API_KEY": "", "TEACHER_TRANSPORT": transport,
+           "DEEPSEEK_BASE_URL": "http://localhost:18000/v1", "DEEPSEEK_MODEL": "local-checkpoint"}
     subprocess.run([bash, str(repo / "scripts/generate_bcp_graph_sft_deepseek41.sh")],
                    env=env, check=True, capture_output=True,
                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
@@ -244,3 +246,43 @@ def test_shell_dry_run_never_starts_services_or_requires_api_key(tmp_path):
     assert "--dry-run" in arguments
     assert arguments[arguments.index("--samples") + 1] == "3"
     assert not (tmp_path / "raw/search.log").exists()
+
+
+def test_local_checkpoint_provenance_detects_metadata_change(tmp_path):
+    from scripts.generate_bcp_graph_sft import checkpoint_provenance
+    with pytest.raises(ValueError, match="config.json"):
+        checkpoint_provenance(tmp_path)
+    config = tmp_path / "config.json"
+    config.write_text('{"model_type":"local_deepseek"}')
+    first = checkpoint_provenance(tmp_path)
+    assert first["model_type"] == "local_deepseek"
+    assert first["weights_hashed"] is False
+    config.write_text('{"model_type":"different_checkpoint"}')
+    assert checkpoint_provenance(tmp_path) != first
+    assert checkpoint_provenance(None) is None
+
+
+def test_local_sbatch_handoff_preserves_judge_and_checkpoint(tmp_path):
+    import os
+    from pathlib import Path
+    import shutil
+    import subprocess
+    bash = "C:/Program Files/Git/bin/bash.exe" if os.name == "nt" else shutil.which("bash")
+    if not bash:
+        pytest.skip("Bash unavailable")
+    repo = Path(__file__).resolve().parents[1]
+    source = (repo / "scripts/generate_ctxgraph_sft_deepseek_v4_flash_0731_9node.sh").read_text()
+    block = source[source.index('if [ "$BCP_EXPLICIT_GRAPH_SFT" = 1 ]; then', source.index('VLLM_READY=0')):]
+    block = block[:block.index('export OPENAI_API_KEY=dummy')]
+    script = tmp_path / "handoff.sh"
+    script.write_text('set -eu\nbash() { [[ "$TEACHER_TRANSPORT" == vllm && "$DEEPSEEK_MODEL" == actual-model && "$TEACHER_CHECKPOINT_PATH" == /scratch/actual-ckpt && "$OPENAI_API_KEY" == judge-test-value && "$OPENAI_BASE_URL" == https://judge.example/v1 && "$SAMPLES" == 3 && "$WORKERS" == 2 && "$DEEPSEEK_BASE_URL" == http://teacher:18000/v1 && "$LOCAL_SEARCH_URL" == http://retrieval:18999 ]]; }\n' + block)
+    env = {**os.environ, "BCP_EXPLICIT_GRAPH_SFT": "1", "TEACHER_HEAD_IP": "teacher",
+           "TEACHER_PORT": "18000", "SEARCH_NODE_IP": "retrieval", "SEARCH_PORT": "18999",
+           "MODEL_ID": "actual-model", "MODEL_PATH": "/scratch/actual-ckpt",
+           "MAX_SAMPLES": "3", "NUM_WORKERS": "2", "ARTIFACT_ROOT": "/scratch/output",
+           "PROJECT_ROOT": str(repo), "OPENAI_API_KEY": "judge-test-value",
+           "OPENAI_BASE_URL": "https://judge.example/v1", "DEEPSEEK_API_KEY": ""}
+    for key in ("SAMPLES", "WORKERS", "RUN_DIR"):
+        env.pop(key, None)
+    subprocess.run([bash, str(script)], env=env, check=True, capture_output=True,
+                   creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)

@@ -14,6 +14,16 @@
 # engine and the ninth node serves BrowseComp-Plus retrieval.
 set -euo pipefail
 
+# Opt in to the BC-P explicit-action collector while reusing this local server.
+BCP_EXPLICIT_GRAPH_SFT=${BCP_EXPLICIT_GRAPH_SFT:-0}
+if [ "$BCP_EXPLICIT_GRAPH_SFT" = 1 ]; then
+  export STUDENT_TOKENIZER_ID=${STUDENT_TOKENIZER_ID:-Qwen/Qwen3.5-9B}
+  export NUM_WORKERS=${NUM_WORKERS:-2}
+  export MAX_TURN=${MAX_TURN:-100}
+  export PROMPT_LENGTH=${PROMPT_LENGTH:-8192}
+  export RESPONSE_LENGTH=${RESPONSE_LENGTH:-24576}
+fi
+
 PROJECT_ROOT=${PROJECT_ROOT:-/work/09281/chc_1996/vista/context-graph}
 MODEL_ID=${MODEL_ID:-deepseek-ai/DeepSeek-V4-Flash-0731}
 SERVER_CONDA_ENV=${SERVER_CONDA_ENV:-deepseek_v4}
@@ -104,7 +114,7 @@ if [ -n "${MODEL_PATH:-}" ]; then
     exit 2
   fi
 else
-  for candidate in "$SCRATCH/DeepSeek-V4-Flash-0731" "$SCRATCH/models/DeepSeek-V4-Flash-0731" "$SCRATCH/models/deepseek-ai/DeepSeek-V4-Flash-0731"; do
+  for candidate in "$SCRATCH/${MODEL_ID##*/}" "$SCRATCH/models/${MODEL_ID##*/}" "$SCRATCH/models/$MODEL_ID"; do
     if [ -s "$candidate/config.json" ]; then
       MODEL_PATH=$candidate
       break
@@ -116,8 +126,8 @@ else
 fi
 if [ -z "${MODEL_PATH:-}" ]; then
   echo "ERROR: could not find $MODEL_ID under SCRATCH=$SCRATCH"
-  echo "Expected a direct model directory or $HF_HUB_CACHE/models--deepseek-ai--DeepSeek-V4-Flash-0731/snapshots/<revision>"
-  echo "Override with MODEL_PATH=/absolute/path/to/DeepSeek-V4-Flash-0731"
+  echo "Expected a direct model directory or a cached snapshot of $MODEL_ID"
+  echo "Override with MODEL_PATH=/absolute/path/to/checkpoint"
   exit 2
 fi
 require_scratch_path MODEL_PATH "$MODEL_PATH"
@@ -307,6 +317,21 @@ for _ in $(seq 1 1800); do
   sleep 1
 done
 if [ "$VLLM_READY" != "1" ]; then echo "ERROR: vLLM server did not become ready within 1800 seconds; tail of $VLLM_LOG:"; tail -n 80 "$VLLM_LOG"; exit 2; fi
+
+if [ "$BCP_EXPLICIT_GRAPH_SFT" = 1 ]; then
+  export TEACHER_TRANSPORT=vllm
+  export DEEPSEEK_BASE_URL="http://$TEACHER_HEAD_IP:$TEACHER_PORT/v1"
+  export DEEPSEEK_MODEL="$MODEL_ID"
+  export TEACHER_CHECKPOINT_PATH="$MODEL_PATH"
+  export LOCAL_SEARCH_URL="http://$SEARCH_NODE_IP:$SEARCH_PORT"
+  export STUDENT_TOKENIZER_PATH AGENT_CONDA_ENV DATA_PATH START_INDEX
+  export MAX_TURN PROMPT_LENGTH RESPONSE_LENGTH TURN_MAX_NEW_TOKENS
+  export SAMPLES=${SAMPLES:-$MAX_SAMPLES} WORKERS=${WORKERS:-$NUM_WORKERS}
+  export RUN_DIR=${RUN_DIR:-$ARTIFACT_ROOT/bcp-explicit}
+  # Preserve OPENAI_* for the grader; local teacher requests need no cloud key.
+  bash "$PROJECT_ROOT/scripts/generate_bcp_graph_sft_deepseek41.sh"
+  exit 0
+fi
 
 export OPENAI_API_KEY=dummy
 export OPENAI_BASE_URL="http://$TEACHER_HEAD_IP:$TEACHER_PORT/v1"

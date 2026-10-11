@@ -10,18 +10,18 @@
 set -euo pipefail
 cd "${PROJECT_ROOT:-/work/09281/chc_1996/vista/context-graph}"
 source "${CONDA_SH:-/work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh}"
-conda activate cxtgraph
+conda activate "${AGENT_CONDA_ENV:-cxtgraph}"
 : "${SCRATCH:?Set SCRATCH}"
 export HF_HOME=${HF_HOME:-$SCRATCH/hf_cache}
 export HF_HUB_CACHE=${HF_HUB_CACHE:-$HF_HOME/hub}
 TOKENIZER=${STUDENT_TOKENIZER_PATH:-Qwen/Qwen3.5-9B}
 RUN_DIR=${RUN_DIR:-$SCRATCH/contextgraph_sft/bcp_deepseek41/${SLURM_JOB_ID:-local}-$(date +%Y%m%d_%H%M%S)}
-TRANSPORT=${TEACHER_TRANSPORT:-deepseek}
+TRANSPORT=${TEACHER_TRANSPORT:-vllm}
 SEARCH_PORT=${SEARCH_PORT:-18999}
 SEARCH_PID=
 if [[ "$TRANSPORT" == vllm ]]; then
-    : "${DEEPSEEK_BASE_URL:?Set the existing V4.1 vLLM base URL}"
-    : "${DEEPSEEK_MODEL:?Set the exact served V4.1 model ID}"
+    : "${DEEPSEEK_BASE_URL:?Use BCP_EXPLICIT_GRAPH_SFT=1 with the local DeepSeek sbatch, or set an existing vLLM base URL}"
+    : "${DEEPSEEK_MODEL:?Set the exact served local model ID}"
 fi
 if [[ ${DRY_RUN:-0} != 1 && "$TRANSPORT" == deepseek ]]; then
     : "${DEEPSEEK_API_KEY:?Set the teacher API key in the environment}"
@@ -55,6 +55,7 @@ if [[ -z ${LOCAL_SEARCH_URL:-} ]]; then
     fi
 fi
 args=(--data "${DATA_PATH:-data/bc_train.parquet}" --heldout "${HELDOUT_PATH:-data/bc_test.parquet}" --output "$RUN_DIR" --tokenizer "$TOKENIZER" --transport "$TRANSPORT" --samples "${SAMPLES:-25}" --start "${START_INDEX:-0}" --candidates "${CANDIDATES:-2}" --workers "${WORKERS:-2}" --seed "${SEED:-42}")
+args+=(--prompt-length "${PROMPT_LENGTH:-8192}" --response-length "${RESPONSE_LENGTH:-24576}" --max-turn "${MAX_TURN:-100}" --turn-max-tokens "${TURN_MAX_NEW_TOKENS:-2048}")
 [[ ${DRY_RUN:-0} != 1 ]] || args+=(--dry-run)
 [[ ${PREFLIGHT_ONLY:-0} != 1 ]] || args+=(--preflight-only)
 python scripts/generate_bcp_graph_sft.py "${args[@]}"
