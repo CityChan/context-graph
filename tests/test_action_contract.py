@@ -107,6 +107,8 @@ def test_finalizer_constrains_finish_without_fabricating_fallback(response, vali
         assert schema['properties']['tool']['const'] == 'finish'
         assert agent.chat[-1]['content'] == response
         assert agent.force_action_finish is False
+        final_messages = agent.llm_client.calls[0][1]['messages']
+        assert '<function=' not in final_messages[-1]['content']
     asyncio.run(run())
 
 
@@ -138,3 +140,46 @@ def test_emitted_action_schemas_are_valid_json_schema(ability):
         decision = {'tool': 'graph_read', 'arguments': {'offset': 0}}
         jsonschema.validate(decision, schema)
         assert contract.decode(json.dumps(decision), schema)[0] == decision
+
+
+@pytest.mark.parametrize('room', [0, 9, 10, 255])
+def test_tiny_budget_does_not_launch_truncated_json_request(room):
+    async def run():
+        agent = constrained_agent([])
+        assert await agent.step(max_new_tokens=room) is None
+        assert agent.llm_client.calls == []
+        assert agent.action_budget_skips == 1
+        assert agent.action_protocol_errors == 0
+    asyncio.run(run())
+
+
+def test_branch_budget_protects_a_real_model_return_and_never_reports_last_search():
+    async def run():
+        report = encoded('return', message='Source 42: verified fact; remaining claim unresolved.')
+        agent = constrained_agent([encoded('search', query='evidence'), report], branch=True)
+        dispatched = []
+        async def tool(response):
+            dispatched.append(response)
+            return 'source 42 evidence ' * 10000
+        result = await agent.react(tool, max_turn=5, max_tokens=2000,
+                                   should_continue=lambda r: not r.startswith('<function=return>'))
+        assert result['last_response'].startswith('<function=return>')
+        assert result['iteration'] == 2
+        assert len(dispatched) == 1
+        assert agent.forced_branch_returns == 1
+        assert agent.action_protocol_errors == 0
+        assert agent.response_tokens_used() <= 2000
+        assert agent.llm_client.calls[-1][1]['structured_outputs']['json']['properties']['tool']['const'] == 'return'
+        assert agent.chat[-1]['content'] == report
+        assert all(call['max_len'] - len(ids) >= 256 for ids, call in agent.llm_client.calls)
+    asyncio.run(run())
+
+
+def test_explicit_search_prompt_has_one_protocol_and_preserves_question():
+    from agents.prompts import create_chat
+    question = 'Which book? Literal <parameter=example> in the question.'
+    chat = create_chat(question, 'search_graph', explicit_graph_tools=True)
+    assert chat[1]['content'] == 'Question: ' + question
+    assert '<function=' not in chat[0]['content']
+    assert 'unlimited thinking' not in str(chat)
+    assert 'checkpoint' not in str(chat)

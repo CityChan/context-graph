@@ -139,3 +139,19 @@ def test_summary_rejects_missing_rows_and_judge_errors(tmp_path):
     (tmp_path / "results-2.jsonl").write_text(json.dumps(row) + "\n")
     with pytest.raises(RuntimeError, match="judge"):
         summarize(tmp_path)
+
+
+def test_summary_exposes_protocol_errors_even_with_successful_finalizer(tmp_path):
+    from scripts.evaluation_records import read_evaluation
+    manifest = dict(source_sha256='hash', indices=[0, 1, 2], commit='sha', model_path='snapshot',
+                    method='contextgraph', config={}, seed=42, judge_model='judge')
+    for rank in range(3):
+        (tmp_path / f'manifest-{rank}.json').write_text(json.dumps(manifest))
+        row = dict(source_index=rank, task_reward=0, is_finish=True, status='ok',
+                   env_stats=dict(action_protocol_errors=rank + 1, forced_finish=1, natural_finish=0))
+        (tmp_path / f'results-{rank}.jsonl').write_text(json.dumps(row) + '\n')
+    _, _, summary = read_evaluation(tmp_path)
+    assert summary['finished'] == summary['forced_finishes'] == 3
+    assert summary['natural_finishes'] == 0
+    assert summary['action_protocol_errors'] == 6
+    assert summary['format_retry_failures'] == 0

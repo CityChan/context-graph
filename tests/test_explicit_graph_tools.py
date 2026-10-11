@@ -191,9 +191,10 @@ def test_explicit_branch_keeps_parent_final_answer_reserve(monkeypatch):
 
         async def react(self, *args, **kwargs):
             parent = agents[0]
-            assert self.config.response_length == parent.remaining_generation_tokens() - 1152
+            from agents.action_contract import BRANCH_HANDOFF_RESERVE
+            assert self.config.response_length == parent.remaining_generation_tokens() - 1152 - BRANCH_HANDOFF_RESERVE
             result = await super().react(*args, **kwargs)
-            assert parent.remaining_generation_tokens() - self.response_tokens_used() >= 1152
+            assert parent.remaining_generation_tokens() - self.response_tokens_used() >= 1152 + BRANCH_HANDOFF_RESERVE
             return result
     monkeypatch.setattr(module, 'Agent', RecordingAgent)
     outputs = asyncio.run(module.process_item(item(), context))
@@ -216,6 +217,34 @@ def test_explicit_branch_large_observation_cannot_overrun_allowance():
         assert len(agent.messages()[-1]['content']) < 1000
         assert agent.remaining_generation_tokens() > 5000
     asyncio.run(run())
+
+
+def test_exhausted_branch_report_reaches_parent_with_budget_charged(monkeypatch):
+    report = 'Source 42: measured room temperature; next measurement unresolved.'
+    responses = [call('branch', description='inspect', prompt='Inspect room'),
+                 ACTION, call('return', message=report), ACTION]
+    module, context, client = explicit_rollout(monkeypatch, responses, [(0, False), (100, True)])
+    rollout = context.config.actor_rollout_ref.rollout
+    rollout.response_length = 20000
+    rollout.plugin.branch_len = 1000000
+    agents = []
+    original_agent, original_action = module.Agent, module.run_action
+    class RecordingAgent(original_agent):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            agents.append(self)
+    async def large_observation(env, response):
+        result = await original_action(env, response)
+        return result + ' observed evidence ' * 10000 if result else result
+    monkeypatch.setattr(module, 'Agent', RecordingAgent)
+    monkeypatch.setattr(module, 'run_action', large_observation)
+    outputs = asyncio.run(module.process_item(item(), context))
+    assert report in str(agents[0].messages())
+    assert 'Branch has finished its task' not in str(agents[0].messages())
+    assert agents[0].external_response_tokens == agents[1].response_tokens_used()
+    assert agents[0].response_tokens_used() <= rollout.response_length
+    assert outputs[0].extra_fields['env_stats']['forced_branch_returns'] == 1
+    assert outputs[0].extra_fields['env_stats']['action_protocol_errors'] == 0
 
 
 def test_more_than_ten_explicit_operations_are_not_silently_capped(monkeypatch):

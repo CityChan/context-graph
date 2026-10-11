@@ -4,6 +4,17 @@ import json
 from .baseline_task_protocol import task_kind
 
 PROFILE = 'typed_action_json_v1'
+# A launch floor, not a guarantee that arbitrary argument text will fit.
+MIN_ACTION_TOKENS = 256
+BRANCH_RETURN_RESERVE = 768
+BRANCH_HANDOFF_RESERVE = 1536
+BRANCH_RETURN_PROMPT = ('Branch budget is ending. Use return now with a concise report of observed '
+                        'findings, source IDs and unresolved work. Do not claim the task is solved '
+                        'without evidence. Choose JSON tool=return, arguments.message (at most 256 characters).')
+FINAL_PROMPT = ('FINAL ANSWER REQUIRED NOW. Use only evidence already visible to submit your '
+                'best-supported answer; state uncertainty when evidence is incomplete. '
+                'Choose JSON tool=finish with arguments.answer, and optionally a brief '
+                'arguments.explanation with source IDs and arguments.confidence. Do not research further.')
 
 
 def validate_training_contract(config):
@@ -34,8 +45,8 @@ def obj(properties, required=None):
             'required': list(properties if required is None else required), 'additionalProperties': False}
 
 
-def string():
-    return {'type': 'string', 'minLength': 1, 'maxLength': 4096}
+def string(max_length=4096):
+    return {'type': 'string', 'minLength': 1, 'maxLength': max_length}
 
 
 def action(name, properties, required=None):
@@ -93,9 +104,13 @@ class ActionContract:
         text = string()
         finish = action('finish', {'answer': text, 'explanation': text, 'confidence': text}, ['answer']) if self.kind == 'search' else action('finish', {'message': text})
         if final:
-            if self.branch or self.kind in ('scienceworld', 'discoveryworld'):
+            if self.branch:
+                return action('return', {'message': string(256)})
+            if self.kind in ('scienceworld', 'discoveryworld'):
                 raise ValueError('finish is unavailable for this agent')
-            return finish
+            return (action('finish', {'answer': string(256), 'explanation': string(512),
+                                     'confidence': string(16)}, ['answer'])
+                    if self.kind == 'search' else action('finish', {'message': string(512)}))
         choices = [action('merge', {'node_ids': {'type': 'array', 'items': text, 'minItems': 2, 'maxItems': 6}, 'summary': text}),
                    action('add_edge', {'source': text, 'target': text, 'relation': {'enum': ['causal', 'semantic', 'temporal']}}),
                    action('graph_read', {'node_id': text, 'offset': {'type': 'integer', 'minimum': 0}}, []),

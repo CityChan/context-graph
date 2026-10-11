@@ -46,6 +46,10 @@ def task_diagnostics(row, trajectory):
         'last_graph_errors': [{k: e.get(k) for k in ('turn_id', 'agent_name', 'op', 'args', 'error')}
                               for e in explicit if not e.get('success')][-3:],
         'last_model_turns': {agent: [model_turn(r) for r in turns[-2:]] for agent, turns in records.items()},
+        'action_protocol_error_events': [
+            {'agent': agent, 'request_index': index, **model_turn(record)}
+            for agent, turns in records.items() for index, record in enumerate(turns)
+            if record.get('action_protocol_error')],
         'saved_transcript_tail': trajectory.get('message_str', '')[-4000:],
     }
 

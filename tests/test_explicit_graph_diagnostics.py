@@ -36,3 +36,13 @@ def test_missing_trace_and_unfinished_task_are_not_inferred_as_success():
     assert report['stop'] is None
     assert report['explicit_tool_attempts'] == {}
     assert not report['is_finish']
+
+
+def test_diagnostics_keeps_earlier_errors_including_branch_requests():
+    row = dict(source_index=6, status='ok', task_reward=0, is_finish=True)
+    rejected = {'action_protocol_error': 'truncated JSON', 'max_tokens': 10, 'output_ids': [1] * 10}
+    trajectory = {'model_contexts': [rejected, {}, {}],
+                  'branch_model_contexts': {'branch': [rejected, {}, {}]}}
+    errors = task_diagnostics(row, trajectory)['action_protocol_error_events']
+    assert [e['agent'] for e in errors] == ['main', 'branch']
+    assert all(e['max_tokens'] == 10 and e['output_tokens'] == 10 for e in errors)

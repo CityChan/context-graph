@@ -152,6 +152,7 @@ def summary(root, ids, benchmark):
     value["score_scale"] = "0..100; negative terminal scores clipped to 0; raw scores retained per task"
     value["successes"] = sum(r["success"] for r in graded)
     value['format_failures'] = sum(r.get('termination_reason') in ('invalid_tool_limit', 'invalid_summary') for r in graded)
+    value['action_protocol_errors'] = sum(r.get('env_stats', {}).get('action_protocol_errors', 0) for r in records)
     if benchmark == "discoveryworld":
         value["score_scale"] = "official normalized procedural task score multiplied by 100"
         value["knowledge_score"] = None

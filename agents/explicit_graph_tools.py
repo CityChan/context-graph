@@ -47,7 +47,7 @@ def action_protocol(plugin):
 
 EXPLICIT_GRAPH_PROMPT = """
 Graph ownership: YOU decide when and how to manage memory. Graph tools are
-ordinary XML tools, available on every action turn, including in branches.
+ordinary JSON actions, available on every action turn, including in branches.
 There are no scheduled graph checkpoints, automatic prune/merge/semantic edges,
 automatic branch archival, or automatic context summaries. Continue task tools
 when no graph change is useful. Do not use pass. Emit exactly one complete tool
@@ -71,10 +71,10 @@ The framework records observations/temporal/delegation links, but makes no
 semantic decisions. Graph tools consume the same turn/token budget as task tools.
 
 Examples:
-<function=graph_read><parameter=offset>0</parameter></function>
-<function=graph_read><parameter=node_id>n3</parameter><parameter=offset>0</parameter></function>
-<function=recall><parameter=node_id>n3</parameter></function>
-<function=graph_compact></function>
+{"tool":"graph_read","arguments":{"offset":0}}
+{"tool":"graph_read","arguments":{"node_id":"n3","offset":0}}
+{"tool":"recall","arguments":{"node_id":"n3"}}
+{"tool":"graph_compact","arguments":{}}
 """
 
 

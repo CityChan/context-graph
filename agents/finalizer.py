@@ -207,6 +207,9 @@ async def submit_emergency_final_answer(
     persistent_content = None
     context_overlay = str(context_overlay or "").strip()
     final_prompt = FINAL_ANSWER_PROMPT
+    if getattr(agent, 'action_contract', None) is not None:
+        from .action_contract import FINAL_PROMPT
+        final_prompt = FINAL_PROMPT
     if getattr(getattr(getattr(agent, "config", None), "plugin", None), "diagnostic_fix", "none") == "answer":
         from .diagnostic_fixes import ANSWER_CONSISTENCY
         final_prompt += "\n\n" + ANSWER_CONSISTENCY

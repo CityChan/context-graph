@@ -288,7 +288,8 @@ async def process_item(
         )
         if explicit_graph_tools:
             user_prompt[0]['content'] += '\n\n' + EXPLICIT_GRAPH_PROMPT
-            from .action_contract import ActionContract, PROMPT as ACTION_PROMPT, PROFILE as ACTION_PROFILE
+            from .action_contract import (ActionContract, PROMPT as ACTION_PROMPT, PROFILE as ACTION_PROFILE,
+                                          BRANCH_HANDOFF_RESERVE, MIN_ACTION_TOKENS)
             user_prompt[0]['content'] += '\n\n' + ACTION_PROMPT
 
         branch_prompt = BRANCH_MESSAGE_SEARCH if 'search' in workflow else BRANCH_MESSAGE
@@ -945,7 +946,7 @@ async def process_item(
                 pre_finalize_token_limit = bool(
                     final_answer_reserve
                     and remaining_generation_tokens(agent['main'])
-                    <= protected_final_answer_budget + 9
+                    <= protected_final_answer_budget + (MIN_ACTION_TOKENS if explicit_graph_tools else 10) - 1
                 )
                 break
 
@@ -1120,7 +1121,10 @@ async def process_item(
                         process_reward_min_precedence=graph_rpo_enabled,
                         action_contract=ActionContract(ability, env, branch=True) if explicit_graph_tools else None,
                     )
-                    branch_prompt_formatted = branch_prompt.format(message=message_to_branch)
+                    branch_prompt_formatted = (f'You are BRANCH. Assigned subtask: {message_to_branch}\n'
+                                               'Use the shared graph to inspect existing evidence before repeating research. '
+                                               'Use return to report findings, source IDs and unresolved work to MAIN.'
+                                               if explicit_graph_tools else branch_prompt.format(message=message_to_branch))
 
                     # Branch sees its OWN child graph state, not the parent
                     graph_state_hint = f"\n\nYour {'shared' if explicit_graph_tools else 'subtask'} working graph:\n{child_graph.to_state_text()}"
@@ -1131,7 +1135,7 @@ async def process_item(
                         agent[agent_name].config = copy.deepcopy(config)
                         agent[agent_name].config.response_length = min(
                             max(0, agent['main'].remaining_generation_tokens()
-                                - protected_final_answer_budget),
+                                - protected_final_answer_budget - BRANCH_HANDOFF_RESERVE),
                             int(getattr(config.plugin, 'branch_len', None) or config.response_length))
                         agent[agent_name].working_context_limit = config.prompt_length + config.response_length
 
@@ -1182,13 +1186,16 @@ async def process_item(
                     if fn_call_ret is not None and fn_call_ret['function'] == 'return':
                         if 'message' in fn_call_ret['arguments']:
                             branch_message = fn_call_ret['arguments'].get('message', 'Empty message')
-                            branch_message = f'Branch has finished its task, the returned message is:\n\n{branch_message}'
+                            branch_message = (f'Branch report (may be incomplete):\n\n{branch_message}'
+                                              if explicit_graph_tools else
+                                              f'Branch has finished its task, the returned message is:\n\n{branch_message}')
                     elif fn_call_ret is not None and fn_call_ret['function'] == 'finish':
                         if 'message' in fn_call_ret['arguments']:
                             branch_message = fn_call_ret['arguments'].get('message', 'Empty message')
                             branch_message = f'Branch has finished its task, the returned message is:\n\n{branch_message}'
                     if branch_message is None:
-                        branch_message = f'Branch has finished its task. The last message was:\n\n{clean_response(last_response)}'
+                        branch_message = (last_response if explicit_graph_tools else
+                                          f'Branch has finished its task. The last message was:\n\n{clean_response(last_response)}')
 
                     # 4. Collapse child graph into a SUMMARY node on the parent.
                     #    The summary content is the branch's return message; the
@@ -2104,6 +2111,8 @@ async def process_item(
         env.stats['structured_graph_controller'] = int(structured_graph_controller)
         env.stats['explicit_graph_tools'] = int(explicit_graph_tools)
         env.stats['action_protocol_errors'] = sum(a.action_protocol_errors for a in agent.values())
+        env.stats['action_budget_skips'] = sum(a.action_budget_skips for a in agent.values())
+        env.stats['forced_branch_returns'] = sum(a.forced_branch_returns for a in agent.values())
         env.stats['constrained_action_protocol'] = int(explicit_graph_tools)
         env.stats['graph_context_refresh_tokens'] = sum(getattr(a, 'graph_context_tokens', 0) for a in agent.values())
         env.stats['controller_allow_pass'] = int(controller_allow_pass)

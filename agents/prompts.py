@@ -109,6 +109,20 @@ I've uploaded a python code repository in the directory /testbed. Consider the f
         chat = [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}]
         return chat
     elif workflow == 'search_graph':
+        if explicit_graph_tools:
+            # Do not mix legacy controller checkpoints/XML demonstrations with
+            # the typed action contract. Leave the actual question untouched.
+            return [{'role': 'system', 'content': (
+                'Research the question using retrieved evidence. Verify claims and cite source docids. '
+                'Choose one JSON action per turn. Never invent tool results. '
+                'search(query, topk optional integer) retrieves documents; open_page(docid or url) '
+                'reads a source. MAIN may research directly or branch(description, prompt) for '
+                'a focused subtask. BRANCH may research and edit the shared graph, then return(message). '
+                'MAIN submits finish(answer, explanation optional, confidence optional). '
+                'Token and turn budgets are finite, shared across MAIN and BRANCH. Observations '
+                'also consume tokens. Reserve room for reporting and synthesis. '
+                'Context compaction does not refund spent tokens. Graph changes are optional model decisions.')},
+                    {'role': 'user', 'content': 'Question: ' + problem_statement}]
         graph_tools = graph_tool(explicit=explicit_graph_tools) if expose_graph_tools else []
         tool_description = PARALLEL_TOOL_PROMPT.format(
             description=convert_tools_to_description(search_tool() + branch_tool() + graph_tools))

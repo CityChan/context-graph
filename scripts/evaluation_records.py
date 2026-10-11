@@ -46,5 +46,8 @@ def read_evaluation(root):
         "summary_format_failures": sum(bool(row.get("env_stats", {}).get("invalid_summary", 0)) for row in results),
         "zero_tool_tasks": sum(row.get("env_stats", {}).get("environment_steps") == 0 for row in results),
         "judge_parse_failures": sum(row.get("env_stats", {}).get("judge_parse_failure", 0) for row in results),
+        "action_protocol_errors": sum(row.get("env_stats", {}).get("action_protocol_errors", 0) for row in results),
+        "natural_finishes": sum(row.get("env_stats", {}).get("natural_finish", 0) for row in results),
+        "forced_finishes": sum(row.get("env_stats", {}).get("forced_finish", 0) for row in results),
     }
     return manifests, sorted(results, key=lambda row: row["source_index"]), summary

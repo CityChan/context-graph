@@ -265,6 +265,33 @@ completion should be distinguished from a natural model finish using
 
 ## Verification boundary
 
+The `07cebf8` Vista BC-P run (job 1064887, three tasks) finished only through
+the emergency finalizer: `natural_finish=0` for all three. It recorded six
+action protocol errors, including two branch requests with only ten output
+tokens. The DiscoveryWorld run (1064888, two tasks) recorded zero protocol
+errors but no graph-tool calls and zero task scores. These are separate evidence
+classes, not a graph-policy performance pass.
+
+The budget-boundary fix refuses typed action requests below 256 available tokens
+(including the per-turn cap). This is a launch floor, not a guarantee that every
+argument fits. Branches keep 768 tokens and one model turn for a bounded,
+model-authored `return` when research stops; the parent retains an additional
+1536 tokens for receiving that report and continuing, besides any final-answer
+reserve. All report generation and visible handoff text are charged. No graph
+maintenance is forced. Failed reports remain failures rather than treating a
+last search or rejected JSON as completed work. `forced_branch_returns` records
+budget-directed return requests; `action_budget_skips` records rejected launches.
+
+Explicit BC-P prompts and finalizer instructions now use JSON without the legacy
+XML/checkpoint/unlimited-thinking directives. Final-only answer fields and
+budget-directed branch reports have character bounds, not token guarantees.
+Raw sampled JSON and probabilities remain unchanged in policy trajectories.
+The summary reports `action_protocol_errors`, `natural_finishes` and
+`forced_finishes` separately from legacy format-retry failures; the diagnostic
+includes every recorded main/branch protocol error, even before the last two
+requests. The fixes require a new live run; re-auditing old artifacts does not
+retroactively make them successful.
+
 Local regression coverage exercises reward precedence, peak-score reset,
 natural termination versus step cap, real executor paths with a scripted
 simulator/model, main/branch no-tool stops, native validation rewards, prompt

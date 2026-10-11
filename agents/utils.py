@@ -730,6 +730,8 @@ class Agent(SessionSummaryMixin, AgentContext):
         self.action_contract = action_contract
         self.force_action_finish = False
         self.action_protocol_errors = 0
+        self.action_budget_skips = 0
+        self.forced_branch_returns = 0
         if action_contract is not None:
             chat_template_kwargs = {**(chat_template_kwargs or {}), 'enable_thinking': False}
         super().__init__(
@@ -762,6 +764,15 @@ class Agent(SessionSummaryMixin, AgentContext):
         completion_kwargs = dict(completion_kwargs or {})
         action_schema = None
         if self.action_contract is not None:
+            from .action_contract import MIN_ACTION_TOKENS
+            available = max_len - len(prompt)
+            turn_cap = getattr(self.config.plugin, 'turn_max_new_tokens', None)
+            if turn_cap:
+                available = min(available, turn_cap)
+            if available < MIN_ACTION_TOKENS:
+                self.action_budget_skips += 1
+                return None
+            max_len = len(prompt) + available
             action_schema = self.action_contract.schema(final=self.force_action_finish)
             if 'structured_outputs' in completion_kwargs:
                 raise ValueError('Action contract cannot be overridden by another output schema')
@@ -840,9 +851,15 @@ class Agent(SessionSummaryMixin, AgentContext):
         max_turn = max(int(max_turn), 0)
         # The return summary is a model call too: reserve one of the caller's
         # remaining turns for it, rather than issuing an uncounted extra call.
-        action_turn_limit = max(max_turn - int(summary_prompt is not None), 0)
+        bounded_return = self.action_contract is not None and self.action_contract.branch
+        action_turn_limit = max(max_turn - int(summary_prompt is not None or bounded_return), 0)
         explicit_tools = getattr(self.config.plugin, 'graph_action_protocol', None) == 'explicit_tools'
-        reserve = 0 if explicit_tools and summary_prompt is None else 512
+        from .action_contract import BRANCH_RETURN_RESERVE, BRANCH_RETURN_PROMPT, MIN_ACTION_TOKENS
+        reserve = BRANCH_RETURN_RESERVE if bounded_return else (0 if explicit_tools and summary_prompt is None else 512)
+        if bounded_return:
+            max_tokens = min(max_tokens if max_tokens is not None else self.config.response_length,
+                             self.config.response_length)
+        branch_token_limit = max_tokens if max_tokens is not None else self.config.response_length
         max_tokens = (max_tokens if max_tokens is not None else self.config.response_length) - reserve
 
         last_response = None
@@ -854,6 +871,8 @@ class Agent(SessionSummaryMixin, AgentContext):
                 break
             used = self.response_tokens_used() if explicit_tools else len(self.context()) - init_len
             if used > max_tokens or (explicit_tools and used >= max_tokens):
+                break
+            if bounded_return and max_tokens - used < MIN_ACTION_TOKENS:
                 break
 
             iteration += 1
@@ -876,12 +895,30 @@ class Agent(SessionSummaryMixin, AgentContext):
                 from .finalizer import append_observation_preserving_final_answer
                 # Fit the visible observation inside this branch's allowance.
                 # Unseen overflow is not charged; earlier work is never refunded.
-                protected = max(self.config.response_length - max_tokens, 0) + 10
+                protected = max(self.config.response_length - max_tokens, 0) + (0 if bounded_return else 10)
                 visible = append_observation_preserving_final_answer(self, observation, protected, 0)
                 if visible is None:
                     break
             else:
                 self.append({'role': 'user', 'content': observation, })
+
+        if (last_response is None and bounded_return and iteration < max_turn
+                and time.time() - session_start_time <= session_timeout):
+            from .finalizer import append_observation_preserving_final_answer
+            visible = append_observation_preserving_final_answer(
+                self, BRANCH_RETURN_PROMPT, MIN_ACTION_TOKENS, 0)
+            if visible == BRANCH_RETURN_PROMPT:
+                self.force_action_finish = True
+                try:
+                    report = await self.step(max_new_tokens=min(512, max(0, branch_token_limit - self.response_tokens_used())))
+                finally:
+                    self.force_action_finish = False
+                if report is not None:
+                    iteration += 1
+                    self.forced_branch_returns += 1
+                    should_continue(report)
+                    if report.startswith('<function=return>'):
+                        last_response = report
 
         if (last_response is None and summary_prompt is not None
                 and iteration < max_turn
@@ -894,7 +931,9 @@ class Agent(SessionSummaryMixin, AgentContext):
             iteration += 1
             last_response = await self.step(max_new_tokens=4096)
         if last_response is None:
-            last_response = str(response) if response is not None else "Branch stopped without a response: no remaining budget."
+            last_response = ("Branch stopped without a valid return report. Evidence remains in the shared graph."
+                             if bounded_return else str(response) if response is not None
+                             else "Branch stopped without a response: no remaining budget.")
 
         return {'last_response': last_response, 'iteration': iteration}
 
