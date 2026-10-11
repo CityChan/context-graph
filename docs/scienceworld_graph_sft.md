@@ -9,13 +9,16 @@ DeepSeek-V4-Flash-0731 checkpoint, not a claim that those weights are V4.1.
 ```bash
 cd /work/09281/chc_1996/vista/context-graph
 git pull --ff-only
-SAMPLES=3 CANDIDATES=2 bash scripts/generate_scienceworld_graph_sft_deepseek_4node_idev.sh
+AGENT_BUDGET_MODE=working_context SAMPLES=3 CANDIDATES=2 bash scripts/generate_scienceworld_graph_sft_deepseek_4node_idev.sh
 ```
 
 This launches six candidate episodes sequentially (`WORKERS=1`). Defaults are
-32K working context, 24K cumulative response/observation budget, 100 model
-turns, 100 environment steps, and 2,048 output tokens per request. Explicit
-graph calls consume the same turn/token allowance as task actions. The teacher
+32K working context, 100 model turns, 100 environment steps, and 2,048 output
+tokens per request. In `working_context` mode, rendered input plus output must
+fit the window; lifetime token consumption is recorded but is not capped at
+24K. Graph compaction can reclaim window space. Explicit graph calls consume
+the same turn allowance as task actions. Use a fresh run directory after changing
+the budget mode or code; old rejected candidates are not resumed under new settings. The teacher
 runs in `deepseek_v4`; the collector uses `cxtgraph` plus the existing isolated
 ScienceWorld 1.2.3 dependency overlay and Java runtime.
 

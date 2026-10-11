@@ -56,8 +56,12 @@ branches and compaction segments of a question together across shards.
 On the endpoint wrapper, `DRY_RUN=1` validates datasets/configuration without retrieval or model calls.
 `PREFLIGHT_ONLY=1` checks retrieval health and two teacher JSON action responses.
 `STUDENT_TOKENIZER_PATH` can point to a cached Qwen3.5-9B tokenizer. Defaults:
-32K total context, 24K cumulative response/observation allowance, 8K branch
-allowance, 100 model turns, 2,048 output tokens per ordinary request.
+32K working context, 100 model turns, 2,048 output tokens per ordinary request.
+The default `AGENT_BUDGET_MODE=working_context` limits each rendered input plus
+output to the physical window, including branches. Lifetime consumption is
+recorded, not capped at 24K; compaction can reclaim window space. Use a fresh
+run directory after changing the budget mode or code, rather than resuming
+old rejected candidates under different settings.
 
 For an existing vLLM teacher, set `TEACHER_TRANSPORT=vllm`,
 `DEEPSEEK_BASE_URL` (including `/v1`) and `DEEPSEEK_MODEL` to its exact served
