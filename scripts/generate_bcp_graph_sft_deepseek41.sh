@@ -60,6 +60,7 @@ args+=(--prompt-length "${PROMPT_LENGTH:-8192}" --response-length "${RESPONSE_LE
 [[ ${PREFLIGHT_ONLY:-0} != 1 ]] || args+=(--preflight-only)
 python scripts/generate_bcp_graph_sft.py "${args[@]}"
 if [[ ${DRY_RUN:-0} == 1 || ${PREFLIGHT_ONLY:-0} == 1 ]]; then exit 0; fi
+python scripts/diagnose_graph_sft.py "$RUN_DIR" --output "$RUN_DIR/diagnostics.json"
 # Curation uses a new directory, so resume never overwrites a previous dataset.
 SFT_DIR=$(mktemp -d "$RUN_DIR/sft-XXXXXXXX")
 rmdir "$SFT_DIR"

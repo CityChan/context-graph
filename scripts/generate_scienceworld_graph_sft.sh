@@ -16,6 +16,7 @@ args=(--benchmark scienceworld --data "$RUN_DIR/data/scienceworld_graph_train.pa
 [[ ${TEACHER_PREFLIGHT_ONLY:-0} != 1 ]] || args+=(--preflight-only)
 python scripts/generate_bcp_graph_sft.py "${args[@]}"
 if [[ ${DRY_RUN:-0} == 1 || ${TEACHER_PREFLIGHT_ONLY:-0} == 1 ]]; then exit 0; fi
+python scripts/diagnose_graph_sft.py "$RUN_DIR" --output "$RUN_DIR/diagnostics.json"
 SFT_DIR=$(mktemp -d "$RUN_DIR/sft-XXXXXXXX")
 rmdir "$SFT_DIR"
 python scripts/build_bcp_graph_sft.py "$RUN_DIR" --output "$SFT_DIR" --tokenizer "$STUDENT_TOKENIZER_PATH" --review

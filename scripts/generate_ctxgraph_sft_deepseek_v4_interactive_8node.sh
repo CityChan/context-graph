@@ -212,8 +212,13 @@ export NO_PROXY="${NO_PROXY:+$NO_PROXY,}127.0.0.1,localhost,$TEACHER_HEAD_NODE,$
 export no_proxy=$NO_PROXY
 
 echo "Domain: $DOMAIN"
-echo "Sample shard: start=$START_INDEX count=$MAX_SAMPLES array_chunk_mode=$ARRAY_CHUNK_MODE"
-echo "Graph checkpoints: initial=$INITIAL_CONSOLIDATION_TURN interval=$CONSOLIDATION_INTERVAL"
+if [ "$EXPLICIT_GRAPH_SFT" = 1 ]; then
+  echo "Explicit SFT: start=$START_INDEX questions=${SAMPLES:-$MAX_SAMPLES} candidates_per_question=${CANDIDATES:-2}"
+  echo "Graph protocol: explicit_tools; automatic consolidation disabled"
+else
+  echo "Sample shard: start=$START_INDEX count=$MAX_SAMPLES array_chunk_mode=$ARRAY_CHUNK_MODE"
+  echo "Graph checkpoints: initial=$INITIAL_CONSOLIDATION_TURN interval=$CONSOLIDATION_INTERVAL"
+fi
 echo "Model: $MODEL_ID at $MODEL_PATH"
 echo "Student tokenizer: $STUDENT_TOKENIZER_PATH"
 echo "Teacher nodes: ${NODELIST[*]}"

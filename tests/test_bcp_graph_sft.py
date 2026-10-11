@@ -221,6 +221,17 @@ def test_real_executor_collects_and_exports_compacted_json_policy(tmp_path, monk
     assert all("secret answer" not in str(r["messages"]) for r in requests)
     (root / "manifest.json").write_text(json.dumps({"profile": generator.SCIENCEWORLD_PROFILE if benchmark == "scienceworld" else generator.PROFILE,
                       "settings": vars(args), "config": OmegaConf.to_container(config)}))
+    from scripts.diagnose_graph_sft import diagnose
+    report = diagnose(root)
+    assert report["completed_candidates"] == 1
+    task = report["tasks"][0]
+    assert task["request_count"] == 5 and task["malformed_json_requests"] == 0
+    assert task["sampled_graph_tools"] == {"merge": 1, "graph_compact": 1}
+    assert "merge" in task["tools_permitted_in_every_request"]
+    assert task["last_requests"][-1]["response"] == requests[-1]["response"]
+    if benchmark == "scienceworld":
+        assert task["sampled_tools"]["action"] == 3
+        assert "finish" not in task["tools_permitted_in_every_request"]
     monkeypatch.setattr(curator, "TeacherClient", lambda *a: base_client(*a, client=fake))
     reviewed = []
     async def review(events, *args):

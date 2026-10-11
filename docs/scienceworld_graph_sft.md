@@ -51,6 +51,19 @@ Default output is printed at startup, under
 - `episodes/*/attempt-*/requests.jsonl`, `trajectory.json`, `tools.jsonl`: raw evidence.
 - `sft-*/`: accepted Parquets, `decisions.jsonl`, curation manifest and review requests.
 
+If every candidate is rejected, diagnose saved artifacts before another GPU run:
+
+```bash
+python scripts/diagnose_graph_sft.py "$RUN_DIR"
+```
+
+This needs no teacher or simulator. It reports termination reasons and budget
+statistics, tools present in request schemas versus tools actually sampled,
+repeated commands, recent environment feedback and excerpts of model-visible
+messages. New runs also save `diagnostics.json` before curation, including when
+no SFT rows survive. `status=ok` means the candidate was recorded, not solved.
+The raw `requests.jsonl` remains the source for full, unabridged contexts.
+
 Set `RUN_DIR` to resume completed candidates with identical manifest settings and
 commit. No accepted row count is guaranteed. Trace auditing and teacher review
 do not prove causal benefit from graph operations. Local tests use a fake
