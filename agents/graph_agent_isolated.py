@@ -1121,7 +1121,8 @@ async def process_item(
                         agent[agent_name].graph_base_prompt[-1]['content'] += '\n\n' + branch_prompt_formatted
                         agent[agent_name].config = copy.deepcopy(config)
                         agent[agent_name].config.response_length = min(
-                            agent['main'].remaining_generation_tokens(),
+                            max(0, agent['main'].remaining_generation_tokens()
+                                - protected_final_answer_budget),
                             int(getattr(config.plugin, 'branch_len', None) or config.response_length))
                         agent[agent_name].working_context_limit = config.prompt_length + config.response_length
 

@@ -149,6 +149,50 @@ def test_main_graph_calls_and_branch_graph_calls_are_policy_tokens(monkeypatch):
     assert valid, errors
 
 
+def test_explicit_branch_keeps_parent_final_answer_reserve(monkeypatch):
+    responses = [call('branch', description='inspect', prompt='Inspect the room'),
+                 ACTION, call('return', message='observed room'), ACTION]
+    module, context, client = explicit_rollout(monkeypatch, responses, [(0, False), (100, True)])
+    plugin = context.config.actor_rollout_ref.rollout.plugin
+    plugin.final_answer_reserve = 1024
+    plugin.final_answer_safety_margin = 128
+    plugin.branch_len = 1000000
+    agents = []
+    original = module.Agent
+    class RecordingAgent(original):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            agents.append(self)
+
+        async def react(self, *args, **kwargs):
+            parent = agents[0]
+            assert self.config.response_length == parent.remaining_generation_tokens() - 1152
+            result = await super().react(*args, **kwargs)
+            assert parent.remaining_generation_tokens() - self.response_tokens_used() >= 1152
+            return result
+    monkeypatch.setattr(module, 'Agent', RecordingAgent)
+    outputs = asyncio.run(module.process_item(item(), context))
+    assert len(agents) == 2
+    assert outputs[0].extra_fields['env_stats']['consol_attempts'] == 0
+
+
+def test_explicit_branch_large_observation_cannot_overrun_allowance():
+    async def run():
+        agent = make_agent(['search', 'return'], enable_summary=False,
+                           graph_action_protocol='explicit_tools')
+        async def tool(response):
+            return 'large evidence ' * 10000
+        await agent.react(tool, max_turn=1, max_tokens=500, summary_prompt=None)
+        assert agent.response_tokens_used() <= 500
+        assert len(agent.llm_client.calls) == 1
+        assert agent.model_contexts[0]['response'] == 'search'
+        assert agent.model_contexts[0]['output_ids']
+        assert agent.model_contexts[0]['max_tokens'] <= 500
+        assert len(agent.messages()[-1]['content']) < 1000
+        assert agent.remaining_generation_tokens() > 5000
+    asyncio.run(run())
+
+
 def test_more_than_ten_explicit_operations_are_not_silently_capped(monkeypatch):
     responses = [call('graph_read')] * 12 + [ACTION, ACTION]
     module, context, client = explicit_rollout(monkeypatch, responses, [(0, False), (100, True)])

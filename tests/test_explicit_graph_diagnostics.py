@@ -1,4 +1,14 @@
-from scripts.diagnose_explicit_graph_eval import task_diagnostics
+from scripts.diagnose_explicit_graph_eval import task_diagnostics, model_turn
+
+
+def test_old_contextgraph_input_records_do_not_fabricate_empty_outputs():
+    report = model_turn({'input_ids': [1, 2, 3], 'max_len': 103,
+                         'messages': [{'role': 'assistant', 'content': 'inspect evidence'}]})
+    assert report['max_tokens'] == 100
+    assert report['output_tokens'] is None
+    assert report['response_tail'] is None
+    assert not report['output_recorded']
+    assert report['last_visible_messages'][0]['content_tail'] == 'inspect evidence'
 
 
 def test_graph_diagnostics_separates_bookkeeping_attempts_and_successes():

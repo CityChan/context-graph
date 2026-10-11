@@ -208,6 +208,21 @@ did not exercise that explicit interface in the recorded trace; an absent trace
 is reported separately. Normal evaluation completion and generation-quality
 checks alone do not establish successful graph usage or task performance.
 
+In explicit mode, branches share the episode token allowance and cannot spend
+the main agent's configured final-answer reserve and safety margin. Branch
+generations and visible tool observations must fit their assigned allowance;
+oversized observations are truncated using the existing head/tail budget helper.
+This does not force a graph operation, grant extra tokens or enable automatic
+graph maintenance. Environment-terminated benchmarks with a zero final-answer
+reserve keep that setting.
+
+Older `model_contexts` records contain input messages and a `max_len` ceiling
+only. The diagnostic reports missing response fields as unknown and includes
+the last visible input messages and saved transcript tail. New records also
+capture the actual response and output token IDs. A budget-triggered finalizer
+completion should be distinguished from a natural model finish using
+`natural_finish`, `forced_finish` and `pre_finalize_token_limit`.
+
 ## Verification boundary
 
 Local regression coverage exercises reward precedence, peak-score reset,

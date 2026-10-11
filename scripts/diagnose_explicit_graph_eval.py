@@ -9,6 +9,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.evaluation_records import read_evaluation
 
 
+def model_turn(record):
+    # Older ContextGraph traces store inputs only, unlike the memory baseline.
+    # Missing outputs are unknown, not zero-token/empty model generations.
+    maximum = record.get('max_tokens')
+    if maximum is None and 'max_len' in record and 'input_ids' in record:
+        maximum = max(record['max_len'] - len(record['input_ids']), 0)
+    return {'max_tokens': maximum,
+            'output_tokens': len(record['output_ids']) if 'output_ids' in record else None,
+            'response_tail': str(record['response'])[-1200:] if 'response' in record else None,
+            'output_recorded': 'response' in record,
+            'last_visible_messages': [{'role': m.get('role'), 'content_tail': str(m.get('content', ''))[-1200:]}
+                                      for m in record.get('messages', [])[-2:]]}
+
+
 def task_diagnostics(row, trajectory):
     stats = trajectory.get('env_stats', {})
     trace = trajectory.get('graph_trace', {})
@@ -29,11 +43,8 @@ def task_diagnostics(row, trajectory):
         'explicit_tool_successes': dict(Counter(e['op'] for e in explicit if e.get('success'))),
         'last_graph_errors': [{k: e.get(k) for k in ('turn_id', 'agent_name', 'op', 'args', 'error')}
                               for e in explicit if not e.get('success')][-3:],
-        'last_model_turns': {agent: [
-            {'phase': r.get('phase'), 'max_tokens': r.get('max_tokens'),
-             'output_tokens': len(r.get('output_ids', [])),
-             'response_tail': str(r.get('response', ''))[-1200:]}
-            for r in turns[-2:]] for agent, turns in records.items()},
+        'last_model_turns': {agent: [model_turn(r) for r in turns[-2:]] for agent, turns in records.items()},
+        'saved_transcript_tail': trajectory.get('message_str', '')[-4000:],
     }
 
 

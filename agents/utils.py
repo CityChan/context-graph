@@ -754,13 +754,16 @@ class Agent(SessionSummaryMixin, AgentContext):
                           getattr(self, 'working_context_limit', self.config.prompt_length + self.config.response_length),
                           len(prompt) + max_new_tokens if max_new_tokens is not None else 131072)
         completion_kwargs = dict(completion_kwargs or {})
+        context_record = None
         if getattr(self.config.plugin, "capture_model_contexts", False):
-            self.model_contexts.append({
+            context_record = {
                 "messages": copy.deepcopy(self.working_messages()),
                 "input_ids": list(prompt),
                 "max_len": max_len,
+                "max_tokens": max(max_len - len(prompt), 0),
                 "completion_kwargs": copy.deepcopy(completion_kwargs),
-            })
+            }
+            self.model_contexts.append(context_record)
         completion = await self.llm_client.create_completion(
             prompt,
             uid=self.context_uid,
@@ -771,6 +774,9 @@ class Agent(SessionSummaryMixin, AgentContext):
         if completion is None:
             return None
         response = completion["choices"][0]["message"]["content"]
+        if context_record is not None:
+            context_record['response'] = response
+            context_record['output_ids'] = list(completion['choices'][0]['message'].get('raw_output_ids', []))
         self.append({'role': 'assistant', 'content': response}, completion)
         if getattr(self.config.plugin, "controller_owned_tool_formatting", False):
             from .tool_protocol import canonicalize_tool_call_text
@@ -820,11 +826,11 @@ class Agent(SessionSummaryMixin, AgentContext):
                 print('[SESSION] Session Timeout')
                 break
             used = self.response_tokens_used() if explicit_tools else len(self.context()) - init_len
-            if used > max_tokens:
+            if used > max_tokens or (explicit_tools and used >= max_tokens):
                 break
 
             iteration += 1
-            response = await self.step()
+            response = await self.step(max_new_tokens=max_tokens - used) if explicit_tools else await self.step()
             if response is None:
                 break
 
@@ -839,7 +845,16 @@ class Agent(SessionSummaryMixin, AgentContext):
                 break
             if observation_prompt:
                 observation += '\n' + observation_prompt
-            self.append({'role': 'user', 'content': observation, })
+            if explicit_tools:
+                from .finalizer import append_observation_preserving_final_answer
+                # Fit the visible observation inside this branch's allowance.
+                # Unseen overflow is not charged; earlier work is never refunded.
+                protected = max(self.config.response_length - max_tokens, 0) + 10
+                visible = append_observation_preserving_final_answer(self, observation, protected, 0)
+                if visible is None:
+                    break
+            else:
+                self.append({'role': 'user', 'content': observation, })
 
         if (last_response is None and summary_prompt is not None
                 and iteration < max_turn
