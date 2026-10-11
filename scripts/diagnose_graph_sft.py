@@ -12,7 +12,8 @@ STAT_KEYS = ("environment_steps", "environment_moves", "environment_score", "env
              "hit_token_limit", "hit_max_turn", "hit_timeout", "session_time", "invalid_tool",
              "action_protocol_errors", "constrained_action_protocol", "graph_op_attempts",
              "graph_explicit_ops", "graph_context_refresh_tokens", "observation_budget_truncations",
-             "observation_budget_skips")
+             "observation_budget_skips", "token_budget_mode", "episode_token_limit",
+             "total_model_tokens", "response_ledger_tokens", "peak_request_tokens", "finalizer_enabled")
 
 
 def read(path):

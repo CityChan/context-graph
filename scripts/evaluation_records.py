@@ -36,6 +36,7 @@ def read_evaluation(root):
                 raise ValueError("Nonbinary task reward or invalid finish flag")
         results.extend(rows)
     summary = {
+        "token_budget_mode": first.get('config', {}).get('actor_rollout_ref', {}).get('rollout', {}).get('plugin', {}).get('token_budget_mode', 'legacy_unspecified'),
         "method": first["method"], "benchmark": first.get("benchmark", "bcp"),
         "count": len(results),
         "task_successes": sum(row["task_reward"] for row in results),

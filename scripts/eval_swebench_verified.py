@@ -149,6 +149,12 @@ def config_for(args):
         plugin.supo_max_summaries = 2
         plugin.supo_summary_max_tokens = 1024
         plugin.baseline_task_protocol = 'swe_v1'
+    from agents.token_budget import configure_budget, window_budget
+    configure_budget(config)
+    # SWE grades the workspace patch at termination. All methods use the same
+    # natural finish protocol; no method gets a forced submission call.
+    if window_budget(config.actor_rollout_ref.rollout):
+        config.actor_rollout_ref.rollout.plugin.final_answer_reserve = 0
     return config
 
 
@@ -291,7 +297,13 @@ async def generate(args):
     creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"],
         cwd=Path(__file__).resolve().parents[1], text=True, creationflags=creationflags).strip()
-    write_json(root / "manifest.json", {"dataset": dataset_manifest, "method": args.method,
+    manifest_path = root / 'manifest.json'
+    if manifest_path.exists():
+        previous = read_json(manifest_path)
+        old_mode = previous['config']['actor_rollout_ref']['rollout']['plugin'].get('token_budget_mode', 'legacy_cumulative')
+        if old_mode != config.actor_rollout_ref.rollout.plugin.token_budget_mode:
+            raise ValueError('Budget protocol changed; use a fresh output directory')
+    write_json(manifest_path, {"dataset": dataset_manifest, "method": args.method,
         "model": args.model, "model_path": str(Path(args.model_path).resolve()), "seed": args.seed,
         "backend": getattr(args, "backend", "docker"),
         "instance_ids": [task["instance_id"] for task in selected], "commit": commit,

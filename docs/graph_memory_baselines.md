@@ -69,16 +69,22 @@ Adaptations are explicit:
 
 ## Budget and evidence
 
-The shared evaluator keeps the existing BC-P protocol: 32,768-token context,
-24,576 cumulative generated/visible-observation/control-instruction tokens,
-100 model requests, 2,048 tokens per request, 1,024 final-answer reserve,
-and unchanged search/open-page limits. Memory replies are capped at 1,024 tokens
-and count against **both** the cumulative budget and model-request limit.
-Removing context never refunds consumed tokens. These methods therefore do not
-receive 100 actor requests plus unlimited helper requests.
+New evaluations use `token_budget_mode=working_context`: the 32K/64K setting
+limits each request's fully rendered input plus output. There is no episode
+token cap inferred from the window. Compression can recover context space;
+past generation, observations and helper work remain recorded. All actor and
+helper calls still share the model-request limit (normally 100), with unchanged
+2,048-token actor and 1,024-token helper caps. BC-P keeps its 1,024-token final
+reserve. SWE now disables forced finalization for every method and grades the
+workspace patch at termination. Simulators retain environment-owned termination.
+
+`AGENT_BUDGET_MODE=legacy_cumulative` explicitly restores the old evaluator
+budget/finalization configuration for reproduction. Historical run descriptions
+below refer to that old protocol. See [evaluation budgets](evaluation_budgets.md)
+for the comparison boundary and rerun commands.
 
 Replayed inputs are reported in `total_token` (input plus output across every
-request), separate from the cumulative response/observation budget. Embedding
+request), separate from the cumulative response/observation ledger. Embedding
 calls and elapsed time are reported too. This controls the stated budgets but
 does not assert equal FLOPs or wall-clock cost between methods.
 

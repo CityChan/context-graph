@@ -52,7 +52,8 @@ def config_for(method, context_length):
     if context_length not in (32768, 65536):
         raise ValueError("Expected 32768 or 65536 context")
     response = context_length - 8192
-    return OmegaConf.create({"algorithm": {"adv_estimator": ""}, "actor_rollout_ref": {"rollout": {
+    from agents.token_budget import configure_budget
+    return configure_budget(OmegaConf.create({"algorithm": {"adv_estimator": ""}, "actor_rollout_ref": {"rollout": {
         "prompt_length": 8192, "response_length": response, "plugin": {
             "workflow": WORKFLOWS[method], "max_turn": 100, "val_max_turn": 100,
             "max_session": 10, "val_max_session": 10, "session_timeout": 3600,
@@ -64,7 +65,7 @@ def config_for(method, context_length):
             "auto_prune_max_active": 12, "auto_bind_branch_edges": True,
             "lambda_compact": 0.0, "lambda_cost": 0.0,
             "apply_chat_template_kwargs": {"enable_thinking": True, "preserve_thinking": True},
-        }}}})
+        }}}}))
 
 
 def load_tasks(data, samples):

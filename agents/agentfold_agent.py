@@ -233,8 +233,9 @@ async def process_item(item, context):
     kind = task_kind(ability)
     config = copy.deepcopy(context.config.actor_rollout_ref.rollout)
     plugin, tokenizer = config.plugin, context.tokenizer
-    budget = int(getattr(plugin, "val_response_length", None) or config.response_length)
-    window = int(config.prompt_length) + budget
+    from .token_budget import TokenBudget
+    token_budget = TokenBudget.from_config(config)
+    window = token_budget.window
     max_turn = int(getattr(plugin, "val_max_turn", plugin.max_turn))
     cap = int(getattr(plugin, "turn_max_new_tokens", 2048))
     reserve = max(0, int(getattr(plugin, "final_answer_reserve", 0)))
@@ -261,7 +262,10 @@ async def process_item(item, context):
         consecutive_invalid = 0
         input_ids, output_ids, logprobs = [], [], []
         while iteration < max_turn:
-            remaining = budget - used
+            live_messages = copy.deepcopy(fixed)
+            live_messages[-1]['content'] += '\n\nWorking history:\n' + '\n\n'.join(s.render() for s in steps)
+            live_ids = _apply_chat_template(tokenizer, live_messages, config, tokenize=True, add_generation_prompt=True)
+            remaining = token_budget.remaining(used, len(live_ids))
             finish_only = bool(reserve and (remaining <= reserve + margin + max(cap, 10)
                                            or iteration == max_turn - 1))
             constrained_retry = bool(feedback) and not finish_only
@@ -293,7 +297,8 @@ async def process_item(item, context):
             candidate_ids = list(_apply_chat_template(tokenizer, messages, config,
                                  tokenize=True, add_generation_prompt=True,
                                  **({'enable_thinking': False} if finish_only or constrained_retry else {})))
-            limit = min(window - len(candidate_ids), remaining - contract_cost - (reserve + margin if reserve and not finish_only else 0))
+            limit = token_budget.generation_limit(used, len(candidate_ids), contract_cost,
+                                                  reserve + margin if reserve and not finish_only else 0)
             if cap > 0:
                 limit = min(limit, cap)
             if limit < 10:
@@ -355,7 +360,7 @@ async def process_item(item, context):
                         reason = "invalid_tool_limit"
                         break
                     rejected, correction = retry_context(text, str(exc), tokenizer)
-                    feedback = _fit_observation(correction, tokenizer, max(0, budget - used))
+                    feedback = _fit_observation(correction, tokenizer, token_budget.remaining(used, len(candidate_ids) + len(output_ids)))
                     cost = len(tokenizer.encode(feedback, add_special_tokens=False))
                     used += cost
                     stats["feedback_tokens"] += cost
@@ -376,7 +381,11 @@ async def process_item(item, context):
                     break
                 raw = str(result.get("observation", "Empty"))
                 record["raw_observation"] = raw
-                allowance = max(0, budget - used - reserve - margin)
+                retained = copy.deepcopy(fixed)
+                retained[-1]['content'] += '\n\nWorking history:\n' + '\n\n'.join(s.render() for s in steps)
+                retained[-1]['content'] += '\n\n' + Step(next_step, next_step, action + '\nObservation:\n').render()
+                retained_ids = _apply_chat_template(tokenizer, retained, config, tokenize=True, add_generation_prompt=True)
+                allowance = max(0, token_budget.remaining(used, len(retained_ids)) - reserve - margin)
                 shown = _fit_observation(raw, tokenizer, allowance)
                 stats["observation_budget_truncations"] += int(bool(shown) and shown != raw)
                 stats["observation_budget_skips"] += int(not shown)
@@ -403,14 +412,16 @@ async def process_item(item, context):
                      hit_token_limit=int(reason == "token_limit"), hit_max_turn=int(reason == "max_turn"),
                      hit_timeout=int(reason == "timeout"))
         stats["hit_format_retry_limit"] = int(reason == "invalid_tool_limit")
+        stats.update(token_budget.stats(used, audit, reserve))
         return AgentLoopOutput(prompt_ids=input_ids, response_ids=output_ids,
             response_mask=[0] * len(output_ids), response_logprobs=logprobs,
             reward_score=float(reward), num_turns=iteration, metrics=AgentLoopMetrics(),
             extra_fields={"messages": transcript, "model_contexts": audit, "env_stats": stats,
                           "is_finish": is_finish, "termination_reason": reason,
                           "judge_audit": copy.deepcopy(getattr(env, "judge_audit", [])),
-                          "agentfold": PROVENANCE if kind == 'search' else {
+                          "budget_protocol": token_budget.metadata(),
+                          "agentfold": {**PROVENANCE, **token_budget.metadata()} if kind == 'search' else {
                               **PROVENANCE, **provenance(kind), "variant": "zero_shot_adaptation_v6",
                               "native_format_retry_profile": "live_suffix_native_xml_v1",
-                              "native_format_retry_enable_thinking": False},
+                              "native_format_retry_enable_thinking": False, **token_budget.metadata()},
                           "working_history": [s.__dict__ for s in steps]})

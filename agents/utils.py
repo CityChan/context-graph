@@ -753,10 +753,12 @@ class Agent(SessionSummaryMixin, AgentContext):
         max_len = self.prompt_ids_len + self.config.response_length
         if max_new_tokens is not None:
             max_len = min(len(prompt) + max_new_tokens, 131072)
-        if (getattr(self.config.plugin, "enable_summary", False) or getattr(self, "summary_sessions", None)
+        from .token_budget import window_budget
+        if (window_budget(self.config) or getattr(self.config.plugin, "enable_summary", False) or getattr(self, "summary_sessions", None)
                 or getattr(self.config.plugin, "graph_action_protocol", None) == "explicit_tools"):
             remaining = self.remaining_generation_tokens()
             if remaining < 10:
+                self.budget_exhausted = True
                 return None
             max_len = min(len(prompt) + remaining,
                           getattr(self, 'working_context_limit', self.config.prompt_length + self.config.response_length),
@@ -771,6 +773,7 @@ class Agent(SessionSummaryMixin, AgentContext):
                 available = min(available, turn_cap)
             if available < MIN_ACTION_TOKENS:
                 self.action_budget_skips += 1
+                self.budget_exhausted = True
                 return None
             max_len = len(prompt) + available
             action_schema = self.action_contract.schema(final=self.force_action_finish)
@@ -797,6 +800,9 @@ class Agent(SessionSummaryMixin, AgentContext):
         if completion is None:
             return None
         response = completion["choices"][0]["message"]["content"]
+        self.peak_request_tokens = max(getattr(self, 'peak_request_tokens', 0),
+            len(prompt) + len(completion['choices'][0]['message'].get('raw_output_ids', [])))
+        self.total_request_tokens = getattr(self, 'total_request_tokens', 0) + len(prompt) + len(completion['choices'][0]['message'].get('raw_output_ids', []))
         if context_record is not None:
             context_record['response'] = response
             context_record['output_ids'] = list(completion['choices'][0]['message'].get('raw_output_ids', []))
@@ -854,6 +860,8 @@ class Agent(SessionSummaryMixin, AgentContext):
         bounded_return = self.action_contract is not None and self.action_contract.branch
         action_turn_limit = max(max_turn - int(summary_prompt is not None or bounded_return), 0)
         explicit_tools = getattr(self.config.plugin, 'graph_action_protocol', None) == 'explicit_tools'
+        from .token_budget import window_budget
+        use_window = window_budget(self.config)
         from .action_contract import BRANCH_RETURN_RESERVE, BRANCH_RETURN_PROMPT, MIN_ACTION_TOKENS
         reserve = BRANCH_RETURN_RESERVE if bounded_return else (0 if explicit_tools and summary_prompt is None else 512)
         if bounded_return:
@@ -870,13 +878,14 @@ class Agent(SessionSummaryMixin, AgentContext):
                 print('[SESSION] Session Timeout')
                 break
             used = self.response_tokens_used() if explicit_tools else len(self.context()) - init_len
-            if used > max_tokens or (explicit_tools and used >= max_tokens):
+            available = self.remaining_generation_tokens() - reserve if use_window else max_tokens - used
+            if (available <= 0 if use_window else used > max_tokens or (explicit_tools and used >= max_tokens)):
                 break
-            if bounded_return and max_tokens - used < MIN_ACTION_TOKENS:
+            if bounded_return and available < MIN_ACTION_TOKENS:
                 break
 
             iteration += 1
-            response = await self.step(max_new_tokens=max_tokens - used) if explicit_tools else await self.step()
+            response = await self.step(max_new_tokens=available) if explicit_tools or use_window else await self.step()
             if response is None:
                 break
 
@@ -895,7 +904,7 @@ class Agent(SessionSummaryMixin, AgentContext):
                 from .finalizer import append_observation_preserving_final_answer
                 # Fit the visible observation inside this branch's allowance.
                 # Unseen overflow is not charged; earlier work is never refunded.
-                protected = max(self.config.response_length - max_tokens, 0) + (0 if bounded_return else 10)
+                protected = (reserve if use_window else max(self.config.response_length - max_tokens, 0)) + (0 if bounded_return else 10)
                 visible = append_observation_preserving_final_answer(self, observation, protected, 0)
                 if visible is None:
                     break
@@ -910,7 +919,7 @@ class Agent(SessionSummaryMixin, AgentContext):
             if visible == BRANCH_RETURN_PROMPT:
                 self.force_action_finish = True
                 try:
-                    report = await self.step(max_new_tokens=min(512, max(0, branch_token_limit - self.response_tokens_used())))
+                    report = await self.step(max_new_tokens=min(512, self.remaining_generation_tokens() if use_window else max(0, branch_token_limit - self.response_tokens_used())))
                 finally:
                     self.force_action_finish = False
                 if report is not None:

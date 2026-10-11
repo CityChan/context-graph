@@ -125,6 +125,7 @@ def setup(monkeypatch, method, responses, **kwargs):
     cls = gm.AMemMemory
     monkeypatch.setattr(gm, "AMemMemory", lambda: cls(fake_embed))
     context.config = config_for(SimpleNamespace(method=method, memory_mode="repaired"))
+    context.config.actor_rollout_ref.rollout.plugin.token_budget_mode = 'legacy_cumulative'
     return env, context, item, client
 
 

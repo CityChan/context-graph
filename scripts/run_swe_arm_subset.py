@@ -160,6 +160,7 @@ def main():
         raise ValueError("Expected live Qwen/Qwen3.5-9B server with requested context length")
     protocol = {"dataset": dataset, "instance_ids": ids, "inventory_sha256": file_hash(args.inventory),
                 "context_length": args.context_length, "method": args.method, "seed": 42,
+                "token_budget_mode": os.environ.get('AGENT_BUDGET_MODE', 'working_context'),
                 "test_timeout": args.test_timeout, "model_path": str(Path(args.model_path).resolve()),
                 "commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=REPO, text=True).strip(),
                 "official_x86_result": False}

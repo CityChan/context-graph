@@ -87,6 +87,7 @@ def setup(monkeypatch, responses, *, observation="RAW_ONLY " * 100, failure=None
     monkeypatch.setattr(af, "create_chat", lambda *a: [
         {"role": "system", "content": "tools"}, {"role": "user", "content": "Find gold."}])
     config = config_for(SimpleNamespace(method="agentfold", memory_mode="repaired"))
+    config.actor_rollout_ref.rollout.plugin.token_budget_mode = 'legacy_cumulative'
     config.actor_rollout_ref.rollout.plugin.val_max_turn = 10
     client = Client(responses)
     context = SimpleNamespace(config=config, tokenizer=Tokenizer(), llm_client=client, is_train=False)

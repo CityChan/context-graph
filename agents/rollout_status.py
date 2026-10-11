@@ -26,6 +26,8 @@ def classify_rollout_status(
     iteration: int,
     max_turn: int,
     timed_out: bool,
+    token_budget_mode: str = 'legacy_cumulative',
+    budget_exhausted: bool = False,
 ) -> dict[str, int | str]:
     """Classify how a root-agent rollout ended using mutually clear flags."""
     response_tokens = max(int(response_tokens), 0)
@@ -44,6 +46,9 @@ def classify_rollout_status(
         and response_limit > 0
         and response_tokens >= exhaustion_threshold
     )
+    if token_budget_mode == 'working_context':
+        hit_token_limit = bool(not is_finish and (budget_exhausted or
+            (working_context_limit > 0 and main_context_tokens >= working_context_limit - 10)))
     hit_max_turn = bool(not is_finish and int(iteration) >= int(max_turn))
     hit_timeout = bool(not is_finish and timed_out)
     unfolded_main = bool(

@@ -61,7 +61,7 @@ def diagnose(root):
     if first['method'] != 'contextgraph':
         raise ValueError('Expected a contextgraph evaluation')
     plugin = first['config']['actor_rollout_ref']['rollout']['plugin']
-    fields = ('graph_action_protocol', 'structured_graph_controller',
+    fields = ('token_budget_mode', 'graph_action_protocol', 'structured_graph_controller',
               'controller_owned_tool_formatting', 'auto_prune_max_active',
               'auto_bind_branch_edges', 'consolidation_interval',
               'initial_consolidation_turn', 'enable_summary', 'enable_retrieval_memory')

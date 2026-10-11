@@ -262,6 +262,11 @@ async def process_item(
         env.stats['main_len'] = min(main_response_tokens, config.response_length)
         env.stats['main_context_tokens'] = main_context_tokens
         env.stats['working_context_limit'] = working_context_limit
+        from .token_budget import agent_budget_stats, window_budget
+        if window_budget(config):
+            for key, value in agent_budget_stats(agent.values(), config).items():
+                env.stats[key] = value
+            env.stats['main_len'] = main_response_tokens
         env.stats['total_token'] = len(tokenizer.encode(print_chat(user_prompt + session_message)))
         env.stats['main_turn'] = len(agent['main'].messages())
         env.stats['is_branch'] = int(len(agent) > 1)
@@ -281,6 +286,8 @@ async def process_item(
 
         is_finish = getattr(env, 'is_finish', False) or getattr(env, 'finish', False)
         rollout_status = classify_rollout_status(
+            token_budget_mode=getattr(config.plugin, 'token_budget_mode', 'legacy_cumulative'),
+            budget_exhausted=getattr(agent['main'], 'budget_exhausted', False),
             response_tokens=main_response_tokens,
             response_limit=config.response_length,
             main_context_tokens=main_context_tokens,

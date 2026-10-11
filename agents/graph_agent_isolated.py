@@ -1139,6 +1139,9 @@ async def process_item(
                                 - protected_final_answer_budget - BRANCH_HANDOFF_RESERVE),
                             int(getattr(config.plugin, 'branch_len', None) or config.response_length))
                         agent[agent_name].working_context_limit = config.prompt_length + config.response_length
+                        from .token_budget import window_budget
+                        if window_budget(config):
+                            agent[agent_name].config.response_length = config.response_length
                         agent[agent_name].replace_user_turn(len(agent[agent_name].chat) - 1,
                             branch_prompt_formatted + '\n\n' + decision_state(graph, agent[agent_name]))
 
@@ -1975,6 +1978,8 @@ async def process_item(
         working_context_limit = config.prompt_length + config.response_length
         is_finish = getattr(env, 'is_finish', False) or getattr(env, 'finish', False)
         rollout_status = classify_rollout_status(
+            token_budget_mode=getattr(config.plugin, 'token_budget_mode', 'legacy_cumulative'),
+            budget_exhausted=getattr(agent['main'], 'budget_exhausted', False),
             response_tokens=main_response_tokens,
             response_limit=config.response_length,
             main_context_tokens=main_context_tokens,
@@ -2038,6 +2043,11 @@ async def process_item(
         env.stats['main_len'] = min(main_response_tokens, config.response_length)
         env.stats['main_context_tokens'] = main_context_tokens
         env.stats['working_context_limit'] = working_context_limit
+        from .token_budget import agent_budget_stats, window_budget
+        if window_budget(config):
+            for key, value in agent_budget_stats(agent.values(), config).items():
+                env.stats[key] = value
+            env.stats['main_len'] = main_response_tokens
         # This is post-run telemetry over the complete archived trajectory, not a
         # model input. Suppress the tokenizer model_max_length warning while still
         # counting the full untruncated trace.

@@ -8,6 +8,7 @@ import copy
 import re
 import uuid
 import random
+from .token_budget import window_budget
 
 
 SUMMARY_REQUEST = (
@@ -64,6 +65,9 @@ class SessionSummaryMixin:
                 + getattr(self, "external_response_tokens", 0))
 
     def remaining_generation_tokens(self):
+        if window_budget(self.config):
+            window = getattr(self, 'working_context_limit', None) or (self.config.prompt_length + self.config.response_length)
+            return max(window - len(self.context()), 0)
         return max(self.config.response_length - self.response_tokens_used()
                    - len(self.get_generation_prompt()), 0)
 

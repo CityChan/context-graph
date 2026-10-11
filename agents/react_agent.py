@@ -158,6 +158,8 @@ async def process_item(
         main_context_tokens = len(agent.context())
         working_context_limit = config.prompt_length + config.response_length
         rollout_status = classify_rollout_status(
+            token_budget_mode=getattr(config.plugin, 'token_budget_mode', 'legacy_cumulative'),
+            budget_exhausted=getattr(agent, 'budget_exhausted', False),
             response_tokens=main_response_tokens,
             response_limit=config.response_length,
             main_context_tokens=main_context_tokens,
@@ -170,6 +172,10 @@ async def process_item(
         env.stats.update({k: v for k, v in rollout_status.items() if k != 'termination_reason'})
         env.stats['main_context_tokens'] = main_context_tokens
         env.stats['working_context_limit'] = working_context_limit
+        from .token_budget import agent_budget_stats, window_budget
+        if window_budget(config):
+            for key, value in agent_budget_stats([agent], config).items():
+                env.stats[key] = value
 
         out_data = await agent.get_data()
         agent_reward = score[1]

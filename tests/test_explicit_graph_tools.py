@@ -177,12 +177,14 @@ def test_malformed_structured_action_never_reaches_simulator(monkeypatch):
     assert stats['completed'] == 1
 
 
-def test_explicit_branch_keeps_parent_final_answer_reserve(monkeypatch):
+@pytest.mark.parametrize('mode', ['working_context', 'legacy_cumulative'])
+def test_explicit_branch_keeps_parent_final_answer_reserve(monkeypatch, mode):
     responses = [call('branch', description='inspect', prompt='Inspect the room'),
                  ACTION, call('return', message='observed room'), ACTION]
     module, context, client = explicit_rollout(monkeypatch, responses, [(0, False), (100, True)])
     plugin = context.config.actor_rollout_ref.rollout.plugin
     plugin.final_answer_reserve = 1024
+    plugin.token_budget_mode = mode
     plugin.final_answer_safety_margin = 128
     plugin.branch_len = 1000000
     agents = []
@@ -195,9 +197,16 @@ def test_explicit_branch_keeps_parent_final_answer_reserve(monkeypatch):
         async def react(self, *args, **kwargs):
             parent = agents[0]
             from agents.action_contract import BRANCH_HANDOFF_RESERVE
-            assert self.config.response_length == parent.remaining_generation_tokens() - 1152 - BRANCH_HANDOFF_RESERVE
+            remaining_before = parent.remaining_generation_tokens()
+            if mode == 'working_context':
+                assert self.config.response_length == parent.config.response_length
+            else:
+                assert self.config.response_length == remaining_before - 1152 - BRANCH_HANDOFF_RESERVE
             result = await super().react(*args, **kwargs)
-            assert parent.remaining_generation_tokens() - self.response_tokens_used() >= 1152 + BRANCH_HANDOFF_RESERVE
+            if mode == 'working_context':
+                assert parent.remaining_generation_tokens() == remaining_before
+            else:
+                assert parent.remaining_generation_tokens() - self.response_tokens_used() >= 1152 + BRANCH_HANDOFF_RESERVE
             return result
     monkeypatch.setattr(module, 'Agent', RecordingAgent)
     outputs = asyncio.run(module.process_item(item(), context))
@@ -222,13 +231,15 @@ def test_explicit_branch_large_observation_cannot_overrun_allowance():
     asyncio.run(run())
 
 
-def test_exhausted_branch_report_reaches_parent_with_budget_charged(monkeypatch):
+@pytest.mark.parametrize('mode', ['working_context', 'legacy_cumulative'])
+def test_exhausted_branch_report_reaches_parent_with_budget_charged(monkeypatch, mode):
     report = 'Source 42: measured room temperature; next measurement unresolved.'
     responses = [call('branch', description='inspect', prompt='Inspect room'),
                  ACTION, call('return', message=report), ACTION]
     module, context, client = explicit_rollout(monkeypatch, responses, [(0, False), (100, True)])
     rollout = context.config.actor_rollout_ref.rollout
     rollout.response_length = 20000
+    rollout.plugin.token_budget_mode = mode
     rollout.plugin.branch_len = 1000000
     agents = []
     original_agent, original_action = module.Agent, module.run_action
@@ -245,7 +256,12 @@ def test_exhausted_branch_report_reaches_parent_with_budget_charged(monkeypatch)
     assert report in str(agents[0].messages())
     assert 'Branch has finished its task' not in str(agents[0].messages())
     assert agents[0].external_response_tokens == agents[1].response_tokens_used()
-    assert agents[0].response_tokens_used() <= rollout.response_length
+    if mode == 'legacy_cumulative':
+        assert agents[0].response_tokens_used() <= rollout.response_length
+    else:
+        assert agents[0].response_tokens_used() > rollout.response_length
+        assert all(len(r['input_ids']) + r['max_tokens'] <= rollout.prompt_length + rollout.response_length
+                   for a in agents for r in a.model_contexts)
     assert outputs[0].extra_fields['env_stats']['forced_branch_returns'] == 1
     assert outputs[0].extra_fields['env_stats']['action_protocol_errors'] == 0
 

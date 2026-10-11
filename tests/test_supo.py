@@ -19,6 +19,7 @@ def setup(monkeypatch, responses, **kwargs):
         {"role": "user", "content": "ORIGINAL_QUESTION: Find gold."}])
     config = config_for(SimpleNamespace(method="supo", memory_mode="repaired"))
     plugin = config.actor_rollout_ref.rollout.plugin
+    plugin.token_budget_mode = 'legacy_cumulative'
     plugin.supo_context_threshold = 1700
     plugin.supo_summary_max_tokens = 500
     plugin.val_max_turn = 10

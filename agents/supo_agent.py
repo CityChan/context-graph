@@ -108,8 +108,9 @@ async def process_item(item, context):
     threshold = options["supo_context_threshold"]
     max_summaries = options["supo_max_summaries"]
     summary_cap = options["supo_summary_max_tokens"]
-    budget = int(getattr(plugin, "val_response_length", None) or config.response_length)
-    window = int(config.prompt_length) + budget
+    from .token_budget import TokenBudget
+    token_budget = TokenBudget.from_config(config)
+    window = token_budget.window
     max_turn = int(getattr(plugin, "val_max_turn", plugin.max_turn))
     turn_cap = int(getattr(plugin, "turn_max_new_tokens", 2048))
     reserve = max(0, int(getattr(plugin, "final_answer_reserve", 0)))
@@ -154,7 +155,7 @@ async def process_item(item, context):
         reason = "max_turn"
         input_ids, output_ids, logprobs = [], [], []
         while iteration < max_turn:
-            remaining = budget - used
+            remaining = token_budget.remaining(used, len(render(working)))
             finish_only = bool(reserve and (remaining <= reserve + margin + max(turn_cap, 10)
                                            or iteration == max_turn - 1))
             phase = "final" if finish_only else ("summary" if pending else "action")
@@ -179,14 +180,15 @@ async def process_item(item, context):
             else:
                 instruction = feedback
             if instruction:
-                instruction = _fit_observation(instruction, tokenizer, max(0, budget - used))
+                context_size = len(render(copy.deepcopy(messages), control=phase != 'action')) if token_budget.use_window else 0
+                instruction = _fit_observation(instruction, tokenizer, token_budget.remaining(used, context_size))
                 messages.append({"role": "user", "content": instruction})
                 cost = len(encode(instruction))
                 used += cost
                 stats["instruction_tokens"] += cost
             candidate_ids = render(messages, control=phase != 'action')
-            limit = min(window - len(candidate_ids), budget - used
-                        - (reserve + margin if reserve and not finish_only else 0))
+            limit = token_budget.generation_limit(used, len(candidate_ids),
+                        reserve=reserve + margin if reserve and not finish_only else 0)
             if turn_cap > 0:
                 limit = min(limit, turn_cap)
             if phase == "summary":
@@ -287,7 +289,8 @@ async def process_item(item, context):
                     if kind != 'search':
                         # The world/files changed. Retain and charge the latest round once;
                         # summarizing memory never replays, resets or undoes an action.
-                        shown = _fit_observation(raw, tokenizer, max(0, budget - used - reserve - margin))
+                        empty_round = copy.deepcopy(fixed) + [{'role': 'assistant', 'content': action}, {'role': 'user', 'content': ''}]
+                        shown = _fit_observation(raw, tokenizer, max(0, token_budget.remaining(used, len(render(empty_round)) + summary_cap) - reserve - margin))
                         used += len(encode(shown))
                         stats['observation_tokens'] += len(encode(shown))
                         stats['observation_budget_truncations'] += int(bool(shown) and shown != raw)
@@ -311,7 +314,8 @@ async def process_item(item, context):
                         break
                     pending = True
                     continue
-                shown = _fit_observation(raw, tokenizer, max(0, budget - used - reserve - margin))
+                empty_candidate = candidate[:-1] + [{'role': 'user', 'content': ''}]
+                shown = _fit_observation(raw, tokenizer, max(0, token_budget.remaining(used, len(render(empty_candidate))) - reserve - margin))
                 cost = len(encode(shown))
                 used += cost
                 stats["observation_tokens"] += cost
@@ -325,6 +329,7 @@ async def process_item(item, context):
                 break
         _, reward, _ = await asyncio.wait_for(env.get_reward(item, transcript, context), timeout=600)
         stats.update(dict(getattr(env, "stats", {})))
+        stats.update(token_budget.stats(used, audit, reserve))
         stats.update(task_reward=float(reward), main_turn=iteration, main_len=used,
                      main_context_tokens=len(render(working)), working_context_limit=window,
                      session_time=time.monotonic() - started, model_requests=len(audit),
@@ -340,5 +345,5 @@ async def process_item(item, context):
                           "judge_audit": copy.deepcopy(getattr(env, "judge_audit", [])),
                           "supo": {**PROVENANCE, **options, **({**provenance(kind),
                               'overflow': 'retain crossing action/observation after prefix summary',
-                              'stateful_overflow_profile': 'retained_round_v1'} if kind != 'search' else {})},
+                              'stateful_overflow_profile': 'retained_round_v1'} if kind != 'search' else {}), **token_budget.metadata()},
                           "working_history": working})

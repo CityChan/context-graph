@@ -59,8 +59,13 @@ def audit(root):
                 raise ValueError(f"Task {idx}: request/trajectory mismatch")
         if stats["generated_tokens"] != sum(len(r["output_ids"]) for r in requests):
             raise ValueError(f"Task {idx}: missing generated-token cost")
-        budget = manifests[0]["config"]["actor_rollout_ref"]["rollout"]["plugin"]["val_response_length"]
-        if stats["main_len"] > budget or stats["main_len"] != sum(stats[k] for k in
+        rollout = manifests[0]['config']['actor_rollout_ref']['rollout']
+        use_window = rollout['plugin'].get('token_budget_mode', 'legacy_cumulative') == 'working_context'
+        budget = rollout['plugin']['val_response_length']
+        window = rollout['prompt_length'] + rollout['response_length']
+        if any(len(r['input_ids']) + len(r['output_ids']) > window for r in requests):
+            raise ValueError(f'Task {idx}: model request exceeded working context')
+        if (not use_window and stats["main_len"] > budget) or stats["main_len"] != sum(stats[k] for k in
                 ("generated_tokens", "observation_tokens", "instruction_tokens")):
             raise ValueError(f"Task {idx}: inconsistent budget")
         if trajectory["baseline_protocol"] != manifests[0]["baseline_protocol"]:

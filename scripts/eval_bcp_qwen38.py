@@ -222,7 +222,21 @@ async def evaluate(args):
         from agents.memory_baseline_agent import provenance
         from agents.graph_memory_baselines import settings
         manifest["baseline_protocol"] = provenance(args.method, settings(config.actor_rollout_ref.rollout.plugin))
-    (root / f"manifest-{args.rank}.json").write_text(json.dumps(manifest, indent=2))
+    from agents.token_budget import TokenBudget
+    budget_protocol = TokenBudget.from_config(config.actor_rollout_ref.rollout).metadata()
+    manifest['budget_protocol'] = budget_protocol
+    if 'baseline_protocol' in manifest:
+        manifest['baseline_protocol'] = {**manifest['baseline_protocol'], **budget_protocol}
+        if args.method in ('memobrain', 'amem'):
+            manifest['baseline_protocol']['finalizer_enabled'] = bool(config.actor_rollout_ref.rollout.plugin.final_answer_reserve)
+            manifest['baseline_protocol']['turns'] = 'all actor and memory requests; final answer slot reserved'
+    manifest_path = root / f"manifest-{args.rank}.json"
+    if manifest_path.exists():
+        previous = json.loads(manifest_path.read_text())
+        old_mode = previous['config']['actor_rollout_ref']['rollout']['plugin'].get('token_budget_mode', 'legacy_cumulative')
+        if old_mode != budget_protocol['token_budget_mode']:
+            raise ValueError('Budget protocol changed; use a fresh output directory')
+    manifest_path.write_text(json.dumps(manifest, indent=2))
 
     # Keep the same server preflight across all methods.
     probe = TokenClient(args.endpoint, args.model, tokenizer, config.actor_rollout_ref.rollout,

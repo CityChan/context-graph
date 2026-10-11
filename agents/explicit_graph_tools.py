@@ -16,6 +16,8 @@ GRAPH_DECISION_PROFILE = 'graph_affordances_v2'
 
 def configure_evaluation_protocol(config, method, protocol="controller"):
     """Resolve evaluator settings before writing manifests or creating workers."""
+    from .token_budget import configure_budget
+    configure_budget(config)
     if protocol not in {'controller', 'explicit_tools'}:
         raise ValueError('Unknown graph action protocol')
     if protocol == 'explicit_tools' and method != 'contextgraph':
@@ -71,8 +73,10 @@ Branches start with the original task, their assignment and shared graph state;
 use graph_read to inspect evidence. Their observations remain after return.
 The framework records observations/temporal/delegation links, but makes no
 semantic decisions. Graph tools consume the same turn/token budget as task tools.
-Working-context space and cumulative episode tokens are DIFFERENT limits:
-graph_compact can reduce the former, but costs tokens and never refunds the latter.
+Working-context space and cumulative episode consumption are DIFFERENT quantities.
+graph_compact reclaims window space, but never refunds recorded computation.
+In working_context evaluation there is no cumulative token cap derived from the
+window size; turn and time limits still apply. Legacy runs may cap cumulative use.
 merge/prune alone do not remove old messages from your working conversation.
 select changes focus for subsequent observations; add_edge records a relationship.
 Neither is a compression operation.
@@ -177,11 +181,18 @@ def decision_state(graph, agent):
     """Expose resource facts, without choosing targets or scheduling graph work."""
     _, cost, charge = compaction_plan(agent, graph)
     remaining = agent.remaining_generation_tokens()
+    from .token_budget import window_budget
+    use_window = window_budget(agent.config)
+    window = getattr(agent, 'working_context_limit', None) or (agent.config.prompt_length + agent.config.response_length)
+    room = window - cost - len(agent.get_generation_prompt())
+    compact_fits = cost <= agent.config.prompt_length and (room > 128 if use_window else charge + 128 < remaining)
+    budget_text = (f'window_tokens_remaining={remaining}; episode_token_limit=none; '
+                   if use_window else f'episode_tokens_remaining={remaining}; ')
     return (graph.to_state_text() + '\n[Graph resource snapshot before this feedback is appended] '
-            f'working_context_tokens={len(agent.context())}; episode_tokens_remaining={remaining}; '
+            f'working_context_tokens={len(agent.context())}; {budget_text}'
             f'compact_prompt_tokens={cost}/{agent.config.prompt_length}; '
             f'compact_token_charge={charge}; '
-            f'compact_fits_now={cost <= agent.config.prompt_length and charge + 128 < remaining}. '
+            f'compact_fits_now={compact_fits}. '
             'Feedback and the next action also cost tokens. Compaction does not refund episode tokens.')
 
 
@@ -192,7 +203,12 @@ def compact_context(agent, graph):
     prompt, cost, charge = compaction_plan(agent, graph)
     if cost > agent.config.prompt_length:
         raise ValueError("active graph exceeds prompt budget; merge/prune more before graph_compact")
-    if charge + 128 >= agent.remaining_generation_tokens():
+    from .token_budget import window_budget
+    use_window = window_budget(agent.config)
+    window = getattr(agent, 'working_context_limit', None) or (agent.config.prompt_length + agent.config.response_length)
+    if use_window and cost + len(agent.get_generation_prompt()) + 128 >= window:
+        raise ValueError('compacted graph leaves insufficient working context')
+    if not use_window and charge + 128 >= agent.remaining_generation_tokens():
         raise ValueError("insufficient episode token budget for graph_compact")
     prefix = AgentContext(prompt, agent.tokenizer, agent.config, prompt_turn=len(prompt),
                           chat_template_kwargs=agent.chat_template_kwargs)

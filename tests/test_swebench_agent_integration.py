@@ -107,9 +107,11 @@ def test_real_code_loop_exports_patch_and_cleans_container(method, tmp_path, mon
         assert trajectory[method]['task_protocol'] == 'swe_v1'
         assert trajectory['env_stats']['environment_steps'] == 2
         final = trajectory['model_contexts'][-1]
-        assert final['phase'] == 'final'
-        assert 'parameter=message' in final['structured_outputs']['regex']
-        assert final['control_enable_thinking'] is False
+        assert final['phase'] == 'action'
+        assert final['structured_outputs'] is None
+        assert final['control_enable_thinking'] is None
+        assert trajectory['env_stats']['finalizer_enabled'] == 0
+        assert trajectory['env_stats']['finalizer_attempted'] == 0
     else:
         assert trajectory["num_branches"] == (0 if method == "react" else 1)
     assert not responses

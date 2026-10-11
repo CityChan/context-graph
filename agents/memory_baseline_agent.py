@@ -55,8 +55,9 @@ async def process_item(item, context):
     if method not in {"memobrain", "amem"}:
         raise ValueError(f"Unknown memory baseline: {method}")
     options = memory.settings(plugin)
-    budget = int(getattr(plugin, "val_response_length", None) or config.response_length)
-    window = int(config.prompt_length) + int(config.response_length)
+    from .token_budget import TokenBudget
+    token_budget = TokenBudget.from_config(config)
+    window = token_budget.window
     max_turn = int(getattr(plugin, "val_max_turn", plugin.max_turn))
     turn_cap = int(getattr(plugin, "turn_max_new_tokens", 2048))
     reserve = max(0, int(getattr(plugin, "final_answer_reserve", 0)))
@@ -92,13 +93,13 @@ async def process_item(item, context):
 
     async def request(messages, phase, final=False, instruction="", constraint=None):
         nonlocal used, iteration, last_ids, last_outputs, last_logprobs
-        if iteration >= max_turn or (not simulator and phase.startswith("memory") and iteration >= max_turn - 1):
+        if iteration >= max_turn or (reserve and phase.startswith("memory") and iteration >= max_turn - 1):
             raise BudgetEnd("max_turn")
         control = final or phase.startswith("memory")
         candidate = render(messages, control=control)
         instruction_cost = len(encode(instruction))
-        limit = min(window - len(candidate), budget - used - instruction_cost
-                    - (reserve + margin if not final else 0))
+        limit = token_budget.generation_limit(used, len(candidate), instruction_cost,
+                                              reserve + margin if not final else 0)
         if turn_cap > 0:
             limit = min(limit, turn_cap)
         if phase.startswith("memory"):
@@ -214,7 +215,6 @@ async def process_item(item, context):
         rejected, consecutive_invalid = "", 0
         try:
             while iteration < max_turn:
-                finish_only = not simulator and (force_final or iteration == max_turn - 1 or budget - used <= reserve + margin + max(turn_cap, 10))
                 if method == "memobrain":
                     working = copy.deepcopy(fixed) + store.history()
                 else:
@@ -236,6 +236,8 @@ async def process_item(item, context):
                     if selected:
                         working.append({"role": "user", "content": "Retrieved A-MEM notes (observed evidence):\n" + "\n".join(selected)})
                     working.extend(recent)
+                finish_only = bool(reserve and (force_final or iteration == max_turn - 1
+                    or token_budget.remaining(used, len(render(working))) <= reserve + margin + max(turn_cap, 10)))
                 instruction = feedback
                 control_cost_text = ""
                 if finish_only:
@@ -275,7 +277,9 @@ async def process_item(item, context):
                     reason = "finish"
                     break
                 raw = str(result.get("observation", "Empty"))
-                shown = _fit_observation(raw, tokenizer, max(0, budget - used - reserve - margin))
+                empty_round = working + [{'role': 'assistant', 'content': text if kind == 'search' else action},
+                                         {'role': 'user', 'content': ''}]
+                shown = _fit_observation(raw, tokenizer, max(0, token_budget.remaining(used, len(render(empty_round))) - reserve - margin))
                 cost = len(encode(shown))
                 used += cost
                 stats["observation_tokens"] += cost
@@ -311,7 +315,7 @@ async def process_item(item, context):
                                 neighbors=[store.nodes[n] for n in neighbors]), "memory_evolve",
                                 lambda decision: store.evolve(nid, neighbors, decision))
                 except BudgetEnd:
-                    if simulator:
+                    if not reserve:
                         raise
                     force_final = True
         except BudgetEnd as exc:
@@ -335,6 +339,9 @@ async def process_item(item, context):
                      hit_token_limit=int(reason == "token_limit"), hit_max_turn=int(reason == "max_turn"),
                      hit_timeout=int(reason == "timeout"))
         stats["hit_format_retry_limit"] = int(reason == "invalid_tool_limit")
+        stats.update(token_budget.stats(used, audit, reserve))
+        protocol = {**protocol, **token_budget.metadata(), 'finalizer_enabled': bool(reserve),
+                    'turns': 'all actor and memory requests' + ('; final answer slot reserved' if reserve else '; no final answer slot')}
         return AgentLoopOutput(prompt_ids=last_ids, response_ids=last_outputs,
             response_mask=[0] * len(last_outputs), response_logprobs=last_logprobs,
             reward_score=float(reward), num_turns=iteration, metrics=AgentLoopMetrics(),
