@@ -229,8 +229,8 @@ def validate_graph_trace(trace: Any) -> tuple[bool, list[str], dict[str, Any]]:
         return False, errors + ["events is not a list"], metrics
 
     expected_hash = trace.get("initial_hash")
-    explicit_ops = {"merge", "add_edge", "select", "prune"}
-    structural_ops = {"merge", "add_edge", "prune"}
+    explicit_ops = {"merge", "add_edge", "select", "prune", "recall"}
+    structural_ops = {"merge", "add_edge", "prune", "recall"}
     for index, event in enumerate(events):
         if not isinstance(event, dict):
             errors.append(f"event {index} is not an object")
@@ -278,7 +278,7 @@ def validate_graph_trace(trace: Any) -> tuple[bool, list[str], dict[str, Any]]:
         productive = success and _has_expected_effect(event)
         if productive:
             metrics["productive_model_ops"] += 1
-        elif success and op != "pass":
+        elif success and op not in {"pass", "graph_read", "graph_compact"}:
             metrics["redundant_model_ops"] += 1
 
     if expected_hash != trace.get("final_hash"):
@@ -305,6 +305,11 @@ def _has_expected_effect(event: dict[str, Any]) -> bool:
     if op == "prune":
         target = args.get("node_id")
         return before_nodes.get(target, {}).get("status") == "active" and after_nodes.get(target, {}).get("status") == "pruned"
+    if op == "recall":
+        target = args.get('node_id')
+        return before_nodes.get(target, {}).get('status') in {'folded', 'pruned'} and after_nodes.get(target, {}).get('status') == 'active'
+    if op in {'graph_read', 'graph_compact'}:
+        return False  # Useful context operations, not graph-structure changes.
     if op == "add_edge":
         return bool(event.get("added_edges"))
     if op == "merge":
@@ -312,6 +317,8 @@ def _has_expected_effect(event: dict[str, Any]) -> bool:
     if op == "branch":
         created = [after_nodes[node_id] for node_id in event.get("created_node_ids", []) if node_id in after_nodes]
         created_types = {node.get("type") for node in created}
+        if (event.get('decision_context') or {}).get('mode') == 'explicit_tool':
+            return 'subtask' in created_types
         return "subtask" in created_types and "summary" in created_types
     if event.get("source") in {"environment", "heuristic", "system"}:
         return event.get("before_hash") != event.get("after_hash")
@@ -394,6 +401,15 @@ def _model_operation_errors(event: dict[str, Any]) -> list[str]:
             errors.append("prune target was not an eligible active node")
         if after_nodes.get(target, {}).get("status") != "pruned":
             errors.append("prune did not mark its target pruned")
+    elif op == "recall":
+        target = args.get('node_id')
+        if target not in before_nodes or target in active_before:
+            errors.append('recall target was not a stored inactive node')
+        if after_nodes.get(target, {}).get('status') != 'active':
+            errors.append('recall did not restore its target')
+    elif op in {"graph_read", "graph_compact"}:
+        if semantic_snapshot(before) != semantic_snapshot(after):
+            errors.append('read/compact unexpectedly mutated graph content')
     elif op == "select":
         if args.get("node_id") not in active_before:
             errors.append("select target was not active in the pre-state")

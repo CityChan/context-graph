@@ -33,8 +33,10 @@ def validate_config(config):
         raise ValueError("v3_long excludes scope, compress and flat reward shaping")
     if config.algorithm.mask_overlong or config.algorithm.graphrpo_norm_adv_by_std:
         raise ValueError("v3_long retains exhausted episodes and uses mean-centered advantages")
-    if rollout.agent.default_agent_loop != "context_graph_isolated_agent" or not plugin.structured_graph_controller:
-        raise ValueError("v3_long requires the isolated structured GraphRPO agent")
+    if (rollout.agent.default_agent_loop != "context_graph_isolated_agent"
+            or plugin.get("graph_action_protocol") != "explicit_tools"
+            or plugin.structured_graph_controller):
+        raise ValueError("v3_long requires isolated GraphRPO with explicit_tools")
     if int(plugin.max_traj) < max(int(plugin.max_session), int(plugin.val_max_session)) + 1:
         raise ValueError("max_traj must retain the main stream and every possible branch")
     if int(rollout.n) < 2 or not 1 <= int(config.algorithm.graphrpo_dynamic_min_groups) <= int(config.data.train_batch_size):
@@ -65,6 +67,8 @@ def write_manifest(config):
     OmegaConf.save(config, str(prefix) + ".yaml", resolve=True)
     metadata = {
         "profile": "scienceworld_graphrpo_v3_long", "commit": revision,
+        "graph_action_protocol": config.actor_rollout_ref.rollout.plugin.graph_action_protocol,
+        "graph_protocol_revision": "model_owned_explicit_tools_v1",
         "dirty_paths": dirty, "python": sys.executable, "argv": sys.argv[1:],
         "prepare_only": bool(config.scienceworld_profile_prepare_only),
         "validation_reward": "native binary completion; raw and peak environment scores retained",

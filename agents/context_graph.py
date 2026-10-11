@@ -314,6 +314,10 @@ class ContextGraph:
         max_attempts: int = 20,
     ) -> Optional[str]:
         """Return a diagnostic when the per-trajectory graph budget is spent."""
+        if getattr(self, "model_owned", False):
+            # Explicit tools share the episode turn/token budget; no hidden
+            # ten-operation quota that disables the policy's action space.
+            return None
         if self.graph_op_attempt_count >= max_attempts:
             return f"graph operation attempt budget exhausted ({max_attempts})"
         if self.explicit_op_count >= max_valid_ops:

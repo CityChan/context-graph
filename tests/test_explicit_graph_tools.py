@@ -1,0 +1,187 @@
+"""Model-controlled graph edits and immutable PPO prefixes, without a live model."""
+import asyncio
+import copy
+import sys
+from types import SimpleNamespace
+
+import pytest
+
+from agents.context_graph import ContextGraph, NodeType, NodeStatus
+from agents.explicit_graph_tools import execute_graph_tool, parse_graph_call
+from agents.graph_trace import GraphTraceRecorder, validate_graph_trace
+from agents.session_summary import iter_agent_data
+from tests.test_session_restart import make_agent
+from tests.test_scienceworld_training import ACTION, Simulator, item, setup_rollout
+
+
+def call(name, **args):
+    return '<function=' + name + '>' + ''.join(
+        f'<parameter={k}>{v}</parameter>' for k, v in args.items()) + '</function>'
+
+
+def test_compaction_changes_real_input_without_losing_any_training_tokens():
+    async def run():
+        responses = [call('merge', node_ids='n2,n3', summary='verified result'),
+                     call('graph_compact'), call('graph_read', node_id='n2'), 'finish']
+        agent = make_agent(responses, enable_summary=False, graph_action_protocol='explicit_tools')
+        agent.config.prompt_length = 2000
+        graph = ContextGraph()
+        graph.model_owned = True
+        graph.add_node('fix the bug', NodeType.QUERY)
+        for raw in ['obsolete evidence ' * 30, 'second evidence ' * 30]:
+            graph.add_node(raw[:80], NodeType.OBSERVATION, metadata={'raw_content': raw})
+        trace = GraphTraceRecorder(graph)
+        agent.append({'role': 'user', 'content': 'obsolete transcript ' * 80})
+        for index in range(3):
+            response = await agent.step()
+            archived_ids = copy.deepcopy(agent.chat_ids)
+            used = agent.response_tokens_used()
+            result = execute_graph_tool(graph, trace, agent, response,
+                agent_name='main', turn_id=index, penalize=True)
+            assert result.success
+            assert agent.chat_ids == archived_ids
+            if index == 1:
+                assert agent.response_tokens_used() > used  # refresh is charged, never refunded
+                assert len(agent.context()) < 2000
+            if index == 2:
+                assert 'obsolete evidence' in result  # folded raw evidence is still accessible
+            agent.append({'role': 'user', 'content': str(result)})
+        await agent.step()
+        third_messages = agent.llm_client.calls[2][1]['messages']
+        assert 'obsolete transcript' not in str(third_messages)
+        assert 'obsolete evidence' not in str(third_messages)
+        assert 'fix the bug' in str(third_messages) and 'verified result' in str(third_messages)
+        segments = [d async for _, d in iter_agent_data({'main': agent}, True, 1)]
+        assert len(segments) == 2
+        learned = [t for d in segments for t, keep in zip(d['response_ids'], d['response_mask']) if keep]
+        expected = [t for ts, masks in zip(agent.chat_ids, agent.token_mask) for t, keep in zip(ts, masks) if keep]
+        assert learned == expected
+        for data, calls in zip(segments, [agent.llm_client.calls[:2], agent.llm_client.calls[2:]]):
+            sequence = data['prompt_ids'] + data['response_ids']
+            assert all(sequence[:len(ids)] == ids for ids, _ in calls)
+            assert all(lp == -.125 for lp, keep in zip(data['response_logprobs'], data['response_mask']) if keep)
+        assert sum(sum(d['graph_decision_mask']) for d in segments) > 0
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize('bad', [
+    call('prune', node_id='n2') + ACTION,
+    '<function=prune><parameter=node_id>n2</parameter>',
+    '<function=prune><parameter=node_id>n2</parameter><parameter=node_id>n3</parameter></function>',
+    call('add_edge', source='n1', target='n2', relation='invented'),
+    call('graph_compact', ignored='x'),
+])
+def test_malformed_calls_rejected_before_mutation(bad):
+    with pytest.raises(ValueError):
+        parse_graph_call(bad)
+
+
+def test_prune_recall_and_budget_rejection_preserve_raw_evidence():
+    async def run():
+        responses = [call('prune', node_id='n2'), call('recall', node_id='n2'), call('graph_compact')]
+        agent = make_agent(responses, enable_summary=False)
+        graph = ContextGraph()
+        graph.model_owned = True
+        graph.add_node('task', NodeType.QUERY)
+        graph.add_node('brief', NodeType.OBSERVATION, metadata={'raw_content': 'x' * 2000})
+        trace = GraphTraceRecorder(graph)
+        for index in range(3):
+            response = await agent.step()
+            result = execute_graph_tool(graph, trace, agent, response, agent_name='main', turn_id=index, penalize=True)
+            assert result.success == (index < 2)
+            if index == 0:
+                assert graph.nodes['n2'].status == NodeStatus.PRUNED
+            agent.append({'role': 'user', 'content': str(result)})
+        assert graph.nodes['n2'].is_active()
+        assert graph.nodes['n2'].metadata['raw_content'] == 'x' * 2000
+        assert not getattr(agent, 'summary_sessions', [])
+        assert agent.additional_info[-2]['process_reward'] == -.3
+    asyncio.run(run())
+
+
+def explicit_rollout(monkeypatch, responses, sequence, max_turn=40):
+    module, context, client = setup_rollout(monkeypatch, responses, max_turn=max_turn)
+    class Sim(Simulator):
+        pass
+    Sim.sequence = sequence
+    monkeypatch.setitem(sys.modules, 'scienceworld', SimpleNamespace(ScienceWorldEnv=Sim))
+    plugin = context.config.actor_rollout_ref.rollout.plugin
+    plugin.graph_action_protocol = 'explicit_tools'
+    # Deliberately conflicting old settings must not trigger hidden work.
+    plugin.structured_graph_controller = True
+    plugin.consolidation_interval = plugin.initial_consolidation_turn = 1
+    plugin.auto_prune_max_active = 2
+    plugin.auto_bind_branch_edges = True
+    for name in ['auto_prune_low_value', 'auto_connect_semantic', 'auto_merge_similar', 'collapse_child']:
+        monkeypatch.setattr(ContextGraph, name, lambda *a, **k: pytest.fail('automatic graph maintenance'))
+    return module, context, client
+
+
+def test_model_can_decline_graph_work_and_exceed_old_active_node_limit(monkeypatch):
+    module, context, client = explicit_rollout(monkeypatch, [ACTION] * 14, [(0, False)] * 13 + [(100, True)])
+    outputs = asyncio.run(module.process_item(item(), context))
+    trace = outputs[0].extra_fields['graph_trace']
+    assert len(client.calls) == 14
+    assert all(e['source'] != 'heuristic' for e in trace['events'])
+    assert outputs[0].extra_fields['env_stats']['graph_n_pruned'] == 0
+    assert outputs[0].extra_fields['env_stats']['consol_attempts'] == 0
+    assert 'graph_compact' in str(client.calls[0][1]['messages'])
+    assert context.config.actor_rollout_ref.rollout.plugin.structured_graph_controller is True
+
+
+def test_main_graph_calls_and_branch_graph_calls_are_policy_tokens(monkeypatch):
+    responses = [call('branch', description='inspect', prompt='Inspect the room'),
+                 ACTION, call('prune', node_id='n3'), call('recall', node_id='n3'),
+                 call('return', message='observed room'), call('graph_read', node_id='n3'), ACTION]
+    module, context, client = explicit_rollout(monkeypatch, responses, [(0, False), (100, True)])
+    context.config.actor_rollout_ref.rollout.plugin.max_traj = 1  # cannot discard branch policy tokens
+    outputs = asyncio.run(module.process_item(item(), context))
+    assert len(client.calls) == len(responses)
+    assert len(outputs) == 2 and all(o.reward_score == 1 for o in outputs)
+    events = outputs[0].extra_fields['graph_trace']['events']
+    edits = [e for e in events if e['op'] in ('prune', 'recall')]
+    assert len(edits) == 2 and all(e['success'] and e['agent_name'] != 'main' for e in edits)
+    assert 'observed' in str(client.calls[-1][1]['messages'])
+    assert all(any(o.extra_fields['graph_decision_mask']) for o in outputs)
+    assert outputs[0].extra_fields['env_stats']['memory_n_archives'] == 0
+    assert all(not any(o.extra_fields['graph_edit_credit_mask']) for o in outputs)
+    valid, errors, _ = validate_graph_trace(outputs[0].extra_fields['graph_trace'])
+    assert valid, errors
+
+
+def test_more_than_ten_explicit_operations_are_not_silently_capped(monkeypatch):
+    responses = [call('graph_read')] * 12 + [ACTION, ACTION]
+    module, context, client = explicit_rollout(monkeypatch, responses, [(0, False), (100, True)])
+    outputs = asyncio.run(module.process_item(item(), context))
+    events = outputs[0].extra_fields['graph_trace']['events']
+    reads = [e for e in events if e['op'] == 'graph_read']
+    assert len(reads) == 12 and all(e['success'] for e in reads)
+    assert len(client.calls) == len(responses)
+
+
+def test_executor_compaction_exports_all_sessions_and_actual_new_prefix(monkeypatch):
+    responses = [ACTION, ACTION, call('merge', node_ids='n2,n3', summary='verified current room'),
+                 call('graph_compact'), ACTION]
+    module, context, client = explicit_rollout(monkeypatch, responses, [(0, False), (0, False), (100, True)])
+    context.config.actor_rollout_ref.rollout.prompt_length = 30000
+    outputs = asyncio.run(module.process_item(item(), context))
+    assert len(outputs) == 2 and all(o.reward_score == 1 for o in outputs)
+    assert len(client.calls) == 5
+    assert '[Model-selected active graph]' in str(client.calls[-1][1]['messages'])
+    assert 'verified current room' in str(client.calls[-1][1]['messages'])
+    trace = outputs[0].extra_fields['graph_trace']
+    valid, errors, _ = validate_graph_trace(trace)
+    assert valid, errors
+    refresh = next(e for e in trace['events'] if e['op'] == 'graph_compact')
+    assert refresh['context_refresh']['session_index'] == 1
+    assert refresh['context_refresh']['cumulative_refresh_tokens'] > 0
+    assert outputs[0].extra_fields['env_stats']['graph_context_refresh_tokens'] > 0
+
+
+def test_branch_edits_cannot_receive_credit_on_a_main_turn():
+    from agents.graph_rpo import valid_graph_edit_events
+    event = {'source': 'model', 'success': True, 'op': 'recall', 'agent_name': '#0-inspect',
+             'semantic_before_hash': 'old', 'semantic_after_hash': 'new', 'assistant_turn_index': 3}
+    assert valid_graph_edit_events({'events': [event]}) == []
+    event['agent_name'] = 'main'
+    assert valid_graph_edit_events({'events': [event]}) == [event]

@@ -745,11 +745,13 @@ class Agent(SessionSummaryMixin, AgentContext):
         max_len = self.prompt_ids_len + self.config.response_length
         if max_new_tokens is not None:
             max_len = min(len(prompt) + max_new_tokens, 131072)
-        if getattr(self.config.plugin, "enable_summary", False):
+        if (getattr(self.config.plugin, "enable_summary", False) or getattr(self, "summary_sessions", None)
+                or getattr(self.config.plugin, "graph_action_protocol", None) == "explicit_tools"):
             remaining = self.remaining_generation_tokens()
             if remaining < 10:
                 return None
-            max_len = min(len(prompt) + remaining, self.config.prompt_length + self.config.response_length,
+            max_len = min(len(prompt) + remaining,
+                          getattr(self, 'working_context_limit', self.config.prompt_length + self.config.response_length),
                           len(prompt) + max_new_tokens if max_new_tokens is not None else 131072)
         completion_kwargs = dict(completion_kwargs or {})
         if getattr(self.config.plugin, "capture_model_contexts", False):
@@ -806,10 +808,9 @@ class Agent(SessionSummaryMixin, AgentContext):
         # The return summary is a model call too: reserve one of the caller's
         # remaining turns for it, rather than issuing an uncounted extra call.
         action_turn_limit = max(max_turn - int(summary_prompt is not None), 0)
-        if max_tokens is not None:
-            max_tokens = max_tokens - 512
-        else:
-            max_tokens = self.config.response_length - 512
+        explicit_tools = getattr(self.config.plugin, 'graph_action_protocol', None) == 'explicit_tools'
+        reserve = 0 if explicit_tools and summary_prompt is None else 512
+        max_tokens = (max_tokens if max_tokens is not None else self.config.response_length) - reserve
 
         last_response = None
         response = None
@@ -818,7 +819,8 @@ class Agent(SessionSummaryMixin, AgentContext):
             if time.time() - session_start_time > session_timeout:  # TODO add session timeout
                 print('[SESSION] Session Timeout')
                 break
-            if len(self.context()) - init_len > max_tokens:  # summary
+            used = self.response_tokens_used() if explicit_tools else len(self.context()) - init_len
+            if used > max_tokens:
                 break
 
             iteration += 1

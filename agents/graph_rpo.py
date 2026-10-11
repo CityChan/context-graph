@@ -34,7 +34,7 @@ from .graph_trace import semantic_snapshot_hash
 
 
 GRAPH_EVALUATOR_SCHEMA_VERSION = "contextgraph.graph_evaluator.v1"
-STATE_CHANGING_GRAPH_OPS = frozenset({"merge", "prune", "add_edge", "select"})
+STATE_CHANGING_GRAPH_OPS = frozenset({"merge", "prune", "add_edge", "select", "recall"})
 EXTERNAL_EVALUATOR_BACKEND = "external_evaluator"
 REFERENCE_ANSWER_LIKELIHOOD_BACKEND = "reference_answer_likelihood"
 OLD_POLICY_ANSWER_LIKELIHOOD_BACKEND = "old_policy_answer_likelihood"
@@ -117,6 +117,7 @@ def valid_graph_edit_events(graph_trace: dict[str, Any]) -> list[dict[str, Any]]
         event
         for event in graph_trace.get("events", [])
         if event.get("source") == "model"
+        and event.get("agent_name", "main") == "main"
         and event.get("success") is True
         and str(event.get("op", "")).lower() in STATE_CHANGING_GRAPH_OPS
         and _event_has_semantic_state_change(event)

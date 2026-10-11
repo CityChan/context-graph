@@ -7,6 +7,7 @@ def create_chat(
     item=None,
     *,
     expose_graph_tools=True,
+    explicit_graph_tools=False,
     scienceworld_prompt_profile="legacy",
 ):
     if workflow == 'code':
@@ -108,7 +109,7 @@ I've uploaded a python code repository in the directory /testbed. Consider the f
         chat = [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}]
         return chat
     elif workflow == 'search_graph':
-        graph_tools = graph_tool() if expose_graph_tools else []
+        graph_tools = graph_tool(explicit=explicit_graph_tools) if expose_graph_tools else []
         tool_description = PARALLEL_TOOL_PROMPT.format(
             description=convert_tools_to_description(search_tool() + branch_tool() + graph_tools))
         graph_system_prompt = (
@@ -127,7 +128,7 @@ I've uploaded a python code repository in the directory /testbed. Consider the f
         chat = [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}]
         return chat
     elif workflow == 'search_graph_multi':
-        graph_tools = graph_tool() if expose_graph_tools else []
+        graph_tools = graph_tool(explicit=explicit_graph_tools) if expose_graph_tools else []
         tool_description = PARALLEL_TOOL_PROMPT.format(
             description=convert_tools_to_description(search_tool() + branch_tool() + graph_tools))
         graph_system_prompt = (
@@ -149,7 +150,7 @@ I've uploaded a python code repository in the directory /testbed. Consider the f
         return chat
     elif workflow in ('math_branch', 'math_graph'):
         expose_graph_tools = expose_graph_tools and workflow == 'math_graph'
-        graph_tools = graph_tool() if expose_graph_tools else []
+        graph_tools = graph_tool(explicit=explicit_graph_tools) if expose_graph_tools else []
         tools = math_tool() + branch_tool() + graph_tools
         tool_description = PARALLEL_TOOL_PROMPT.format(
             description=convert_tools_to_description(tools)
@@ -199,7 +200,7 @@ I've uploaded a python code repository in the directory /testbed. Consider the f
         if 'graph' in workflow:
             tools = tools + branch_tool()
             if expose_graph_tools:
-                tools = tools + graph_tool()
+                tools = tools + graph_tool(explicit=explicit_graph_tools)
         tool_description = PARALLEL_TOOL_PROMPT.format(description=convert_tools_to_description(tools))
         base_system = (
             "You are a household robot assistant completing tasks in a virtual home. "
@@ -249,7 +250,7 @@ I've uploaded a python code repository in the directory /testbed. Consider the f
         if workflow.endswith(('_branch', '_graph')):
             tools += branch_tool()
         if workflow.endswith('_graph') and expose_graph_tools:
-            tools += graph_tool()
+            tools += graph_tool(explicit=explicit_graph_tools)
         description = PARALLEL_TOOL_PROMPT.format(description=convert_tools_to_description(tools))
         description = description.replace(
             "You may provide optional reasoning for your function call in natural language BEFORE the function call, but NOT after.",
@@ -276,7 +277,7 @@ I've uploaded a python code repository in the directory /testbed. Consider the f
         if 'graph' in workflow:
             tools = tools + branch_tool()
             if expose_graph_tools:
-                tools = tools + graph_tool()
+                tools = tools + graph_tool(explicit=explicit_graph_tools)
         tool_description = PARALLEL_TOOL_PROMPT.format(description=convert_tools_to_description(tools))
         if scienceworld_prompt_profile != "legacy":
             tool_description = tool_description.replace(

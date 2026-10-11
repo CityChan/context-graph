@@ -1,4 +1,11 @@
-"""ContextGraph Agent Loop (Isolated Subgraph Variant).
+"""ContextGraph agent loop with explicit-tools and historical controller protocols.
+
+With graph_action_protocol=explicit_tools, main and branch policies own graph
+edits and context compaction. Branches share raw graph evidence; no heuristic
+maintenance, archival, checkpoint scheduling or automatic summary is performed.
+Context resets export immutable, token-aligned training segments.
+
+The following describes the historical controller protocol only:
 
 Hierarchical/spatially-isolated version of context_graph_agent. Each branch
 runs on its own private ContextGraph (a subgraph), so the main agent's
@@ -52,6 +59,9 @@ from .finalizer import (
 )
 from .rollout_status import classify_rollout_status, validate_session_summary
 from .scienceworld_training import NoToolGuard, training_reward, validate_reward_profile
+from .explicit_graph_tools import (
+    action_protocol, EXPLICIT_GRAPH_PROMPT, graph_call as detect_graph_call, execute_graph_tool, record_observation,
+)
 from .prompts import create_chat, BRANCH_MESSAGE_SEARCH, BRANCH_MESSAGE
 from .verifier import judge_scope
 from .context_graph import ContextGraph, GraphOpResult, NodeType, NodeStatus, EdgeRelation
@@ -162,7 +172,7 @@ async def process_item(
         *,
         _continuation=None,
 ) -> Union[AgentLoopOutput, list[AgentLoopOutput]]:
-    """Isolated ContextGraph agent loop.
+    """ContextGraph rollout. Explicit tools override the historical behavior below.
 
     Differences from graph_agent.process_item:
       1. Each ``branch`` call spawns a private child ContextGraph via
@@ -175,6 +185,10 @@ async def process_item(
          stays immutable so generated and optimized prompts remain identical.
     """
     mode = memory_mode(context.config.actor_rollout_ref.rollout.plugin)
+    plugin = context.config.actor_rollout_ref.rollout.plugin
+    if (action_protocol(plugin) == 'explicit_tools'
+            and graph_rpo_credit_backend(plugin) == OLD_POLICY_CONTINUATION_BACKEND):
+        raise ValueError('Explicit graph tools require ordinary GraphRPO; continuation E/M uses controller checkpoints')
     if context.is_train and context.config.algorithm.get('graphrpo_alternating_roles', False):
         if (str(context.config.algorithm.get('adv_estimator', '')).lower() not in
                 {'graphrpo', 'advantageestimator.graphrpo'} or
@@ -198,7 +212,21 @@ async def process_item(
     os.environ["no_proxy"] = ""
     tokenizer = context.tokenizer
 
-    config = context.config.actor_rollout_ref.rollout
+    config = copy.deepcopy(context.config.actor_rollout_ref.rollout)
+    graph_protocol = action_protocol(config.plugin)
+    explicit_graph_tools = graph_protocol == "explicit_tools" and (
+        getattr(config.plugin, "graph_action_protocol", None) == "explicit_tools"
+        or str(context.config.algorithm.get('adv_estimator', '')).lower() in {'graphrpo', 'advantageestimator.graphrpo'}
+    )
+    if explicit_graph_tools:
+        # Per-rollout effective settings; never mutate the shared trainer config.
+        from omegaconf import OmegaConf
+        for name, value in {'structured_graph_controller': False, 'graph_action_protocol': 'explicit_tools',
+                            'enable_summary': False, 'controller_owned_tool_formatting': False}.items():
+            if OmegaConf.is_config(config.plugin):
+                OmegaConf.update(config.plugin, name, value, force_add=True)
+            else:
+                setattr(config.plugin, name, value)
     validate_session_summary(config.plugin)
     is_train = context.is_train
     diagnostic_fix = validate_fix(getattr(config.plugin, "diagnostic_fix", "none"), is_train)
@@ -252,8 +280,11 @@ async def process_item(
             workflow,
             item,
             expose_graph_tools=not structured_graph_controller,
+            explicit_graph_tools=explicit_graph_tools,
             scienceworld_prompt_profile=getattr(config.plugin, "scienceworld_prompt_profile", "legacy"),
         )
+        if explicit_graph_tools:
+            user_prompt[0]['content'] += '\n\n' + EXPLICIT_GRAPH_PROMPT
 
         branch_prompt = BRANCH_MESSAGE_SEARCH if 'search' in workflow else BRANCH_MESSAGE
 
@@ -279,7 +310,7 @@ async def process_item(
         branch_attempts = []
         remember_branches = coerce_bool(getattr(config.plugin, "graph_branch_history", False), default=False)
         if graph_rpo_enabled and is_train:
-            if not structured_graph_controller:
+            if not structured_graph_controller and not explicit_graph_tools:
                 raise ValueError(
                     "GraphRPO requires structured_graph_controller=True so each "
                     "edit span is an isolated structured decision"
@@ -308,7 +339,7 @@ async def process_item(
             # Only the selected M decision receives continuation credit. Avoid
             # auxiliary scope judges and unrelated process shaping in this path.
             process_reward = None
-        max_traj = getattr(config.plugin, "max_traj", None)
+        max_traj = None if explicit_graph_tools else getattr(config.plugin, "max_traj", None)
         enable_retrieval_memory = getattr(
             config.plugin, "enable_retrieval_memory", True
         )
@@ -326,6 +357,9 @@ async def process_item(
         # can still use in-place replacement because no log-prob is recomputed from
         # the completed transcript there.
         enable_history_replacement = enable_retrieval_memory and not is_train
+        if explicit_graph_tools:
+            enable_history_replacement = False
+            inject_graph_state_after_action = True
         retrieval_summary_budget = getattr(
             config.plugin, "retrieval_summary_budget", 768
         )
@@ -518,11 +552,16 @@ async def process_item(
             consolidation_invalid_penalty = -0.3
             consolidation_pass_invalid_penalty = -0.3
             graph_invalid_penalty = -0.3
+        if explicit_graph_tools:
+            auto_prune_max_active = 0
+            auto_bind_branch_edges = False
+            consolidation_interval = initial_consolidation_turn = 0
 
         llm_client = context.llm_client
 
         # ── Initialize parent ContextGraph ──
         graph = ContextGraph(tokenizer, namespace_prefix="n", memory_policy=mode)
+        graph.model_owned = explicit_graph_tools
         query_text = env.instance_info['problem_statement']
         root_id = graph.add_node(query_text, NodeType.QUERY)
         structured_memory = (
@@ -599,6 +638,8 @@ async def process_item(
             prompt_turn=prompt_turn,
             process_reward_min_precedence=graph_rpo_enabled,
         )
+        if explicit_graph_tools:
+            agent['main'].graph_base_prompt = copy.deepcopy(agent['main'].chat[:prompt_turn])
 
         async def call_structured_memory_controller(prompt, schema, max_new_tokens):
             """Run an isolated controller call with bounded schema-repair retries."""
@@ -904,6 +945,8 @@ async def process_item(
 
             session_message.append({'role': 'assistant', 'content': response})
             fn_call = extract_fn_call(response)
+            if explicit_graph_tools:
+                fn_call = detect_graph_call(response) or fn_call
             if not observe_action_turn(response, agent['main']):
                 break
             repeat_hint = ""
@@ -914,7 +957,10 @@ async def process_item(
             new_evidence_text = None
 
             # ── Graph operations on parent graph ──
-            if (
+            if explicit_graph_tools and detect_graph_call(response):
+                observation = execute_graph_tool(graph, graph_trace, agent['main'], response,
+                    agent_name='main', turn_id=main_turn_count, penalize=bool(process_reward and is_train))
+            elif (
                 structured_graph_controller
                 and fn_call is not None
                 and fn_call['function'] in GRAPH_OPS
@@ -1032,14 +1078,21 @@ async def process_item(
                         NodeType.SUBTASK,
                         parent_id=graph.active_node_id,
                         edge_relation=EdgeRelation.DECOMPOSITION,
+                        metadata={'raw_content': message_to_branch} if explicit_graph_tools else {},
                     )
+                    if explicit_graph_tools:
+                        branch_event = graph_trace.record(
+                            graph, trace_before, turn_id=main_turn_count, source='model', op='branch',
+                            args=fn_call.get('arguments', {}), assistant_content=response,
+                            assistant_turn_index=branch_turn_index,
+                            decision_context={'mode': 'explicit_tool', 'agent': 'main'})
 
                     # 2. Spawn private child graph for this branch
                     branch_idx = len(branches)
                     child_prefix = f"b{branch_idx}_"
-                    child_graph = graph.spawn_child(subtask_id, prefix=child_prefix)
+                    child_graph = graph if explicit_graph_tools else graph.spawn_child(subtask_id, prefix=child_prefix)
                     # Child graph's root mirrors the subtask query
-                    child_root = child_graph.add_node(
+                    child_root = subtask_id if explicit_graph_tools else child_graph.add_node(
                         f"Subtask: {description}\n{message_to_branch}",
                         NodeType.QUERY,
                     )
@@ -1049,7 +1102,7 @@ async def process_item(
                     branch_tasks[agent_name] = message_to_branch
                     branch_node_map[agent_name] = subtask_id
 
-                    history = agent['main'].working_messages()
+                    history = copy.deepcopy(user_prompt) if explicit_graph_tools else agent['main'].working_messages()
                     agent[agent_name] = Agent(
                         llm_client,
                         history,
@@ -1061,12 +1114,35 @@ async def process_item(
                     branch_prompt_formatted = branch_prompt.format(message=message_to_branch)
 
                     # Branch sees its OWN child graph state, not the parent
-                    graph_state_hint = f"\n\nYour subtask working graph:\n{child_graph.to_state_text()}"
+                    graph_state_hint = f"\n\nYour {'shared' if explicit_graph_tools else 'subtask'} working graph:\n{child_graph.to_state_text()}"
                     agent[agent_name].append({'role': 'user', 'content': branch_prompt_formatted + graph_state_hint})
+                    if explicit_graph_tools:
+                        agent[agent_name].graph_base_prompt = copy.deepcopy(user_prompt)
+                        agent[agent_name].graph_base_prompt[-1]['content'] += '\n\n' + branch_prompt_formatted
+                        agent[agent_name].config = copy.deepcopy(config)
+                        agent[agent_name].config.response_length = min(
+                            agent['main'].remaining_generation_tokens(),
+                            int(getattr(config.plugin, 'branch_len', None) or config.response_length))
+                        agent[agent_name].working_context_limit = config.prompt_length + config.response_length
 
                     # 3. Branch runs with a graph-aware run_action that tracks
                     #    its observations into the child graph (not the parent)
                     wrapped_action = make_graph_aware_run_action(env, child_graph)
+                    if explicit_graph_tools:
+                        async def wrapped_action(response):
+                            if detect_graph_call(response):
+                                return execute_graph_tool(graph, graph_trace, agent[agent_name], response,
+                                    agent_name=agent_name, turn_id=iteration + (len(agent[agent_name].chat) - agent[agent_name].prompt_turn) // 2,
+                                    penalize=bool(process_reward and is_train))
+                            before = graph_trace.capture(graph)
+                            result = await run_action(env, response)
+                            if result is not None:
+                                node_id = record_observation(graph, response, result)
+                                event = graph_trace.record(graph, before, turn_id=iteration, source='environment',
+                                    op='add_observation', args={'node_id': node_id}, success=True)
+                                event['agent_name'] = agent_name
+                                result += '\n\n' + graph.to_state_text()
+                            return result
                     agent_return = await agent[agent_name].react(
                         wrapped_action,
                         max_turn=max(0, effective_max_turn - iteration),
@@ -1078,10 +1154,14 @@ async def process_item(
                         ),
                         safe_finish=lambda
                             x: "You are in branch mode and cannot branch task or finish the task. Use the `return` tool to go back to the main agent." if '<function=finish>' in x or '<function=branch>' in x else None,
-                        summary_prompt="The context limit has been exceeded for the branch. Please finish the sub task directly and clearly state the progress made and the pending jobs of the sub task. Only summarize the sub task progress, using the return tool.",
+                        summary_prompt=None if explicit_graph_tools else "The context limit has been exceeded for the branch. Please finish the sub task directly and clearly state the progress made and the pending jobs of the sub task. Only summarize the sub task progress, using the return tool.",
                         observation_prompt=f"* You are now in branch mode: {description}. Conduct the sub task based on instruction, and when you complete the assigned sub task, use return tool to return, do not perform action beyond the assigned sub task.",
                     )
                     iteration += agent_return['iteration']
+                    if explicit_graph_tools:
+                        agent['main'].external_response_tokens = (
+                            getattr(agent['main'], 'external_response_tokens', 0)
+                            + agent[agent_name].response_tokens_used())
                     last_response = agent_return['last_response']
                     session_message.extend(agent[agent_name].messages()[len(history):])
 
@@ -1103,20 +1183,22 @@ async def process_item(
                     #    subgraph's stats become metadata. The child is detached
                     #    from active state and optionally retained in the evidence
                     #    archive; it is never serialized wholesale into prompts.
-                    child_stats = graph.collapse_child(
+                    if explicit_graph_tools:
+                        trace_before = graph_trace.capture(graph)
+                    child_stats = {'retained_in_shared_graph': 1} if explicit_graph_tools else graph.collapse_child(
                         subtask_id,
                         preserve_archive=enable_retrieval_memory,
                     ) or {}
                     branch_subgraph_stats[agent_name] = child_stats
 
                     summary_id = graph.add_node(
-                        branch_message if mode == "repaired" else branch_message[:2000],
+                        branch_message if mode == "repaired" or explicit_graph_tools else branch_message[:2000],
                         NodeType.SUMMARY,
                         parent_id=subtask_id,
                         edge_relation=EdgeRelation.CAUSAL,
                         metadata={
                             'tool': 'branch_return',
-                            'collapsed_from_branch': agent_name,
+                            ('reported_by_branch' if explicit_graph_tools else 'collapsed_from_branch'): agent_name,
                             'child_graph_prefix': child_prefix,
                             **{f'child_{k}': v for k, v in child_stats.items()},
                         },
@@ -1127,7 +1209,7 @@ async def process_item(
                     new_evidence_node_id = summary_id
                     new_evidence_tool_name = "branch_return"
                     new_evidence_text = branch_message
-                    print(f'[BRANCH ISOLATED] Collapsed {agent_name}: child stats={child_stats}')
+                    print(f'[BRANCH] Returned {agent_name}: child stats={child_stats}')
 
                     # Improvement #3: auto-bind branch summary to most-related EXISTING
                     # parent node with a SEMANTIC edge. Without this, branches only
@@ -1161,18 +1243,21 @@ async def process_item(
                     # Only inject parent graph state if there are multiple branches
                     # (so the agent can see what summaries exist for cross-branch reasoning).
                     # Single-branch case degenerates to fold-like behavior (no graph noise).
-                    if len(branches) > 1:
+                    if explicit_graph_tools or len(branches) > 1:
                         observation = f'{branch_message}\n\n{graph.to_state_text()}'
                     else:
                         observation = branch_message
                     branch_return[agent_name] = branch_message
-                    branch_event = graph_trace.record(
+                    return_event = graph_trace.record(
                         graph, trace_before, turn_id=main_turn_count,
-                        source="model", op="branch",
+                        source="environment" if explicit_graph_tools else "model",
+                        op="branch_return" if explicit_graph_tools else "branch",
                         args=fn_call.get('arguments', {}), success=True,
                         assistant_content=response,
                         assistant_turn_index=branch_turn_index,
                     )
+                    if not explicit_graph_tools:
+                        branch_event = return_event
                     documents = getattr(env, 'evidence_documents', [])
                     seen_docs = {str(d['docid']) for d in documents[:branch_document_start]}
                     retrieved_docs = {str(d['docid']) for d in documents[branch_document_start:]}
@@ -1204,7 +1289,11 @@ async def process_item(
                     break
 
                 if fn_call is not None:
-                    if fn_call['function'] == 'search':
+                    if explicit_graph_tools:
+                        new_evidence_node_id = record_observation(graph, response, observation)
+                        new_evidence_tool_name = fn_call['function']
+                        new_evidence_text = observation
+                    elif fn_call['function'] == 'search':
                         new_evidence_node_id = graph.add_node(
                             observation[:500],
                             NodeType.OBSERVATION,
@@ -1301,7 +1390,7 @@ async def process_item(
                 print(f'[GRAPH ISOLATED AUTO] Pruned low-value nodes: {auto_pruned}')
 
             trace_before = graph_trace.capture(graph)
-            auto_edges = graph.auto_connect_semantic(keyword_overlap_threshold=3)
+            auto_edges = [] if explicit_graph_tools else graph.auto_connect_semantic(keyword_overlap_threshold=3)
             if auto_edges:
                 graph_trace.record(
                     graph, trace_before, turn_id=main_turn_count,
@@ -1310,7 +1399,7 @@ async def process_item(
                 )
                 print(f'[GRAPH ISOLATED AUTO] Added semantic edges: {auto_edges}')
 
-            if fn_call and fn_call.get('function') == 'branch':
+            if not explicit_graph_tools and fn_call and fn_call.get('function') == 'branch':
                 trace_before = graph_trace.capture(graph)
                 auto_merged = graph.auto_merge_similar(similarity_threshold=2)
                 if auto_merged:
@@ -1326,7 +1415,7 @@ async def process_item(
                 print(agent['main'].chat[-1])
                 agent['main'].append({'role': 'assistant', 'content': str(response)})
 
-            if process_reward:
+            if process_reward and not explicit_graph_tools:
                 observation = truncate_text(observation, max_lines=100, merge_repeat=True, merge_num=4)
             if repeat_hint:
                 observation = repeat_hint + "\n\n" + observation
@@ -2001,6 +2090,8 @@ async def process_item(
         env.stats['consol_controller_errors'] = consolidation_stats['controller_errors']
         env.stats['consol_candidate_skips'] = consolidation_stats['candidate_skips']
         env.stats['structured_graph_controller'] = int(structured_graph_controller)
+        env.stats['explicit_graph_tools'] = int(explicit_graph_tools)
+        env.stats['graph_context_refresh_tokens'] = sum(getattr(a, 'graph_context_tokens', 0) for a in agent.values())
         env.stats['controller_allow_pass'] = int(controller_allow_pass)
         env.stats['controller_structural_policy'] = int(
             controller_action_policy == "structural"
@@ -2104,7 +2195,8 @@ async def process_item(
 
             # Keep FoldAgent's paper process rewards as the shared base signal for
             # ContextGraph. Graph-specific outcome shaping is applied separately.
-            GRAPH_OP_MARKERS = ('<function=merge>', '<function=prune>', '<function=select>', '<function=add_edge>')
+            GRAPH_OP_MARKERS = ('<function=merge>', '<function=prune>', '<function=select>', '<function=add_edge>',
+                                '<function=recall>', '<function=graph_read>', '<function=graph_compact>')
             if rollout_status['unfolded_main']:
                 bad_turn = [i for i, turn in enumerate(agent['main'].messages()) if
                             '<function=branch>' not in str(turn)
@@ -2350,6 +2442,7 @@ async def process_item(
                     'termination_reason': rollout_status['termination_reason'],
                     'scienceworld_training_reward_profile': scienceworld_reward_profile,
                     'graph_rpo_credit_backend': graph_rpo_backend,
+                    'graph_action_protocol': graph_protocol,
                     'native_task_reward': native_task_reward,
                     'training_reward_applied': scienceworld_reward_profile == 'v3_long' and is_train,
                     'hit_no_tool_limit': int(no_tool_guard.stopped),

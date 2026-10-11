@@ -201,8 +201,10 @@ def validate_config(
         assert config.actor_rollout_ref.actor.strategy == "fsdp", (
             "GraphRPO's global episode weighting currently requires the FSDP actor"
         )
-        assert bool(plugin.get("structured_graph_controller", False)), (
-            "GraphRPO requires structured_graph_controller=True"
+        from agents.explicit_graph_tools import action_protocol
+        graph_protocol = action_protocol(plugin)
+        assert graph_protocol == "explicit_tools" or bool(plugin.get("structured_graph_controller", False)), (
+            "Controller GraphRPO requires structured_graph_controller=True"
         )
         graph_credit_backend = str(
             plugin.get("graph_rpo_credit_backend", "old_policy_counterfactual_qa")
@@ -224,6 +226,7 @@ def validate_config(
             "old_policy_continuation requires M-only or alternating E/M training"
         )
         if memory_only or alternating:
+            assert graph_protocol == "controller", "Continuation E/M requires controller checkpoints"
             from agents.graph_rpo_continuation import choose_checkpoint
 
             assert int(plugin.get("graph_rpo_continuation_samples", 4)) >= 2

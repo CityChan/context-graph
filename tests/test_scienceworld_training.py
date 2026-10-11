@@ -200,7 +200,7 @@ def test_loop_token_exhaustion_keeps_negative_reward(monkeypatch):
     async def exhaust_budget(agent, *args, **kwargs):
         response = await original(agent, *args, **kwargs)
         # Exhaust the budget after a real action response, before its observation.
-        context.config.actor_rollout_ref.rollout.response_length = agent.response_tokens_used() + 5
+        agent.config.response_length = agent.response_tokens_used() + 5
         return response
     monkeypatch.setattr(module, 'step_preserving_final_answer', exhaust_budget)
     outputs = asyncio.run(module.process_item(item(), context))
@@ -232,6 +232,8 @@ def test_profile_resolves_and_rejects_incompatible_overrides(tmp_path):
     saved = OmegaConf.load(next(tmp_path.glob("protocol-*.yaml")))
     assert saved.actor_rollout_ref.rollout.response_length == 57344
     assert saved.algorithm.graphrpo_norm_adv_by_std is False
+    assert saved.actor_rollout_ref.rollout.plugin.graph_action_protocol == 'explicit_tools'
+    assert saved.actor_rollout_ref.rollout.plugin.structured_graph_controller is False
     config.algorithm.mask_overlong = True
     with pytest.raises(ValueError, match="exhausted"):
         validate_config(config)

@@ -322,7 +322,7 @@ def branch_tool():
     return [branch, return_tool]
 
 
-def graph_tool():
+def graph_tool(*, explicit=False):
     """Graph operations for ContextGraph-based context management."""
     merge = {
         'type': 'function',
@@ -440,6 +440,22 @@ def graph_tool():
             },
         },
     }
+    if explicit:
+        tools = [merge, add_edge, select_node, prune_node]
+        for tool in tools:
+            tool['function']['description'] = tool['function']['description'].replace(
+                'listed in the latest Eligible graph-tool node IDs line',
+                'shown in graph state or returned by graph_read')
+        for name, description, properties, required in [
+            ('graph_read', 'Read stored graph evidence, including inactive nodes. Without node_id, list all stored IDs in pages of 20.',
+             {'node_id': {'type': 'string'}, 'offset': {'type': 'string', 'description': 'Zero-based character or list offset; default 0.'}}, []),
+            ('recall', 'Restore an inactive node to active memory without deleting its raw evidence.',
+             {'node_id': {'type': 'string'}}, ['node_id']),
+            ('graph_compact', 'Rebuild working context from the original task and every active graph node. First merge/prune to choose what to retain. Oversized snapshots are rejected.', {}, []),
+        ]:
+            tools.append({'type': 'function', 'function': {'name': name, 'description': description,
+                          'parameters': {'type': 'object', 'properties': properties, 'required': required}}})
+        return tools
     return [merge, add_edge, select_node, prune_node, pass_graph]
 
 

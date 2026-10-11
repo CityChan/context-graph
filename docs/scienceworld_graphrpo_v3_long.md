@@ -4,7 +4,55 @@ This opt-in training profile implements the objective described in the supplied
 ScienceWorld v3_long screenshots. It is **not a verified reproduction of the
 unavailable `huanchen/graphrpo-compress-rl` branch**. The backbone and deployment
 hardware must be selected explicitly. Existing benchmark evaluation and ordinary
-GraphRPO defaults remain unchanged.
+GraphRPO controller configurations remain available for historical runs. This
+profile now defaults to model-owned explicit graph tools, a protocol change from
+its initial checkpoint-controlled version; do not pool their results.
+
+## Model-owned graph tools
+
+`graph_action_protocol: explicit_tools` exposes ordinary XML tools on every main
+and branch action turn. The model chooses whether and when to call them:
+
+| Tool | Effect |
+| --- | --- |
+| `merge(node_ids, summary)` | Fold 2–6 active nodes into a model-written summary. |
+| `prune(node_id)` | Remove a non-root node from active memory; retain raw evidence. |
+| `add_edge(source, target, relation)` | Add a causal, semantic or temporal edge. |
+| `select(node_id)` | Set graph focus. |
+| `graph_read(node_id?, offset?)` | Read stored evidence, including folded/pruned nodes; omit ID to page through all IDs. |
+| `recall(node_id)` | Restore an inactive node. |
+| `graph_compact()` | Rebuild working context from the original task and **all** currently active nodes and edges. |
+
+Merge/prune change the graph immediately. Existing conversation turns remain
+visible until the model calls `graph_compact`; that call makes the chosen memory
+affect subsequent model input. An oversized snapshot is rejected, with feedback
+to merge/prune further. The framework never silently selects nodes to drop.
+Read pages contain up to 2,000 characters or 20 node IDs; offsets expose the rest.
+
+There are no forced graph checkpoints, automatic prune/merge/semantic links,
+automatic session summaries, or automatic branch archives in this protocol.
+Observation records and temporal/delegation links still record executed actions.
+Branches start from the original task plus their assignment and shared graph
+state, and can read/edit the same graph. Returning adds their report without
+folding or deleting their observations. The ten-operation graph quota is disabled;
+episode turns, token budgets and branch limits still apply.
+
+Each explicit context reset exports a separate PPO segment with the exact prefix
+used for generation. Prior policy tokens/log probabilities remain immutable and
+trainable; no branch or reset segment is sampled away by `max_traj`. Branch work
+and graph refresh payloads consume the episode budget without refunds. Invalid
+graph calls receive token-local `-0.3`; graph decisions retain their span markers.
+Under this profile's `outcome_only` backend, both main and branch graph tools learn
+from shared episode advantage and process penalties; local graph delta remains
+zero. Other existing local-credit backends still score main-agent edits only,
+and branch events must never be mapped onto a main-agent turn index.
+
+Other isolated-agent configurations can opt in with the same
+`actor_rollout_ref.rollout.plugin.graph_action_protocol=explicit_tools` field
+(use Hydra `+` when adding a field absent from that configuration). Explicit mode
+overrides old automatic-maintenance flags in a per-rollout copy. Existing E/M
+continuation uses controller checkpoints and rejects explicit mode. Non-GraphRPO
+benchmark/memory-baseline launchers retain their existing protocol unless opted in.
 
 ## Objective
 
@@ -74,10 +122,10 @@ The complete Hydra configuration is
 The following are explicit operational defaults, **not recovered screenshot
 settings**: 65,536-token context (`8,192 + 57,344`), 100 total turns, 100
 environment steps, 2,048 tokens per action, up to five branches, 8,192 branch
-tokens, graph checkpoint every five main turns, 100 training steps, validation
+tokens, model-selected graph-tool timing, 100 training steps, validation
 and checkpoint every ten steps. All main/branch streams are retained. Training
-and validation share the response budget and prompt. Controller sampling uses
-temperature `1`, matching action sampling, and top-p `1`.
+and validation share the response budget and prompt. Graph and environment tools
+use the same action-policy sampling: temperature `1`, top-p `1`.
 
 Use an existing training environment with the required VERL/vLLM model support,
 ScienceWorld and Java. This launcher does not install dependencies or change
@@ -118,5 +166,7 @@ Local regression coverage exercises reward precedence, peak-score reset,
 natural termination versus step cap, real executor paths with a scripted
 simulator/model, main/branch no-tool stops, native validation rewards, prompt
 matching, dynamic filtering, config composition, unchanged E/M baselines and
-episode-deduplicated mean centering. No live GPU training or model-performance
+episode-deduplicated mean centering, explicit main/branch graph edits, retained
+raw evidence, absence of automatic maintenance, and exact policy-prefix alignment
+across model-selected context resets. No live GPU training or model-performance
 claim follows from these tests.

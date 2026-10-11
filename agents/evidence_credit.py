@@ -97,6 +97,8 @@ def assign_evidence_credits(*, agent, graph_trace, gold, documents, plugin_confi
                "graph_rpo_duplicate_branches": 0}
     previous = []
     for event in graph_trace["events"]:
+        if event.get("agent_name", "main") != "main":
+            continue  # Branch tokens receive episode/process credit, not main-turn local credit.
         op = event.get("op")
         if event.get("source") != "model" or not event.get("success"):
             continue

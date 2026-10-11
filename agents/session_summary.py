@@ -59,7 +59,9 @@ class SessionSummaryMixin:
     def response_tokens_used(self):
         # Includes observations and summary generation, just like the original
         # response budget. Restarting never grants a fresh response allowance.
-        return max(len(sum(self.chat_ids, [])) - self.prompt_ids_len, 0)
+        return (max(len(sum(self.chat_ids, [])) - self.prompt_ids_len, 0)
+                + getattr(self, "graph_context_tokens", 0)
+                + getattr(self, "external_response_tokens", 0))
 
     def remaining_generation_tokens(self):
         return max(self.config.response_length - self.response_tokens_used()
@@ -161,7 +163,8 @@ async def iter_agent_data(agents, is_train, max_traj=None):
     for name in names:
         async for data in agents[name].session_data():
             if is_train:
-                yield name, data
+                if any(data['response_mask']):
+                    yield name, data
         if not is_train:
             # Evaluation keeps the full audit transcript and exports the last
             # working session's tokens; it is never fed into a policy update.
