@@ -195,6 +195,19 @@ to every task worker. Local tests verify configuration, worker parsing and shell
 argument forwarding. Live idev startup and model graph-tool usage still require
 inspection of the resulting logs and trajectories.
 
+For an existing BC-P output directory, inspect the actual stop reasons, effective
+configuration, model graph-tool attempts/successes, trace event sources and last
+main/branch responses without rerunning inference:
+
+```bash
+python scripts/diagnose_explicit_graph_eval.py /path/to/bcp-output
+```
+
+This diagnostic does not assign a pass flag. A zero tool count means the model
+did not exercise that explicit interface in the recorded trace; an absent trace
+is reported separately. Normal evaluation completion and generation-quality
+checks alone do not establish successful graph usage or task performance.
+
 ## Verification boundary
 
 Local regression coverage exercises reward precedence, peak-score reset,
