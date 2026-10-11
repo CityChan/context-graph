@@ -31,7 +31,7 @@ PROMPT_PROFILES = ("legacy", "focus_v2", "focus_v3", "discoveryworld_v1")
 DEFAULT_MEMORY_PROFILES = {"scienceworld": "turns", "discoveryworld": "repaired"}
 
 
-def config_for(benchmark, method, context_length, max_steps=100, memory_profile=None, prompt_profile="legacy", observation_profile="full", *, memory_smoke=False):
+def config_for(benchmark, method, context_length, max_steps=100, memory_profile=None, prompt_profile="legacy", observation_profile="full", *, memory_smoke=False, graph_action_protocol="controller"):
     if benchmark not in BENCHMARKS:
         raise ValueError("Unknown benchmark")
     if method not in METHODS:
@@ -83,7 +83,8 @@ def config_for(benchmark, method, context_length, max_steps=100, memory_profile=
     plugin.final_answer_reserve = 0
     plugin.final_answer_safety_margin = 128
     plugin.turn_max_new_tokens = 2048
-    return config
+    from agents.explicit_graph_tools import configure_evaluation_protocol
+    return configure_evaluation_protocol(config, method, graph_action_protocol)
 
 
 def agent_for(method):
@@ -194,7 +195,7 @@ async def generate(args, task, directory):
     from agents.utils import TaskContext
     from scripts.eval_bcp_qwen38 import TokenClient, tokenizer_preflight
     process_item = agent_for(args.method)
-    config = config_for(args.benchmark, args.method, args.context_length, args.max_steps, args.memory_profile, args.prompt_profile, getattr(args, "discoveryworld_observation_profile", "full"), memory_smoke=getattr(args, 'memory_smoke', False))
+    config = config_for(args.benchmark, args.method, args.context_length, args.max_steps, args.memory_profile, args.prompt_profile, getattr(args, "discoveryworld_observation_profile", "full"), memory_smoke=getattr(args, 'memory_smoke', False), graph_action_protocol=getattr(args, 'graph_action_protocol', 'controller'))
     rollout_config = config.actor_rollout_ref.rollout
     tokenizer = AutoTokenizer.from_pretrained(args.model_path, local_files_only=True)
     tokenizer_preflight(tokenizer, rollout_config)
@@ -246,7 +247,7 @@ def preflight(args):
                 "model_path": str(Path(args.model_path).resolve()), "seed": 42,
                 "decoding": {"temperature": 0, "top_p": 1, "thinking": True},
                 "server_execution": {"requested_enforce_eager": os.environ.get("SERVER_ENFORCE_EAGER", "1") == "1"},
-                "config": OmegaConf.to_container(config_for(args.benchmark, args.method, args.context_length, args.max_steps, args.memory_profile, args.prompt_profile, getattr(args, "discoveryworld_observation_profile", "full"), memory_smoke=getattr(args, 'memory_smoke', False))),
+                "config": OmegaConf.to_container(config_for(args.benchmark, args.method, args.context_length, args.max_steps, args.memory_profile, args.prompt_profile, getattr(args, "discoveryworld_observation_profile", "full"), memory_smoke=getattr(args, 'memory_smoke', False), graph_action_protocol=getattr(args, 'graph_action_protocol', 'controller'))),
                 "task_timeout": args.task_timeout,
                 "versions": {p: importlib.metadata.version(p) for p in ("torch", "transformers", "httpx", "pandas", "numpy", "omegaconf")},
                 "commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()}
@@ -307,6 +308,7 @@ def run(args):
                              "--method", args.method, "--endpoint", args.endpoint, "--model-path", args.model_path,
                              "--context-length", str(args.context_length), "--max-steps", str(args.max_steps),
                              "--memory-profile", args.memory_profile,
+                             "--graph-action-protocol", getattr(args, 'graph_action_protocol', 'controller'),
                              "--prompt-profile", args.prompt_profile,
                              "--discoveryworld-observation-profile", getattr(args, "discoveryworld_observation_profile", "full")]
                             + (['--memory-smoke'] if getattr(args, 'memory_smoke', False) else []),
@@ -330,6 +332,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("benchmark", choices=BENCHMARKS)
     parser.add_argument("--method", choices=METHODS, default="contextgraph")
+    parser.add_argument('--graph-action-protocol', choices=['controller', 'explicit_tools'], default='controller')
     parser.add_argument("--data", type=Path)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--endpoint", required=True)
@@ -348,6 +351,8 @@ def main():
     parser.add_argument("--retry-errors", action="store_true")
     parser.add_argument("--task", type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.graph_action_protocol == 'explicit_tools' and args.method != 'contextgraph':
+        parser.error('explicit_tools requires --method contextgraph')
     if args.memory_smoke and (args.benchmark != 'scienceworld' or args.method != 'supo'
                              or (not args.task and args.samples != 2)):
         parser.error('--memory-smoke requires ScienceWorld SUPO and --samples 2')

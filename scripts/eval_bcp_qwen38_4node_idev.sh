@@ -26,6 +26,8 @@ esac
 export SEARCH_PORT=${SEARCH_PORT:-18999} MODEL_PORT=${MODEL_PORT:-18000}
 export SAMPLES=${SAMPLES:-8} SEED=${SEED:-42} WORKERS=${WORKERS:-2}
 export MEMORY_MODE=${MEMORY_MODE:-repaired}
+export GRAPH_ACTION_PROTOCOL=${GRAPH_ACTION_PROTOCOL:-controller}
+case "$GRAPH_ACTION_PROTOCOL" in controller|explicit_tools) ;; *) echo 'Invalid GRAPH_ACTION_PROTOCOL'; exit 2 ;; esac
 export DATA_PATH=${DATA_PATH:-$PROJECT_ROOT/data/$DEFAULT_DATA}
 export SEARCH_HF_HOME=${SEARCH_HF_HOME:-/work/09281/chc_1996/vista/cache}
 export SEARCH_HF_HUB_CACHE=${SEARCH_HF_HUB_CACHE:-$SEARCH_HF_HOME/hub}
@@ -146,12 +148,14 @@ case "${1:-}" in
       if [[ "$METHOD" == amem ]]; then "$EVAL_PYTHON" scripts/prepare_amem_embedding.py --offline; fi
     fi
     if [[ -n ${EVAL_INDICES_FILE:-} ]]; then BASELINE_ARGS+=(--indices-file "$EVAL_INDICES_FILE"); fi
+    BASELINE_ARGS+=(--graph-action-protocol "$GRAPH_ACTION_PROTOCOL")
     exec "$EVAL_PYTHON" -u scripts/eval_bcp_qwen38.py --benchmark "$BENCHMARK" --method "$METHOD" --memory-mode "$MEMORY_MODE" --model "$MODEL_ID" --model-path "$MODEL_PATH" --endpoint "$2" --rank "$3" --data "$DATA_PATH" --samples "$SAMPLES" --seed "$SEED" --workers "$WORKERS" --output "$RUN_ROOT" "${BASELINE_ARGS[@]}"
     ;;
 esac
 
 export METHOD=${1:?Usage: bash scripts/eval_bcp_qwen38_4node_idev.sh react|foldagent|contextgraph|agentfold|supo|memobrain|amem}
 case "$METHOD" in react|foldagent|contextgraph|agentfold|supo|memobrain|amem) ;; *) echo "Invalid method: $METHOD"; exit 2 ;; esac
+if [[ "$GRAPH_ACTION_PROTOCOL" == explicit_tools && "$METHOD" != contextgraph ]]; then echo 'explicit_tools requires contextgraph'; exit 2; fi
 : "${SLURM_JOB_ID:?Run inside an existing four-node idev}"
 : "${SLURM_JOB_NODELIST:?Missing allocation nodes}"
 : "${SCRATCH:?Missing Vista scratch directory}"
@@ -169,6 +173,7 @@ mkdir "$RUN_ROOT" # Do not overwrite or merge an earlier run.
 exec > >(tee -a "$RUN_ROOT/suite.log") 2>&1
 echo "Model=$MODEL_ID Method=$METHOD memory=$MEMORY_MODE job=$SLURM_JOB_ID samples=$SAMPLES seed=$SEED"
 echo "Benchmark=$BENCHMARK data=$DATA_PATH retrieval=local-BCP-corpus"
+echo "GRAPH_ACTION_PROTOCOL=$GRAPH_ACTION_PROTOCOL"
 if [ "$BENCHMARK" = gaia ]; then echo "GAIA text-only internal comparison; not official GAIA evaluation."; fi
 echo "Output=$RUN_ROOT; allocation time limit still applies."
 git rev-parse HEAD | tee "$RUN_ROOT/commit.txt"
@@ -195,7 +200,7 @@ export MODEL_PATH
 echo "Resolved HF checkpoint: $MODEL_PATH"
 python -c 'import os,pandas as pd; from scripts.eval_bcp_qwen38 import validate_dataset; f=pd.read_parquet(os.environ["DATA_PATH"]); validate_dataset(f.to_dict("records"),os.environ["BENCHMARK"]); print("Dataset protocol preflight passed:",len(f),"rows")'
 python -c 'import os,pandas as pd; from scripts.eval_bcp_qwen38 import select_indices; from scripts.eval_gaia import _process_item_for_workflow; from transformers import AutoTokenizer; f=pd.read_parquet(os.environ["DATA_PATH"]); ids=select_indices(len(f),int(os.environ["SAMPLES"]),int(os.environ["SEED"]),os.environ.get("EVAL_INDICES_FILE")); assert len(ids)>=1; t=AutoTokenizer.from_pretrained(os.environ["MODEL_PATH"],local_files_only=True); [_process_item_for_workflow(w) for w in ("search_branch","search_graph")]; print("Preflight rows:",len(f),"selected:",ids,"tokenizer:",type(t).__name__)'
-python -c 'import os; from types import SimpleNamespace; from transformers import AutoTokenizer; from scripts.eval_bcp_qwen38 import config_for,tokenizer_preflight; os.environ.pop("QWEN_ENABLE_THINKING",None); t=AutoTokenizer.from_pretrained(os.environ["MODEL_PATH"],local_files_only=True); c=config_for(SimpleNamespace(method=os.environ["METHOD"],memory_mode=os.environ["MEMORY_MODE"])); tokenizer_preflight(t,c.actor_rollout_ref.rollout); print("Observation tokenizer preflight passed")'
+python -c 'import os; from types import SimpleNamespace; from transformers import AutoTokenizer; from scripts.eval_bcp_qwen38 import config_for,tokenizer_preflight; os.environ.pop("QWEN_ENABLE_THINKING",None); t=AutoTokenizer.from_pretrained(os.environ["MODEL_PATH"],local_files_only=True); c=config_for(SimpleNamespace(method=os.environ["METHOD"],memory_mode=os.environ["MEMORY_MODE"],graph_action_protocol=os.environ["GRAPH_ACTION_PROTOCOL"])); tokenizer_preflight(t,c.actor_rollout_ref.rollout); print("Observation tokenizer preflight passed")'
 python -c 'import os; from openai import OpenAI; c=OpenAI(timeout=60,max_retries=1); r=c.chat.completions.create(model=os.environ["JUDGE_MODEL"],messages=[{"role":"user","content":"Reply OK."}]); assert r.choices; c.close(); print("Judge API preflight passed")'
 sha256sum "$DATA_PATH" > "$RUN_ROOT/data.sha256"
 

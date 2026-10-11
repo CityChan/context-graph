@@ -144,7 +144,8 @@ def config_for(args):
     elif args.method in {"memobrain", "amem"}:
         from agents.graph_memory_baselines import settings
         config.actor_rollout_ref.rollout.plugin.update(settings(args))
-    return config
+    from agents.explicit_graph_tools import configure_evaluation_protocol
+    return configure_evaluation_protocol(config, args.method, getattr(args, 'graph_action_protocol', 'controller'))
 
 
 def tokenizer_preflight(tokenizer, config):
@@ -288,6 +289,7 @@ def main():
     parser.add_argument("--supo-max-summaries", type=int, default=2)
     parser.add_argument("--supo-summary-max-tokens", type=int, default=1024)
     parser.add_argument("--memory-mode", choices=["legacy", "repaired"], default="repaired")
+    parser.add_argument('--graph-action-protocol', choices=['controller', 'explicit_tools'], default='controller')
     parser.add_argument("--model", default="Qwen/Qwen3.8-27B")
     parser.add_argument("--model-path")
     parser.add_argument("--endpoint")
@@ -298,6 +300,8 @@ def main():
     parser.add_argument("--rank", type=int, choices=range(3), default=0)
     parser.add_argument("--workers", type=int, default=2)
     args = parser.parse_args()
+    if args.graph_action_protocol == 'explicit_tools' and args.method != 'contextgraph':
+        parser.error('explicit_tools requires --method contextgraph')
     if args.merge:
         summarize(Path(args.output))
     else:

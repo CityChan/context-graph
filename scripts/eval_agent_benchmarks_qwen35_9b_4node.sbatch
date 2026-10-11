@@ -17,6 +17,8 @@ cd "$PROJECT_ROOT"
 : "${SCRATCH:?SCRATCH must be set}"
 export BENCH_CONTEXT_LENGTH=${BENCH_CONTEXT_LENGTH:-65536} BENCH_SAMPLES=${BENCH_SAMPLES:--1}
 export BENCH_MAX_STEPS=${BENCH_MAX_STEPS:-100}
+export GRAPH_ACTION_PROTOCOL=${GRAPH_ACTION_PROTOCOL:-controller}
+case "$GRAPH_ACTION_PROTOCOL" in controller|explicit_tools) ;; *) echo 'Invalid GRAPH_ACTION_PROTOCOL'; exit 2 ;; esac
 default_memory_profile=turns
 if [[ ${1:-} == discoveryworld || ( ${1:-} == _eval && ${BENCHMARK:-} == discoveryworld ) ]]; then default_memory_profile=repaired; fi
 export BENCH_MEMORY_PROFILE=${BENCH_MEMORY_PROFILE:-$default_memory_profile}
@@ -53,6 +55,7 @@ if [[ ${1:-} == _eval ]]; then
         export USE_TF=0 USE_TORCH=1 USE_FLAX=0 FORCE_TF_AVAILABLE=0
     fi
     extra=()
+    extra+=(--graph-action-protocol "$GRAPH_ACTION_PROTOCOL")
     [[ ${BENCH_MEMORY_SMOKE:-0} == 1 ]] && extra+=(--memory-smoke)
     if [[ "$BENCHMARK" == discoveryworld ]]; then extra+=(--discoveryworld-observation-profile "${BENCH_DISCOVERYWORLD_OBSERVATION_PROFILE:-full}"); fi
     [[ ${BENCH_RETRY_ERRORS:-0} == 1 ]] && extra+=(--retry-errors)
@@ -66,6 +69,7 @@ case "$BENCHMARK" in
     *) echo 'Expected scienceworld or discoveryworld'; exit 2 ;;
 esac
 mode=${2:-both}
+if [[ "$GRAPH_ACTION_PROTOCOL" == explicit_tools && "$mode" != contextgraph ]]; then echo 'explicit_tools requires contextgraph'; exit 2; fi
 case "$mode" in
     both) methods=(contextgraph foldagent); labels=(contextgraph foldagent); shard_indices=(0 0); shard_count=1 ;;
     baselines) methods=(agentfold supo); labels=(agentfold supo); shard_indices=(0 0); shard_count=1 ;;
@@ -87,6 +91,7 @@ exec 8>"$BENCH_RUN_DIR/launcher.lock"
 flock -n 8 || { echo 'This run already has a launcher'; exit 2; }
 exec > >(tee -a "$BENCH_RUN_DIR/suite.log") 2>&1
 echo "BENCHMARK_BATCH_START benchmark=$BENCHMARK method=$mode memory_profile=$BENCH_MEMORY_PROFILE prompt_profile=$BENCH_PROMPT_PROFILE artifacts=$BENCH_RUN_DIR"
+echo "GRAPH_ACTION_PROTOCOL=$GRAPH_ACTION_PROTOCOL"
 
 # Only this private overlay is modified; preserve cxtgraph and the SWE env.
 base=${BENCH_BASE_PYTHON:-/scratch/09281/chc_1996/context-graph-swe/envs/agent-direct-Rs4ngP/bin/python}

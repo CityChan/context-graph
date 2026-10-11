@@ -160,6 +160,41 @@ and reward semantics under the run directory. Subsequent rollout and validation
 artifacts go there too. `DRY_RUN` checks/configures the protocol only; it does not
 validate checkpoint weights, datasets, JVM startup, CUDA or distributed execution.
 
+## Zero-shot evaluation on existing Vista idev nodes
+
+BC-P and DiscoveryWorld accept `GRAPH_ACTION_PROTOCOL=explicit_tools` with
+`contextgraph`. This uses the Qwen3.5-9B actor for explicit graph decisions and
+disables automatic pruning, branch archival, semantic edge binding and scheduled
+graph maintenance. Model calls to graph tools remain enabled. Omitting the flag
+preserves the existing `controller` evaluation protocol.
+
+From a clean, updated checkout inside an idle **four-node** allocation, run a
+small BC-P evaluation:
+
+```bash
+GRAPH_ACTION_PROTOCOL=explicit_tools SAMPLES=3 DATA_PATH="$PWD/data/bc_test.parquet" bash scripts/eval_bcp_qwen35_9b_4node_idev.sh contextgraph
+```
+
+For two DiscoveryWorld tasks at the default Normal difficulty, using the same
+compact observation profile as the memory integration smoke:
+
+```bash
+GRAPH_ACTION_PROTOCOL=explicit_tools BENCH_SAMPLES=2 BENCH_DISCOVERYWORLD_OBSERVATION_PROFILE=compact_v1 bash scripts/eval_discoveryworld_qwen35_9b_4node.sbatch contextgraph
+```
+
+Run these sequentially in one allocation, or in separate idle allocations. Both
+launchers manage their own model servers. `SAMPLES=-1` and `BENCH_SAMPLES=-1`
+select the full respective dataset. Existing context defaults remain 32K for
+BC-P and 64K for DiscoveryWorld; match budgets and observation profiles when
+comparing against trained policies.
+
+The launch log prints `GRAPH_ACTION_PROTOCOL=explicit_tools`. Each evaluation
+manifest records the effective protocol and disabled maintenance settings under
+`config.actor_rollout_ref.rollout.plugin`; DiscoveryWorld forwards the protocol
+to every task worker. Local tests verify configuration, worker parsing and shell
+argument forwarding. Live idev startup and model graph-tool usage still require
+inspection of the resulting logs and trajectories.
+
 ## Verification boundary
 
 Local regression coverage exercises reward precedence, peak-score reset,

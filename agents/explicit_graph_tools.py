@@ -13,6 +13,27 @@ from .graph_operations import GRAPH_OPS, handle_merge, handle_prune, handle_sele
 EXPLICIT_GRAPH_TOOLS = GRAPH_OPS | {"graph_read", "recall", "graph_compact"}
 
 
+def configure_evaluation_protocol(config, method, protocol="controller"):
+    """Resolve evaluator settings before writing manifests or creating workers."""
+    if protocol not in {'controller', 'explicit_tools'}:
+        raise ValueError('Unknown graph action protocol')
+    if protocol == 'explicit_tools' and method != 'contextgraph':
+        raise ValueError('explicit_tools requires method=contextgraph')
+    if method != 'contextgraph':
+        return config
+    plugin = config.actor_rollout_ref.rollout.plugin
+    plugin.graph_action_protocol = protocol
+    if protocol == 'explicit_tools':
+        plugin.update({
+            'structured_graph_controller': False, 'controller_owned_tool_formatting': False,
+            'consolidation_interval': 0, 'initial_consolidation_turn': 0,
+            'auto_prune_max_active': 0, 'auto_bind_branch_edges': False,
+            'enable_summary': False, 'enable_retrieval_memory': False,
+            'inject_graph_state_after_action': True, 'graph_controller_counts_as_turn': True,
+        })
+    return config
+
+
 def action_protocol(plugin):
     value = getattr(plugin, "graph_action_protocol", None)
     if value is None:
