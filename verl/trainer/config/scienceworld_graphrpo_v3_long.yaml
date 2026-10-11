@@ -74,6 +74,10 @@ actor_rollout_ref:
       scienceworld_max_steps: 100
       contextgraph_memory_mode: legacy
       graph_action_protocol: explicit_tools
+      action_output_profile: typed_action_json_v1
+      apply_chat_template_kwargs:
+        enable_thinking: false
+        preserve_thinking: true
       structured_graph_controller: false
       controller_action_policy: structural
       graph_rpo_credit_backend: outcome_only

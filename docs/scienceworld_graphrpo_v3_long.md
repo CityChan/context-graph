@@ -10,8 +10,12 @@ its initial checkpoint-controlled version; do not pool their results.
 
 ## Model-owned graph tools
 
-`graph_action_protocol: explicit_tools` exposes ordinary XML tools on every main
-and branch action turn. The model chooses whether and when to call them:
+`graph_action_protocol: explicit_tools` now uses `typed_action_json_v1` on every
+main and branch action turn. The model chooses a tool and typed arguments under
+vLLM JSON-schema constrained decoding; the framework serializes the validated
+decision for existing environment adapters. The model does not write XML.
+This replaces the earlier unconstrained explicit-XML profile; keep results separate.
+The model chooses whether and when to call graph tools:
 
 | Tool | Effect |
 | --- | --- |
@@ -53,6 +57,42 @@ Other isolated-agent configurations can opt in with the same
 overrides old automatic-maintenance flags in a per-rollout copy. Existing E/M
 continuation uses controller checkpoints and rejects explicit mode. Non-GraphRPO
 benchmark/memory-baseline launchers retain their existing protocol unless opted in.
+
+### Action protocol and training records
+
+The supported typed interfaces are BC-P/local GAIA, SWE, ScienceWorld and
+DiscoveryWorld. Every ordinary action, branch action and finalizer call supplies
+an output schema. Templates use `enable_thinking=false`: this action-only profile
+does not emit a separate reasoning block. A branch has `return` instead of
+`branch`/`finish`; simulator episodes have no model finish tool. DiscoveryWorld
+uses its public action catalogue and dialog state to constrain the command object
+and argument types, without consulting grading information. No action is forced
+merely to exercise a tool. Target existence and other semantic preconditions are
+still checked by the tool/environment after syntax validation.
+
+JSON parsing rejects partial objects, duplicate keys, unsupported tools and
+argument types before dispatch. Legacy transport delimiters embedded in arguments
+are rejected rather than interpreted as extra calls. Budget truncation can still
+interrupt a structured generation; it is recorded as an action protocol error,
+never completed by guessing fields. The finalizer restricts the schema to finish
+and does not synthesize a fallback answer from rejected output. These checks do
+not guarantee that the chosen action is useful or that the task will succeed.
+
+Raw sampled JSON, IDs and log probabilities remain in the model history and PPO
+segments. The XML execution representation is stored separately in per-turn
+metadata; it never replaces sampled tokens or receives their probabilities.
+Graph event hashes refer to the raw policy decision, and process labels use the
+dispatched action. The existing PPO objective recomputes old/new raw-model
+likelihoods on these sequences; this is constrained rollout collection, not an
+implementation of grammar-renormalized PPO. Mixing backend guided log-probs into
+the PPO denominator or rollout importance/rejection correction is rejected.
+The v3_long profile already uses recomputed old-policy probabilities.
+
+Manifests record the output profile and thinking setting, and trajectories expose
+`constrained_action_protocol` and `action_protocol_errors`. BC-P also probes the
+full action schema before starting tasks. CPU tests verify schema validity,
+dispatch, role restrictions, malformed-output rejection and exact training token
+alignment; live vLLM grammar execution still needs the GPU preflight/evaluation.
 
 ## Objective
 
@@ -107,7 +147,7 @@ does not enable compress or scope penalties.
 | KL coefficient / estimator | `0.0005 / low_var_kl`, same episode weights |
 | Learning rate / actor gradient clip | `2e-6 / 0.5` |
 | Optimizer epochs | `1`; GraphRPO uses one minibatch containing all retained streams |
-| Rollout-log-prob override | disabled; existing on-policy actor path |
+| Rollout-log-prob override | disabled; recomputed raw-policy likelihood on sampled JSON |
 | Overlong masking | disabled; preserve truncation penalties |
 
 Dynamic sampling can retain fewer than four groups when its three-batch budget

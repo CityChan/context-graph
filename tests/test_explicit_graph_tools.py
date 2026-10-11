@@ -1,6 +1,7 @@
 """Model-controlled graph edits and immutable PPO prefixes, without a live model."""
 import asyncio
 import copy
+import json
 import sys
 from types import SimpleNamespace
 
@@ -100,7 +101,19 @@ def test_prune_recall_and_budget_rejection_preserve_raw_evidence():
 
 
 def explicit_rollout(monkeypatch, responses, sequence, max_turn=40):
-    module, context, client = setup_rollout(monkeypatch, responses, max_turn=max_turn)
+    from agents.agent_text import extract_fn_call
+    def structured(text):
+        call = extract_fn_call(text)
+        if call is None:
+            return text
+        args = call['arguments']
+        if 'node_ids' in args:
+            args['node_ids'] = args['node_ids'].split(',')
+        for key in ('offset', 'topk'):
+            if key in args:
+                args[key] = int(args[key])
+        return json.dumps({'tool': call['function'], 'arguments': args})
+    module, context, client = setup_rollout(monkeypatch, [structured(r) for r in responses], max_turn=max_turn)
     class Sim(Simulator):
         pass
     Sim.sequence = sequence
@@ -145,8 +158,20 @@ def test_main_graph_calls_and_branch_graph_calls_are_policy_tokens(monkeypatch):
     assert all(any(o.extra_fields['graph_decision_mask']) for o in outputs)
     assert outputs[0].extra_fields['env_stats']['memory_n_archives'] == 0
     assert all(not any(o.extra_fields['graph_edit_credit_mask']) for o in outputs)
+    assert outputs[0].extra_fields['action_output_profile'] == 'typed_action_json_v1'
+    assert all('structured_outputs' in kwargs for _, kwargs in client.calls)
+    assert all('"tool"' in e['assistant_content_preview'] for e in edits)
     valid, errors, _ = validate_graph_trace(outputs[0].extra_fields['graph_trace'])
     assert valid, errors
+
+
+def test_malformed_structured_action_never_reaches_simulator(monkeypatch):
+    module, context, client = explicit_rollout(monkeypatch, ['{"tool":', ACTION], [(100, True)])
+    outputs = asyncio.run(module.process_item(item(), context))
+    stats = outputs[0].extra_fields['env_stats']
+    assert stats['action_protocol_errors'] == 1
+    assert stats['environment_steps'] == 1
+    assert stats['completed'] == 1
 
 
 def test_explicit_branch_keeps_parent_final_answer_reserve(monkeypatch):

@@ -30,6 +30,8 @@ def configure_evaluation_protocol(config, method, protocol="controller"):
             'auto_prune_max_active': 0, 'auto_bind_branch_edges': False,
             'enable_summary': False, 'enable_retrieval_memory': False,
             'inject_graph_state_after_action': True, 'graph_controller_counts_as_turn': True,
+            'action_output_profile': 'typed_action_json_v1',
+            'apply_chat_template_kwargs': {'enable_thinking': False, 'preserve_thinking': True},
         })
     return config
 
@@ -197,7 +199,7 @@ def execute_graph_tool(graph, trace, agent, response, *, agent_name, turn_id, pe
     graph.record_graph_op(result.success)
     event = trace.record(graph, before, turn_id=turn_id, source="model", op=attempted,
                         args=call["arguments"], success=result.success,
-                        error=None if result.success else str(result), assistant_content=response,
+                        error=None if result.success else str(result), assistant_content=agent.chat[turn]['content'],
                         assistant_turn_index=turn, decision_context={"mode": "explicit_tool", "agent": agent_name})
     event["agent_name"] = agent_name
     if attempted == 'graph_compact' and result.success:

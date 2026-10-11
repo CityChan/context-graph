@@ -19,6 +19,8 @@ def model_turn(record):
             'output_tokens': len(record['output_ids']) if 'output_ids' in record else None,
             'response_tail': str(record['response'])[-1200:] if 'response' in record else None,
             'output_recorded': 'response' in record,
+            'action_protocol_error': record.get('action_protocol_error'),
+            'dispatched_action_tail': str(record.get('dispatched_action', ''))[-1200:],
             'last_visible_messages': [{'role': m.get('role'), 'content_tail': str(m.get('content', ''))[-1200:]}
                                       for m in record.get('messages', [])[-2:]]}
 

@@ -235,6 +235,17 @@ async def evaluate(args):
                   "required": ["ok"], "additionalProperties": False}
         answer = await probe.create_completion(prompt, max_new_tokens=64, structured_outputs={"json": schema})
         assert json.loads(answer["choices"][0]["message"]["content"])["ok"] in (True, False)
+        if getattr(args, 'graph_action_protocol', 'controller') == 'explicit_tools':
+            from agents.action_contract import ActionContract
+            contract = ActionContract('LocalSearch', None)
+            schema = contract.schema()
+            action_prompt = tokenizer.apply_chat_template([{'role': 'user', 'content':
+                'Return {"tool":"graph_read","arguments":{}}.'}],
+                tokenize=True, add_generation_prompt=True, enable_thinking=False)
+            answer = await probe.create_completion(action_prompt, max_new_tokens=256,
+                                                    structured_outputs={'json': schema})
+            contract.decode(answer['choices'][0]['message']['content'], schema)
+            print('Typed action schema preflight passed')
     finally:
         await probe.client.aclose()
 

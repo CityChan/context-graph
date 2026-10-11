@@ -239,9 +239,15 @@ async def submit_emergency_final_answer(
         return False
 
     print(f"[FINALIZER] forcing best-effort answer with {final_budget} tokens")
+    contract = getattr(agent, 'action_contract', None)
+    previous_phase = getattr(agent, 'force_action_finish', False)
+    if contract is not None:
+        agent.force_action_finish = True
     try:
         response = await agent.step(max_new_tokens=final_budget)
     finally:
+        if contract is not None:
+            agent.force_action_finish = previous_phase
         if context_overlay and overlay_idx is not None:
             agent.replace_user_turn(overlay_idx, persistent_content)
     if response is None:
@@ -251,6 +257,12 @@ async def submit_emergency_final_answer(
     # arguments/reasoning as if the model had submitted an answer.
     visible_response = response.rsplit("</think>", 1)[-1].strip()
     call = extract_fn_call(visible_response)
+    if contract is not None:
+        # A truncated/rejected structured decision must never become an invented answer.
+        if not call or call['function'] != 'finish':
+            return False
+        observation = await action_runner(env, visible_response)
+        return observation is None
     valid_finish = bool(
         call and call["function"] == "finish"
         and call["arguments"].get("answer", "").strip()

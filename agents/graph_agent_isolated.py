@@ -229,6 +229,9 @@ async def process_item(
                 setattr(config.plugin, name, value)
     validate_session_summary(config.plugin)
     is_train = context.is_train
+    if explicit_graph_tools and is_train:
+        from .action_contract import validate_training_contract
+        validate_training_contract(context.config)
     diagnostic_fix = validate_fix(getattr(config.plugin, "diagnostic_fix", "none"), is_train)
     repeat_advice = RepeatAdvice()
 
@@ -285,6 +288,8 @@ async def process_item(
         )
         if explicit_graph_tools:
             user_prompt[0]['content'] += '\n\n' + EXPLICIT_GRAPH_PROMPT
+            from .action_contract import ActionContract, PROMPT as ACTION_PROMPT, PROFILE as ACTION_PROFILE
+            user_prompt[0]['content'] += '\n\n' + ACTION_PROMPT
 
         branch_prompt = BRANCH_MESSAGE_SEARCH if 'search' in workflow else BRANCH_MESSAGE
 
@@ -637,6 +642,7 @@ async def process_item(
             config,
             prompt_turn=prompt_turn,
             process_reward_min_precedence=graph_rpo_enabled,
+            action_contract=ActionContract(ability, env) if explicit_graph_tools else None,
         )
         if explicit_graph_tools:
             agent['main'].graph_base_prompt = copy.deepcopy(agent['main'].chat[:prompt_turn])
@@ -957,7 +963,9 @@ async def process_item(
             new_evidence_text = None
 
             # ── Graph operations on parent graph ──
-            if explicit_graph_tools and detect_graph_call(response):
+            if explicit_graph_tools and response.startswith('[Action protocol rejected]'):
+                observation = response
+            elif explicit_graph_tools and detect_graph_call(response):
                 observation = execute_graph_tool(graph, graph_trace, agent['main'], response,
                     agent_name='main', turn_id=main_turn_count, penalize=bool(process_reward and is_train))
             elif (
@@ -1083,7 +1091,7 @@ async def process_item(
                     if explicit_graph_tools:
                         branch_event = graph_trace.record(
                             graph, trace_before, turn_id=main_turn_count, source='model', op='branch',
-                            args=fn_call.get('arguments', {}), assistant_content=response,
+                            args=fn_call.get('arguments', {}), assistant_content=agent['main'].chat[-1]['content'],
                             assistant_turn_index=branch_turn_index,
                             decision_context={'mode': 'explicit_tool', 'agent': 'main'})
 
@@ -1110,6 +1118,7 @@ async def process_item(
                         config,
                         prompt_turn=prompt_turn,
                         process_reward_min_precedence=graph_rpo_enabled,
+                        action_contract=ActionContract(ability, env, branch=True) if explicit_graph_tools else None,
                     )
                     branch_prompt_formatted = branch_prompt.format(message=message_to_branch)
 
@@ -1131,6 +1140,8 @@ async def process_item(
                     wrapped_action = make_graph_aware_run_action(env, child_graph)
                     if explicit_graph_tools:
                         async def wrapped_action(response):
+                            if response.startswith('[Action protocol rejected]'):
+                                return response
                             if detect_graph_call(response):
                                 return execute_graph_tool(graph, graph_trace, agent[agent_name], response,
                                     agent_name=agent_name, turn_id=iteration + (len(agent[agent_name].chat) - agent[agent_name].prompt_turn) // 2,
@@ -2092,6 +2103,8 @@ async def process_item(
         env.stats['consol_candidate_skips'] = consolidation_stats['candidate_skips']
         env.stats['structured_graph_controller'] = int(structured_graph_controller)
         env.stats['explicit_graph_tools'] = int(explicit_graph_tools)
+        env.stats['action_protocol_errors'] = sum(a.action_protocol_errors for a in agent.values())
+        env.stats['constrained_action_protocol'] = int(explicit_graph_tools)
         env.stats['graph_context_refresh_tokens'] = sum(getattr(a, 'graph_context_tokens', 0) for a in agent.values())
         env.stats['controller_allow_pass'] = int(controller_allow_pass)
         env.stats['controller_structural_policy'] = int(
@@ -2199,10 +2212,11 @@ async def process_item(
             GRAPH_OP_MARKERS = ('<function=merge>', '<function=prune>', '<function=select>', '<function=add_edge>',
                                 '<function=recall>', '<function=graph_read>', '<function=graph_compact>')
             if rollout_status['unfolded_main']:
-                bad_turn = [i for i, turn in enumerate(agent['main'].messages()) if
-                            '<function=branch>' not in str(turn)
-                            and '<function=finish>' not in str(turn)
-                            and not any(m in str(turn) for m in GRAPH_OP_MARKERS)]
+                bad_turn = [i for i, turn in enumerate(agent['main'].messages())
+                            for decision in [str((agent['main'].additional_info[i] or {}).get('dispatched_action', turn))]
+                            if '<function=branch>' not in decision
+                            and '<function=finish>' not in decision
+                            and not any(m in decision for m in GRAPH_OP_MARKERS)]
                 agent['main'].set_process_reward(bad_turn, -1)
 
             if rollout_status['no_finish']:
@@ -2237,6 +2251,7 @@ async def process_item(
                 '[Error] The "search" function requires a "query" argument',
                 '[Error] The "open_page" function requires either a "docid" or a "url".',
                 '[Error] The function',
+                '[Action protocol rejected]',
                 'Use exactly one action tool call with a command parameter.',
                 'The action command cannot be empty.',
             )
@@ -2444,6 +2459,7 @@ async def process_item(
                     'scienceworld_training_reward_profile': scienceworld_reward_profile,
                     'graph_rpo_credit_backend': graph_rpo_backend,
                     'graph_action_protocol': graph_protocol,
+                    'action_output_profile': ACTION_PROFILE if explicit_graph_tools else 'legacy',
                     'native_task_reward': native_task_reward,
                     'training_reward_applied': scienceworld_reward_profile == 'v3_long' and is_train,
                     'hit_no_tool_limit': int(no_tool_guard.stopped),

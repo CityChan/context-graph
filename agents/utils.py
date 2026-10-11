@@ -725,7 +725,13 @@ class Agent(SessionSummaryMixin, AgentContext):
         prompt_turn=2,
         process_reward_min_precedence=False,
         chat_template_kwargs=None,
+        action_contract=None,
     ):
+        self.action_contract = action_contract
+        self.force_action_finish = False
+        self.action_protocol_errors = 0
+        if action_contract is not None:
+            chat_template_kwargs = {**(chat_template_kwargs or {}), 'enable_thinking': False}
         super().__init__(
             conversations,
             tokenizer,
@@ -754,6 +760,12 @@ class Agent(SessionSummaryMixin, AgentContext):
                           getattr(self, 'working_context_limit', self.config.prompt_length + self.config.response_length),
                           len(prompt) + max_new_tokens if max_new_tokens is not None else 131072)
         completion_kwargs = dict(completion_kwargs or {})
+        action_schema = None
+        if self.action_contract is not None:
+            action_schema = self.action_contract.schema(final=self.force_action_finish)
+            if 'structured_outputs' in completion_kwargs:
+                raise ValueError('Action contract cannot be overridden by another output schema')
+            completion_kwargs['structured_outputs'] = {'json': action_schema}
         context_record = None
         if getattr(self.config.plugin, "capture_model_contexts", False):
             context_record = {
@@ -778,6 +790,21 @@ class Agent(SessionSummaryMixin, AgentContext):
             context_record['response'] = response
             context_record['output_ids'] = list(completion['choices'][0]['message'].get('raw_output_ids', []))
         self.append({'role': 'assistant', 'content': response}, completion)
+        if self.action_contract is not None:
+            try:
+                payload, wire = self.action_contract.decode(response, action_schema)
+            except (ValueError, TypeError) as error:
+                self.action_protocol_errors += 1
+                self.additional_info[-1] = {'action_protocol_error': str(error)}
+                if context_record is not None:
+                    context_record['action_protocol_error'] = str(error)
+                return '[Action protocol rejected] No tool executed: ' + str(error)
+            self.additional_info[-1] = {'policy_action': payload, 'dispatched_action': wire}
+            if context_record is not None:
+                context_record['dispatched_action'] = wire
+            # Preserve sampled JSON and its exact token/log-prob sequence in chat.
+            # Only the executor receives the deterministic legacy wire format.
+            return wire
         if getattr(self.config.plugin, "controller_owned_tool_formatting", False):
             from .tool_protocol import canonicalize_tool_call_text
 
