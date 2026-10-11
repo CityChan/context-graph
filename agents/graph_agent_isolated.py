@@ -61,6 +61,7 @@ from .rollout_status import classify_rollout_status, validate_session_summary
 from .scienceworld_training import NoToolGuard, training_reward, validate_reward_profile
 from .explicit_graph_tools import (
     action_protocol, EXPLICIT_GRAPH_PROMPT, graph_call as detect_graph_call, execute_graph_tool, record_observation,
+    decision_state, GRAPH_DECISION_PROFILE,
 )
 from .prompts import create_chat, BRANCH_MESSAGE_SEARCH, BRANCH_MESSAGE
 from .verifier import judge_scope
@@ -1138,6 +1139,8 @@ async def process_item(
                                 - protected_final_answer_budget - BRANCH_HANDOFF_RESERVE),
                             int(getattr(config.plugin, 'branch_len', None) or config.response_length))
                         agent[agent_name].working_context_limit = config.prompt_length + config.response_length
+                        agent[agent_name].replace_user_turn(len(agent[agent_name].chat) - 1,
+                            branch_prompt_formatted + '\n\n' + decision_state(graph, agent[agent_name]))
 
                     # 3. Branch runs with a graph-aware run_action that tracks
                     #    its observations into the child graph (not the parent)
@@ -1147,9 +1150,10 @@ async def process_item(
                             if response.startswith('[Action protocol rejected]'):
                                 return response
                             if detect_graph_call(response):
-                                return execute_graph_tool(graph, graph_trace, agent[agent_name], response,
+                                result = execute_graph_tool(graph, graph_trace, agent[agent_name], response,
                                     agent_name=agent_name, turn_id=iteration + (len(agent[agent_name].chat) - agent[agent_name].prompt_turn) // 2,
                                     penalize=bool(process_reward and is_train))
+                                return str(result) + '\n\n' + decision_state(graph, agent[agent_name])
                             before = graph_trace.capture(graph)
                             result = await run_action(env, response)
                             if result is not None:
@@ -1157,7 +1161,7 @@ async def process_item(
                                 event = graph_trace.record(graph, before, turn_id=iteration, source='environment',
                                     op='add_observation', args={'node_id': node_id}, success=True)
                                 event['agent_name'] = agent_name
-                                result += '\n\n' + graph.to_state_text()
+                                result += '\n\n' + decision_state(graph, agent[agent_name])
                             return result
                     agent_return = await agent[agent_name].react(
                         wrapped_action,
@@ -1262,7 +1266,7 @@ async def process_item(
                     # Only inject parent graph state if there are multiple branches
                     # (so the agent can see what summaries exist for cross-branch reasoning).
                     # Single-branch case degenerates to fold-like behavior (no graph noise).
-                    if explicit_graph_tools or len(branches) > 1:
+                    if not explicit_graph_tools and len(branches) > 1:
                         observation = f'{branch_message}\n\n{graph.to_state_text()}'
                     else:
                         observation = branch_message
@@ -1503,7 +1507,7 @@ async def process_item(
                 observation = (
                     f"{observation}\n\n"
                     "[Latest ContextGraph state]\n"
-                    f"{graph.to_state_text()}"
+                    + (decision_state(graph, agent['main']) if explicit_graph_tools else graph.to_state_text())
                 )
 
             observation_turn = len(agent['main'].chat)
@@ -2469,6 +2473,7 @@ async def process_item(
                     'graph_rpo_credit_backend': graph_rpo_backend,
                     'graph_action_protocol': graph_protocol,
                     'action_output_profile': ACTION_PROFILE if explicit_graph_tools else 'legacy',
+                    'graph_decision_profile': GRAPH_DECISION_PROFILE if explicit_graph_tools else 'legacy',
                     'native_task_reward': native_task_reward,
                     'training_reward_applied': scienceworld_reward_profile == 'v3_long' and is_train,
                     'hit_no_tool_limit': int(no_tool_guard.stopped),

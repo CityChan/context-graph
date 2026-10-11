@@ -11,6 +11,7 @@ from .graph_operations import GRAPH_OPS, handle_merge, handle_prune, handle_sele
 
 
 EXPLICIT_GRAPH_TOOLS = GRAPH_OPS | {"graph_read", "recall", "graph_compact"}
+GRAPH_DECISION_PROFILE = 'graph_affordances_v2'
 
 
 def configure_evaluation_protocol(config, method, protocol="controller"):
@@ -31,6 +32,7 @@ def configure_evaluation_protocol(config, method, protocol="controller"):
             'enable_summary': False, 'enable_retrieval_memory': False,
             'inject_graph_state_after_action': True, 'graph_controller_counts_as_turn': True,
             'action_output_profile': 'typed_action_json_v1',
+            'graph_decision_profile': GRAPH_DECISION_PROFILE,
             'apply_chat_template_kwargs': {'enable_thinking': False, 'preserve_thinking': True},
         })
     return config
@@ -69,6 +71,34 @@ Branches start with the original task, their assignment and shared graph state;
 use graph_read to inspect evidence. Their observations remain after return.
 The framework records observations/temporal/delegation links, but makes no
 semantic decisions. Graph tools consume the same turn/token budget as task tools.
+Working-context space and cumulative episode tokens are DIFFERENT limits:
+graph_compact can reduce the former, but costs tokens and never refunds the latter.
+merge/prune alone do not remove old messages from your working conversation.
+select changes focus for subsequent observations; add_edge records a relationship.
+Neither is a compression operation.
+
+Choose by the evidence and the cost, not a tool quota:
+- Before repeating a search or measurement, inspect a relevant existing node with
+  graph_read when its preview is insufficient. In a branch, this can recover
+  the parent's evidence without repeating an environment action.
+- When several nodes contain overlapping findings you have read, merge them into
+  a concise note preserving source IDs, measured values, uncertainty and pending work.
+  Never merge unseen previews as though they were verified facts.
+- Prune a demonstrated dead end or obsolete state only when it is not needed for
+  the current task. The raw node remains recoverable with graph_read/recall.
+- If long/redundant history obstructs further work, use merge/prune to prepare a
+  smaller active graph, then graph_compact if its snapshot fits the shown limits.
+  If history is short, facts are still distinct, or little episode budget remains,
+  continue a useful task action, return your branch findings, or finish instead.
+
+Illustrative sequence, NOT a required workflow (IDs and sources below are fictional):
+Suppose you have read n2: "source A measured 20 C" and n3: "source B confirms
+20 C; pressure still unknown", and their raw pages dominate the working context.
+One turn: {"tool":"merge","arguments":{"node_ids":["n2","n3"],"summary":"A and B agree on 20 C. Pressure remains unknown."}}
+After receiving the new node ID and checking that the smaller snapshot fits,
+a later turn: {"tool":"graph_compact","arguments":{}}
+Then continue investigating pressure. Preserve the measured value and sources;
+do not prune unrelated evidence or invent a pressure value.
 
 Examples:
 {"tool":"graph_read","arguments":{"offset":0}}
@@ -123,10 +153,8 @@ def parse_graph_call(text):
     return {"function": name, "arguments": arguments}
 
 
-def compact_context(agent, graph):
-    """Start a new immutable training segment only at the model's request."""
-    from .utils import AgentContext
-
+def compaction_plan(agent, graph):
+    """Read-only rendering shared by the model-visible estimate and executor."""
     active = sorted(graph.active_nodes, key=lambda n: (n.id != graph.active_node_id, n.id))
     snapshot = json.dumps({
         "focus": graph.active_node_id,
@@ -142,6 +170,26 @@ def compact_context(agent, graph):
     cost = len(agent._render_prefix(prompt))
     base_cost = len(agent._render_prefix(getattr(agent, "graph_base_prompt", agent.chat[:agent.prompt_turn])))
     charge = max(cost - base_cost, 0)
+    return prompt, cost, charge
+
+
+def decision_state(graph, agent):
+    """Expose resource facts, without choosing targets or scheduling graph work."""
+    _, cost, charge = compaction_plan(agent, graph)
+    remaining = agent.remaining_generation_tokens()
+    return (graph.to_state_text() + '\n[Graph resource snapshot before this feedback is appended] '
+            f'working_context_tokens={len(agent.context())}; episode_tokens_remaining={remaining}; '
+            f'compact_prompt_tokens={cost}/{agent.config.prompt_length}; '
+            f'compact_token_charge={charge}; '
+            f'compact_fits_now={cost <= agent.config.prompt_length and charge + 128 < remaining}. '
+            'Feedback and the next action also cost tokens. Compaction does not refund episode tokens.')
+
+
+def compact_context(agent, graph):
+    """Start a new immutable training segment only at the model's request."""
+    from .utils import AgentContext
+
+    prompt, cost, charge = compaction_plan(agent, graph)
     if cost > agent.config.prompt_length:
         raise ValueError("active graph exceeds prompt budget; merge/prune more before graph_compact")
     if charge + 128 >= agent.remaining_generation_tokens():

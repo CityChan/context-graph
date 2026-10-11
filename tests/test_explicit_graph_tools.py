@@ -159,6 +159,9 @@ def test_main_graph_calls_and_branch_graph_calls_are_policy_tokens(monkeypatch):
     assert outputs[0].extra_fields['env_stats']['memory_n_archives'] == 0
     assert all(not any(o.extra_fields['graph_edit_credit_mask']) for o in outputs)
     assert outputs[0].extra_fields['action_output_profile'] == 'typed_action_json_v1'
+    assert outputs[0].extra_fields['graph_decision_profile'] == 'graph_affordances_v2'
+    assert 'compact_token_charge=' in str(client.calls[1][1]['messages'])
+    assert 'compact_token_charge=' in str(client.calls[-1][1]['messages'])
     assert all('structured_outputs' in kwargs for _, kwargs in client.calls)
     assert all('"tool"' in e['assistant_content_preview'] for e in edits)
     valid, errors, _ = validate_graph_trace(outputs[0].extra_fields['graph_trace'])
@@ -283,3 +286,54 @@ def test_branch_edits_cannot_receive_credit_on_a_main_turn():
     assert valid_graph_edit_events({'events': [event]}) == []
     event['agent_name'] = 'main'
     assert valid_graph_edit_events({'events': [event]}) == [event]
+
+
+def test_graph_feedback_exposes_raw_size_and_exact_compaction_cost_without_mutating():
+    from agents.explicit_graph_tools import decision_state, compaction_plan, compact_context
+    agent = make_agent([], enable_summary=False, graph_action_protocol='explicit_tools')
+    agent.config.prompt_length = 4000
+    graph = ContextGraph(agent.tokenizer)
+    graph.model_owned = True
+    graph.add_node('question', NodeType.QUERY)
+    graph.add_node('preview', NodeType.OBSERVATION, metadata={'raw_content': 'x' * 1000})
+    before = copy.deepcopy(graph.to_dict())
+    ids_before = copy.deepcopy(agent.chat_ids)
+    used = agent.response_tokens_used()
+    _, cost, charge = compaction_plan(agent, graph)
+    state = decision_state(graph, agent)
+    assert 'preview=7tok stored=1000tok' in state
+    assert f'compact_prompt_tokens={cost}/4000' in state
+    assert f'compact_token_charge={charge}' in state
+    assert 'compact_fits_now=True' in state
+    assert graph.to_dict() == before and agent.chat_ids == ids_before
+    assert agent.response_tokens_used() == used
+    compact_context(agent, graph)
+    prefix = agent.summary_sessions[-1]['prefix']
+    assert len(prefix.context()) - len(prefix.get_generation_prompt()) == cost
+    assert agent.graph_context_tokens == charge
+    assert agent.response_tokens_used() > used  # a real model-requested refresh is charged
+
+
+def test_graph_feedback_reports_oversized_raw_graph_even_with_tiny_previews():
+    from agents.explicit_graph_tools import decision_state
+    agent = make_agent([], enable_summary=False)
+    graph = ContextGraph(agent.tokenizer)
+    graph.model_owned = True
+    graph.add_node('question', NodeType.QUERY)
+    graph.add_node('short', NodeType.OBSERVATION, metadata={'raw_content': 'x' * 10000})
+    assert 'compact_fits_now=False' in decision_state(graph, agent)
+    assert 'stored=10000tok' in decision_state(graph, agent)
+    assert len(graph.active_nodes) == 2 and graph.nodes['n2'].is_active()
+
+
+def test_graph_policy_examples_match_typed_schema_and_remain_optional():
+    from agents.action_contract import ActionContract
+    from agents.explicit_graph_tools import EXPLICIT_GRAPH_PROMPT
+    contract = ActionContract('LocalSearch', None)
+    examples = [line[line.index('{'):].strip() for line in EXPLICIT_GRAPH_PROMPT.splitlines()
+                if '{"tool"' in line]
+    assert any('"merge"' in line for line in examples)
+    for example in examples:
+        contract.decode(example, contract.schema())
+    assert 'NOT a required workflow' in EXPLICIT_GRAPH_PROMPT
+    assert 'never refunds' in EXPLICIT_GRAPH_PROMPT

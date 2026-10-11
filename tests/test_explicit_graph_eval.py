@@ -24,6 +24,7 @@ def test_eval_manifest_config_matches_selected_protocol(benchmark, protocol):
     assert plugin.structured_graph_controller == (protocol == 'controller')
     assert plugin.auto_prune_max_active == (12 if protocol == 'controller' else 0)
     if protocol == 'explicit_tools':
+        assert plugin.graph_decision_profile == 'graph_affordances_v2'
         assert not any([plugin.auto_bind_branch_edges, plugin.enable_summary, plugin.enable_retrieval_memory,
                         plugin.consolidation_interval, plugin.initial_consolidation_turn,
                         plugin.controller_owned_tool_formatting])

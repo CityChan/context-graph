@@ -265,6 +265,24 @@ completion should be distinguished from a natural model finish using
 
 ## Verification boundary
 
+`graph_affordances_v2` adds conditional graph-use guidance and a fictional
+read-evidence / merge / compact example to the shared training/evaluation prompt.
+It explicitly includes cases where continuing a task action is preferable.
+No call quota, periodic controller, operation bonus or automatic edit is added.
+Model-owned graph rows distinguish preview token counts from stored raw-content
+token counts. Main/branch feedback includes the working-context size, remaining
+episode tokens, and the exact rendered snapshot cost used by `graph_compact`.
+These are read-only resource facts measured before the feedback itself is appended;
+the feedback and subsequent action also consume budget, so eligibility is rechecked
+on execution. The profile is saved in explicit evaluation manifests and trajectories.
+
+This makes graph actions easier to assess but does not demonstrate that a zero-shot
+model will use them. Zero graph calls remain zero, and graph-call frequency alone
+is not a quality metric. Compaction cannot cure cumulative token exhaustion by
+refunding past work. If repeated live runs still show no useful graph decisions,
+model-authored, replay-validated SFT examples are a separate training step; sparse
+terminal-reward RL cannot be assumed to discover the behavior from all-zero outcomes.
+
 The `07cebf8` Vista BC-P run (job 1064887, three tasks) finished only through
 the emergency finalizer: `natural_finish=0` for all three. It recorded six
 action protocol errors, including two branch requests with only ten output

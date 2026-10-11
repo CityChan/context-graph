@@ -744,8 +744,12 @@ class ContextGraph:
             preview = node.content[:60].replace("\n", " ")
             if len(node.content) > 60:
                 preview += "..."
+            size = f'{node.token_count}tok'
+            if getattr(self, 'model_owned', False):
+                raw = node.metadata.get('raw_content', node.content)
+                size = f'preview={node.token_count}tok stored={self._count_tokens(raw)}tok'
             lines.append(
-                f"  [{nid}]{status_mark} {node.type.value}: {preview} [{node.token_count}tok]"
+                f"  [{nid}]{status_mark} {node.type.value}: {preview} [{size}]"
             )
         if truncated_nodes > 0:
             lines.append(f"  ... and {truncated_nodes} more nodes (hidden)")
