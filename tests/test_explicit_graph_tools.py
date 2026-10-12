@@ -130,8 +130,11 @@ def explicit_rollout(monkeypatch, responses, sequence, max_turn=40):
     return module, context, client
 
 
-def test_model_can_decline_graph_work_and_exceed_old_active_node_limit(monkeypatch):
+@pytest.mark.parametrize('teacher_profile', ['evaluation', 'graph_demonstration_v1'])
+def test_model_can_decline_graph_work_and_exceed_old_active_node_limit(monkeypatch, teacher_profile):
     module, context, client = explicit_rollout(monkeypatch, [ACTION] * 14, [(0, False)] * 13 + [(100, True)])
+    context.config.actor_rollout_ref.rollout.plugin.sft_teacher_profile = teacher_profile
+    context.config.actor_rollout_ref.rollout.prompt_length = 30000
     outputs = asyncio.run(module.process_item(item(), context))
     trace = outputs[0].extra_fields['graph_trace']
     assert len(client.calls) == 14
@@ -139,6 +142,8 @@ def test_model_can_decline_graph_work_and_exceed_old_active_node_limit(monkeypat
     assert outputs[0].extra_fields['env_stats']['graph_n_pruned'] == 0
     assert outputs[0].extra_fields['env_stats']['consol_attempts'] == 0
     assert 'graph_compact' in str(client.calls[0][1]['messages'])
+    assert ('SFT demonstration collection' in str(client.calls[0][1]['messages'])) == (teacher_profile == 'graph_demonstration_v1')
+    assert outputs[0].extra_fields['env_stats']['graph_op_attempts'] == 0
     assert context.config.actor_rollout_ref.rollout.plugin.structured_graph_controller is True
 
 

@@ -227,6 +227,8 @@ async def build(args, tokenizer):
                        "trajectory_id": row_id, "task_id": episode["question_hash"],
                        "question_hash": episode["question_hash"], "source_index": episode["source_index"],
                        "candidate": episode["candidate"], "teacher_model": settings.teacher_model,
+                       "teacher_profile": getattr(settings, "teacher_profile", "evaluation"),
+                       "selection": getattr(settings, "selection", "uniform"),
                        "task_reward": 1.0, "kind": row_kind, "tokens": length,
                        "segment_has_graph_action": any(t in GRAPH_TOOLS for t in tools),
                        "episode": str(path.relative_to(root)), "graph_trace_valid": True,

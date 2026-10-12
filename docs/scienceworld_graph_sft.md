@@ -28,6 +28,29 @@ disabled. The model chooses graph operations and environment commands. The
 simulator ends episodes; `finish` is not available to the model. Candidate
 generation does not force graph calls or manufacture successful feedback.
 
+The endpoint wrapper now defaults to `SFT_SELECTION=task_balanced`: shuffle
+within task types and take a seeded round-robin across types before applying
+`START_INDEX`/`SAMPLES`. Small batches therefore cover different task types
+when available, rather than repeatedly sampling only conductivity variations.
+This uses training metadata, not task outcomes or gold solutions. It changes
+the collection distribution; it is not a representative accuracy evaluation.
+
+`SFT_TEACHER_PROFILE=graph_demonstration_v1` adds collection-only guidance to
+the initial system prompt: preserve useful evidence and failed attempts, consider
+merge/prune after meaningful phases, and request compaction before running out
+of space. The model still selects every action and target, and may decline graph
+work. There is no forced graph turn, automatic pruning, or operation quota.
+The exact guidance is retained in sampled prefixes and exported SFT messages;
+formal evaluation does not enable it by default. Record the prompt difference
+when interpreting teacher/student results. Accepted Parquets record the profile
+and selection mode. `TEACHER_TEMPERATURE` defaults to 0.7.
+
+To reproduce the former collection strategy, explicitly set
+`SFT_TEACHER_PROFILE=evaluation SFT_SELECTION=uniform`. Use a fresh run directory
+for any strategy change. These generation changes do not guarantee successful
+tasks or useful graph trajectories; inspect diagnostics and accepted-row counts
+before scaling up. Success and graph-evidence review gates are unchanged.
+
 Dataset metadata is generated under the run directory, without overwriting
 shared repository datasets. Before generation, every training task/variation
 is checked against the simulator's official training split. Identity and

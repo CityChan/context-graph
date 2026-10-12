@@ -107,6 +107,8 @@ def diagnose(root):
             "commit": manifest.get("commit"), "teacher": settings.get("teacher_model"),
             "settings": {k: settings.get(k) for k in ("benchmark", "samples", "candidates", "max_turn", "max_steps",
                                                       "prompt_length", "response_length", "branch_len", "turn_max_tokens")},
+            "teacher_profile": settings.get("teacher_profile", "evaluation"),
+            "selection": settings.get("selection", "uniform"),
             "graph_config": {k: plugin.get(k) for k in ("graph_action_protocol", "action_output_profile",
                                                        "structured_graph_controller", "auto_prune_max_active",
                                                        "consolidation_interval", "initial_consolidation_turn")},

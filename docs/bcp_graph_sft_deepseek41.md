@@ -73,10 +73,25 @@ not immutable checkpoints: requested and returned model identifiers are logged.
 
 Each question has two independently sampled full episodes by default. These
 are **not** matched counterfactual continuations from saved mid-task states.
-The existing conditional graph-use prompt is identical to explicit evaluation.
+The endpoint wrapper defaults to `SFT_TEACHER_PROFILE=graph_demonstration_v1`,
+which adds collection-only guidance for evidence notes, responding to failed
+actions and model-requested compaction before window exhaustion. Actions,
+arguments, retained evidence and operation timing remain model choices; no
+graph-call quota or automatic graph operation is introduced. Formal evaluation
+keeps its existing prompt. Use `SFT_TEACHER_PROFILE=evaluation` to reproduce the
+former evaluation-prompt collection strategy. `TEACHER_TEMPERATURE` defaults to
+0.7; these settings are stored in the manifest. Use a fresh run directory when
+changing them. The shared Python CLI defaults to the evaluation profile unless
+`--teacher-profile` is supplied, as the wrappers do.
 References stay in the environment/grader; the teacher receives the question
 and retrieved evidence. Non-thinking mode collects JSON actions for the same
 non-thinking student interface, not hidden reasoning labels.
+
+The demonstration guidance remains in the exact sampled conditioning prefixes
+and exported SFT messages; it is not silently stripped. Accepted rows record
+`teacher_profile` and `selection`. Validate the student with the intended eval
+prompt after SFT; guided teacher demonstrations are not zero-shot eval results,
+and guidance does not guarantee accepted graph trajectories.
 
 Every request saves its exact messages, raw response, permitted action schema,
 teacher usage, requested/returned model IDs and finish reason. API output is

@@ -292,6 +292,10 @@ async def process_item(
             from .action_contract import (ActionContract, PROMPT as ACTION_PROMPT, PROFILE as ACTION_PROFILE,
                                           BRANCH_HANDOFF_RESERVE, MIN_ACTION_TOKENS)
             user_prompt[0]['content'] += '\n\n' + ACTION_PROMPT
+            from .sft_teacher_guidance import teacher_guidance
+            guidance = teacher_guidance(getattr(config.plugin, 'sft_teacher_profile', 'evaluation'))
+            if guidance:
+                user_prompt[0]['content'] += '\n\n' + guidance
 
         branch_prompt = BRANCH_MESSAGE_SEARCH if 'search' in workflow else BRANCH_MESSAGE
 

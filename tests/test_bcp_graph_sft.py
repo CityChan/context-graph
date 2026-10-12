@@ -94,6 +94,24 @@ def test_question_split_does_not_depend_on_candidate_or_episode_order():
     assert {split_for("same-question", 42, 0.5) for candidate in range(10)} in ({"train"}, {"validation"})
 
 
+def test_task_balanced_selection_preserves_splits_and_shard_order():
+    from scripts.make_scienceworld_data import to_row
+    def sw(name, variation):
+        return to_row({"task_id": f"{name}-{variation}", "task_name": name,
+                       "variation_idx": variation, "split": "train"}, "scienceworld_graph")
+    rows = [sw("conductivity", i) for i in range(20)] + [sw("boil", 0), sw("freeze", 0)]
+    heldout = [sw("boil", 100)]
+    selected = select_training_rows(rows, heldout, 0, -1, 42, "task_balanced")
+    assert len(selected) == len(set(selected)) == len(rows)
+    assert {rows[i]["extra_info"]["task_name"] for i in selected[:3]} == {"conductivity", "boil", "freeze"}
+    assert select_training_rows(rows, heldout, 0, 3, 42, "task_balanced") == selected[:3]
+    assert select_training_rows(rows, heldout, 3, 3, 42, "task_balanced") == selected[3:6]
+    with pytest.raises(ValueError, match="overlap"):
+        select_training_rows(rows, [rows[-1]], 0, 3, 42, "task_balanced")
+    with pytest.raises(ValueError, match="requires ScienceWorld"):
+        select_training_rows([row("question")], [row("held out")], 0, 1, 42, "task_balanced")
+
+
 def test_teacher_transport_does_not_rewrite_raw_json_or_use_judge_credentials(tmp_path, monkeypatch):
     from tests.test_session_restart import make_agent
     agent = make_agent([])
@@ -145,7 +163,8 @@ def test_evidence_review_rejects_unsupported_or_oversized_edits():
 
 
 @pytest.mark.parametrize("benchmark", ["bcp", "scienceworld"])
-def test_real_executor_collects_and_exports_compacted_json_policy(tmp_path, monkeypatch, benchmark):
+@pytest.mark.parametrize("teacher_profile", ["evaluation", "graph_demonstration_v1"])
+def test_real_executor_collects_and_exports_compacted_json_policy(tmp_path, monkeypatch, benchmark, teacher_profile):
     from collections import Counter
     from agents import graph_agent_isolated
     from scripts import generate_bcp_graph_sft as generator, build_bcp_graph_sft as curator
@@ -197,6 +216,7 @@ def test_real_executor_collects_and_exports_compacted_json_policy(tmp_path, monk
                            turn_max_tokens=2048, workers=1, candidates=1, teacher_model="test-teacher",
                            transport="deepseek", temperature=0.7, preflight_only=False)
     args.benchmark, args.max_steps = benchmark, 100
+    args.teacher_profile = teacher_profile
     if benchmark == "scienceworld":
         args.prompt_length, args.response_length = 16384, 49152
     config = make_config(args)
@@ -219,6 +239,8 @@ def test_real_executor_collects_and_exports_compacted_json_policy(tmp_path, monk
     segments = transcript_segments(requests)
     assert len(segments) == 2
     assert all("secret answer" not in str(r["messages"]) for r in requests)
+    for r in requests:
+        assert ("SFT demonstration collection" in str(r["messages"])) == (teacher_profile == "graph_demonstration_v1")
     (root / "manifest.json").write_text(json.dumps({"profile": generator.SCIENCEWORLD_PROFILE if benchmark == "scienceworld" else generator.PROFILE,
                       "settings": vars(args), "config": OmegaConf.to_container(config)}))
     from scripts.diagnose_graph_sft import diagnose
@@ -245,6 +267,7 @@ def test_real_executor_collects_and_exports_compacted_json_policy(tmp_path, monk
     graph_rows = pd.read_parquet(tmp_path / "sft/graph_train.parquet")
     assert len(graph_rows) == 2 and not graph_rows.iloc[0]["causal_graph_benefit_verified"]
     assert graph_rows["segment_has_graph_action"].tolist() == [True, False]
+    assert set(graph_rows["teacher_profile"]) == {teacher_profile}
     assert not (tmp_path / "sft/control_train.parquet").exists()
     # Completed episode resumes without dispatching any further task requests.
     asyncio.run(generator.collect(args, [data_row], [0], config, tokenizer, root))
@@ -304,6 +327,7 @@ def test_shell_dry_run_never_starts_services_or_requires_api_key(tmp_path, trans
     assert arguments[0] == "scripts/generate_bcp_graph_sft.py"
     assert "--dry-run" in arguments
     assert arguments[arguments.index("--samples") + 1] == "3"
+    assert arguments[arguments.index("--teacher-profile") + 1] == "graph_demonstration_v1"
     assert not (tmp_path / "raw/search.log").exists()
 
 
@@ -345,6 +369,8 @@ def test_scienceworld_endpoint_dry_run_uses_private_train_data_without_search(tm
     assert calls[calls.index("--samples") + 1] == "3"
     assert calls[calls.index("--candidates") + 1] == "2"
     assert calls[calls.index("--transport") + 1] == "vllm"
+    assert calls[calls.index("--teacher-profile") + 1] == "graph_demonstration_v1"
+    assert calls[calls.index("--selection") + 1] == "task_balanced"
     assert calls[calls.index("--data") + 1].replace("\\", "/").endswith("/run/data/scienceworld_graph_train.parquet")
     assert "--dry-run" in calls and "--search-url" not in calls
     assert not any("build_bcp" in line for line in calls)

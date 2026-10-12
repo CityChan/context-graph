@@ -46,7 +46,9 @@ def question(row):
     return " ".join(query.split()).casefold()
 
 
-def select_training_rows(rows, heldout, start, samples, seed):
+def select_training_rows(rows, heldout, start, samples, seed, selection="uniform"):
+    if selection not in {"uniform", "task_balanced"}:
+        raise ValueError("Unknown training selection mode")
     if start < 0 or samples == 0 or samples < -1:
         raise ValueError("start must be nonnegative; samples must be positive or -1")
     if not rows or not heldout:
@@ -64,6 +66,18 @@ def select_training_rows(rows, heldout, start, samples, seed):
             eligible.append(index)
             seen.add(query)
     random.Random(seed).shuffle(eligible)
+    if selection == "task_balanced":
+        # Round-robin task types, with seeded order inside and across groups.
+        # This uses only task metadata, never rewards, solutions or gold paths.
+        groups = {}
+        for index in eligible:
+            if rows[index].get("ability") != "ScienceWorld@real":
+                raise ValueError("task_balanced selection requires ScienceWorld rows")
+            groups.setdefault(rows[index]["extra_info"]["task_name"], []).append(index)
+        names = sorted(groups)
+        random.Random(seed).shuffle(names)
+        eligible = [groups[name][offset] for offset in range(max(map(len, groups.values())))
+                    for name in names if offset < len(groups[name])]
     selected = eligible[start:] if samples == -1 else eligible[start:start + samples]
     if not selected:
         raise ValueError("No training rows selected")
@@ -84,6 +98,10 @@ def make_config(args):
                            "branch_len": args.branch_len, "val_response_length": args.response_length,
                            "max_turn": args.max_turn, "val_max_turn": args.max_turn,
                            "turn_max_new_tokens": args.turn_max_tokens})
+    from agents.sft_teacher_guidance import teacher_guidance
+    profile = getattr(args, "teacher_profile", "evaluation")
+    teacher_guidance(profile)  # Validate before starting a teacher or simulator.
+    rollout.plugin.sft_teacher_profile = profile
     return config
 
 
@@ -265,6 +283,8 @@ def parse_args():
     p.add_argument("--workers", type=int, default=2)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--temperature", type=float, default=0.7)
+    p.add_argument("--selection", choices=["uniform", "task_balanced"], default="uniform")
+    p.add_argument("--teacher-profile", choices=["evaluation", "graph_demonstration_v1"], default="evaluation")
     p.add_argument("--prompt-length", type=int, default=8192)
     p.add_argument("--response-length", type=int, default=24576)
     p.add_argument("--branch-len", type=int, default=8192)
@@ -298,7 +318,7 @@ def main():
         simulator = {"version": version, "split": "train", "simplification": "", "prompt_profile": "focus_v3"}
     elif any(row.get("ability") != "LocalSearch" for row in rows + heldout):
         raise ValueError("BC-P requires LocalSearch rows")
-    indices = select_training_rows(rows, heldout, args.start, args.samples, args.seed)
+    indices = select_training_rows(rows, heldout, args.start, args.samples, args.seed, args.selection)
     config = make_config(args)
     root = Path(args.output)
     root.mkdir(parents=True, exist_ok=True)
@@ -320,6 +340,8 @@ def main():
         raise ValueError("Resume manifest mismatch; use a fresh output directory")
     path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps({"selected_questions": len(indices), "planned_episodes": len(indices) * args.candidates,
+                      "teacher_profile": args.teacher_profile, "selection": args.selection,
+                      "task_types": sorted({rows[i]["extra_info"]["task_name"] for i in indices}) if simulator else None,
                       "teacher": args.teacher_model, "output": str(root), "dry_run": args.dry_run}), flush=True)
     if args.dry_run:
         return

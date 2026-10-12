@@ -57,6 +57,7 @@ fi
 args=(--data "${DATA_PATH:-data/bc_train.parquet}" --heldout "${HELDOUT_PATH:-data/bc_test.parquet}" --output "$RUN_DIR" --tokenizer "$TOKENIZER" --transport "$TRANSPORT" --samples "${SAMPLES:-25}" --start "${START_INDEX:-0}" --candidates "${CANDIDATES:-2}" --workers "${WORKERS:-2}" --seed "${SEED:-42}")
 args+=(--prompt-length "${PROMPT_LENGTH:-8192}" --response-length "${RESPONSE_LENGTH:-24576}" --max-turn "${MAX_TURN:-100}" --turn-max-tokens "${TURN_MAX_NEW_TOKENS:-2048}")
 [[ ${DRY_RUN:-0} != 1 ]] || args+=(--dry-run)
+args+=(--teacher-profile "${SFT_TEACHER_PROFILE:-graph_demonstration_v1}" --temperature "${TEACHER_TEMPERATURE:-0.7}")
 [[ ${PREFLIGHT_ONLY:-0} != 1 ]] || args+=(--preflight-only)
 python scripts/generate_bcp_graph_sft.py "${args[@]}"
 if [[ ${DRY_RUN:-0} == 1 || ${PREFLIGHT_ONLY:-0} == 1 ]]; then exit 0; fi
