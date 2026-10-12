@@ -142,6 +142,10 @@ class SessionSummaryMixin:
                 setattr(view, attr, (list(getattr(prefix, attr)) if prefix else [])
                         + list(getattr(self, attr)[start:end]))
             view.prompt_turn = prefix.prompt_turn if prefix else self.prompt_turn
+            if prefix is not None and window_budget(self.config):
+                # Model-requested compaction may retain more than the original
+                # prompt allocation; export the exact sampled conditioning prefix.
+                view.prompt_length = prefix.prompt_length
             view.summary_sessions = []
             yield index, start, view
 

@@ -21,6 +21,15 @@ limit, memory retrieval sizes, output caps, and graph decision ownership are
 unchanged. Explicit graph compaction remains a model-selected action. This patch
 does not force the teacher to use graph tools or relax SFT acceptance gates.
 
+In window mode, `graph_compact` checks its complete active-graph snapshot against
+the physical window, reserving the generation prefix and at least 129 tokens of
+headroom. The initial `prompt_length` allocation (often 8K) is not a separate
+snapshot cap. The model-visible fit estimate and executor use the same bound;
+the new segment retains the complete snapshot in both inference and export.
+Oversized snapshots are rejected without dropping nodes. Legacy cumulative mode
+retains its prompt cap. A merge changes the graph; only a model-requested
+`graph_compact` replaces conversation history.
+
 ## Finalization and reporting
 
 * BC-P enables emergency finalization for all seven methods.

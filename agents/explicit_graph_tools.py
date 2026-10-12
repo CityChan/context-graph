@@ -177,6 +177,16 @@ def compaction_plan(agent, graph):
     return prompt, cost, charge
 
 
+def compaction_prompt_limit(agent):
+    """Window-mode snapshots are not limited by the initial prompt allocation."""
+    from .token_budget import window_budget
+    if not window_budget(agent.config):
+        return agent.config.prompt_length
+    window = getattr(agent, 'working_context_limit', None) or (agent.config.prompt_length + agent.config.response_length)
+    # Match the executor's strict headroom guard, including the generation prefix.
+    return max(0, window - len(agent.get_generation_prompt()) - 129)
+
+
 def decision_state(graph, agent):
     """Expose resource facts, without choosing targets or scheduling graph work."""
     _, cost, charge = compaction_plan(agent, graph)
@@ -185,15 +195,17 @@ def decision_state(graph, agent):
     use_window = window_budget(agent.config)
     window = getattr(agent, 'working_context_limit', None) or (agent.config.prompt_length + agent.config.response_length)
     room = window - cost - len(agent.get_generation_prompt())
-    compact_fits = cost <= agent.config.prompt_length and (room > 128 if use_window else charge + 128 < remaining)
+    limit = compaction_prompt_limit(agent)
+    compact_fits = cost <= limit and (room > 128 if use_window else charge + 128 < remaining)
     budget_text = (f'window_tokens_remaining={remaining}; episode_token_limit=none; '
                    if use_window else f'episode_tokens_remaining={remaining}; ')
     return (graph.to_state_text() + '\n[Graph resource snapshot before this feedback is appended] '
             f'working_context_tokens={len(agent.context())}; {budget_text}'
-            f'compact_prompt_tokens={cost}/{agent.config.prompt_length}; '
+            f'compact_prompt_tokens={cost}/{limit}; '
             f'compact_token_charge={charge}; '
             f'compact_fits_now={compact_fits}. '
-            'Feedback and the next action also cost tokens. Compaction does not refund episode tokens.')
+            'Feedback and the next action also cost tokens. Only graph_compact replaces old history; '
+            'merge/prune alone do not. Recorded computation is never refunded.')
 
 
 def compact_context(agent, graph):
@@ -201,17 +213,24 @@ def compact_context(agent, graph):
     from .utils import AgentContext
 
     prompt, cost, charge = compaction_plan(agent, graph)
-    if cost > agent.config.prompt_length:
-        raise ValueError("active graph exceeds prompt budget; merge/prune more before graph_compact")
     from .token_budget import window_budget
     use_window = window_budget(agent.config)
     window = getattr(agent, 'working_context_limit', None) or (agent.config.prompt_length + agent.config.response_length)
     if use_window and cost + len(agent.get_generation_prompt()) + 128 >= window:
         raise ValueError('compacted graph leaves insufficient working context')
+    if not use_window and cost > agent.config.prompt_length:
+        raise ValueError("active graph exceeds prompt budget; merge/prune more before graph_compact")
     if not use_window and charge + 128 >= agent.remaining_generation_tokens():
         raise ValueError("insufficient episode token budget for graph_compact")
-    prefix = AgentContext(prompt, agent.tokenizer, agent.config, prompt_turn=len(prompt),
+    prefix_config = copy.deepcopy(agent.config)
+    if use_window:
+        # AgentContext otherwise silently truncates the snapshot to the original
+        # prompt allocation. This changes only the segment, never the actor window.
+        prefix_config.prompt_length = max(prefix_config.prompt_length, cost + 8)
+    prefix = AgentContext(prompt, agent.tokenizer, prefix_config, prompt_turn=len(prompt),
                           chat_template_kwargs=agent.chat_template_kwargs)
+    if prefix.messages() != prompt:
+        raise ValueError('compacted graph prefix would be truncated')
     sessions = getattr(agent, "summary_sessions", [])
     sessions.append({"start": len(agent.chat), "prefix": prefix, "reason": "model_graph_compact"})
     agent.summary_sessions = sessions

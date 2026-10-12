@@ -97,6 +97,70 @@ def test_oversized_actual_context_cannot_issue_request():
     assert not agent.llm_client.calls and agent.budget_exhausted
 
 
+@pytest.mark.parametrize('mode', ['working_context', 'legacy_cumulative'])
+def test_compaction_above_initial_prompt_allocation_preserves_full_prefix(mode):
+    from agents.explicit_graph_tools import compaction_plan, compaction_prompt_limit
+    from agents.session_summary import iter_agent_data
+
+    async def run():
+        agent = make_agent(['inspect', 'continue'], enable_summary=False, token_budget_mode=mode)
+        agent.config.prompt_length = 500
+        agent.config.response_length = 6000
+        await agent.step()
+        agent.append({'role': 'user', 'content': 'old history ' * 300})
+        graph = ContextGraph(agent.tokenizer)
+        graph.add_node('original task must remain', NodeType.QUERY)
+        raw = 'START of retained evidence ' + 'x' * 1500 + ' END of retained evidence'
+        graph.add_node('short preview', NodeType.OBSERVATION, metadata={'raw_content': raw})
+        prompt, cost, _ = compaction_plan(agent, graph)
+        assert 500 < cost < 6000
+        old_ids = copy.deepcopy(agent.chat_ids)
+        old_config = copy.deepcopy(agent.config)
+        graph_before = copy.deepcopy(graph.to_dict())
+        state = decision_state(graph, agent)
+        assert f'compact_prompt_tokens={cost}/{compaction_prompt_limit(agent)}' in state
+        if mode == 'legacy_cumulative':
+            assert 'compact_fits_now=False' in state
+            with pytest.raises(ValueError, match='exceeds prompt budget'):
+                compact_context(agent, graph)
+            assert not getattr(agent, 'summary_sessions', [])
+            return
+        assert 'compact_fits_now=True' in state
+        assert compact_context(agent, graph).success
+        prefix = agent.summary_sessions[-1]['prefix']
+        assert prefix.messages() == prompt
+        assert raw in str(agent.working_messages())
+        assert agent.chat_ids == old_ids and agent.config == old_config
+        assert graph.to_dict() == graph_before
+        assert await agent.step() == 'continue'
+        request_ids, _ = agent.llm_client.calls[-1]
+        assert len(request_ids) > 500
+        assert len(request_ids) + agent.model_contexts[-1]['max_tokens'] <= 6500
+        segments = [data async for _, data in iter_agent_data({'main': agent}, True)]
+        assert len(segments) == 2
+        sequence = segments[-1]['prompt_ids'] + segments[-1]['response_ids']
+        assert sequence[:len(request_ids)] == request_ids
+        assert raw in str(segments[-1]['messages'])
+        policy = [t for segment in segments for t, mask in zip(segment['response_ids'], segment['response_mask']) if mask]
+        expected = [t for ids, masks in zip(agent.chat_ids, agent.token_mask) for t, mask in zip(ids, masks) if mask]
+        assert policy == expected
+    asyncio.run(run())
+
+
+def test_compaction_rejects_snapshot_exceeding_window_without_mutation():
+    agent = make_agent([], enable_summary=False, token_budget_mode='working_context')
+    graph = ContextGraph(agent.tokenizer)
+    graph.add_node('task', NodeType.QUERY)
+    graph.add_node('preview', NodeType.OBSERVATION, metadata={'raw_content': 'x' * 6500})
+    before = copy.deepcopy(graph.to_dict())
+    ids = copy.deepcopy(agent.chat_ids)
+    assert 'compact_fits_now=False' in decision_state(graph, agent)
+    with pytest.raises(ValueError, match='insufficient working context'):
+        compact_context(agent, graph)
+    assert not getattr(agent, 'summary_sessions', [])
+    assert graph.to_dict() == before and agent.chat_ids == ids
+
+
 def test_lifetime_cost_does_not_misclassify_window_stop():
     status = classify_rollout_status(response_tokens=90000, response_limit=24576,
         main_context_tokens=5000, working_context_limit=32768, is_finish=False,
