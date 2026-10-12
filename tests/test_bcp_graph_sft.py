@@ -163,7 +163,7 @@ def test_evidence_review_rejects_unsupported_or_oversized_edits():
 
 
 @pytest.mark.parametrize("benchmark", ["bcp", "scienceworld"])
-@pytest.mark.parametrize("teacher_profile", ["evaluation", "graph_demonstration_v1"])
+@pytest.mark.parametrize("teacher_profile", ["evaluation", "graph_demonstration_v1", "framework_assisted_v1"])
 def test_real_executor_collects_and_exports_compacted_json_policy(tmp_path, monkeypatch, benchmark, teacher_profile):
     from collections import Counter
     from agents import graph_agent_isolated
@@ -171,6 +171,10 @@ def test_real_executor_collects_and_exports_compacted_json_policy(tmp_path, monk
     from tests.test_session_restart import Tokenizer
     from omegaconf import OmegaConf
     import pandas as pd
+    assisted = teacher_profile == 'framework_assisted_v1'
+    if assisted:
+        from agents.sft_teacher_guidance import AssistedMaintenance
+        monkeypatch.setattr(AssistedMaintenance, 'interval', 2)
 
     class Env:
         def __init__(self, *args):
@@ -240,7 +244,21 @@ def test_real_executor_collects_and_exports_compacted_json_policy(tmp_path, monk
     assert len(segments) == 2
     assert all("secret answer" not in str(r["messages"]) for r in requests)
     for r in requests:
-        assert ("SFT demonstration collection" in str(r["messages"])) == (teacher_profile == "graph_demonstration_v1")
+        assert ("SFT demonstration collection" in str(r["messages"])) == (teacher_profile != "evaluation")
+    assert [bool(r.get('sft_assistance')) for r in requests] == ([False, False, True, True, False] if assisted else [False] * 5)
+    if assisted:
+        from scripts.diagnose_graph_sft import schema_tools
+        assert 'action' not in schema_tools(requests[2]['schema'])
+        assert 'search' not in schema_tools(requests[2]['schema'])
+        assert '[Framework-assisted SFT maintenance checkpoint ' in str(requests[2]['messages'])
+        broken = copy.deepcopy(requests)
+        broken[2]['sft_assistance'] = None
+        assert audit_episode(episode, trajectory, broken)[0] == 'unmatched_assistance'
+        broken_trace = copy.deepcopy(trajectory)
+        for event in broken_trace['graph_trace']['events']:
+            if event.get('op') == 'graph_compact':
+                event['context_refresh']['tokens_after'] = event['context_refresh']['tokens_before']
+        assert audit_episode(episode, broken_trace, requests)[0] == 'incomplete_assisted_maintenance'
     (root / "manifest.json").write_text(json.dumps({"profile": generator.SCIENCEWORLD_PROFILE if benchmark == "scienceworld" else generator.PROFILE,
                       "settings": vars(args), "config": OmegaConf.to_container(config)}))
     from scripts.diagnose_graph_sft import diagnose
@@ -249,6 +267,8 @@ def test_real_executor_collects_and_exports_compacted_json_policy(tmp_path, monk
     task = report["tasks"][0]
     assert task["request_count"] == 5 and task["malformed_json_requests"] == 0
     assert task["sampled_graph_tools"] == {"merge": 1, "graph_compact": 1}
+    assert len(task['assisted_requests']) == (2 if assisted else 0)
+    assert task['assisted_compactions'] == int(assisted)
     assert "merge" in task["tools_permitted_in_every_request"]
     assert task["last_requests"][-1]["response"] == requests[-1]["response"]
     if benchmark == "scienceworld":
@@ -268,6 +288,7 @@ def test_real_executor_collects_and_exports_compacted_json_policy(tmp_path, monk
     assert len(graph_rows) == 2 and not graph_rows.iloc[0]["causal_graph_benefit_verified"]
     assert graph_rows["segment_has_graph_action"].tolist() == [True, False]
     assert set(graph_rows["teacher_profile"]) == {teacher_profile}
+    assert set(graph_rows['framework_assisted']) == {assisted}
     assert not (tmp_path / "sft/control_train.parquet").exists()
     # Completed episode resumes without dispatching any further task requests.
     asyncio.run(generator.collect(args, [data_row], [0], config, tokenizer, root))

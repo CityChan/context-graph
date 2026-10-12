@@ -747,8 +747,13 @@ class Agent(SessionSummaryMixin, AgentContext):
         self.info_cache = {}
         self.tool_format_repairs = []
         self.model_contexts = []
+        from .sft_teacher_guidance import ASSISTED_PROFILE, AssistedMaintenance
+        self.sft_maintenance = (AssistedMaintenance() if action_contract is not None and
+            getattr(config.plugin, 'sft_teacher_profile', 'evaluation') == ASSISTED_PROFILE else None)
 
     async def step(self, max_new_tokens=None, retry_cjk=0, completion_kwargs=None):
+        if self.sft_maintenance is not None:
+            self.sft_maintenance.prepare(self)
         prompt = self.context()
         max_len = self.prompt_ids_len + self.config.response_length
         if max_new_tokens is not None:
@@ -777,6 +782,10 @@ class Agent(SessionSummaryMixin, AgentContext):
                 return None
             max_len = len(prompt) + available
             action_schema = self.action_contract.schema(final=self.force_action_finish)
+            if self.sft_maintenance is not None and self.sft_maintenance.active and not self.force_action_finish:
+                action_schema = self.sft_maintenance.constrain(action_schema)
+                self.sft_maintenance.active['requests'] += 1
+                completion_kwargs['sft_assistance'] = copy.deepcopy(self.sft_maintenance.active)
             if 'structured_outputs' in completion_kwargs:
                 raise ValueError('Action contract cannot be overridden by another output schema')
             completion_kwargs['structured_outputs'] = {'json': action_schema}
@@ -817,6 +826,8 @@ class Agent(SessionSummaryMixin, AgentContext):
                     context_record['action_protocol_error'] = str(error)
                 return '[Action protocol rejected] No tool executed: ' + str(error)
             self.additional_info[-1] = {'policy_action': payload, 'dispatched_action': wire}
+            if self.sft_maintenance is not None:
+                self.sft_maintenance.sampled(payload)
             if context_record is not None:
                 context_record['dispatched_action'] = wire
             # Preserve sampled JSON and its exact token/log-prob sequence in chat.

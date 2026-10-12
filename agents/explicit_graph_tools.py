@@ -285,10 +285,15 @@ def execute_graph_tool(graph, trace, agent, response, *, agent_name, turn_id, pe
                         error=None if result.success else str(result), assistant_content=agent.chat[turn]['content'],
                         assistant_turn_index=turn, decision_context={"mode": "explicit_tool", "agent": agent_name})
     event["agent_name"] = agent_name
+    maintenance = getattr(agent, 'sft_maintenance', None)
+    if maintenance is not None and maintenance.active:
+        event['decision_context']['sft_assistance'] = dict(maintenance.active)
     if attempted == 'graph_compact' and result.success:
         event['context_refresh'] = {'tokens_before': context_before, 'tokens_after': len(agent.context()),
                                     'session_index': len(agent.summary_sessions),
                                     'cumulative_refresh_tokens': agent.graph_context_tokens}
+    if maintenance is not None:
+        maintenance.executed(attempted, result.success, context_before, len(agent.context()))
     if not result.success and penalize:
         agent.set_process_reward(turn, -0.3)
     return result

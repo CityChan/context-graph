@@ -62,7 +62,10 @@ def diagnose(root):
         counts, commands, endings = Counter(), Counter(), Counter()
         last, first, permitted = [], None, None
         malformed = 0
+        assistance = []
         for record in lines(request_path):
+            if record.get('sft_assistance'):
+                assistance.append(record['sft_assistance'])
             if first is None:
                 first = record
             allowed = schema_tools(record.get("schema", {}))
@@ -92,6 +95,11 @@ def diagnose(root):
                       "stats": {k: stats.get(k) for k in STAT_KEYS},
                       "request_count": sum(endings.values()), "finish_reasons": dict(endings),
                       "malformed_json_requests": malformed,
+                      "assisted_requests": assistance,
+                      "assisted_compactions": sum(
+                          e.get('op') == 'graph_compact' and bool(e.get('success')) and
+                          bool(e.get('decision_context', {}).get('sft_assistance'))
+                          for e in trajectory.get('graph_trace', {}).get('events', [])),
                       "tools_permitted_in_every_request": sorted(permitted) if permitted is not None else None,
                       "sampled_tools": dict(counts), "sampled_graph_tools": {k: counts[k] for k in GRAPH_TOOLS if counts[k]},
                       "most_common_commands": commands.most_common(6),

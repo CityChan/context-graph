@@ -95,3 +95,44 @@ commit. No accepted row count is guaranteed. Trace auditing and teacher review
 do not prove causal benefit from graph operations. Local tests use a fake
 simulator/teacher with the real graph executor; a Vista smoke is still needed
 to verify actual checkpoint serving and native ScienceWorld execution together.
+
+## Framework-assisted demonstration smoke
+
+Run on an idle existing four-node idev allocation with the cached local DeepSeek
+checkpoint (no cloud teacher API key). The launcher still uses `deepseek_v4` for
+serving and `cxtgraph` for collection:
+
+```bash
+git pull --ff-only
+SAMPLES=3 CANDIDATES=2 bash scripts/smoke_assisted_graph_sft_deepseek_4node_idev.sh scienceworld
+```
+
+This creates fresh artifacts, selects train tasks across task families, and uses
+`framework_assisted_v1`. After eight sampled task calls, or at half the working
+window with at least two new task calls, the framework appends a labelled
+maintenance instruction. For up to six requests it restricts the action schema
+to `merge`, `prune`, `graph_read`, `recall`, and `graph_compact`. The teacher
+authors every operation, target and summary. Task tools resume only after a real,
+successful compaction reduces the working context. Failed maintenance exhausts
+the bounded checkpoint and records an error; the framework never writes a
+summary or fabricates a policy call. Reserved branch-return/final-answer calls
+take precedence, but incomplete checkpoints cannot pass curation.
+
+All requests count against normal budgets. Raw requests and graph trace events
+record `sft_assistance` with the trigger, checkpoint ID and framework/model
+ownership. Exact conditioning messages, including the intervention, remain in
+SFT segments. Exported rows have `framework_assisted=true`; these are assisted
+demonstrations, not evidence that the teacher autonomously chose when to maintain
+memory. Ordinary evaluation and `graph_demonstration_v1` have no scheduler.
+
+Check `diagnostics.json` for `assisted_requests`, `assisted_compactions`, task
+completion and stop reasons, then the `sft-*/manifest.json` for accepted graph
+training rows. Task success, trace matching, context reduction, continuation,
+length and evidence-review gates remain enforced. The smoke can still produce
+zero accepted data if the teacher fails the task; it does not claim a task-solving
+or causal graph benefit. Local tests exercise a fake teacher/simulator through
+the real executor and Parquet export, separately from this live GPU smoke.
+
+The same entry point accepts `bcp`, using the established colocated retrieval
+launcher on four nodes. BC-P still requires its corpus and judge configuration;
+it uses the training split, not `bc_test.parquet`.

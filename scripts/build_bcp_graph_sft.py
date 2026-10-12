@@ -77,6 +77,31 @@ def audit_episode(episode, trajectory, requests):
         return "unmatched_graph_action", None
     if Counter(e["op"] for e in events) != Counter(a for a in actions if a in GRAPH_TOOLS):
         return "missing_graph_event", None
+    assisted = [r for r in requests if r.get('sft_assistance')]
+    assisted_events = [e for e in events if e.get('decision_context', {}).get('sft_assistance')]
+    if Counter((hashlib.sha256(r['response'].encode()).hexdigest(), digest(r['sft_assistance'])) for r in assisted) != Counter(
+            (e['assistant_content_sha256'], digest(e['decision_context']['sft_assistance'])) for e in assisted_events):
+        return "unmatched_assistance", None
+    from agents.sft_teacher_guidance import ASSISTED_PROFILE, AssistedMaintenance
+    checkpoints = set()
+    for r in assisted:
+        info = r['sft_assistance']
+        if (info.get('profile') != ASSISTED_PROFILE or info.get('timing_source') != 'framework'
+                or info.get('semantic_source') != 'model'
+                or '[Framework-assisted SFT maintenance checkpoint ' not in str(r['messages'])):
+            return "invalid_assistance", None
+        permitted = {c['properties']['tool']['const'] for c in r['schema']['anyOf']}
+        if not permitted or not permitted <= AssistedMaintenance.tools:
+            return "invalid_assistance_schema", None
+        checkpoints.add((info.get('context_uid_at_trigger'), info['checkpoint']))
+    completed_checkpoints = set()
+    for e in assisted_events:
+        refresh = e.get('context_refresh', {})
+        if e['op'] == 'graph_compact' and refresh.get('tokens_after', 0) < refresh.get('tokens_before', 0):
+            info = e['decision_context']['sft_assistance']
+            completed_checkpoints.add((info.get('context_uid_at_trigger'), info['checkpoint']))
+    if checkpoints != completed_checkpoints:
+        return "incomplete_assisted_maintenance", None
     continuation = {"action", "return"} if scienceworld else {"search", "open_page", "finish", "return"}
     if events and not any(a in continuation
                           for a in actions[max(i for i, a in enumerate(actions) if a in GRAPH_TOOLS) + 1:]):
@@ -228,6 +253,8 @@ async def build(args, tokenizer):
                        "question_hash": episode["question_hash"], "source_index": episode["source_index"],
                        "candidate": episode["candidate"], "teacher_model": settings.teacher_model,
                        "teacher_profile": getattr(settings, "teacher_profile", "evaluation"),
+                       "framework_assisted": getattr(settings, "teacher_profile", "evaluation") == "framework_assisted_v1",
+                       "assisted_request_count": sum(bool(r.get('sft_assistance')) for r in requests),
                        "selection": getattr(settings, "selection", "uniform"),
                        "task_reward": 1.0, "kind": row_kind, "tokens": length,
                        "segment_has_graph_action": any(t in GRAPH_TOOLS for t in tools),

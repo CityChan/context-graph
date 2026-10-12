@@ -147,6 +147,7 @@ teacher policy log-probabilities. They are only for SFT/inference accounting.
                   "finish_reason": choice.finish_reason, "usage": usage,
                   "requested_model": self.args.teacher_model, "returned_model": response.model,
                   "response_id": response.id, "transport": self.args.transport}
+        record['sft_assistance'] = kwargs.get('sft_assistance')
         with self.audit_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(record, ensure_ascii=False) + "\n")
         ids = self.tokenizer.encode(content, add_special_tokens=False)
@@ -284,7 +285,7 @@ def parse_args():
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--temperature", type=float, default=0.7)
     p.add_argument("--selection", choices=["uniform", "task_balanced"], default="uniform")
-    p.add_argument("--teacher-profile", choices=["evaluation", "graph_demonstration_v1"], default="evaluation")
+    p.add_argument("--teacher-profile", choices=["evaluation", "graph_demonstration_v1", "framework_assisted_v1"], default="evaluation")
     p.add_argument("--prompt-length", type=int, default=8192)
     p.add_argument("--response-length", type=int, default=24576)
     p.add_argument("--branch-len", type=int, default=8192)
