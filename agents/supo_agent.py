@@ -21,7 +21,8 @@ from .utils import AgentLoopMetrics, AgentLoopOutput, _apply_chat_template, sele
 
 
 PROVENANCE = {
-    "method": "supo", "variant": "zero_shot_rollout_adaptation_v4", **PROTOCOL,
+    "method": "supo", "variant": "zero_shot_rollout_adaptation_v5", **PROTOCOL,
+    "summary_limit_policy": "configured finalizer, otherwise continue without summaries to normal limits",
     "control_prompt_profile": "supo_phase_roles_v1",
     "control_enable_thinking": False,
     "action_thinking": "inherited evaluation configuration",
@@ -32,7 +33,7 @@ PROVENANCE = {
     "implementation": "paper_based_reimplementation",
     "supo_rl_training": False, "trained_supo_checkpoint": False,
     "budget": "cumulative generated IDs plus visible observation/instruction text; no refunds",
-    "overflow": "discard crossing action/observation from working context only",
+    "overflow": "discard crossing round while summaries remain; otherwise retain budget-fitted action/observation",
 }
 SUMMARY_REQUEST = (
     "Summarize the previous research so that you can continue in a fresh context. "
@@ -152,11 +153,12 @@ async def process_item(item, context):
         previous_summary = ''
         pending_round = []
         rejected, consecutive_invalid = "", 0
+        summary_limit_reached = False
         reason = "max_turn"
         input_ids, output_ids, logprobs = [], [], []
         while iteration < max_turn:
             remaining = token_budget.remaining(used, len(render(working)))
-            finish_only = bool(reserve and (remaining <= reserve + margin + max(turn_cap, 10)
+            finish_only = bool(reserve and (summary_limit_reached or remaining <= reserve + margin + max(turn_cap, 10)
                                            or iteration == max_turn - 1))
             phase = "final" if finish_only else ("summary" if pending else "action")
             messages = (summary_context(task, previous_summary, working[len(fixed):])
@@ -227,6 +229,8 @@ async def process_item(item, context):
                               structured_outputs=constraint,
                               control_enable_thinking=False if phase != 'action' else None)
                 audit.append(record)
+                if phase == 'final':
+                    record['final_trigger'] = 'summary_limit' if summary_limit_reached else 'budget_or_turn_limit'
                 if instruction:
                     transcript.append({"role": "user", "content": instruction})
                 transcript.append({"role": "assistant", "content": text})
@@ -285,7 +289,15 @@ async def process_item(item, context):
                     # Keep actual dispatched calls, not unverified reasoning, as history.
                     candidate[-2]['content'] = action
                 record["candidate_context_tokens"] = len(render(candidate))
-                if record["candidate_context_tokens"] >= threshold:
+                crossing = record["candidate_context_tokens"] >= threshold
+                if crossing and stats['summary_restarts'] >= max_summaries:
+                    # The summary cap limits memory calls, not the episode. Keep
+                    # this real round via normal observation fitting below. Search
+                    # can use its configured finalizer on the next counted turn;
+                    # simulators/SWE without a finalizer continue to normal limits.
+                    summary_limit_reached = True
+                    record['summary_limit_reached'] = True
+                elif crossing:
                     if kind != 'search':
                         # The world/files changed. Retain and charge the latest round once;
                         # summarizing memory never replays, resets or undoes an action.
@@ -299,9 +311,6 @@ async def process_item(item, context):
                         record['retained_after_summary'] = True
                         pending_round = [{'role': 'assistant', 'content': action},
                                          {'role': 'user', 'content': shown}]
-                        if stats['summary_restarts'] >= max_summaries:
-                            reason = 'summary_limit'
-                            break
                         pending = True
                         continue
                     # Algorithm 2 line 11: retain s_t, not (s_t, a_t, o_t).
@@ -309,9 +318,6 @@ async def process_item(item, context):
                     record["discarded_from_working_context"] = True
                     stats["supo_discarded_rounds"] += 1
                     stats["supo_discarded_observation_tokens"] += len(encode(raw))
-                    if stats["summary_restarts"] >= max_summaries:
-                        reason = "summary_limit"
-                        break
                     pending = True
                     continue
                 empty_candidate = candidate[:-1] + [{'role': 'user', 'content': ''}]
@@ -335,7 +341,7 @@ async def process_item(item, context):
                      session_time=time.monotonic() - started, model_requests=len(audit),
                      total_token=sum(len(r["input_ids"]) + len(r["output_ids"]) for r in audit),
                      hit_token_limit=int(reason == "token_limit"), hit_max_turn=int(reason == "max_turn"),
-                     hit_summary_limit=int(reason == "summary_limit"), hit_timeout=int(reason == "timeout"))
+                     hit_summary_limit=int(summary_limit_reached), hit_timeout=int(reason == "timeout"))
         stats["hit_format_retry_limit"] = int(reason == "invalid_tool_limit")
         return AgentLoopOutput(prompt_ids=input_ids, response_ids=output_ids,
             response_mask=[0] * len(output_ids), response_logprobs=logprobs,

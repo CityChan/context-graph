@@ -72,14 +72,108 @@ def test_multiple_resets_keep_original_question_and_latest_summary(monkeypatch):
     assert len(env.actions) == 3
 
 
-def test_summary_limit_stops_without_extra_model_or_tool_calls(monkeypatch):
-    env, context, item, client = setup(monkeypatch, [SEARCH, SUMMARY, SEARCH], observation="long " * 500)
+@pytest.mark.parametrize('budget_mode', ['legacy_cumulative', 'working_context'])
+def test_summary_limit_uses_counted_finalizer_with_latest_evidence(monkeypatch, budget_mode):
+    env, context, item, client = setup(monkeypatch, [SEARCH, SUMMARY, SEARCH, FINISH], observation="long " * 500)
     context.config.actor_rollout_ref.rollout.plugin.supo_max_summaries = 1
+    context.config.actor_rollout_ref.rollout.plugin.token_budget_mode = budget_mode
     out = asyncio.run(supo.process_item(item, context))
-    assert out.extra_fields["termination_reason"] == "summary_limit"
-    assert out.extra_fields["env_stats"]["hit_summary_limit"] == 1
-    assert not out.extra_fields["is_finish"]
-    assert len(client.calls) == 3 and env.actions == [SEARCH, SEARCH] and env.closed
+    assert out.extra_fields["termination_reason"] == "finish"
+    stats = out.extra_fields['env_stats']
+    assert stats['hit_summary_limit'] == stats['forced_finish'] == stats['finalizer_attempted'] == 1
+    assert stats['summary_restarts'] == stats['summary_attempts'] == 1
+    assert out.extra_fields["is_finish"]
+    assert len(client.calls) == out.num_turns == 4 and env.actions == [SEARCH, SEARCH, FINISH] and env.closed
+    records = out.extra_fields['model_contexts']
+    assert [r['phase'] for r in records] == ['action', 'summary', 'action', 'final']
+    assert records[-1]['final_trigger'] == 'summary_limit'
+    assert 'long long' in str(records[-1]['messages'])
+    assert not records[-2].get('discarded_from_working_context')
+    assert stats['main_len'] == sum(stats[k] for k in ('generated_tokens', 'observation_tokens', 'instruction_tokens'))
+    window = context.config.actor_rollout_ref.rollout.prompt_length + context.config.actor_rollout_ref.rollout.response_length
+    assert all(len(r['input_ids']) + r['max_tokens'] <= window for r in records)
+
+
+def test_zero_summary_allowance_finalizes_without_summary_request(monkeypatch):
+    env, context, item, client = setup(monkeypatch, [SEARCH, FINISH], observation='long ' * 500)
+    context.config.actor_rollout_ref.rollout.plugin.supo_max_summaries = 0
+    out = asyncio.run(supo.process_item(item, context))
+    assert out.extra_fields['env_stats']['summary_attempts'] == 0
+    assert [r['phase'] for r in out.extra_fields['model_contexts']] == ['action', 'final']
+    assert env.actions == [SEARCH, FINISH]
+
+
+def test_summary_limit_does_not_add_an_uncounted_final_turn(monkeypatch):
+    env, context, item, client = setup(monkeypatch, [SEARCH], observation='long ' * 500)
+    plugin = context.config.actor_rollout_ref.rollout.plugin
+    plugin.supo_max_summaries = 0
+    plugin.final_answer_reserve = 0
+    plugin.val_max_turn = 1
+    out = asyncio.run(supo.process_item(item, context))
+    assert out.extra_fields['termination_reason'] == 'max_turn'
+    assert out.extra_fields['env_stats']['hit_summary_limit'] == 1
+    assert out.extra_fields['env_stats']['forced_finish'] == 0
+    assert len(client.calls) == 1 and env.actions == [SEARCH]
+
+
+@pytest.mark.parametrize('kind,ability,action', [
+    ('swe', 'SWEVerified@test', '<function=python_exec><parameter=code>print(1)</parameter></function>'),
+    ('scienceworld', 'ScienceWorld@test', '<function=action><parameter=command>look around</parameter></function>'),
+    ('discoveryworld', 'DiscoveryWorld@test', '<function=action><parameter=command>{"action":"WAIT"}</parameter></function>'),
+])
+@pytest.mark.parametrize('summary_cap', [0, 1])
+def test_stateful_summary_cap_keeps_latest_state_and_continues(monkeypatch, kind, ability, action, summary_cap):
+    import numpy as np
+    responses = [action, action] + ([SUMMARY] if summary_cap else []) + [action, action]
+    env, context, item, client = setup(monkeypatch, responses)
+    item.non_tensor_batch['ability'] = np.array([ability])
+    monkeypatch.setattr(supo, 'task_chat', lambda *a, **kw: [
+        {'role': 'system', 'content': 'Use native tools.'}, {'role': 'user', 'content': 'Complete task.'}])
+    plugin = context.config.actor_rollout_ref.rollout.plugin
+    plugin.token_budget_mode = 'working_context'
+    plugin.supo_context_threshold = 1000
+    plugin.supo_max_summaries = summary_cap
+    plugin.final_answer_reserve = 0 if kind == 'swe' else 1024
+    async def run_action(call):
+        env.actions.append(call)
+        env.is_finish = len(env.actions) == 4
+        return {'observation': f'CURRENT_STATE_{len(env.actions)} ' + 'x' * 550}
+    env.run_action = run_action
+    out = asyncio.run(supo.process_item(item, context))
+    stats = out.extra_fields['env_stats']
+    assert env.actions == [action] * 4 and env.closed
+    assert out.extra_fields['termination_reason'] == 'finish'
+    assert stats['summary_attempts'] == stats['summary_restarts'] == summary_cap
+    assert stats['hit_summary_limit'] == 1
+    assert stats['forced_finish'] == stats['finalizer_attempted'] == stats['finalizer_enabled'] == 0
+    records = out.extra_fields['model_contexts']
+    assert all(r['phase'] != 'final' for r in records)
+    assert 'CURRENT_STATE_3' in str(records[-1]['messages'])
+    assert len(client.calls) == out.num_turns == 4 + summary_cap
+
+
+def test_no_finalizer_continuation_still_obeys_window_limit(monkeypatch):
+    short_search = '<function=search><parameter=query>x</parameter></function>'
+    env, context, item, client = setup(monkeypatch, [short_search] * 20, observation='x' * 900)
+    original_completion = client.create_completion
+    async def bounded_completion(ids, **kwargs):
+        # The scripted fake must obey the same request cap as a real endpoint.
+        if kwargs['max_new_tokens'] < len(context.tokenizer.encode(short_search)) + 1:
+            return None
+        return await original_completion(ids, **kwargs)
+    client.create_completion = bounded_completion
+    config = context.config.actor_rollout_ref.rollout
+    config.prompt_length = config.response_length = 2048
+    plugin = config.plugin
+    plugin.token_budget_mode = 'working_context'
+    plugin.supo_context_threshold = 1700
+    plugin.supo_max_summaries = 0
+    plugin.final_answer_reserve = 0
+    out = asyncio.run(supo.process_item(item, context))
+    assert out.extra_fields['termination_reason'] == 'token_limit'
+    assert out.extra_fields['env_stats']['hit_summary_limit'] == 1
+    assert out.extra_fields['env_stats']['summary_attempts'] == 0
+    assert all(len(r['input_ids']) + r['max_tokens'] <= 4096 for r in out.extra_fields['model_contexts'])
 
 
 @pytest.mark.parametrize("bad", ["", "no summary tags", SEARCH, '<summary> </summary>',

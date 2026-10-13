@@ -38,6 +38,21 @@ retains its prompt cap. A merge changes the graph; only a model-requested
 * ScienceWorld/DiscoveryWorld terminate through the environment or budget rules;
   no synthetic finish action is added.
 
+SUPO `zero_shot_rollout_adaptation_v5` treats `supo_max_summaries` as a cap on
+summary calls, not an episode termination condition. When the threshold is
+crossed after that cap, the latest executed action/observation is retained using
+normal budget-aware observation fitting. With a configured final-answer reserve
+(BC-P), the next counted request enters the existing finalizer. Without one
+(default SWE and both simulators), task actions continue without more summaries
+until normal environment/window/turn/time termination. No actions are replayed,
+no additional summaries are granted, and no simulator `finish` is invented.
+
+`hit_summary_limit` now records that the cap was encountered, even if the task
+subsequently finishes; it is no longer a termination reason. Finalization audit
+records identify `final_trigger=summary_limit`. Earlier v4 runs that terminated
+with `summary_limit` require rerunning for comparable results; this code change
+does not revise their saved scores or establish an accuracy improvement.
+
 Results record `token_budget_mode`, `working_context_limit`,
 `episode_token_limit` (null in window mode), `finalizer_enabled`, and
 `finalizer_attempted`. `forced_finish` records a successful forced submission;
