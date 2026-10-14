@@ -12,7 +12,7 @@ import copy
 import re
 import time
 
-from .agentfold_agent import _fit_observation, _get, parse_response
+from .agentfold_agent import _fit_observation, _get, parse_response, format_retry_constraint
 from .environment_lifecycle import managed_environment
 from .baseline_task_protocol import task_kind, task_chat, provenance
 from .prompts import create_chat
@@ -21,11 +21,13 @@ from .utils import AgentLoopMetrics, AgentLoopOutput, _apply_chat_template, sele
 
 
 PROVENANCE = {
-    "method": "supo", "variant": "zero_shot_rollout_adaptation_v5", **PROTOCOL,
+    "method": "supo", "variant": "zero_shot_rollout_adaptation_v6", **PROTOCOL,
     "summary_limit_policy": "configured finalizer, otherwise continue without summaries to normal limits",
     "control_prompt_profile": "supo_phase_roles_v1",
     "control_enable_thinking": False,
     "action_thinking": "inherited evaluation configuration",
+    "format_retry_output_profile": "single_native_tool_xml_v1",
+    "format_retry_enable_thinking": False,
     "control_output_profile": "bounded_xml_v1",
     "control_text_max_chars": {"summary": 1200, "final": 384},
     "control_char_budget": "min(phase cap, request token limit - 96); not a token guarantee",
@@ -148,7 +150,8 @@ async def process_item(item, context):
                      invalid_tool=0, invalid_summary=0, generated_tokens=0,
                      observation_tokens=0, instruction_tokens=0, supo_discarded_rounds=0,
                      supo_discarded_observation_tokens=0, observation_budget_truncations=0,
-                     observation_budget_skips=0)
+                     observation_budget_skips=0, format_retry_requests=0,
+                     format_errors_at_output_limit=0)
         pending, feedback, used, iteration = False, "", 0, 0
         previous_summary = ''
         pending_round = []
@@ -161,6 +164,8 @@ async def process_item(item, context):
             finish_only = bool(reserve and (summary_limit_reached or remaining <= reserve + margin + max(turn_cap, 10)
                                            or iteration == max_turn - 1))
             phase = "final" if finish_only else ("summary" if pending else "action")
+            constrained_retry = phase == 'action' and bool(feedback)
+            control_request = phase != 'action' or constrained_retry
             messages = (summary_context(task, previous_summary, working[len(fixed):])
                         if phase == 'summary' else copy.deepcopy(working))
             phase_system = SUMMARY_SYSTEM if phase == 'summary' else (final_system if phase == 'final' else '')
@@ -181,14 +186,16 @@ async def process_item(item, context):
                 instruction = "Budget ending: submit one finish call now using the available evidence."
             else:
                 instruction = feedback
+                if constrained_retry:
+                    instruction += " Output only the single tool call, without analysis or a compression block."
             if instruction:
-                context_size = len(render(copy.deepcopy(messages), control=phase != 'action')) if token_budget.use_window else 0
+                context_size = len(render(copy.deepcopy(messages), control=control_request)) if token_budget.use_window else 0
                 instruction = _fit_observation(instruction, tokenizer, token_budget.remaining(used, context_size))
                 messages.append({"role": "user", "content": instruction})
                 cost = len(encode(instruction))
                 used += cost
                 stats["instruction_tokens"] += cost
-            candidate_ids = render(messages, control=phase != 'action')
+            candidate_ids = render(messages, control=control_request)
             limit = token_budget.generation_limit(used, len(candidate_ids),
                         reserve=reserve + margin if reserve and not finish_only else 0)
             if turn_cap > 0:
@@ -198,7 +205,8 @@ async def process_item(item, context):
             if limit < 10:
                 reason = "token_limit"
                 break
-            constraint = control_output(phase, limit)
+            # Empty steps select the native tool grammar without AgentFold edits.
+            constraint = format_retry_constraint([], kind) if constrained_retry else control_output(phase, limit)
             if constraint and phase == 'final' and kind == 'swe':
                 constraint['regex'] = constraint['regex'].replace('parameter=answer', 'parameter=message')
             if phase != 'action' and constraint is None:
@@ -208,6 +216,7 @@ async def process_item(item, context):
                 reason = "timeout"
                 break
             iteration += 1
+            stats['format_retry_requests'] += int(constrained_retry)
             try:
                 result = await asyncio.wait_for(context.llm_client.create_completion(
                     candidate_ids, messages=messages, max_new_tokens=limit,
@@ -224,10 +233,12 @@ async def process_item(item, context):
                 used += len(output_ids)
                 stats["generated_tokens"] += len(output_ids)
                 text = response["content"]
-                record = dict(phase=phase, input_ids=input_ids, output_ids=output_ids,
+                record = dict(phase='format_retry' if constrained_retry else phase,
+                              input_ids=input_ids, output_ids=output_ids,
                               messages=messages, response=text, max_tokens=limit,
+                              finish_reason=result['choices'][0].get('finish_reason'),
                               structured_outputs=constraint,
-                              control_enable_thinking=False if phase != 'action' else None)
+                              control_enable_thinking=False if control_request else None)
                 audit.append(record)
                 if phase == 'final':
                     record['final_trigger'] = 'summary_limit' if summary_limit_reached else 'budget_or_turn_limit'
@@ -258,12 +269,15 @@ async def process_item(item, context):
                     continue
                 try:
                     if constraint and not re.fullmatch(constraint['regex'], text):
-                        raise ValueError('Final answer violated bounded XML output contract')
+                        raise ValueError('Tool call violated constrained XML output contract')
                     # Shared XML validation only; AgentFold compression is not enabled.
                     action, _ = parse_response(text, [], finish_only=finish_only, kind=kind)
                 except (ValueError, TypeError) as exc:
                     stats["invalid_tool"] += 1
                     record["format_error"] = str(exc)
+                    record['format_error_at_output_limit'] = (
+                        len(output_ids) >= limit or record['finish_reason'] == 'length')
+                    stats['format_errors_at_output_limit'] += int(record['format_error_at_output_limit'])
                     consecutive_invalid += 1
                     if consecutive_invalid >= MAX_FORMAT_ERRORS:
                         reason = "invalid_tool_limit"

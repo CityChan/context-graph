@@ -115,6 +115,20 @@ def test_smoke_audit_requires_grading_complete_and_memory(tmp_path, benchmark, m
     target.write_text(json.dumps(trajectory if benchmark == 'swe-lite' else [trajectory]))
     assert not audit(tmp_path, benchmark, method, 2)['passed']
 
+    trajectory['termination_reason'] = 'invalid_tool_limit'
+    trajectory['model_contexts'] = [dict(
+        phase='format_retry', format_error='Incomplete call',
+        format_error_at_output_limit=True, finish_reason='length',
+        output_ids=[1, 2], max_tokens=2, structured_outputs={'regex': 'tool'},
+        response='unfinished')]
+    target.write_text(json.dumps(trajectory if benchmark == 'swe-lite' else [trajectory]))
+    report = audit(tmp_path, benchmark, method, 2)
+    assert not report['checks']['no_format_stops']
+    error = report['tasks'][-1]['last_format_errors'][0]
+    assert error['at_output_limit'] is True and error['finish_reason'] == 'length'
+    assert error['output_tokens'] == error['max_tokens'] == 2
+    assert error['constrained_output'] is True
+
 
 @pytest.mark.parametrize('benchmark', ['swe-lite', 'discoveryworld', 'scienceworld'])
 @pytest.mark.parametrize('method', ['supo', 'agentfold', 'memobrain', 'amem'])

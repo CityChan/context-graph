@@ -65,6 +65,10 @@ def audit(root, benchmark, method, expected):
                           'last_format_errors': [
                               {'phase': r.get('phase'), 'error': r['format_error'],
                                'at_output_limit': r.get('format_error_at_output_limit'),
+                               'finish_reason': r.get('finish_reason'),
+                               'output_tokens': len(r.get('output_ids', [])),
+                               'max_tokens': r.get('max_tokens'),
+                               'constrained_output': bool(r.get('structured_outputs')),
                                'response_tail': r.get('response', '')[-1200:]}
                               for r in errors[-3:]]})
             if benchmark == 'scienceworld':

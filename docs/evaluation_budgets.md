@@ -53,6 +53,17 @@ records identify `final_trigger=summary_limit`. Earlier v4 runs that terminated
 with `summary_limit` require rerunning for comparable results; this code change
 does not revise their saved scores or establish an accuracy improvement.
 
+SUPO `zero_shot_rollout_adaptation_v6` additionally constrains action-format
+retries to one native XML tool call with thinking disabled, reusing AgentFold's
+retry grammar without its compression block. Ordinary action requests inherit
+the evaluation thinking configuration. Retries still consume requests, tokens,
+and time; three consecutive invalid outputs still stop the episode. The native
+parser validates calls before dispatch, and unsupported server constraints fail
+visibly. Audit records expose `phase=format_retry`, the constraint, finish
+reason, and whether a rejected output reached its generation limit. This repairs
+the retry path seen in the SWE smoke with repeated analysis-only responses; it
+does not establish patch correctness or change summary/finalization policies.
+
 Results record `token_budget_mode`, `working_context_limit`,
 `episode_token_limit` (null in window mode), `finalizer_enabled`, and
 `finalizer_attempted`. `forced_finish` records a successful forced submission;

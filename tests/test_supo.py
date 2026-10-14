@@ -206,6 +206,110 @@ def test_invalid_action_retries_without_tool_side_effects(monkeypatch):
     assert "exactly one" in context.tokenizer.decode(client.calls[1][0])
 
 
+@pytest.mark.parametrize('kind,ability,action', [
+    ('search', 'LocalSearch', SEARCH),
+    ('swe', 'SWEVerified@test', '<function=python_exec><parameter=code>for x in [1, 2]:\n    print(x < 2, x <= 1, x > 0)</parameter></function>'),
+    ('scienceworld', 'ScienceWorld@test', '<function=action><parameter=command>look around</parameter></function>'),
+    ('discoveryworld', 'DiscoveryWorld@test', '<function=action><parameter=command>{"action":"WAIT"}</parameter></function>'),
+])
+def test_format_retry_changes_actual_request_then_restores_action_mode(monkeypatch, kind, ability, action):
+    import numpy as np
+    import re
+    env, context, item, client = setup(monkeypatch, ['analysis without a call', action, action])
+    item.non_tensor_batch['ability'] = np.array([ability])
+    monkeypatch.setattr(supo, 'task_chat', lambda *a, **kw: [
+        {'role': 'system', 'content': 'Use native tools.'}, {'role': 'user', 'content': 'Complete task.'}])
+    plugin = context.config.actor_rollout_ref.rollout.plugin
+    plugin.token_budget_mode = 'working_context'
+    plugin.final_answer_reserve = 0
+    plugin.supo_context_threshold = 4000
+    original_template = context.tokenizer.apply_chat_template
+
+    def template(messages, **kwargs):
+        # Make the actual submitted IDs sensitive to the thinking override.
+        ids = original_template(messages, **kwargs)
+        return ids + ([ord('!')] if kwargs.get('enable_thinking') is False else [])
+
+    monkeypatch.setattr(context.tokenizer, 'apply_chat_template', template)
+
+    async def run_action(call):
+        env.actions.append(call)
+        env.is_finish = len(env.actions) == 2
+        return {'observation': 'CURRENT_STATE'}
+
+    env.run_action = run_action
+    out = asyncio.run(supo.process_item(item, context))
+    records = out.extra_fields['model_contexts']
+    assert [r['phase'] for r in records] == ['action', 'format_retry', 'action']
+    assert [ids[-1] == ord('!') for ids, _ in client.calls] == [False, True, False]
+    assert 'structured_outputs' not in client.calls[0][1]
+    assert 'structured_outputs' not in client.calls[2][1]
+    grammar = client.calls[1][1]['structured_outputs']['regex']
+    assert re.fullmatch(grammar, action)
+    assert not re.fullmatch(grammar, action + action)
+    assert '<compress>' not in grammar
+    if kind in ('scienceworld', 'discoveryworld'):
+        assert 'function=finish' not in grammar
+    assert env.actions == [action, action] and env.closed
+    assert 'CURRENT_STATE' in str(records[-1]['messages'])
+    stats = out.extra_fields['env_stats']
+    assert stats['invalid_tool'] == stats['format_retry_requests'] == 1
+    assert stats['finalizer_attempted'] == stats['forced_finish'] == 0
+    assert out.num_turns == len(client.calls) == 3
+    assert stats['generated_tokens'] == sum(len(r['output_ids']) for r in records)
+    assert all(len(ids) + kw['max_new_tokens'] <= 32768 for ids, kw in client.calls)
+
+
+def test_ignored_retry_constraint_still_rejects_before_dispatch(monkeypatch):
+    # A backend ignoring structured_outputs must not silently dispatch extra calls.
+    env, context, item, client = setup(monkeypatch, ['analysis', SEARCH + OPEN, SEARCH + OPEN])
+    context.config.actor_rollout_ref.rollout.plugin.final_answer_reserve = 0
+    out = asyncio.run(supo.process_item(item, context))
+    assert out.extra_fields['termination_reason'] == 'invalid_tool_limit'
+    assert out.extra_fields['env_stats']['invalid_tool'] == 3
+    assert out.extra_fields['env_stats']['format_retry_requests'] == 2
+    assert not env.actions and env.closed and len(client.calls) == 3
+
+
+@pytest.mark.parametrize('reported_length', [False, True])
+def test_format_error_audit_records_output_limit(monkeypatch, reported_length):
+    env, context, item, client = setup(monkeypatch, ['unused', SEARCH, FINISH], observation='small')
+    original_completion = client.create_completion
+
+    async def completion(ids, **kwargs):
+        result = await original_completion(ids, **kwargs)
+        if len(client.calls) == 1:
+            choice = result['choices'][0]
+            choice['finish_reason'] = 'length' if reported_length else 'stop'
+            size = 10 if reported_length else kwargs['max_new_tokens']
+            choice['message'].update(content='x' * size, raw_output_ids=[120] * size,
+                                     response_log_probs=[0.] * size)
+        return result
+
+    client.create_completion = completion
+    out = asyncio.run(supo.process_item(item, context))
+    record = out.extra_fields['model_contexts'][0]
+    assert record['format_error_at_output_limit'] is True
+    assert record['finish_reason'] == ('length' if reported_length else 'stop')
+    assert out.extra_fields['env_stats']['format_errors_at_output_limit'] == 1
+    assert env.actions == [SEARCH, FINISH]
+
+
+def test_unsupported_retry_constraint_propagates_and_closes(monkeypatch):
+    env, context, item, client = setup(monkeypatch, ['analysis'])
+    original_completion = client.create_completion
+
+    async def completion(ids, **kwargs):
+        if kwargs.get('structured_outputs'):
+            raise RuntimeError('structured outputs unsupported')
+        return await original_completion(ids, **kwargs)
+
+    client.create_completion = completion
+    with pytest.raises(RuntimeError, match='structured outputs unsupported'):
+        asyncio.run(supo.process_item(item, context))
+    assert not env.actions and env.closed
+
+
 def test_cumulative_budget_is_not_refunded_by_summarization(monkeypatch):
     # Keep enough per-turn room to reach the total cap without a finalizer.
     env, context, item, client = setup(monkeypatch,
