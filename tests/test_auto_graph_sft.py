@@ -134,6 +134,11 @@ def test_auto_collection_controller_and_curated_last_turns(tmp_path, monkeypatch
     assert report['outputs'] == {'actor_validation': 3, 'controller_validation': 1}
     export.output = str(tmp_path / 'smoke')
     export.smoke = True
+    export.reviewer_url = 'http://new-node:8000/v1'
+    def current_reviewer(settings, *args):
+        assert settings.teacher_url == export.reviewer_url
+        return base(settings, *args, client=fake)
+    monkeypatch.setattr(curator, 'TeacherClient', current_reviewer)
     asyncio.run(curator.build(export, tokenizer))
     report = curator.read_json(tmp_path / 'smoke/smoke-audit.json')
     assert report['passed'] and not report['training_ready']

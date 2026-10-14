@@ -24,6 +24,8 @@ rmdir "$SFT_DIR"
 BUILDER=scripts/build_bcp_graph_sft.py
 if [[ ${SFT_GRAPH_PROTOCOL:-explicit_tools} == controller ]]; then BUILDER=scripts/build_auto_graph_sft.py; fi
 curation_args=()
+if [[ ${SFT_GRAPH_PROTOCOL:-explicit_tools} == controller ]]; then curation_args+=(--reviewer-url "$DEEPSEEK_BASE_URL"); fi
 if [[ ${SFT_CURATION_SMOKE:-0} == 1 && ${SFT_GRAPH_PROTOCOL:-explicit_tools} == controller ]]; then curation_args+=(--smoke); fi
 python "$BUILDER" "$RUN_DIR" --output "$SFT_DIR" --tokenizer "$STUDENT_TOKENIZER_PATH" --max-length "$(( ${PROMPT_LENGTH:-8192} + ${RESPONSE_LENGTH:-24576} ))" --review "${curation_args[@]}"
+if [[ ${SFT_REQUIRE_COMPLETE:-0} == 1 ]]; then python scripts/audit_auto_graph_sft.py "$SFT_DIR" --require-training; fi
 echo "SCIENCEWORLD_GRAPH_SFT_COMPLETE run=$RUN_DIR sft=$SFT_DIR"

@@ -38,6 +38,34 @@ teacher chat endpoint uses non-thinking generation, recorded in the manifest.
 
 ## Saved evidence and SFT
 
+For **all ScienceWorld training tasks**, use the formal resumable entry inside
+an idle four-node idev allocation:
+
+```bash
+bash scripts/generate_scienceworld_auto_sft_full_4node_idev.sh
+```
+
+It sets `SAMPLES=-1`, `START_INDEX=0`, two candidates per question by default,
+and preserves the tested sequential collector and 32K/100-turn budgets. With
+3,592 source training records this is at most 7,184 candidate episodes; the
+printed selection count accounts for deduplication and held-out exclusion.
+The fixed 10% task hash validation split remains unchanged. The run must finish
+collection and export structural graph training rows to report full success.
+
+The default output is `$SCRATCH/contextgraph_sft/scienceworld-auto-full/<full-commit>`.
+The script prints its exact location. Keep the same commit and parameters and
+rerun the same command on a new allocation to skip completed episodes and retry
+unfinished ones. `AUTO_SFT_RUN_DIR` can explicitly select the original directory;
+a lock prevents simultaneous writers. Do not use the earlier 3-question smoke
+directory for this full run because its collection manifest differs. Wall time
+may exceed one allocation; this entry does not submit or extend a Slurm job.
+
+Local vLLM teacher addresses may change on resume only when the checkpoint
+path/metadata and the rest of the manifest still match. The original manifest
+is immutable, actual endpoints are appended to `collection-sessions.jsonl`,
+and curation uses the current endpoint recorded in export settings. This does
+not hash every weight file; retain the immutable checkpoint snapshot.
+
 Each episode retains `requests.jsonl`, `trajectory.json` with graph trace,
 environment logs, native reward, termination and configuration provenance.
 Diagnostics count graph events by source: `model`, `heuristic`, `environment`.

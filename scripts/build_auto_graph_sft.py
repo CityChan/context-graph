@@ -105,6 +105,8 @@ async def build(args, tokenizer):
     output.mkdir(parents=True, exist_ok=False)
     settings = SimpleNamespace(**manifest["settings"])
     settings.temperature = 0.0
+    if getattr(args, 'reviewer_url', None):
+        settings.teacher_url = args.reviewer_url
     config = OmegaConf.create(manifest["config"]).actor_rollout_ref.rollout
     reviewer = TeacherClient(settings, tokenizer, config, output / "review-requests.jsonl") if args.review else None
     counts, buckets, decisions, seen = Counter(), {}, [], set()
@@ -184,6 +186,7 @@ def main():
     p.add_argument("--review", action="store_true")
     p.add_argument("--review-max-input", type=int, default=24000)
     p.add_argument('--smoke', action='store_true', help='Check qualified exports in either split; report training readiness separately')
+    p.add_argument('--reviewer-url', help='Current teacher endpoint after resuming on another node; recorded in export settings')
     args = p.parse_args()
     if not 0 <= args.validation_fraction < 1 or min(args.max_length, args.review_max_input) < 1:
         p.error("Invalid curation lengths or split")
