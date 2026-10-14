@@ -155,9 +155,21 @@ async def build(args, tokenizer):
               "scope": "successful auto-controller demonstrations; framework timing; no autonomous timing or causal benefit claim",
               "training": "MultiTurnSFTDataset; train_last_response_only=True; no input truncation",
               "reviewer": settings.teacher_model if args.review else None}
+    report['curation_smoke_only'] = bool(getattr(args, 'smoke', False))
+    report['training_ready'] = bool(counts['rows:actor_train'] and counts['structural_rows:train'])
     (output / "manifest.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     print(json.dumps(report, indent=2))
+    if getattr(args, 'smoke', False):
+        from scripts.audit_auto_graph_sft import audit_export
+        smoke = audit_export(output)
+        (output / 'smoke-audit.json').write_text(json.dumps(smoke, indent=2), encoding='utf-8')
+        print(json.dumps(smoke, indent=2))
+        if not smoke['passed']:
+            raise SystemExit('Auto graph collection smoke failed; inspect decisions.jsonl and smoke-audit.json.')
+        return
     if not counts["rows:controller_train"] or not counts["structural_rows:train"]:
+        if counts['structural_rows:validation']:
+            raise SystemExit('Qualified graph rows exist in validation only; training set is empty. Fixed task split preserved.')
         raise SystemExit("No qualified auto graph training rows; inspect decisions.jsonl. Gates were not relaxed.")
 
 
@@ -171,6 +183,7 @@ def main():
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--review", action="store_true")
     p.add_argument("--review-max-input", type=int, default=24000)
+    p.add_argument('--smoke', action='store_true', help='Check qualified exports in either split; report training readiness separately')
     args = p.parse_args()
     if not 0 <= args.validation_fraction < 1 or min(args.max_length, args.review_max_input) < 1:
         p.error("Invalid curation lengths or split")

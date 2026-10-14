@@ -123,6 +123,33 @@ def test_auto_collection_controller_and_curated_last_turns(tmp_path, monkeypatch
     assert rows.iloc[0]["messages"][-1]["content"] == requests[2]["response"]
     assert len(pd.read_parquet(tmp_path / "sft/actor_train.parquet")) == 3
 
+    # The only accepted task may land in validation, as in the live 3x2 smoke.
+    monkeypatch.setattr(curator, 'split_for', lambda *a: 'validation')
+    export.output = str(tmp_path / 'validation-only')
+    with pytest.raises(SystemExit, match='validation only'):
+        asyncio.run(curator.build(export, tokenizer))
+    from scripts.audit_auto_graph_sft import audit_export
+    report = audit_export(export.output)
+    assert report['passed'] and not report['training_ready']
+    assert report['outputs'] == {'actor_validation': 3, 'controller_validation': 1}
+    export.output = str(tmp_path / 'smoke')
+    export.smoke = True
+    asyncio.run(curator.build(export, tokenizer))
+    report = curator.read_json(tmp_path / 'smoke/smoke-audit.json')
+    assert report['passed'] and not report['training_ready']
+    assert not (tmp_path / 'smoke/controller_train.parquet').exists()
+    # Smoke does not turn rejected evidence into accepted training labels.
+    async def rejected_review(*args):
+        return 'evidence_review_failed'
+    monkeypatch.setattr(curator, 'review_edits', rejected_review)
+    export.output = str(tmp_path / 'rejected-smoke')
+    with pytest.raises(SystemExit, match='smoke failed'):
+        asyncio.run(curator.build(export, tokenizer))
+
+
+def test_live_successful_question_hash_stays_in_validation():
+    assert curator.split_for('304417167db62052047233127de185b021f35396d7ba37dda6aa99ad0c0f5144', 42, 0.1) == 'validation'
+
 
 def test_last_response_dataset_masks_rewritten_history(tmp_path):
     import torch

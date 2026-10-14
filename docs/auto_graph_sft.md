@@ -50,6 +50,21 @@ matched sampled graph responses, a structural model edit, post-edit task
 continuation, and clean execution. Merge/prune labels additionally require the
 existing evidence review. Failed/unfinished episodes remain diagnostic artifacts.
 An empty accepted set causes a nonzero exit, rather than reporting SFT success.
+The smoke wrapper enables `SFT_CURATION_SMOKE=1`: it checks qualified exported
+actor/structural-controller rows in either split and reports `training_ready`
+separately in `smoke-audit.json`. A successful collection smoke can have no
+training rows when its only accepted task hashes into validation. The fixed
+task split and all curation gates remain unchanged. The ordinary builder still
+requires structural controller training rows and fails with a specific message
+if only validation rows exist.
+
+To inspect an already curated directory without restarting the teacher, use
+`python scripts/audit_auto_graph_sft.py /path/to/sft-directory` in `cxtgraph`.
+This reads the existing manifest, decisions and Parquet files, checks counts,
+row metadata and task separation, and reports file hashes. It does not rerun
+evidence review or relabel validation examples as training. Add
+`--require-training` to require a usable training split as well. Existing
+exports remain unchanged, including exports made before this audit was added.
 
 Outputs under the printed `sft-*` directory:
 

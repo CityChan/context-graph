@@ -8,6 +8,7 @@ case "$BENCHMARK" in scienceworld|bcp) ;; *) echo "Usage: $0 [scienceworld|bcp]"
 unset RUN_DIR ARTIFACT_ROOT RUN_TAG
 export RUN_TAG="${SLURM_JOB_ID}-${BENCHMARK}-auto-$(date +%Y%m%d_%H%M%S)"
 export SFT_GRAPH_PROTOCOL=controller SFT_TEACHER_PROFILE=evaluation AGENT_BUDGET_MODE=working_context
+export SFT_CURATION_SMOKE=1
 export SAMPLES=${SAMPLES:-3} CANDIDATES=${CANDIDATES:-2} WORKERS=1
 export EXPECTED_NUM_NODES=4 TEACHER_TP=4 MAX_NUM_SEQS=1 NUM_WORKERS=1
 export STUDENT_TOKENIZER_ID=${STUDENT_TOKENIZER_ID:-Qwen/Qwen3.5-9B}
