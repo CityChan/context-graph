@@ -58,6 +58,7 @@ args=(--data "${DATA_PATH:-data/bc_train.parquet}" --heldout "${HELDOUT_PATH:-da
 args+=(--prompt-length "${PROMPT_LENGTH:-8192}" --response-length "${RESPONSE_LENGTH:-24576}" --max-turn "${MAX_TURN:-100}" --turn-max-tokens "${TURN_MAX_NEW_TOKENS:-2048}")
 [[ ${DRY_RUN:-0} != 1 ]] || args+=(--dry-run)
 args+=(--teacher-profile "${SFT_TEACHER_PROFILE:-graph_demonstration_v1}" --temperature "${TEACHER_TEMPERATURE:-0.7}")
+args+=(--graph-protocol "${SFT_GRAPH_PROTOCOL:-explicit_tools}")
 [[ ${PREFLIGHT_ONLY:-0} != 1 ]] || args+=(--preflight-only)
 python scripts/generate_bcp_graph_sft.py "${args[@]}"
 if [[ ${DRY_RUN:-0} == 1 || ${PREFLIGHT_ONLY:-0} == 1 ]]; then exit 0; fi
@@ -65,5 +66,7 @@ python scripts/diagnose_graph_sft.py "$RUN_DIR" --output "$RUN_DIR/diagnostics.j
 # Curation uses a new directory, so resume never overwrites a previous dataset.
 SFT_DIR=$(mktemp -d "$RUN_DIR/sft-XXXXXXXX")
 rmdir "$SFT_DIR"
-python scripts/build_bcp_graph_sft.py "$RUN_DIR" --output "$SFT_DIR" --tokenizer "$TOKENIZER" --review
+BUILDER=scripts/build_bcp_graph_sft.py
+if [[ ${SFT_GRAPH_PROTOCOL:-explicit_tools} == controller ]]; then BUILDER=scripts/build_auto_graph_sft.py; fi
+python "$BUILDER" "$RUN_DIR" --output "$SFT_DIR" --tokenizer "$TOKENIZER" --max-length "$(( ${PROMPT_LENGTH:-8192} + ${RESPONSE_LENGTH:-24576} ))" --review
 echo "BCP_GRAPH_SFT_COMPLETE run=$RUN_DIR sft=$SFT_DIR"

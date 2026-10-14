@@ -24,6 +24,7 @@ from scripts.eval_bcp_qwen38 import completion_budget, config_for
 
 PROFILE = "bcp_explicit_teacher_v1"
 SCIENCEWORLD_PROFILE = "scienceworld_explicit_teacher_v1"
+AUTO_PROFILE = "contextgraph_auto_teacher_v1"
 
 
 def digest(value):
@@ -85,13 +86,14 @@ def select_training_rows(rows, heldout, start, samples, seed, selection="uniform
 
 
 def make_config(args):
+    protocol = getattr(args, "graph_protocol", "explicit_tools")
     if getattr(args, "benchmark", "bcp") == "scienceworld":
         from scripts.eval_agent_benchmarks import config_for as simulator_config
         config = simulator_config("scienceworld", "contextgraph", args.prompt_length + args.response_length,
-                                  args.max_steps, "turns", "focus_v3", graph_action_protocol="explicit_tools")
+                                  args.max_steps, "turns", "focus_v3", graph_action_protocol=protocol)
     else:
         config = config_for(SimpleNamespace(method="contextgraph", memory_mode="repaired",
-                                            graph_action_protocol="explicit_tools"))
+                                            graph_action_protocol=protocol))
     rollout = config.actor_rollout_ref.rollout
     rollout.prompt_length, rollout.response_length = args.prompt_length, args.response_length
     rollout.plugin.update({"capture_model_contexts": True,
@@ -100,13 +102,21 @@ def make_config(args):
                            "turn_max_new_tokens": args.turn_max_tokens})
     from agents.sft_teacher_guidance import teacher_guidance
     profile = getattr(args, "teacher_profile", "evaluation")
+    if protocol == "controller" and profile != "evaluation":
+        raise ValueError("Auto collection uses the evaluation controller, not explicit teacher guidance")
     teacher_guidance(profile)  # Validate before starting a teacher or simulator.
     rollout.plugin.sft_teacher_profile = profile
+    if protocol == "controller":
+        # Make runtime defaults visible in saved configuration, rather than
+        # leaving automatic history management implicit in the executor.
+        rollout.plugin.enable_retrieval_memory = True
+    # Match the chat endpoint's non-thinking template, including budget accounting.
+    rollout.plugin.apply_chat_template_kwargs = {"enable_thinking": False}
     return config
 
 
 class TeacherClient:
-    """Chat API adapter: unmodified sampled JSON is validated by ActionContract.
+    """Chat API adapter retaining actual XML actor / JSON controller requests.
 
 API output IDs below are student re-tokenizations, NOT teacher sampled IDs or
 teacher policy log-probabilities. They are only for SFT/inference accounting.
@@ -120,23 +130,31 @@ teacher policy log-probabilities. They are only for SFT/inference accounting.
         self.client, self.args, self.tokenizer, self.config = client, args, tokenizer, config
         self.audit_path = Path(audit_path)
 
-    def request(self, messages, limit, schema):
+    def request(self, messages, limit, schema, constraints=None):
         body = dict(model=self.args.teacher_model, messages=copy.deepcopy(messages),
                     max_tokens=limit, temperature=self.args.temperature, top_p=0.95)
         if self.args.transport == "deepseek":
-            body.update(response_format={"type": "json_object"},
-                        extra_body={"thinking": {"type": "disabled"}})
+            body.update(extra_body={"thinking": {"type": "disabled"}})
+            if schema is not None:
+                body["response_format"] = {"type": "json_object"}
+            if constraints and "regex" in constraints:
+                raise ValueError("Regex action constraints require local vLLM")
         else:
-            body["extra_body"] = {"structured_outputs": {"json": schema},
-                                  "chat_template_kwargs": {"thinking": False, "enable_thinking": False}}
+            body["extra_body"] = {"chat_template_kwargs": {"thinking": False, "enable_thinking": False}}
+            if constraints or schema is not None:
+                body["extra_body"]["structured_outputs"] = constraints or {"json": schema}
         return body
 
     async def create_completion(self, input_ids, **kwargs):
         limit = completion_budget(self.config, input_ids, kwargs)
         if limit < 256:
             return None
-        schema = kwargs["structured_outputs"]["json"]
-        request = self.request(kwargs["messages"], limit, schema)
+        constraints = kwargs.get("structured_outputs")
+        schema = (constraints or {}).get("json")
+        request = self.request(kwargs["messages"], limit, schema, constraints)
+        for key in ("temperature", "top_p"):
+            if key in (kwargs.get("sampling_params") or {}):
+                request[key] = kwargs["sampling_params"][key]
         response = await self.client.chat.completions.create(**request)
         choice = response.choices[0]
         content = choice.message.content or ""
@@ -147,6 +165,8 @@ teacher policy log-probabilities. They are only for SFT/inference accounting.
                   "finish_reason": choice.finish_reason, "usage": usage,
                   "requested_model": self.args.teacher_model, "returned_model": response.model,
                   "response_id": response.id, "transport": self.args.transport}
+        record["structured_outputs"] = constraints
+        record["sampling"] = {k: request[k] for k in ("temperature", "top_p")}
         record['sft_assistance'] = kwargs.get('sft_assistance')
         with self.audit_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(record, ensure_ascii=False) + "\n")
@@ -169,6 +189,26 @@ async def preflight(args, tokenizer, config, root):
     teacher = TeacherClient(args, tokenizer, config, root / "preflight-requests.jsonl")
     contract = ActionContract("LocalSearch", None)
     try:
+        if getattr(args, "graph_protocol", "explicit_tools") == "controller":
+            from agents.graph_controller import graph_action_schema
+            from agents.agent_text import extract_fn_call
+            import jsonschema
+            schema = graph_action_schema([0, 1], allow_pass=True)
+            probes = [(None, '<function=action><parameter=command>look around</parameter></function>'
+                       if scienceworld else '<function=search><parameter=query>test</parameter></function>'),
+                      (schema, '{"action":"pass","candidate_indices":[],"summary":"","relation":"semantic"}')]
+            for schema, text in probes:
+                messages = [{"role": "user", "content": "Return exactly: " + text}]
+                ids = tokenizer.apply_chat_template(messages, tokenize=True, add_generation_prompt=True,
+                                                    enable_thinking=False)
+                result = await teacher.create_completion(ids, messages=messages, max_new_tokens=256,
+                                                        structured_outputs={"json": schema} if schema else None)
+                content = result["choices"][0]["message"]["content"]
+                if schema:
+                    jsonschema.validate(json.loads(content), schema)
+                elif extract_fn_call(content) is None:
+                    raise ValueError("Auto teacher preflight did not produce an environment tool call")
+            return
         for branch in (False, True):
             contract = ActionContract("ScienceWorld@real" if scienceworld else "LocalSearch", None, branch=branch)
             messages = [{"role": "user", "content": 'Return JSON: {"tool":"graph_read","arguments":{}}'}]
@@ -286,6 +326,7 @@ def parse_args():
     p.add_argument("--temperature", type=float, default=0.7)
     p.add_argument("--selection", choices=["uniform", "task_balanced"], default="uniform")
     p.add_argument("--teacher-profile", choices=["evaluation", "graph_demonstration_v1", "framework_assisted_v1"], default="evaluation")
+    p.add_argument("--graph-protocol", choices=["explicit_tools", "controller"], default="explicit_tools")
     p.add_argument("--prompt-length", type=int, default=8192)
     p.add_argument("--response-length", type=int, default=24576)
     p.add_argument("--branch-len", type=int, default=8192)
@@ -323,7 +364,7 @@ def main():
     config = make_config(args)
     root = Path(args.output)
     root.mkdir(parents=True, exist_ok=True)
-    manifest = {"profile": SCIENCEWORLD_PROFILE if args.benchmark == "scienceworld" else PROFILE,
+    manifest = {"profile": AUTO_PROFILE if args.graph_protocol == "controller" else (SCIENCEWORLD_PROFILE if args.benchmark == "scienceworld" else PROFILE),
                 "simulator": simulator, "source_sha256": hashlib.sha256(Path(args.data).read_bytes()).hexdigest(),
                 "heldout_sha256": hashlib.sha256(Path(args.heldout).read_bytes()).hexdigest(),
                 "indices": indices, "settings": {k: v for k, v in vars(args).items()
@@ -335,13 +376,14 @@ def main():
                            "base_url": os.getenv("OPENAI_BASE_URL"),
                            "mode": "llm_fallback" if os.getenv("OPENAI_API_KEY", "") not in {"", "dummy"} else "strict_em_only"},
                 "accounting": "student tokenizer for episode budgets; teacher API usage saved per request; no teacher logprobs",
-                "schema_enforcement": "local validation + API JSON mode" if args.transport == "deepseek" else "vllm JSON schema + local validation"}
+                "schema_enforcement": "per-request constraints; auto actor XML, controller JSON; see requests.jsonl" if args.graph_protocol == "controller" else ("local validation + API JSON mode" if args.transport == "deepseek" else "vllm JSON schema + local validation")}
     path = root / "manifest.json"
     if path.exists() and json.loads(path.read_text(encoding="utf-8")) != manifest:
         raise ValueError("Resume manifest mismatch; use a fresh output directory")
     path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps({"selected_questions": len(indices), "planned_episodes": len(indices) * args.candidates,
                       "teacher_profile": args.teacher_profile, "selection": args.selection,
+                      "graph_protocol": args.graph_protocol,
                       "task_types": sorted({rows[i]["extra_info"]["task_name"] for i in indices}) if simulator else None,
                       "teacher": args.teacher_model, "output": str(root), "dry_run": args.dry_run}), flush=True)
     if args.dry_run:

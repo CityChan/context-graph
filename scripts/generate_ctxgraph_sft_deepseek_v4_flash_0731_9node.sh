@@ -327,7 +327,9 @@ if [ "$BCP_EXPLICIT_GRAPH_SFT" = 1 ]; then
   export STUDENT_TOKENIZER_PATH AGENT_CONDA_ENV DATA_PATH START_INDEX
   export MAX_TURN PROMPT_LENGTH RESPONSE_LENGTH TURN_MAX_NEW_TOKENS
   export SAMPLES=${SAMPLES:-$MAX_SAMPLES} WORKERS=${WORKERS:-$NUM_WORKERS}
-  export RUN_DIR=${RUN_DIR:-$ARTIFACT_ROOT/bcp-explicit}
+  SFT_RUN_KIND=explicit
+  if [[ ${SFT_GRAPH_PROTOCOL:-explicit_tools} == controller ]]; then SFT_RUN_KIND=auto; fi
+  export RUN_DIR=${RUN_DIR:-$ARTIFACT_ROOT/bcp-$SFT_RUN_KIND}
   # Preserve OPENAI_* for the grader; local teacher requests need no cloud key.
   bash "$PROJECT_ROOT/scripts/generate_bcp_graph_sft_deepseek41.sh"
   exit 0

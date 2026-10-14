@@ -1,5 +1,9 @@
 # BC-P explicit graph-policy SFT with DeepSeek V4.1
 
+For automatic framework collection, use [the auto SFT smoke](auto_graph_sft.md).
+That entry restores the evaluation controller and automatic memory maintenance;
+the explicit and assisted protocols described below remain separate.
+
 This collector runs the current `explicit_tools` research agent on **BC-P
 training questions**. DeepSeek chooses ordinary research and graph tools; the
 framework executes them against the BC-P corpus. There is no automatic graph

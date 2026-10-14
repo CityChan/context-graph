@@ -213,8 +213,8 @@ export no_proxy=$NO_PROXY
 
 echo "Domain: $DOMAIN"
 if [ "$EXPLICIT_GRAPH_SFT" = 1 ]; then
-  echo "Explicit SFT: start=$START_INDEX questions=${SAMPLES:-$MAX_SAMPLES} candidates_per_question=${CANDIDATES:-2}"
-  echo "Graph protocol: explicit_tools; automatic consolidation disabled"
+  echo "Graph SFT: start=$START_INDEX questions=${SAMPLES:-$MAX_SAMPLES} candidates_per_question=${CANDIDATES:-2}"
+  echo "Graph protocol: ${SFT_GRAPH_PROTOCOL:-explicit_tools}; controller mode enables automatic graph maintenance"
 else
   echo "Sample shard: start=$START_INDEX count=$MAX_SAMPLES array_chunk_mode=$ARRAY_CHUNK_MODE"
   echo "Graph checkpoints: initial=$INITIAL_CONSOLIDATION_TURN interval=$CONSOLIDATION_INTERVAL"
@@ -298,7 +298,9 @@ else
     export DEEPSEEK_BASE_URL="http://$TEACHER_HEAD_IP:$TEACHER_PORT/v1"
     export DEEPSEEK_MODEL="$MODEL_ID" TEACHER_CHECKPOINT_PATH="$MODEL_PATH"
     export STUDENT_TOKENIZER_PATH
-    export RUN_DIR=${RUN_DIR:-$ARTIFACT_ROOT/explicit}
+    SFT_RUN_KIND=explicit
+    if [[ ${SFT_GRAPH_PROTOCOL:-explicit_tools} == controller ]]; then SFT_RUN_KIND=auto; fi
+    export RUN_DIR=${RUN_DIR:-$ARTIFACT_ROOT/$SFT_RUN_KIND}
     export SAMPLES=${SAMPLES:-$MAX_SAMPLES} WORKERS=${WORKERS:-$NUM_WORKERS}
     export START_INDEX MAX_TURN PROMPT_LENGTH RESPONSE_LENGTH TURN_MAX_NEW_TOKENS
     bash "$PROJECT_ROOT/scripts/generate_scienceworld_graph_sft.sh"

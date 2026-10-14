@@ -443,6 +443,26 @@ class MultiTurnSFTDataset(Dataset):
             for k, v in multi_modal_inputs.items():
                 multi_modal_inputs[k] = torch.concat(v, dim=0)
 
+        if row_dict.get("train_last_response_only") is True:
+            # Auto memory rewrites previous observations. Historical assistant
+            # turns in this request are conditioning, not labels for that prefix.
+            if messages[-1].get("role") != "assistant" or self.processor is not None:
+                raise ValueError("Last-response SFT requires text messages ending in assistant")
+            if self.truncation != "error":
+                raise ValueError("Last-response SFT requires truncation=error to preserve conditioning")
+            template_kwargs = {**self.apply_chat_template_kwargs}
+            if enable_thinking is not None:
+                template_kwargs["enable_thinking"] = enable_thinking
+            prefix = self.tokenizer.apply_chat_template(
+                messages[:-1], tools=tools, tokenize=True, add_generation_prompt=True,
+                **template_kwargs,
+            )
+            if input_ids[:len(prefix)].tolist() != list(prefix):
+                raise ValueError("Last-response SFT prefix changed during tokenization")
+            loss_mask[:len(prefix)] = 0
+            if not bool(loss_mask.any()):
+                raise ValueError("Last-response SFT has no supervised output tokens")
+
         # 2. handle position_ids for Qwen-VL series models
         if self.processor is not None and "Qwen2VLImageProcessor" in self.processor.image_processor.__class__.__name__:
             image_grid_thw = multi_modal_inputs.get("image_grid_thw", None)

@@ -50,7 +50,7 @@ def schema_tools(schema):
 def diagnose(root):
     root = Path(root)
     manifest = read(root / "manifest.json")
-    if manifest.get("profile") not in {"bcp_explicit_teacher_v1", "scienceworld_explicit_teacher_v1"}:
+    if manifest.get("profile") not in {"bcp_explicit_teacher_v1", "scienceworld_explicit_teacher_v1", "contextgraph_auto_teacher_v1"}:
         raise ValueError("Expected an explicit graph SFT collection directory")
     settings = manifest["settings"]
     plugin = manifest.get("config", {}).get("actor_rollout_ref", {}).get("rollout", {}).get("plugin", {})
@@ -72,8 +72,15 @@ def diagnose(root):
             permitted = allowed if permitted is None else permitted & allowed
             endings[str(record.get("finish_reason"))] += 1
             try:
-                action = json.loads(record["response"])
-                counts[action["tool"]] += 1
+                if manifest["profile"] == "contextgraph_auto_teacher_v1" and record.get("schema") is None:
+                    from agents.agent_text import extract_fn_call
+                    call = extract_fn_call(record["response"])
+                    if call is None:
+                        raise ValueError("Invalid XML tool call")
+                    action = {"tool": call["function"], "arguments": call.get("arguments", {})}
+                else:
+                    action = json.loads(record["response"])
+                counts[action.get("tool", action.get("action"))] += 1
                 command = action.get("arguments", {}).get("command")
                 if command is not None:
                     commands[str(command)] += 1
@@ -93,6 +100,8 @@ def diagnose(root):
                       "task_reward": episode.get("task_reward"), "is_finish": episode.get("is_finish"),
                       "stop": trajectory.get("termination_reason"),
                       "stats": {k: stats.get(k) for k in STAT_KEYS},
+                      "graph_events_by_source": dict(Counter(str(e.get("source")) + ":" + str(e.get("op"))
+                                                             for e in trajectory.get("graph_trace", {}).get("events", []))),
                       "request_count": sum(endings.values()), "finish_reasons": dict(endings),
                       "malformed_json_requests": malformed,
                       "assisted_requests": assistance,

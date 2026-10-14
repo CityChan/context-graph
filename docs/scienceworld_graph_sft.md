@@ -1,5 +1,9 @@
 # ScienceWorld explicit graph SFT with local DeepSeek
 
+For automatic framework collection (scheduled controller and automatic history
+management), use [the auto SFT smoke](auto_graph_sft.md). The explicit and
+assisted paths below are separate protocols and do not restore the auto baseline.
+
 Use a separate existing four-node GH200 idev allocation. This entry point reuses
 the local DeepSeek Ray/vLLM launcher, with TP=4 across the four GPUs. It starts
 no BC-P retrieval service and needs no DeepSeek cloud API key. The existing
