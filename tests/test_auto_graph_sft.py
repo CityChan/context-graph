@@ -35,6 +35,18 @@ def test_auto_preserves_evaluation_maintenance_config(benchmark, monkeypatch):
         generator.make_config(args)
 
 
+@pytest.mark.parametrize('benchmark', ['bcp', 'scienceworld'])
+def test_full_64k_budget_is_input_plus_output_window(benchmark, monkeypatch):
+    from agents.token_budget import TokenBudget
+    monkeypatch.setenv('AGENT_BUDGET_MODE', 'working_context')
+    args = arguments(benchmark)
+    args.prompt_length, args.response_length = 8192, 57344
+    config = generator.make_config(args).actor_rollout_ref.rollout
+    budget = TokenBudget.from_config(config)
+    assert budget.window == 65536 and budget.use_window
+    assert config.plugin.val_response_length == 57344
+
+
 @pytest.mark.parametrize("benchmark", ["bcp", "scienceworld"])
 def test_auto_collection_controller_and_curated_last_turns(tmp_path, monkeypatch, benchmark):
     from agents import graph_agent_isolated

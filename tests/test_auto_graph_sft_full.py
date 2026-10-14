@@ -53,25 +53,32 @@ def test_resume_rejects_changed_contract(tmp_path, change):
 
 
 @pytest.mark.parametrize('busy', [False, True])
-def test_full_wrapper_forces_full_collection_and_stable_resume_directory(tmp_path, busy):
+@pytest.mark.parametrize('benchmark', ['scienceworld', 'bcp'])
+@pytest.mark.parametrize('window', [32768, 65536])
+def test_full_wrapper_forces_full_collection_and_stable_resume_directory(tmp_path, busy, benchmark, window):
     bash = 'C:/Program Files/Git/bin/bash.exe' if os.name == 'nt' else shutil.which('bash')
     if not bash or not Path(bash).exists():
         pytest.skip('Bash required')
     scripts = tmp_path / 'scripts'
     scripts.mkdir()
-    source = Path(__file__).resolve().parents[1] / 'scripts/generate_scienceworld_auto_sft_full_4node_idev.sh'
+    source = Path(__file__).resolve().parents[1] / f'scripts/generate_{benchmark}_auto_sft_full_4node_idev.sh'
     shutil.copy(source, scripts / source.name)
     mocks = tmp_path / 'mocks.sh'
     mocks.write_text('git() { if [[ "$*" == *--show-toplevel* ]]; then echo "$TEST_ROOT"; else echo stablecommit; fi; }\nflock() { [[ "$LOCK_BUSY" == 0 ]]; }\n', newline='\n')
-    (scripts / 'generate_scienceworld_graph_sft_deepseek_4node_idev.sh').write_text(
+    target = 'generate_scienceworld_graph_sft_deepseek_4node_idev.sh' if benchmark == 'scienceworld' else 'generate_ctxgraph_sft_deepseek_v4_flash_0731_9node.sh'
+    (scripts / target).write_text(
         'set -eu\n[[ "$SAMPLES" == -1 && "$START_INDEX" == 0 && "$CANDIDATES" == 2 && "$WORKERS" == 1 ]]\n'
         '[[ "$SFT_CURATION_SMOKE" == 0 && "$SFT_REQUIRE_COMPLETE" == 1 && "$SFT_GRAPH_PROTOCOL" == controller ]]\n'
         '[[ -z ${DRY_RUN:-} && -z ${ARRAY_CHUNK_MODE:-} ]]\n'
+        '[[ "$MAX_MODEL_LEN" == "$CONTEXT_LENGTH" && "$((PROMPT_LENGTH + RESPONSE_LENGTH))" == "$CONTEXT_LENGTH" ]]\n'
+        'if [[ "$TEST_BENCHMARK" == bcp ]]; then [[ "$BCP_EXPLICIT_GRAPH_SFT" == 1 && "$COLOCATE_SEARCH" == 1 && "$DATA_PATH" == data/bc_train.parquet ]]; fi\n'
         'printf "%s\\n" "$RUN_DIR" >> "$TEST_ROOT/dispatched"\n', newline='\n')
     env = dict(os.environ, TEST_ROOT=tmp_path.as_posix(), SCRATCH=tmp_path.as_posix(),
                BASH_ENV=mocks.as_posix(), SLURM_JOB_ID='first', LOCK_BUSY=str(int(busy)),
                SAMPLES='3', CANDIDATES='2', START_INDEX='20', RUN_DIR='/stale/run',
-               ARTIFACT_ROOT='/stale/root', SFT_CURATION_SMOKE='1', DRY_RUN='1', ARRAY_CHUNK_MODE='1')
+               ARTIFACT_ROOT='/stale/root', SFT_CURATION_SMOKE='1', DRY_RUN='1', ARRAY_CHUNK_MODE='1',
+               CONTEXT_LENGTH=str(window), PROMPT_LENGTH='8192', RESPONSE_LENGTH='24576', MAX_MODEL_LEN='32768',
+               TEST_BENCHMARK=benchmark, DATA_PATH='data/bc_train.parquet')
     env.pop('AUTO_SFT_RUN_DIR', None)
     for job in ('first', 'second'):
         env['SLURM_JOB_ID'] = job
@@ -83,4 +90,44 @@ def test_full_wrapper_forces_full_collection_and_stable_resume_directory(tmp_pat
     else:
         runs = (tmp_path / 'dispatched').read_text().splitlines()
         assert runs[0] == runs[1]
-        assert Path(runs[0]).name == 'stablecommit'
+        assert Path(runs[0]).name == f'context-{window}'
+        assert Path(runs[0]).parent.name == 'stablecommit'
+
+
+def test_managed_search_resume_requires_matching_retrieval_config(tmp_path):
+    original = contract()
+    original['settings']['search_url'] = 'http://node1:18999'
+    original['managed_search'] = {'driver': 'repository_search_server', 'embedding_model': 'fixed'}
+    save_collection_manifest(tmp_path, original)
+    resumed = copy.deepcopy(original)
+    resumed['settings']['search_url'] = 'http://node2:18999'
+    save_collection_manifest(tmp_path, resumed)
+    resumed['managed_search']['embedding_model'] = 'changed'
+    with pytest.raises(ValueError, match='Resume manifest mismatch'):
+        save_collection_manifest(tmp_path, resumed)
+
+
+def test_external_search_endpoint_change_is_not_silently_accepted(tmp_path):
+    original = contract()
+    original['settings']['search_url'] = 'http://external1'
+    save_collection_manifest(tmp_path, original)
+    original['settings']['search_url'] = 'http://external2'
+    with pytest.raises(ValueError, match='Resume manifest mismatch'):
+        save_collection_manifest(tmp_path, original)
+
+
+def test_managed_search_records_local_file_changes(tmp_path, monkeypatch):
+    from scripts.generate_bcp_graph_sft import managed_search_provenance
+    monkeypatch.delenv('SFT_MANAGED_SEARCH', raising=False)
+    assert managed_search_provenance() is None
+    monkeypatch.setenv('SFT_MANAGED_SEARCH', '1')
+    for key in ('LOCAL_SEARCH_CORPUS', 'LOCAL_SEARCH_EMBEDDINGS'):
+        path = tmp_path / key
+        path.write_text('data')
+        monkeypatch.setenv(key, str(path))
+    before = managed_search_provenance()
+    (tmp_path / 'LOCAL_SEARCH_CORPUS').write_text('different data')
+    assert before != managed_search_provenance()
+    monkeypatch.delenv('LOCAL_SEARCH_EMBEDDINGS')
+    with pytest.raises(ValueError, match='both local'):
+        managed_search_provenance()

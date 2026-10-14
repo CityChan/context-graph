@@ -46,13 +46,13 @@ bash scripts/generate_scienceworld_auto_sft_full_4node_idev.sh
 ```
 
 It sets `SAMPLES=-1`, `START_INDEX=0`, two candidates per question by default,
-and preserves the tested sequential collector and 32K/100-turn budgets. With
+and uses a sequential collector, **64K working context**, and 100 task turns. With
 3,592 source training records this is at most 7,184 candidate episodes; the
 printed selection count accounts for deduplication and held-out exclusion.
 The fixed 10% task hash validation split remains unchanged. The run must finish
 collection and export structural graph training rows to report full success.
 
-The default output is `$SCRATCH/contextgraph_sft/scienceworld-auto-full/<full-commit>`.
+The default output is `$SCRATCH/contextgraph_sft/scienceworld-auto-full/<full-commit>/context-65536`.
 The script prints its exact location. Keep the same commit and parameters and
 rerun the same command on a new allocation to skip completed episodes and retry
 unfinished ones. `AUTO_SFT_RUN_DIR` can explicitly select the original directory;
@@ -65,6 +65,32 @@ path/metadata and the rest of the manifest still match. The original manifest
 is immutable, actual endpoints are appended to `collection-sessions.jsonl`,
 and curation uses the current endpoint recorded in export settings. This does
 not hash every weight file; retain the immutable checkpoint snapshot.
+
+For **all BC-P training questions**, use a separate idle four-node allocation:
+
+```bash
+CONTEXT_LENGTH=65536 bash scripts/generate_bcp_auto_sft_full_4node_idev.sh
+```
+
+This reads `data/bc_train.parquet`, excludes `data/bc_test.parquet`, selects all
+eligible unique questions, and generates two candidates each. The printed
+`selected_questions` and `planned_episodes` give the actual totals. It serves
+the same cached DeepSeek checkpoint on four nodes with retrieval colocated on
+the first node, using the existing grader configuration. No cloud teacher key
+is needed; the judge retains its existing credentials and recorded grading mode.
+Outputs use `$SCRATCH/contextgraph_sft/bcp-auto-full/<full-commit>/context-65536`.
+The full-run entry has the same locking, completion audit and resume behavior.
+For managed retrieval, node addresses may change while the saved service
+configuration must match. Corpus/model names, cache path and local-file
+size/mtime are recorded, not full corpus/embedding content hashes. Keep those
+assets unchanged. External search URLs remain strictly checked on resume.
+
+Both full-run entries use `CONTEXT_LENGTH=65536` by default and derive
+`PROMPT_LENGTH=8192`, `RESPONSE_LENGTH=57344`, server `MAX_MODEL_LEN=65536`,
+and export `--max-length=65536`. The window is rendered input plus generated
+output per request, not an episode lifetime token cap. `CONTEXT_LENGTH=32768`
+explicitly selects 32K in a separate directory. Existing running processes and
+32K artifacts are unchanged; do not resume a 32K manifest with 64K settings.
 
 Each episode retains `requests.jsonl`, `trajectory.json` with graph trace,
 environment logs, native reward, termination and configuration provenance.

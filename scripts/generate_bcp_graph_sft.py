@@ -306,6 +306,8 @@ def save_collection_manifest(root, manifest):
         if (manifest.get('settings', {}).get('transport') == 'vllm'
                 and checkpoint.get('path') and checkpoint.get('metadata_sha256')):
             comparable['settings']['teacher_url'] = saved['settings'].get('teacher_url')
+        if manifest.get('managed_search') and manifest['managed_search'] == saved.get('managed_search'):
+            comparable['settings']['search_url'] = saved['settings'].get('search_url')
         if saved != comparable:
             raise ValueError('Resume manifest mismatch; use a fresh output directory')
     else:
@@ -314,8 +316,28 @@ def save_collection_manifest(root, manifest):
     with (root / 'collection-sessions.jsonl').open('a', encoding='utf-8') as stream:
         stream.write(json.dumps({'session_id': uuid.uuid4().hex,
                                  'teacher_url': manifest['settings']['teacher_url'],
+                                 'search_url': manifest['settings'].get('search_url'),
                                  'commit': manifest['commit'],
                                  'source_manifest_sha256': digest(json.loads(path.read_text(encoding='utf-8')))}) + '\n')
+
+
+def managed_search_provenance():
+    """Record the repository-launched retrieval configuration, not external URLs."""
+    if os.getenv('SFT_MANAGED_SEARCH') != '1':
+        return None
+    local = {}
+    for key in ('LOCAL_SEARCH_CORPUS', 'LOCAL_SEARCH_EMBEDDINGS'):
+        value = os.getenv(key)
+        if value:
+            path = Path(value).resolve()
+            stat = path.stat()
+            local[key] = {'path': str(path), 'size': stat.st_size, 'mtime_ns': stat.st_mtime_ns}
+    if len(local) == 1:
+        raise ValueError('Managed search requires both local corpus and embeddings')
+    return {'driver': 'repository_search_server', 'embedding_model': os.getenv('EMBED_MODEL', 'Qwen/Qwen3-Embedding-8B'),
+            'local_files': local, 'corpus': None if local else 'Tevatron/browsecomp-plus-corpus',
+            'embeddings': None if local else 'miaolu3/browsecomp-plus',
+            'cache': os.getenv('SEARCH_HF_HUB_CACHE'), 'content_hashed': False}
 
 
 def validate_scienceworld_training(rows, official_train):
@@ -400,6 +422,8 @@ def main():
                            "mode": "llm_fallback" if os.getenv("OPENAI_API_KEY", "") not in {"", "dummy"} else "strict_em_only"},
                 "accounting": "student tokenizer for episode budgets; teacher API usage saved per request; no teacher logprobs",
                 "schema_enforcement": "per-request constraints; auto actor XML, controller JSON; see requests.jsonl" if args.graph_protocol == "controller" else ("local validation + API JSON mode" if args.transport == "deepseek" else "vllm JSON schema + local validation")}
+    if args.benchmark == 'bcp':
+        manifest['managed_search'] = managed_search_provenance()
     save_collection_manifest(root, manifest)
     print(json.dumps({"selected_questions": len(indices), "planned_episodes": len(indices) * args.candidates,
                       "teacher_profile": args.teacher_profile, "selection": args.selection,
