@@ -73,9 +73,61 @@ Exports contain:
 
 Task-hash splitting groups all candidates and segments of a task together. A tiny
 smoke can export validation only or control only; that does not make it training
-ready. Full collection requires completion and nonempty graph training rows. This
-does not mix in older thinking datasets automatically: their tokenizer, sampled
-prefixes and held-out separation must be independently established first.
+ready. Full collection requires completion and nonempty graph training rows.
+
+## Include assisted explicit + thinking data
+
+The original `RouteA_plus_thinking` recipe also used previously curated assisted
+explicit + thinking demonstrations. Keep these as a separately identified source:
+Route A supplies auto/controller rollouts; assisted data supplies explicit-tool
+demonstrations with its original assistance and reasoning context. The mixed
+dataset does not relabel explicit examples as controller rollouts.
+
+Use `scripts/mix_route_a_sft.py` with the **original source tokenizer**. Both
+sources must have the same vocabulary, special tokens and chat template. Existing
+source quality/held-out curation is a prerequisite: registration records the
+operator's source designation and file hashes, it does not verify task success
+or rediscover whether an arbitrary dataset was framework-assisted.
+
+Supported assisted formats:
+
+- `messages_train`: saved messages with explicit boolean `train` on **every**
+  message, `enable_thinking=true`, and canonical `question_hash` (or `task_id`
+  containing that same hash). Each marked assistant answer becomes a separate
+  supervised request with its saved prefix. All earlier answers have zero loss.
+  Thinking text/reasoning fields must survive the template. These rows are labeled
+  `legacy_messages_retokenized`; original sampled-token equality cannot be claimed
+  without the original request records.
+- `agent_context`: the version-1 token/mask/span format described above, including
+  the matching tokenizer fingerprint. Existing IDs and masks are validated and
+  retained. Other historical `agent_context` formats need a source-specific
+  adapter; the import does not guess their semantics.
+
+Example in a Python environment with pandas, pyarrow and the checkpoint's
+transformers support (replace the paths with the actual exports):
+
+```bash
+python scripts/mix_route_a_sft.py --register-assisted --assisted-manifest /scratch/assisted-source.json --assisted-train /scratch/old/train.parquet --assisted-validation /scratch/old/validation.parquet --tokenizer /scratch/qwen35-checkpoint --assisted-format messages_train
+python scripts/mix_route_a_sft.py --route-a /scratch/route-a/sft-export --assisted-manifest /scratch/assisted-source.json --tokenizer /scratch/qwen35-checkpoint --output /scratch/route-a-plus-thinking --assisted-ratio 1.0
+```
+
+Preserve the old train/validation assignment; conflicting task hashes across
+either source's train and validation sets cause an error, even if downsampling
+would have hidden the conflict. Duplicate supervised prefix/output pairs are
+removed within a split and rejected across splits. Overlength examples are
+rejected without truncation.
+
+The default `--assisted-ratio 1.0` caps assisted **rows** at one per Route A
+training row, without repeating data. This is a configurable starting mix, not
+a recovered historical recipe or a token-level 50/50 split. Route A's exported
+graph/control mixture is preserved. The manifest reports actual row counts and
+supervised token counts per source, source hashes, and removed duplicates.
+All accepted validation rows are retained independently of this sampling cap.
+
+Point `ROUTE_A_SFT_DIR` at the **mixed output directory** to use the existing
+training command below. No change to the training loss-mask mode is needed.
+Actual historical data and its source metadata are still needed to verify the
+import; fixture tests alone do not establish compatibility with that export.
 
 ## Training
 
