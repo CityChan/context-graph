@@ -25,6 +25,14 @@ from scripts.eval_bcp_qwen38 import completion_budget, config_for
 PROFILE = "bcp_explicit_teacher_v1"
 SCIENCEWORLD_PROFILE = "scienceworld_explicit_teacher_v1"
 AUTO_PROFILE = "contextgraph_auto_teacher_v1"
+ROUTE_A_PROFILE = "contextgraph_route_a_v1"
+
+
+def collection_client(args, *positional):
+    if getattr(args, "collection_mode", "teacher") == "route_a":
+        from scripts.route_a_client import RouteAClient
+        return RouteAClient(args, *positional)
+    return TeacherClient(args, *positional)
 
 
 def digest(value):
@@ -110,8 +118,11 @@ def make_config(args):
         # Make runtime defaults visible in saved configuration, rather than
         # leaving automatic history management implicit in the executor.
         rollout.plugin.enable_retrieval_memory = True
-    # Match the chat endpoint's non-thinking template, including budget accounting.
-    rollout.plugin.apply_chat_template_kwargs = {"enable_thinking": False}
+    # Teacher chat collection is non-thinking; Route A retains policy thinking.
+    route_a = getattr(args, "collection_mode", "teacher") == "route_a"
+    if route_a and (protocol != "controller" or args.transport != "vllm_tokens"):
+        raise ValueError("Route A requires controller protocol and vllm_tokens transport")
+    rollout.plugin.apply_chat_template_kwargs = {"enable_thinking": route_a}
     return config
 
 
@@ -186,7 +197,7 @@ async def preflight(args, tokenizer, config, root):
     if not scienceworld:
         async with httpx.AsyncClient(timeout=30) as http:
             (await http.get(args.search_url.rstrip("/") + "/health")).raise_for_status()
-    teacher = TeacherClient(args, tokenizer, config, root / "preflight-requests.jsonl")
+    teacher = collection_client(args, tokenizer, config, root / "preflight-requests.jsonl")
     contract = ActionContract("LocalSearch", None)
     try:
         if getattr(args, "graph_protocol", "explicit_tools") == "controller":
@@ -244,7 +255,10 @@ async def collect(args, rows, indices, config, tokenizer, root):
                 return
             attempt = episode_root / ("attempt-" + uuid.uuid4().hex[:12])
             attempt.mkdir(parents=True)
-            client = TeacherClient(args, tokenizer, config.actor_rollout_ref.rollout, attempt / "requests.jsonl")
+            candidate_args = copy.copy(args)
+            if getattr(args, "collection_mode", "teacher") == "route_a":
+                candidate_args.seed = args.seed + index * args.candidates + candidate
+            client = collection_client(candidate_args, tokenizer, config.actor_rollout_ref.rollout, attempt / "requests.jsonl")
             row = copy.deepcopy(rows[index])
             extra = row["extra_info"]
             extra["instance_id"] = f"{benchmark}-train-{index}-{candidate}"
@@ -303,7 +317,7 @@ def save_collection_manifest(root, manifest):
         saved = json.loads(path.read_text(encoding='utf-8'))
         comparable = copy.deepcopy(manifest)
         checkpoint = manifest.get('local_teacher_checkpoint') or {}
-        if (manifest.get('settings', {}).get('transport') == 'vllm'
+        if (manifest.get('settings', {}).get('transport') in ('vllm', 'vllm_tokens')
                 and checkpoint.get('path') and checkpoint.get('metadata_sha256')):
             comparable['settings']['teacher_url'] = saved['settings'].get('teacher_url')
         if manifest.get('managed_search') and manifest['managed_search'] == saved.get('managed_search'):
@@ -361,7 +375,8 @@ def parse_args():
     p.add_argument("--teacher-url", default=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"))
     p.add_argument("--teacher-model", default=os.getenv("DEEPSEEK_MODEL", "deepseek-flash"))
     p.add_argument("--teacher-checkpoint", default=os.getenv("TEACHER_CHECKPOINT_PATH"))
-    p.add_argument("--transport", choices=["deepseek", "vllm"], default="deepseek")
+    p.add_argument("--transport", choices=["deepseek", "vllm", "vllm_tokens"], default="deepseek")
+    p.add_argument("--collection-mode", choices=["teacher", "route_a"], default="teacher")
     p.add_argument("--search-url", default=os.getenv("LOCAL_SEARCH_URL"))
     p.add_argument("--samples", type=int, default=25)
     p.add_argument("--start", type=int, default=0)
@@ -388,6 +403,11 @@ def main():
     import subprocess
     from omegaconf import OmegaConf
     args = parse_args()
+    if args.collection_mode == "route_a":
+        if not args.teacher_checkpoint or Path(args.teacher_checkpoint).resolve() != Path(args.tokenizer).resolve():
+            raise ValueError("Route A must use the same local checkpoint for policy and tokenizer")
+    elif args.transport == "vllm_tokens":
+        raise ValueError("vllm_tokens is reserved for Route A collection")
     if min(args.workers, args.candidates, args.prompt_length, args.response_length, args.branch_len, args.max_turn, args.max_steps) < 1 or args.turn_max_tokens < 256:
         raise ValueError("Positive budgets/workers/candidates and turn-max-tokens >= 256 required")
     if any(word in Path(args.data).stem.lower() for word in ("test", "validation", "heldout")):
@@ -424,6 +444,14 @@ def main():
                 "schema_enforcement": "per-request constraints; auto actor XML, controller JSON; see requests.jsonl" if args.graph_protocol == "controller" else ("local validation + API JSON mode" if args.transport == "deepseek" else "vllm JSON schema + local validation")}
     if args.benchmark == 'bcp':
         manifest['managed_search'] = managed_search_provenance()
+    route_a_tokenizer = None
+    if args.collection_mode == "route_a":
+        from transformers import AutoTokenizer
+        from agents.exact_context import tokenizer_signature
+        route_a_tokenizer = AutoTokenizer.from_pretrained(args.tokenizer, local_files_only=True)
+        manifest.update(profile=ROUTE_A_PROFILE,
+                        tokenizer_sha256=tokenizer_signature(route_a_tokenizer),
+                        accounting="native policy input/output IDs; same-checkpoint SFT, not RL logprobs")
     save_collection_manifest(root, manifest)
     print(json.dumps({"selected_questions": len(indices), "planned_episodes": len(indices) * args.candidates,
                       "teacher_profile": args.teacher_profile, "selection": args.selection,
@@ -439,7 +467,7 @@ def main():
     if args.search_url:
         os.environ["LOCAL_SEARCH_URL"] = args.search_url
     from transformers import AutoTokenizer
-    tokenizer = AutoTokenizer.from_pretrained(args.tokenizer)
+    tokenizer = route_a_tokenizer if route_a_tokenizer is not None else AutoTokenizer.from_pretrained(args.tokenizer)
     asyncio.run(collect(args, rows, indices, config, tokenizer, root))
 
 

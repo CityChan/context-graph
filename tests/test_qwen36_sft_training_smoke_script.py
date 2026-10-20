@@ -84,7 +84,7 @@ def test_multiturn_sft_uses_renderable_conversation_prefixes():
     assert "Chat template tokenization is not prefix-stable" in text
     assert "if len(prefix) == 0:" in text
     assert "messages: list = convert_nested_value_to_list_recursive(example[self.messages_key])" in text
-    assert 'self.loss_mask_mode in ["per_message", "assistant_tokens", "chatml"]' in text
+    assert 'self.loss_mask_mode in ["per_message", "assistant_tokens", "chatml", "agent_context"]' in text
     assert "return_assistant_tokens_mask=True" in text
     assert 'if self.loss_mask_mode == "assistant_tokens":' in text
     assert 'elif self.loss_mask_mode == "chatml":' in text

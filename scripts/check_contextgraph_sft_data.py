@@ -18,7 +18,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--tokenizer", required=True)
     parser.add_argument("--max-length", type=int, default=8192)
     parser.add_argument(
-        "--loss-mask-mode", choices=("per_message", "assistant_tokens", "chatml"), default="assistant_tokens"
+        "--loss-mask-mode", choices=("per_message", "assistant_tokens", "chatml", "agent_context"), default="assistant_tokens"
     )
     parser.add_argument("--all-samples", action="store_true", help="Tokenize and validate every parquet row")
     return parser.parse_args()
@@ -59,7 +59,7 @@ def main() -> None:
             "tools_key": "tools",
             "enable_thinking_key": "enable_thinking",
             "max_length": args.max_length,
-            "truncation": "right",
+            "truncation": "error" if args.loss_mask_mode == "agent_context" else "right",
             "pad_mode": "right",
             "loss_mask_mode": args.loss_mask_mode,
         }

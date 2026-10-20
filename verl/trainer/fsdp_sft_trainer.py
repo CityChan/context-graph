@@ -41,7 +41,7 @@ from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.utils.data import Dataset, DistributedSampler
 from torchdata.stateful_dataloader import StatefulDataLoader
 from tqdm import tqdm
-from transformers import AutoConfig, AutoModelForCausalLM, PreTrainedModel
+from transformers import AutoConfig, PreTrainedModel
 
 import verl.utils.hdfs_io as hdfs_io
 from verl.utils.attention_utils import index_first_axis, pad_input, rearrange, unpad_input
@@ -63,6 +63,7 @@ from verl.utils.fsdp_utils import (
     init_fn,
 )
 from verl.utils.logger import log_with_rank
+from verl.utils.model import get_hf_auto_model_class
 from verl.utils.profiler import log_gpu_memory_usage
 from verl.utils.py_functional import convert_to_regular_types
 from verl.utils.torch_dtypes import PrecisionType
@@ -231,7 +232,10 @@ class FSDPSFTTrainer:
         )
 
         with init_context():
-            self.model: PreTrainedModel = AutoModelForCausalLM.from_pretrained(
+            # Qwen3.5 checkpoints use a conditional-generation config even for
+            # text-only SFT. Use the same config-aware loader as the RL workers.
+            model_class = get_hf_auto_model_class(config)
+            self.model: PreTrainedModel = model_class.from_pretrained(
                 local_model_path,
                 config=config,
                 torch_dtype=torch_dtype,

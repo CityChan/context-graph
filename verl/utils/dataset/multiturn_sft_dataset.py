@@ -101,7 +101,7 @@ class MultiTurnSFTDataset(Dataset):
         self.loss_mask_mode = config.get(
             "loss_mask_mode", multiturn_config.get("loss_mask_mode", "per_message")
         )
-        assert self.loss_mask_mode in ["per_message", "assistant_tokens", "chatml"]
+        assert self.loss_mask_mode in ["per_message", "assistant_tokens", "chatml", "agent_context"]
         assert self.truncation in ["error", "left", "right"]
 
         if not isinstance(parquet_files, list | ListConfig):
@@ -408,7 +408,21 @@ class MultiTurnSFTDataset(Dataset):
         enable_thinking = self.enable_thinking[item] if self.enable_thinking is not None else None
 
         # 1. tokenize the conversation and build the assistant-only loss mask
-        if self.loss_mask_mode == "assistant_tokens":
+        if row_dict.get("sft_profile") == "route_a_v1" and self.loss_mask_mode != "agent_context":
+            raise ValueError("Route A requires loss_mask_mode=agent_context")
+        if self.loss_mask_mode == "agent_context":
+            from agents.exact_context import tokenizer_signature, validate_agent_context
+            if self.processor is not None or self.truncation != "error":
+                raise ValueError("agent_context requires text-only data and truncation=error")
+            if not hasattr(self, "_agent_tokenizer_sha256"):
+                self._agent_tokenizer_sha256 = tokenizer_signature(self.tokenizer)
+            ids, mask = validate_agent_context(convert_nested_value_to_list_recursive(row_dict),
+                                              self.max_length, self._agent_tokenizer_sha256)
+            input_ids = torch.tensor(ids, dtype=torch.long)
+            loss_mask = torch.tensor(mask, dtype=torch.long)
+            attention_mask = torch.ones_like(input_ids)
+            multi_modal_inputs = {}
+        elif self.loss_mask_mode == "assistant_tokens":
             input_ids, loss_mask, attention_mask, multi_modal_inputs = self._process_full_conversation(
                 messages=messages, tools=tools, enable_thinking=enable_thinking
             )
