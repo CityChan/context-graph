@@ -4,169 +4,27 @@ Optional dynamic sampling, decision scaling, compression process penalties,
 and ROCm allocation controls are documented in
 [training hardening](training_hardening.md).
 
-The alternating E+M variant is now named **[EM-RPO](em_rpo.md)**. GraphRPO
-configuration keys and metrics remain compatible; older experimental backends
-retain their existing names.
+The main design jointly optimizes task execution and graph management with one
+policy and optimizer. The default `graph_rpo_credit_backend=outcome_only` uses
+verified task reward plus non-positive process penalties; it makes no extra QA
+requests. Controller scheduling remains framework-owned. Both execution and
+management tokens receive the episode's group-relative task advantage.
 
-This implementation follows Section 4.2 of the ContextGraph manuscript. It is
-enabled only when `algorithm.adv_estimator=graphrpo` and
+The main token advantage is `A_task + beta * p`, with `p <= 0`. Invalid graph
+decisions receive `-0.3`; tool/format errors and missing finish receive `-1`;
+scope penalties apply to the corresponding branch. Labels use the most negative
+applicable value and remain local to their recorded response spans. PPO clipping
+and KL apply to the shared policy; neither action family is frozen or masked out.
+
+Use `algorithm.adv_estimator=graphrpo` and
 `actor_rollout_ref.actor.policy_loss.loss_mode=graphrpo`.
 
-## Alternating executor and memory training (E+M, opt-in)
+The paired before/after QA backend, maintenance-only continuation training and
+alternating E/M training have been removed. Old backend values and role-specific
+configuration keys are rejected instead of silently selecting another objective.
 
-This is the EM-RPO variant; the heading is retained for existing links.
-
-Set `algorithm.graphrpo_alternating_roles=True`,
-`algorithm.graphrpo_memory_only=False` and keep the
-`old_policy_continuation` backend. The same actor and optimizer train both
-roles. Odd saved training steps train E; even steps train M. The step counts
-rollout attempts, including skipped batches, so resuming does not reset the
-schedule or repeatedly retry an unavailable role.
-
-- **E:** sample K independent complete episodes of the same question with the
-  pre-update shared policy. Give each episode leave-one-out terminal advantage
-  `R_i - mean(R_j, j != i)`. Train its execution tokens, including branch/return
-  and answer tokens; exclude every controller completion, including pass and
-  rejected edits. Main and branch streams share an episode ID and count once
-  in the reward baseline. Weight questions, episodes, then all E tokens in an
-  episode equally at their respective levels. No graph or process bonus is added.
-- **M:** use the same-state continuation procedure below. Only the selected
-  maintenance completion trains, using its continuation group's relative reward.
-
-Each role retains PPO clipping and KL on its selected tokens. E and M use the
-existing executor prompts and structured maintenance requests; this does not
-introduce a second model, adapter, inference loop or automatic evaluator change.
-The other role participates in rollouts but has no direct loss in that update.
-Shared weights change after each update, so neither role is permanently frozen.
-Terminal reward estimates remain noisy and all-tied groups have zero task credit.
-
-Both roles use whole-group service-failure exclusion and the actor's collective
-finite-loss guard. `graph_rpo_training_role` is saved per row; the trainer checks
-it against the saved step before applying credit. `graphrpo/E/*` and
-`graphrpo/M/*` report candidate counts, skipped groups, trainable tokens, nonzero
-advantage fractions and actor update metrics separately.
-
-The Vista pilot defaults to two rollout attempts (E then M), four questions per
-attempt, K=2 for both roles and per-group concurrency 2. It uses five nodes and
-a 24-hour allocation, reusing the existing model/data setup:
-
-```bash
-sbatch scripts/train_bcp_em_rpo.sh
-```
-
-`GRAPH_RPO_EXECUTOR_SAMPLES` and `GRAPH_RPO_CONTINUATION_SAMPLES` control the two
-group sizes. The old M-only launcher/defaults remain available. This E+M path
-still supports only LocalSearch and still uses immutable training history; it
-does not fix the history-replacement difference from retrieval-memory inference.
-Tests cover real agent-loop role masks and branches, driver credit/normalization,
-and both roles updating one optimizer with synthetic token log-probabilities.
-They do not establish successful GPU training or task improvement.
-
-## Same-state continuation experiment (M-only, opt-in)
-
-`graph_rpo_credit_backend=old_policy_continuation` with
-`algorithm.graphrpo_memory_only=True` trains the existing maintenance role of
-the shared model. Inference prompts, controller scheduling, legal actions and
-all previous backend defaults stay unchanged. This is **real tool continuation**,
-not the older tool-free before/after QA probe below.
-
-One ordinary rollout records an ordered tape of model completions and raw
-LocalSearch RPC results up to a maintenance checkpoint. Each candidate replays
-that prefix through the **same agent loop**, including branches, archives,
-visited-document state, graph operations and token/turn accounting. Replayed
-requests must match, and the checkpoint verifies a hash of the actual model
-input, graph/archives, environment state and turn count. Prefix wall time is
-also charged to every continuation. Replay makes no model/search RPCs and
-returns fresh copies of cached results. It does not deep-copy live connections
-or pretend a graph snapshot restores an arbitrary simulator.
-
-At that checkpoint, K independently sampled M decisions each continue with the
-pre-update model using real tools and the normal task judge. Later maintenance
-uses the same frozen policy and schedule; it is not recursively branched. For
-candidate i, its credit is `R_i - mean(R_j for j != i)`. Ties produce zero task
-advantage; duplicates, legal passes and rejected decisions are not selectively
-discarded. There is no compression bonus, operation cost, outcome normalization
-or extra episode/process reward in this mode. PPO's existing KL regularizer
-still applies on selected M tokens. The pilot also enables the existing clipped
-token importance correction for rollout/training probability differences.
-
-Only the selected M completion is trainable. The recorded prefix is retained as
-conditioning tokens with a zero loss mask; future E/M tokens and branch streams
-are excluded from training. The emitted M prefix is checked against the exact
-model input, and original token IDs/logprobs are retained. Each maintenance
-state has a fresh group ID and each candidate a distinct episode ID, so the
-existing GraphRPO loss averages states, candidates, then decision tokens.
-An episode ending before the chosen checkpoint emits a zero-mask sample and is
-excluded from loss normalization. Exhausted network/timeout failures, HTTP
-408/429/5xx responses and explicit environment/judge failure flags discard the
-whole group and emit one zero-mask audit sample. Completed siblings are not
-salvaged: doing so would change the comparison group. Queued siblings stop and
-running siblings are cancelled and drained before returning. Replay/token
-inconsistency, configuration/authentication errors and unknown programming errors
-still propagate; caller cancellation is not converted into a training sample.
-
-An entirely zero-mask batch skips model computation, optimizer and scheduler
-updates and empty-tensor metrics, while saving the rollout audit. It consumes a
-rollout attempt in the existing step budget, reported by
-`training/skipped_empty_memory_batch=1` and `training/actor_update_calls=0`.
-Validation/checkpoint hooks for that skipped attempt are not run. Valid tied
-groups retain their M masks and can still receive KL regularization.
-
-The shared FSDP actor checks policy, optional KL and total losses collectively
-before each microbatch backward. If any rank reports a non-finite loss, every
-rank clears accumulated gradients and raises `FloatingPointError` before that
-backward or optimizer step. This deliberately stops training for diagnosis;
-it neither substitutes a zero reward nor attempts recovery with a zero loss.
-Finite zero-mask microbatches still participate in backward. The guard applies
-to all objectives using this actor, and adds one collective per microbatch.
-CPU/Gloo tests cover asymmetric NaN/Inf failures and a zero-mask rank using the
-actual actor update loop; GPU FSDP/NCCL execution remains a separate smoke test.
-
-Limits of this first implementation:
-
-- Only the read-only `LocalSearch` environment is supported. No SWE, ScienceWorld,
-  or DiscoveryWorld cloning is implemented. Session restarts and structured fact
-  memory are rejected in this training mode.
-- One checkpoint per source rollout, configured by the 1-based
-  `graph_rpo_continuation_checkpoint` (default 1). `random` samples an ordinal
-  uniformly from 1 through `graph_rpo_continuation_checkpoint_max` (default 4)
-  **before** executing the prefix, without looking at future rewards. The seed
-  and chosen ordinal are saved. Short episodes may not reach it and are skipped;
-  this is not uniform sampling over the maintenance points actually reached.
-  K is
-  `graph_rpo_continuation_samples` (default 4). Controller temperature must be
-  positive. `rollout.n` controls source prefixes and can be 1.
-- `graph_rpo_continuation_concurrency` (default 2) bounds simultaneous candidates
-  **per source group**. Existing source groups/workers remain parallel, so the
-  cluster-wide limit also depends on their count. This does not reduce the total
-  continuation work or guarantee a particular speedup.
-- One continuation per candidate is a noisy estimate. All-failure groups still
-  have zero task advantage. There is no automatic curriculum or learned PRM.
-- This preserves the existing training context protocol, including its immutable
-  history. It does not claim the graph is the executor's only evidence source.
-- It assumes the synchronous PPO training cycle: complete the rollout batch
-  before updating shared weights. E can change after each optimizer update.
-
-The `graph_rpo_continuation` record in saved training rollouts contains the state
-hash, group, checkpoint, policy step, seeds, all candidate rewards and local
-advantage. Telemetry includes failed/skipped/nonzero fractions, mean absolute advantage
-and decision-token counts. Ordinary validation does not fork and measures the
-complete shared-model agent.
-
-On Vista, after setting any model/data overrides required by the existing BC-P
-launcher, submit the two-attempt pilot (five nodes, 24-hour allocation):
-
-```bash
-sbatch scripts/train_bcp_graphrpo_continuation.sh
-```
-
-The wrapper defaults to four source prefixes, four candidates each, concurrency
-two per group, random checkpoint ordinals 1..4, four validation examples and
-checkpointing every non-skipped step. It reuses the existing SFT
-checkpoint/model setup. Increase `TOTAL_TRAINING_STEPS` only after inspecting
-replay integrity, nonzero advantages, optimizer metrics and saved checkpoints.
-Local tests exercise the real loop with controlled model/search responses;
-they are not evidence of successful Vista GPU training or task improvement.
+The auto/controller training loop still preserves immutable history; this change
+does not enable training-time history replacement or establish GPU training gains.
 
 ## Training semantics
 
@@ -180,10 +38,8 @@ adds branch credit and a separate normalization for decision tokens.
   least two non-dummy episodes.
 - Valid policy-generated `merge`, `prune`, `add_edge`, and `select` decisions
   receive a clipped graph-utility increment. `pass`, automatic edits, and
-  failed edits receive no graph increment. The formal counterfactual backend
-  evaluates edits from both successful and unsuccessful main episodes; the
-  older evaluator and answer-likelihood backends retain their historical
-  terminal-success gate.
+  failed edits receive no graph increment. These optional credit backends are
+  disabled by the default outcome-only profile.
 - Edit increments and non-positive process labels are broadcast across their
   generated assistant-turn spans. Multiple process labels use the most
   negative applicable value.
@@ -191,14 +47,14 @@ adds branch credit and a separate normalization for decision tokens.
   episode, then uniformly over episodes for a question, then over questions in
   the global batch. The same weights are used for entropy and low-variance KL.
 
-GraphRPO deliberately requires the structured graph controller. This makes one
-controller response exactly one edit decision span and prevents legacy XML
-graph calls from being mixed with environment actions.
+The default launchers use the structured graph controller, with one decision per
+controller response. The explicit-tools protocol is also supported: task actions
+and graph operations remain jointly trained under the same episode advantage.
 
 ## Evidence and branch-credit experiment
 
 Set `GRAPH_RPO_CREDIT_BACKEND=evidence` for the new BC-P experiment. The default
-remains `old_policy_counterfactual_qa`, so existing launch commands keep their
+is `outcome_only`; this opt-in backend changes the
 original objective. Evidence credit is supervised by training document annotations;
 it is not an evaluator-free correctness estimate or a demonstrated score improvement.
 
@@ -281,40 +137,6 @@ traces retain decision indices, bounded views, document sets and credit componen
 episode streams. It does not revalidate document annotations against the corpus.
 Evaluation of a trained evidence-profile policy should also enable
 `plugin.graph_branch_history=True`; gold annotations remain unnecessary.
-
-## Formal evaluator-free utility: paired old-policy QA outcomes
-
-`GRAPH_RPO_CREDIT_BACKEND=old_policy_counterfactual_qa` is the default formal
-backend. After an episode has produced its graph-edit trace, but before the
-actor optimizer step, the same fixed pre-update policy receives a tool-free QA
-prompt containing either the graph immediately before an edit or the graph
-immediately after it. Both sides use matched sampling seeds. Their independently
-generated answers are scored by the environment's ordinary task judge, and
-the edit utility is
-
-`mean(R_after) - mean(R_before) - operation_cost`,
-
-clipped by `GRAPH_RPO_DELTA_MAX`. Set
-`GRAPH_RPO_COUNTERFACTUAL_SAMPLES` to the number of downstream answers sampled
-per graph state. Probe generations and their judge audits are stored in the
-graph trace for replay, but probe tokens are not emitted as policy-training
-trajectories.
-
-This estimates how useful the graph state is to the policy that actually
-consumes it. It does not teacher-force the benchmark answer and does not use
-the frozen reference model as a value estimator. The reference model remains
-only in the low-variance KL regularizer. Because failed main trajectories are
-not gated out, an intermediate edit may still receive positive local credit
-when its after-state improves downstream answer success, or negative credit
-when it damages it. If every paired downstream answer receives the same task
-reward, the estimator correctly supplies zero local utility; increasing the
-number or diversity of rollouts is then necessary rather than substituting a
-structural heuristic.
-
-The counterfactual prompt is a graph-conditioned downstream QA probe, not a
-full replay of search/tool continuation from the edit point. That keeps the
-counterfactual tractable and isolates the usefulness of the serialized memory
-available to the answering policy.
 
 ## Diagnostic current-policy answer-likelihood utility
 
@@ -413,20 +235,13 @@ judge metrics are also episode-weighted rather than branch-stream-weighted.
 
 For mechanics-only validation on an existing four- or five-node allocation,
 `scripts/smoke_train_bc_ctxgraph_8b_graphrpo_5node_idev.sh` performs one
-optimizer step with the selected credit backend. It defaults to paired
-old-policy counterfactual QA.
+optimizer step with the selected credit backend. It defaults to joint task/process training without local graph credit.
 
 On an existing four-node allocation, run the original Qwen3-8B zero-shot
 judge-audit variant, including rollout persistence and post-run audit, with:
 
 ```bash
 bash scripts/smoke_train_bc_ctxgraph_8b_graphrpo_qwen3_8b_4node_judge_audit.sh
-```
-
-Run the formal paired-counterfactual backend for two optimizer steps with:
-
-```bash
-bash scripts/smoke_train_bc_ctxgraph_8b_graphrpo_counterfactual_4node_2step.sh
 ```
 
 To test the older teacher-forced current-policy likelihood ablation for two

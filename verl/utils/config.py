@@ -177,10 +177,9 @@ def validate_config(
         print("NOTICE: You have both enabled in-reward kl and kl loss.")
 
     if str(config.algorithm.adv_estimator).lower() == "graphrpo":
-        memory_only = bool(config.algorithm.get("graphrpo_memory_only", False))
-        alternating = bool(config.algorithm.get("graphrpo_alternating_roles", False))
-        assert not (memory_only and alternating), "Choose M-only or alternating E/M, not both"
-        assert config.actor_rollout_ref.rollout.n >= (1 if memory_only or alternating else 2), "GraphRPO requires rollout.n >= 2 unless using internal E/M candidate groups"
+        from agents.graph_rpo import reject_removed_graph_rpo_options
+        reject_removed_graph_rpo_options(config.algorithm, config.actor_rollout_ref.rollout.plugin)
+        assert config.actor_rollout_ref.rollout.n >= 2, "GraphRPO requires rollout.n >= 2"
         assert not config.algorithm.use_kl_in_reward, (
             "GraphRPO applies KL in the policy objective; use_kl_in_reward must be False"
         )
@@ -207,40 +206,19 @@ def validate_config(
             "Controller GraphRPO requires structured_graph_controller=True"
         )
         graph_credit_backend = str(
-            plugin.get("graph_rpo_credit_backend", "old_policy_counterfactual_qa")
+            plugin.get("graph_rpo_credit_backend", "outcome_only")
         ).strip().lower()
         assert graph_credit_backend in {
             "outcome_only",
             "evidence",
             "external_evaluator",
-            "old_policy_counterfactual_qa",
-            "old_policy_continuation",
             "reference_answer_likelihood",
             "old_policy_answer_likelihood",
         }, (
             "GraphRPO plugin.graph_rpo_credit_backend must be outcome_only, evidence, external_evaluator, "
-            "old_policy_counterfactual_qa, old_policy_continuation, reference_answer_likelihood, or "
+            "reference_answer_likelihood, or "
             "old_policy_answer_likelihood"
         )
-        assert (memory_only or alternating) == (graph_credit_backend == "old_policy_continuation"), (
-            "old_policy_continuation requires M-only or alternating E/M training"
-        )
-        if memory_only or alternating:
-            assert graph_protocol == "controller", "Continuation E/M requires controller checkpoints"
-            from agents.graph_rpo_continuation import choose_checkpoint
-
-            assert int(plugin.get("graph_rpo_continuation_samples", 4)) >= 2
-            choose_checkpoint(plugin, seed=0)
-            assert int(plugin.get("graph_rpo_continuation_concurrency", 2)) >= 1
-            assert float(plugin.get("graph_controller_temperature", 0)) > 0
-            assert float(plugin.get("graph_controller_temperature", 0)) == float(config.actor_rollout_ref.rollout.temperature), (
-                "Continuation controller and rollout temperature must match for PPO log-prob recomputation"
-            )
-            assert float(plugin.get("graph_controller_top_p", 1.0)) == 1.0, (
-                "Continuation controller top_p must be 1; truncated sampling is not corrected by PPO"
-            )
-            if alternating:
-                assert int(plugin.get("graph_rpo_executor_samples", 2)) >= 2
         if graph_credit_backend == "external_evaluator":
             assert str(plugin.get("graph_rpo_evaluator_url", "")).strip(), (
                 "external-evaluator GraphRPO requires plugin.graph_rpo_evaluator_url"
@@ -261,18 +239,6 @@ def validate_config(
                 )
             ) > 0
             assert int(plugin.get("graph_rpo_reference_max_answer_length", 128)) > 0
-        if graph_credit_backend == "old_policy_counterfactual_qa":
-            assert int(plugin.get("graph_rpo_counterfactual_samples", 2)) > 0
-            assert int(plugin.get("graph_rpo_counterfactual_max_new_tokens", 512)) >= 10
-            assert float(plugin.get("graph_rpo_counterfactual_temperature", 1.0)) >= 0.0
-            counterfactual_top_p = float(
-                plugin.get("graph_rpo_counterfactual_top_p", 1.0)
-            )
-            assert 0.0 < counterfactual_top_p <= 1.0
-            counterfactual_enable_thinking = plugin.get(
-                "graph_rpo_counterfactual_enable_thinking", False
-            )
-            assert isinstance(counterfactual_enable_thinking, (bool, str))
         assert float(plugin.get("graph_rpo_delta_scale", 1.0)) > 0.0
         assert float(plugin.get("graph_rpo_delta_max", 1.0)) > 0.0
 

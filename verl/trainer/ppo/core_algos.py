@@ -569,7 +569,6 @@ def compute_graphrpo_loss_weights(
     gen_uid: np.ndarray,
     *,
     excluded_gen_uids: Optional[set[Any]] = None,
-    allow_empty: bool = False,
 ) -> torch.Tensor:
     """Return exact ``1 / (|Q| K_q |M_g|)`` token weights.
 
@@ -590,8 +589,6 @@ def compute_graphrpo_loss_weights(
     for row, (question_id, episode_id) in enumerate(zip(question_ids, episode_ids, strict=True)):
         if episode_id in excluded:
             continue
-        if allow_empty and not response_mask[row].to(torch.bool).any():
-            continue
         if episode_id in episode_question and episode_question[episode_id] != question_id:
             raise ValueError(f"GraphRPO gen_uid {episode_id!r} belongs to multiple questions")
         episode_question[episode_id] = question_id
@@ -600,8 +597,6 @@ def compute_graphrpo_loss_weights(
             group_episodes[question_id].append(episode_id)
 
     if not group_episodes:
-        if allow_empty:
-            return torch.zeros_like(response_mask, dtype=torch.float32)
         raise ValueError("GraphRPO batch contains no non-dummy question groups")
     for question_id, episodes in group_episodes.items():
         if len(episodes) < 2:
@@ -637,7 +632,6 @@ def compute_graphrpo_advantage(
     graph_decision_mask: Optional[torch.Tensor] = None,
     excluded_gen_uids: Optional[set[Any]] = None,
     config: Optional[AlgoConfig] = None,
-    training_role: Optional[str] = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Compute the token advantage in the GraphRPO objective.
 
@@ -651,31 +645,8 @@ def compute_graphrpo_advantage(
     """
     if epsilon <= 0.0:
         raise ValueError("GraphRPO epsilon must be positive")
-    if training_role not in {None, "E", "M"}:
-        raise ValueError("Unknown GraphRPO training role")
-    if training_role == "E" and (graph_decision_mask is None or
-            graph_decision_mask.shape != response_mask.shape or
-            torch.any(graph_decision_mask.to(torch.bool) & response_mask.to(torch.bool))):
-        raise ValueError("Executor GraphRPO must exclude all M tokens")
-    if training_role == "M" or (config is not None and config.get("graphrpo_memory_only", False)):
-        # Same-state continuation groups already carry their leave-one-out
-        # advantage. Do not add episode reward or process labels a second time.
-        if graph_edit_credit_mask is None or graph_decision_mask is None:
-            raise ValueError("Memory-only GraphRPO requires credit and decision masks")
-        if graph_edit_credit_mask.shape != response_mask.shape or graph_decision_mask.shape != response_mask.shape:
-            raise ValueError("Memory-only GraphRPO masks must match response tokens")
-        episode_ids = _graph_rpo_python_ids(gen_uid)
-        if len(episode_ids) != response_mask.shape[0]:
-            raise ValueError("GraphRPO identifiers must match response batch size")
-        active = torch.tensor([uid not in (excluded_gen_uids or set()) for uid in episode_ids],
-                              dtype=torch.bool, device=response_mask.device)
-        if not torch.equal(graph_decision_mask[active] * response_mask[active], response_mask[active]):
-            raise ValueError("Memory-only GraphRPO may optimize only selected M tokens")
-        credit = torch.where(response_mask.bool(), graph_edit_credit_mask.to(torch.float32), 0.0)
-        if not torch.isfinite(credit[active]).all() or torch.any((credit[active] != 0) & (response_mask[active] == 0)):
-            raise ValueError("Memory-only credit must be finite and confined to M tokens")
-        advantages = torch.where(active[:, None], credit, 0.0) * response_mask
-        return advantages, advantages
+    from agents.graph_rpo import reject_removed_graph_rpo_options
+    reject_removed_graph_rpo_options(config)
     question_ids = _graph_rpo_python_ids(index)
     episode_ids = _graph_rpo_python_ids(gen_uid)
     excluded = set(excluded_gen_uids or set())
@@ -725,13 +696,8 @@ def compute_graphrpo_advantage(
         rewards = torch.stack([episode_reward[episode_id] for episode_id in episodes])
         mean = rewards.mean()
         population_std = rewards.std(unbiased=False)
-        if training_role == "E":
-            # Deduplicate main/branch streams before the question-level LOO baseline.
-            for episode_id in episodes:
-                episode_advantage[episode_id] = (len(episodes) * episode_reward[episode_id] - rewards.sum()) / (len(episodes) - 1)
-        elif config is not None and not config.get("graphrpo_norm_adv_by_std", True):
+        if config is not None and not config.get("graphrpo_norm_adv_by_std", True):
             # Ordinary GraphRPO ablation: keep the reward's original scale.
-            # E/M objectives above are independent of this normalization switch.
             for episode_id in episodes:
                 episode_advantage[episode_id] = episode_reward[episode_id] - mean
         elif not torch.isfinite(population_std) or population_std.item() == 0.0:
@@ -743,13 +709,6 @@ def compute_graphrpo_advantage(
                 episode_advantage[episode_id] = (
                     episode_reward[episode_id] - mean
                 ) / denominator
-
-    if training_role == "E":
-        advantages = torch.zeros_like(token_level_rewards, dtype=torch.float32)
-        for row, episode_id in enumerate(episode_ids):
-            if episode_id not in excluded:
-                advantages[row] = episode_advantage[episode_id] * response_mask[row]
-        return advantages, advantages
 
     alpha = float(config.get("graphrpo_alpha", 1.0) if config is not None else 1.0)
     beta = float(config.get("graphrpo_beta", 1.0) if config is not None else 1.0)

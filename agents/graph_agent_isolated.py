@@ -88,13 +88,10 @@ from .structured_memory import (
 from .graph_rpo import (
     ANSWER_LIKELIHOOD_BACKENDS,
     EXTERNAL_EVALUATOR_BACKEND,
-    OLD_POLICY_COUNTERFACTUAL_QA_BACKEND,
-    OLD_POLICY_CONTINUATION_BACKEND,
     GraphRPOEvaluatorError,
-    assign_counterfactual_graph_edit_credits,
     assign_graph_edit_credits,
-    format_counterfactual_qa_messages,
     graph_rpo_credit_backend,
+    reject_removed_graph_rpo_options,
     prepare_reference_graph_edit_requests,
 )
 from .trajectory_capture import serialize_agent_trajectories
@@ -112,9 +109,6 @@ from .agent_text import extract_fn_call, extract_summary, clean_response
 # ── Graph operation handlers (parent-graph only in isolated variant) ──
 
 from .graph_operations import handle_merge, handle_add_edge, handle_select, handle_prune, GRAPH_OPS
-
-
-
 
 
 def make_graph_aware_run_action(env, child_graph: ContextGraph):
@@ -170,8 +164,6 @@ def make_graph_aware_run_action(env, child_graph: ContextGraph):
 async def process_item(
         item: DataProto,
         context: TaskContext,
-        *,
-        _continuation=None,
 ) -> Union[AgentLoopOutput, list[AgentLoopOutput]]:
     """ContextGraph rollout. Explicit tools override the historical behavior below.
 
@@ -187,27 +179,8 @@ async def process_item(
     """
     mode = memory_mode(context.config.actor_rollout_ref.rollout.plugin)
     plugin = context.config.actor_rollout_ref.rollout.plugin
-    if (action_protocol(plugin) == 'explicit_tools'
-            and graph_rpo_credit_backend(plugin) == OLD_POLICY_CONTINUATION_BACKEND):
-        raise ValueError('Explicit graph tools require ordinary GraphRPO; continuation E/M uses controller checkpoints')
-    if context.is_train and context.config.algorithm.get('graphrpo_alternating_roles', False):
-        if (str(context.config.algorithm.get('adv_estimator', '')).lower() not in
-                {'graphrpo', 'advantageestimator.graphrpo'} or
-                graph_rpo_credit_backend(context.config.actor_rollout_ref.rollout.plugin) != OLD_POLICY_CONTINUATION_BACKEND):
-            raise ValueError('Alternating E/M requires GraphRPO with old_policy_continuation')
-    if (
-        context.is_train
-        and str(getattr(context.config.algorithm, 'adv_estimator', '')).lower()
-        in {'graphrpo', 'advantageestimator.graphrpo'}
-        and graph_rpo_credit_backend(context.config.actor_rollout_ref.rollout.plugin)
-        == OLD_POLICY_CONTINUATION_BACKEND
-        and _continuation is None
-    ):
-        from .graph_rpo_continuation import run_continuation_group, run_executor_group
-        from verl.trainer.ppo.graph_rpo_roles import graph_rpo_update_role
-        if graph_rpo_update_role(context.config.algorithm, context.global_step) == "E":
-            return await run_executor_group(item, context, process_item)
-        return await run_continuation_group(item, context, process_item)
+    if context.is_train:
+        reject_removed_graph_rpo_options(context.config.algorithm, plugin)
     if mode == "foldagent":
         return await run_foldagent_equivalent(item, context)
     os.environ["no_proxy"] = ""
@@ -267,8 +240,6 @@ async def process_item(
     env = EnvClass(config, tokenizer, ability)
 
     async with managed_environment(env):
-        if _continuation is not None:
-            _continuation.attach(env)
         try:
             await env.init_env(item)
         except Exception as e:
@@ -310,8 +281,6 @@ async def process_item(
             process_reward = None
         adv_estimator = str(getattr(context.config.algorithm, "adv_estimator", "")).lower()
         compress_enabled = bool(process_reward and 'compress' in process_reward) and is_train
-        if compress_enabled and _continuation is not None:
-            raise ValueError('compress process shaping is for ordinary GraphRPO; E/M continuation uses terminal credit only')
         graph_rpo_enabled = adv_estimator in {"graphrpo", "advantageestimator.graphrpo"}
         graph_rpo_backend = graph_rpo_credit_backend(config.plugin) if graph_rpo_enabled else None
         evidence_training = graph_rpo_enabled and is_train and graph_rpo_backend == "evidence"
@@ -346,10 +315,6 @@ async def process_item(
             for required_label in required_labels:
                 if required_label not in process_reward:
                     process_reward.append(required_label)
-        if _continuation is not None:
-            # Only the selected M decision receives continuation credit. Avoid
-            # auxiliary scope judges and unrelated process shaping in this path.
-            process_reward = None
         max_traj = None if explicit_graph_tools else getattr(config.plugin, "max_traj", None)
         enable_retrieval_memory = getattr(
             config.plugin, "enable_retrieval_memory", True
@@ -1604,12 +1569,6 @@ async def process_item(
                         'role': 'user', 'content': fitted_controller_prompt,
                     })
 
-                    if _continuation is not None:
-                        elapsed = _continuation.at_checkpoint(
-                            agent['main'], graph, env, iteration,
-                            time.time() - session_start_time,
-                        )
-                        session_start_time = time.time() - elapsed
 
                     controller_response = await step_preserving_final_answer(
                         agent['main'],
@@ -1643,11 +1602,6 @@ async def process_item(
                             <= protected_final_answer_budget + 9
                         )
                         break
-                    if _continuation is not None:
-                        # Mark every sampled M response, including rejected edits/pass.
-                        # E updates must never optimize controller tokens.
-                        agent['main'].add_graph_edit_credit(len(agent['main'].chat) - 1, 0.0)
-                        await _continuation.capture_decision(agent['main'])
                     session_message.append({
                         'role': 'assistant', 'content': controller_response,
                     })
@@ -2015,8 +1969,6 @@ async def process_item(
             print(score)
         except Exception as e:
             print(f"[Error] Getting reward: {e}")
-            if _continuation is not None:
-                raise  # A judge outage is not evidence against this M decision.
             score, reward_dict = ("", 0), {"ans_reward": 0.0, "format_reward": 0.0, "ref_reward": 0.0}
 
         native_task_reward = float(score[1])
@@ -2334,9 +2286,6 @@ async def process_item(
                         if isinstance(info, dict) and 'graph_edit_credit' in info:
                             info['graph_edit_credit'] = 0.0
                 graph_rpo_metrics = {'graph_rpo_outcome_only': 1}
-            elif graph_rpo_backend == OLD_POLICY_CONTINUATION_BACKEND:
-                # Group credit is assigned after all real continuations finish.
-                graph_rpo_metrics = {}
             elif graph_rpo_backend == "evidence":
                 graph_rpo_metrics = assign_evidence_credits(agent=agent['main'],
                     graph_trace=graph_trace_payload, gold=evidence_gold,
@@ -2348,71 +2297,6 @@ async def process_item(
                     question=query_text,
                     terminal_reward=score[1],
                     tokenizer=tokenizer,
-                    plugin_config=config.plugin,
-                )
-            elif graph_rpo_backend == OLD_POLICY_COUNTERFACTUAL_QA_BACKEND:
-                if not hasattr(env, 'score_answer'):
-                    raise GraphRPOEvaluatorError(
-                        "old_policy_counterfactual_qa requires an environment "
-                        "with score_answer(predicted_answer, audit_sink)"
-                    )
-
-                counterfactual_max_tokens = int(
-                    getattr(config.plugin, 'graph_rpo_counterfactual_max_new_tokens', 512)
-                )
-                counterfactual_temperature = float(
-                    getattr(config.plugin, 'graph_rpo_counterfactual_temperature', 1.0)
-                )
-                counterfactual_top_p = float(
-                    getattr(config.plugin, 'graph_rpo_counterfactual_top_p', 1.0)
-                )
-                raw_counterfactual_thinking = getattr(
-                    config.plugin, 'graph_rpo_counterfactual_enable_thinking', False
-                )
-                if isinstance(raw_counterfactual_thinking, str):
-                    counterfactual_enable_thinking = (
-                        raw_counterfactual_thinking.strip().lower()
-                        in ('1', 'true', 'yes', 'on')
-                    )
-                else:
-                    counterfactual_enable_thinking = bool(raw_counterfactual_thinking)
-
-                async def generate_counterfactual_answer(graph_view, sample_index, seed):
-                    probe_messages = format_counterfactual_qa_messages(
-                        query_text, graph_view
-                    )
-                    probe_agent = Agent(
-                        llm_client,
-                        probe_messages,
-                        tokenizer,
-                        config,
-                        prompt_turn=len(probe_messages),
-                        process_reward_min_precedence=True,
-                        chat_template_kwargs={
-                            'enable_thinking': counterfactual_enable_thinking,
-                        },
-                    )
-                    return await probe_agent.step(
-                        max_new_tokens=counterfactual_max_tokens,
-                        completion_kwargs={
-                            'sampling_params': {
-                                'temperature': counterfactual_temperature,
-                                'top_p': counterfactual_top_p,
-                                'max_tokens': counterfactual_max_tokens,
-                                'seed': seed,
-                            }
-                        },
-                    ) or ''
-
-                async def score_counterfactual_answer(answer, audit_sink):
-                    return await env.score_answer(answer, audit_sink=audit_sink)
-
-                graph_rpo_metrics = await assign_counterfactual_graph_edit_credits(
-                    agent=agent['main'],
-                    graph_trace=graph_trace_payload,
-                    question=query_text,
-                    generate_answer=generate_counterfactual_answer,
-                    score_answer=score_counterfactual_answer,
                     plugin_config=config.plugin,
                 )
             elif graph_rpo_backend in ANSWER_LIKELIHOOD_BACKENDS:

@@ -9,7 +9,7 @@
 #SBATCH -t 02:00:00
 #SBATCH -A AST24021
 
-# One-step end-to-end frozen-reference answer-likelihood GraphRPO smoke on a
+# One-step end-to-end joint task/process GraphRPO smoke on a
 # 4/5-node Vista allocation.
 set -euo pipefail
 
@@ -46,7 +46,7 @@ fi
 export EXPECTED_NUM_NODES
 TRAINER_NODES=$((EXPECTED_NUM_NODES - 1))
 mkdir -p "$PROJECT_ROOT/logs"
-export GRAPH_RPO_CREDIT_BACKEND=${GRAPH_RPO_CREDIT_BACKEND:-old_policy_counterfactual_qa}
+export GRAPH_RPO_CREDIT_BACKEND=${GRAPH_RPO_CREDIT_BACKEND:-outcome_only}
 export TOTAL_TRAINING_STEPS=${TOTAL_TRAINING_STEPS:-1}
 export TRAIN_BATCH_SIZE=${TRAIN_BATCH_SIZE:-$TRAINER_NODES}
 export ROLLOUT_N=${ROLLOUT_N:-2}

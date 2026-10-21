@@ -285,7 +285,7 @@ def test_training_profile_reaches_base_launcher(tmp_path, profile, nodes, contex
                CONDA_PREFIX=tmp_path.as_posix(), SLURM_JOB_ID='fixture', SLURM_JOB_NODELIST='fixture',
                OPENAI_API_KEY='test-only-judge-secret', BCP_TRAIN_PROFILE=profile, BCP_TRAIN_TOPOLOGY=topology,
                ADV_ESTIMATOR='wrong', POLICY_LOSS_MODE='wrong', USE_KL_LOSS='False',
-               BC_CONTROLLER_ACTION_POLICY='balanced', GRAPH_RPO_CREDIT_BACKEND='external_evaluator',
+               BC_CONTROLLER_ACTION_POLICY='balanced', GRAPH_RPO_CREDIT_BACKEND='',
                SMOKE_TEST='0', PREFLIGHT_ONLY='0')
     result = subprocess.run([shutil.which('bash'), setup.as_posix()], cwd=ROOT, env=env,
                             capture_output=True, text=True, timeout=30,
@@ -322,8 +322,8 @@ def test_training_profile_reaches_base_launcher(tmp_path, profile, nodes, contex
             'ADV_ESTIMATOR': 'graphrpo', 'POLICY_LOSS_MODE': 'graphrpo',
             'BC_CONTROLLER_ACTION_POLICY': 'structural', 'PROCESS_REWARD_SPEC': '[scope]',
             'USE_KL_LOSS': 'True', 'ACTOR_KL_LOSS_COEF': '0.0005', 'ALGORITHM_KL_COEF': '0.0',
-            'GRAPH_RPO_CREDIT_BACKEND': 'old_policy_counterfactual_qa',
-            'GRAPH_RPO_COUNTERFACTUAL_SAMPLES': '1', 'SAVE_ROLLOUT_DATA': '1',
+            'GRAPH_RPO_CREDIT_BACKEND': 'outcome_only',
+            'SAVE_ROLLOUT_DATA': '1',
         }.items():
             assert captured[key] == value
         assert 'models--Qwen--Qwen3.5-9B/snapshots/c202236235762e1c871ad0ccb60c8ee5ba337b9a' in captured['MODEL_PATH']
@@ -331,8 +331,8 @@ def test_training_profile_reaches_base_launcher(tmp_path, profile, nodes, contex
         assert 'algorithm.graphrpo_require_binary_reward=True' in args
         assert 'actor_rollout_ref.actor.kl_loss_type=low_var_kl' in args
         graph_args = (tmp_path / 'graph.args').read_text().splitlines()
-        assert '+actor_rollout_ref.rollout.plugin.graph_rpo_credit_backend=old_policy_counterfactual_qa' in graph_args
-        assert '+actor_rollout_ref.rollout.plugin.graph_rpo_counterfactual_samples=1' in graph_args
+        assert '+actor_rollout_ref.rollout.plugin.graph_rpo_credit_backend=outcome_only' in graph_args
+        assert 'graph_rpo_counterfactual_' not in graph_args
         assert 'algorithm.graphrpo_alpha=0.1' in graph_args
         assert 'algorithm.graphrpo_beta=0.25' in graph_args
     else:

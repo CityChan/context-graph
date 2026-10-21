@@ -54,9 +54,8 @@ def test_redundancy_only_after_half_context_and_only_assistant_tokens():
 
 def test_compress_labels_reach_real_graph_agent_training_mask(monkeypatch):
     import asyncio
-    from tests.test_graph_rpo_continuation import _setup, SEARCH, finish
+    from tests.graph_training_fixtures import _setup, SEARCH, finish
     module, item, context, *_ = _setup(monkeypatch,[SEARCH,SEARCH,finish('gold')])
-    context.config.algorithm.graphrpo_memory_only = False
     plugin = context.config.actor_rollout_ref.rollout.plugin
     plugin.graph_rpo_credit_backend = 'evidence'
     plugin.graph_rpo_scope_process_reward = False

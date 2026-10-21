@@ -5,15 +5,12 @@ import numpy as np
 import torch
 
 
-def informative_groups(batch, algorithm, role=None):
+def informative_groups(batch, algorithm):
     """Return row indices per useful uid, keeping all streams of every candidate.
 
-    M credit already contains same-state LOO advantages. E uses outcomes only.
-    Ordinary GraphRPO can learn from a negative process label even on a tie.
+    GraphRPO can learn from a negative process label even on a tie.
     FoldGRPO deliberately filters on deduplicated outcome variance only.
     """
-    if algorithm.get('graphrpo_memory_only', False):
-        role = 'M'
     if 'rm_scores' not in batch.batch:
         raise ValueError('Dynamic sampling requires rollout task rewards (rm_scores)')
     groups = OrderedDict()
@@ -27,9 +24,6 @@ def informative_groups(batch, algorithm, role=None):
     for rows in groups.values():
         if not mask[rows].any():
             continue
-        audits = batch.non_tensor_batch.get('graph_rpo_continuation')
-        if audits is not None and any((audits[i] or {}).get('skipped') for i in rows):
-            continue
         outcomes = {}
         for i in rows:
             key = str(batch.non_tensor_batch['gen_uid'][i])
@@ -42,12 +36,7 @@ def informative_groups(batch, algorithm, role=None):
         if len(outcomes) < 2:
             continue
         useful = len(set(outcomes.values())) > 1
-        if role == 'M':
-            credit = batch.batch['graph_edit_credit_mask'][rows]
-            if not torch.isfinite(credit[mask[rows]]).all():
-                raise ValueError('Nonfinite active maintenance credit in dynamic sampling')
-            useful = bool((torch.isfinite(credit) & (credit != 0) & mask[rows]).any())
-        elif role is None and str(algorithm.adv_estimator).lower() == 'graphrpo':
+        if str(algorithm.adv_estimator).lower() == 'graphrpo':
             for key, coefficient, negative in [('process_reward_mask', 'graphrpo_beta', True),
                                                 ('graph_edit_credit_mask', 'graphrpo_alpha', False)]:
                 if key in batch.batch and float(algorithm.get(coefficient, 1)) > 0:
@@ -61,7 +50,7 @@ def informative_groups(batch, algorithm, role=None):
     return keep, len(groups)
 
 
-def sample_groups(first, following, generate, algorithm, role, target, metrics):
+def sample_groups(first, following, generate, algorithm, target, metrics):
     """Consume at most max_gen_batches from the SAME epoch iterator."""
     from verl import DataProto
 
@@ -77,7 +66,7 @@ def sample_groups(first, following, generate, algorithm, role, target, metrics):
     while True:
         batch = generate(current)
         batches += 1
-        groups, total = informative_groups(batch, algorithm, role)
+        groups, total = informative_groups(batch, algorithm)
         seen += total
         for rows in groups[:target - len(selected)]:
             selected.append(batch[np.asarray(rows)])

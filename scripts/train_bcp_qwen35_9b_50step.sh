@@ -1,6 +1,7 @@
 #!/bin/bash
 # Shared batch entry point; submit via submit_train_bcp_qwen35_9b_50step.sh.
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/check_joint_graphrpo_options.sh"
 METHOD=${1:?Expected contextgraph or foldagent}
 case "$METHOD" in contextgraph|foldagent) ;; *) echo "Invalid method: $METHOD" >&2; exit 2 ;; esac
 export BCP_TRAIN_PROFILE=${BCP_TRAIN_PROFILE:-default}
@@ -179,10 +180,7 @@ if [ "$METHOD" = contextgraph ]; then
   export ADV_ESTIMATOR=graphrpo POLICY_LOSS_MODE=graphrpo
   export BC_CONTROLLER_ACTION_POLICY=structural PROCESS_REWARD_SPEC='[scope]'
   export USE_KL_LOSS=True ACTOR_KL_LOSS_COEF=0.0005 ALGORITHM_KL_COEF=0.0
-  export GRAPH_RPO_CREDIT_BACKEND=${GRAPH_RPO_CREDIT_BACKEND:-old_policy_counterfactual_qa}
-  export GRAPH_RPO_COUNTERFACTUAL_SAMPLES=1 GRAPH_RPO_COUNTERFACTUAL_MAX_NEW_TOKENS=512
-  export GRAPH_RPO_COUNTERFACTUAL_TEMPERATURE=1.0 GRAPH_RPO_COUNTERFACTUAL_TOP_P=1.0
-  export GRAPH_RPO_COUNTERFACTUAL_SEED=42 GRAPH_RPO_COUNTERFACTUAL_ENABLE_THINKING=False
+  export GRAPH_RPO_CREDIT_BACKEND=${GRAPH_RPO_CREDIT_BACKEND:-outcome_only}
   export GRAPH_RPO_ALPHA=0.1 GRAPH_RPO_BETA=0.25 GRAPH_RPO_EPSILON=1e-6
   export GRAPH_RPO_DELTA_SCALE=1.0 GRAPH_RPO_DELTA_MAX=0.25
   export GRAPH_RPO_OPERATION_COSTS='{merge:0.0,prune:0.0,add_edge:0.0,select:0.0}'
@@ -227,9 +225,6 @@ printf '%s\n' "adv_estimator=$ADV_ESTIMATOR" "policy_loss_mode=$POLICY_LOSS_MODE
   "actor_kl_loss_coef=$ACTOR_KL_LOSS_COEF" | tee -a "$RUN_DIR/training-config.txt"
 if [ "$METHOD" = contextgraph ]; then
   printf '%s\n' "process_reward=$PROCESS_REWARD_SPEC" "credit_backend=$GRAPH_RPO_CREDIT_BACKEND" \
-    "probe_samples=$GRAPH_RPO_COUNTERFACTUAL_SAMPLES" "probe_tokens=$GRAPH_RPO_COUNTERFACTUAL_MAX_NEW_TOKENS" \
-    "probe_temperature=$GRAPH_RPO_COUNTERFACTUAL_TEMPERATURE" "probe_top_p=$GRAPH_RPO_COUNTERFACTUAL_TOP_P" \
-    "probe_seed=$GRAPH_RPO_COUNTERFACTUAL_SEED" "probe_thinking=$GRAPH_RPO_COUNTERFACTUAL_ENABLE_THINKING" \
     "graph_alpha=$GRAPH_RPO_ALPHA" "graph_beta=$GRAPH_RPO_BETA" "graph_epsilon=$GRAPH_RPO_EPSILON" \
     "delta_scale=$GRAPH_RPO_DELTA_SCALE" "delta_max=$GRAPH_RPO_DELTA_MAX" \
     "operation_costs=$GRAPH_RPO_OPERATION_COSTS" "rollout_data_dir=$ROLLOUT_DATA_DIR" \
@@ -301,8 +296,6 @@ if [ "$RC" -eq 0 ] && { [ "${SMOKE_TEST:-0}" = 1 ] || [ "$BCP_GRAPH_RPO_SMOKE" =
     python scripts/audit_bc_judge_results.py "${ROLLOUT_FILES[@]}" --fail-on-integrity-error
     if [ "$GRAPH_RPO_CREDIT_BACKEND" = evidence ]; then
       python scripts/audit_evidence_graph_credit.py "${ROLLOUT_FILES[@]}" --require-nonzero
-    else
-      python scripts/audit_counterfactual_graph_credit.py "${ROLLOUT_FILES[@]}" --fail-on-integrity-error --min-tag-rate 0.9 --require-nonzero-delta
     fi
   fi
   echo "BCP_RL_SMOKE_COMPLETE method=$METHOD steps=$TOTAL_TRAINING_STEPS checkpoint=$CHECKPOINT_ROOT/global_step_$TOTAL_TRAINING_STEPS" | tee "$RUN_DIR/smoke-complete.txt"

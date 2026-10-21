@@ -9,10 +9,10 @@
 #SBATCH -t 48:00:00
 #SBATCH -A AST24021
 
-# Formal stage-2 evaluator-free GraphRPO specialization. Start from the
-# completed MiroVerse controller-SFT checkpoint, then use paired QA probes from
-# the pre-update policy to score graph states before and after valid edits.
+# Stage-2 joint GraphRPO. Start from the configured controller-SFT checkpoint
+# and optimize execution and graph management with task/process rewards.
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/check_joint_graphrpo_options.sh"
 
 PROJECT_ROOT=${PROJECT_ROOT:-/work/09281/chc_1996/vista/context-graph}
 SCRATCH_ROOT=${SCRATCH:-/scratch/09281/chc_1996}
@@ -48,9 +48,7 @@ export POLICY_LOSS_MODE=graphrpo
 export BC_CTXGRAPH_PROTOCOL=controller
 export PROCESS_REWARD_SPEC='[scope]'
 export USE_KL_LOSS=True
-export GRAPH_RPO_CREDIT_BACKEND=${GRAPH_RPO_CREDIT_BACKEND:-old_policy_counterfactual_qa}
-export GRAPH_RPO_COUNTERFACTUAL_SAMPLES=${GRAPH_RPO_COUNTERFACTUAL_SAMPLES:-2}
-export GRAPH_RPO_COUNTERFACTUAL_ENABLE_THINKING=${GRAPH_RPO_COUNTERFACTUAL_ENABLE_THINKING:-False}
+export GRAPH_RPO_CREDIT_BACKEND=${GRAPH_RPO_CREDIT_BACKEND:-outcome_only}
 export GRAPH_RPO_ALPHA=${GRAPH_RPO_ALPHA:-0.1}
 export GRAPH_RPO_DELTA_SCALE=${GRAPH_RPO_DELTA_SCALE:-1.0}
 export GRAPH_RPO_DELTA_MAX=${GRAPH_RPO_DELTA_MAX:-0.25}
@@ -58,6 +56,6 @@ export DATA_SEED=${DATA_SEED:-42}
 export SAVE_ROLLOUT_DATA=${SAVE_ROLLOUT_DATA:-1}
 export BC_DISABLE_WANDB=${BC_DISABLE_WANDB:-0}
 export BC_REQUIRE_WANDB=${BC_REQUIRE_WANDB:-1}
-export RUN_TAG=${RUN_TAG:-stage2_graphrpo_counterfactual_sft_5n_48h}
+export RUN_TAG=${RUN_TAG:-stage2_graphrpo_joint_sft_5n_48h}
 
 exec bash scripts/train_bc_ctxgraph_8b_paperfaithful_5node_48h.sh

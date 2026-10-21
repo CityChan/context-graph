@@ -178,7 +178,6 @@ def test_outcome_only_controller_uses_no_scoring_calls(monkeypatch):
     async def no_probe(**kwargs):
         pytest.fail('outcome_only must not invoke a graph evaluator or counterfactual probe')
     monkeypatch.setattr(module, 'assign_graph_edit_credits', no_probe)
-    monkeypatch.setattr(module, 'assign_counterfactual_graph_edit_credits', no_probe)
     outputs = asyncio.run(module.process_item(item(), context))
     assert len(client.calls) == 4
     assert outputs[0].reward_score == 1
@@ -201,6 +200,7 @@ def test_loop_token_exhaustion_keeps_negative_reward(monkeypatch):
         response = await original(agent, *args, **kwargs)
         # Exhaust the budget after a real action response, before its observation.
         agent.config.response_length = agent.response_tokens_used() + 5
+        agent.working_context_limit = len(agent.context()) + 5
         return response
     monkeypatch.setattr(module, 'step_preserving_final_answer', exhaust_budget)
     outputs = asyncio.run(module.process_item(item(), context))
@@ -252,7 +252,7 @@ def test_profile_dynamic_sampling_keeps_process_ties_and_caps_extra_batches():
         generated.append(value)
         return batch((-.1, -.1, -.1), uid=str(value))
     remaining, metrics = iter([1, 2, 3]), {}
-    result = sample_groups(0, remaining, generate, config, None, 8, metrics)
+    result = sample_groups(0, remaining, generate, config, 8, metrics)
     assert generated == [0, 1, 2] and next(remaining) == 3
     assert metrics['graphrpo/dynamic_min_groups_met'] == 0
     assert result.meta_info['dynamic_empty'] is True

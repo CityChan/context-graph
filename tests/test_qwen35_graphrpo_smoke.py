@@ -15,7 +15,7 @@ pytestmark = pytest.mark.skipif(not BASH, reason='Bash unavailable')
     ('complete', 0), ('missing_shard', 1), ('trainer_failure', 17),
     ('credit_failure', 19), ('missing_rollout', 1),
 ])
-@pytest.mark.parametrize('backend', ['old_policy_counterfactual_qa', 'evidence'])
+@pytest.mark.parametrize('backend', ['outcome_only', 'evidence'])
 def test_five_node_two_step_smoke_requires_checkpoint_and_credit(tmp_path, outcome, code, backend):
     (tmp_path / 'scripts').mkdir()
     (tmp_path / 'data').mkdir()
@@ -54,9 +54,11 @@ if [ "$TEST_OUTCOME" != missing_rollout ]; then printf '{}\\n' > "$ROLLOUT_DATA_
     result = subprocess.run([BASH, setup.as_posix()], cwd=ROOT, env=env,
                             capture_output=True, text=True, timeout=30,
                             creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+    if backend == 'outcome_only' and outcome == 'credit_failure':
+        code = 0  # Joint training performs no local graph-credit probe/audit.
     assert result.returncode == code, result.stdout + result.stderr
     run_dir = next((tmp_path / 'outputs').iterdir())
-    assert (run_dir / 'smoke-complete.txt').exists() == (outcome == 'complete')
+    assert (run_dir / 'smoke-complete.txt').exists() == (code == 0)
     captured = dict(line.split('=', 1) for line in (tmp_path / 'captured.env').read_text().splitlines() if '=' in line)
     for key, value in {
         'TOTAL_TRAINING_STEPS': '2', 'TRAIN_BATCH_SIZE': '4', 'ROLLOUT_N': '4',
@@ -72,9 +74,8 @@ if [ "$TEST_OUTCOME" != missing_rollout ]; then printf '{}\\n' > "$ROLLOUT_DATA_
         if backend == 'evidence':
             assert 'audit_evidence_graph_credit.py' in audits and '--require-nonzero' in audits
         else:
-            assert 'audit_counterfactual_graph_credit.py' in audits
-            assert '--fail-on-integrity-error --min-tag-rate 0.9 --require-nonzero-delta' in audits
-    elif outcome == 'credit_failure':
+            assert 'graph_credit.py' not in audits
+    elif outcome == 'credit_failure' and backend == 'evidence':
         assert 'stage=graph_credit_audit exit=19' in (run_dir / 'failure.log').read_text()
 
 

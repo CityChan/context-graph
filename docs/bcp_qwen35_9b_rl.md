@@ -13,27 +13,26 @@ The pinned model is still **Qwen/Qwen3.5-9B** at revision
 | --- | --- |
 | Advantage / actor loss | `graphrpo` / `graphrpo` |
 | Controller | structured, controller-owned formatting, `structural` actions |
-| Credit backend | `old_policy_counterfactual_qa` |
-| Probes | 1 per before/after state, up to 512 tokens, thinking disabled |
-| Probe decoding | temperature 1, top-p 1, paired seed 42 plus question/sample offset |
-| Credit weights | alpha 0.1, beta 0.25, epsilon 1e-6 |
-| Delta | scale 1, cap 0.25, operation costs 0 |
+| Credit backend | `outcome_only` |
+| QA probes | removed |
+| Advantage | shared episode outcome advantage + beta 0.25 times local process labels; epsilon 1e-6 |
+| Local graph delta | zero under `outcome_only`; alpha/delta settings are inactive |
 | Terminal reward | binary task reward; terminal graph shaping disabled by GraphRPO |
 | Process labels | `[scope]` plus GraphRPO's runtime labels; no `[flat,scope,graph]` |
 | KL | actor `low_var_kl`, coefficient 0.0005; no KL in terminal reward |
 | Rollouts | saved under the run's `rollouts/` directory |
 
-The common wrapper sets these values after its old defaults, preventing inherited
-environment variables from silently selecting another backend/controller or
-disabling KL. Resolved settings are saved in `training-config.txt`; existing
+The common wrapper fixes the controller and KL settings and defaults the backend
+to `outcome_only`. Other supported credit backends require an explicit override;
+removed QA/role options fail preflight. Resolved settings are saved in
+`training-config.txt`; existing
 `overrides.txt` records the explicit trainer overrides. Training and internal
 validation share the controller and serving path. External evaluation alignment
 is a separate check, not established by this launcher change.
 
-With one binary QA probe and zero operation cost, raw nonzero deltas are +/-1
-and clip to +/-0.25. A high clipping rate is expected for this configuration.
-The probe uses the existing task judge; it needs no separate graph evaluator
-server. KL does initialize a frozen reference policy, adding memory/compute cost.
+Execution and graph decisions share one policy update. No before/after QA reward
+or separate graph evaluator is used by default. KL still initializes a frozen
+reference policy, adding memory/compute cost.
 
 First submit the **same five-node, 4 x 4, 32K profile** for two steps:
 
@@ -43,11 +42,11 @@ cd /work/09281/chc_1996/vista/context-graph && git pull --ff-only origin master 
 
 This smoke uses eight training examples, skips pre-training validation, and
 requires step-2 model/optimizer/extra-state shards for all four trainer ranks.
-It also requires two rollout JSONL files and passes them through judge-integrity
-and counterfactual-credit audits (answer-tag rate >=0.9 and nonzero edit delta).
-No smoke-complete marker is written if those checks fail. All-zero credit can
-reflect the sampled tasks rather than a software bug, but does not establish
-that this configuration supplies a usable edit-learning signal.
+It also requires two rollout JSONL files and passes them through task-judge
+integrity audits. The main profile does not require local graph
+credit or generate before/after QA probes.
+No smoke-complete marker is written if those checks fail. Passing this integration
+smoke does not establish task-performance improvement.
 
 Logs use `logs/bcp-9b-cg-4x4.JOBID.{out,err}` and
 `outputs/smoke32k_graphrpo_qwen35_9b_bcp_contextgraph_JOBID_TIMESTAMP/suite.log`.

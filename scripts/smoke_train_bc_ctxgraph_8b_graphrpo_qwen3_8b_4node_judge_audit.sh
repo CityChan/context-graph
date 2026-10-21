@@ -106,7 +106,7 @@ fi
 echo "Rollout JSONL files:"
 wc -l "${ROLLOUT_FILES[@]}"
 python scripts/audit_bc_judge_results.py "${ROLLOUT_FILES[@]}" --fail-on-integrity-error
-python scripts/audit_counterfactual_graph_credit.py "${ROLLOUT_FILES[@]}" --backend reference_answer_likelihood --output "$GRAPH_AUDIT_OUTPUT" --fail-on-integrity-error --fail-on-semantic-noop --require-nonzero-delta --expected-delta-scale "$GRAPH_RPO_DELTA_SCALE" --max-clip-rate "$GRAPH_RPO_AUDIT_MAX_CLIP_RATE"
+python scripts/audit_graph_credit.py "${ROLLOUT_FILES[@]}" --backend reference_answer_likelihood --output "$GRAPH_AUDIT_OUTPUT" --fail-on-integrity-error --fail-on-semantic-noop --require-nonzero-delta --expected-delta-scale "$GRAPH_RPO_DELTA_SCALE" --max-clip-rate "$GRAPH_RPO_AUDIT_MAX_CLIP_RATE"
 
 if [ ! -s "$ADAPTER_DIR/adapter_config.json" ] || [ ! -s "$ADAPTER_DIR/adapter_model.safetensors" ]; then
   echo "ERROR: LoRA checkpoint is incomplete under $ADAPTER_DIR"

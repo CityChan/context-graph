@@ -24,7 +24,7 @@ fi
 
 AUDIT_OUTPUT=$(mktemp)
 trap 'rm -f "$AUDIT_OUTPUT"' EXIT
-python scripts/audit_counterfactual_graph_credit.py "$BASELINE_ROLLOUT_DIR" --backend reference_answer_likelihood --output "$AUDIT_OUTPUT" --fail-on-integrity-error --fail-on-semantic-noop --require-nonzero-delta
+python scripts/audit_graph_credit.py "$BASELINE_ROLLOUT_DIR" --backend reference_answer_likelihood --output "$AUDIT_OUTPUT" --fail-on-integrity-error --fail-on-semantic-noop --require-nonzero-delta
 GRAPH_RPO_DELTA_SCALE=$(python -c "import json,sys; summary=json.load(open(sys.argv[1], encoding='utf-8'))['summary']; stats=summary['raw_abs_delta_distribution']; assert stats.get('count', 0) > 0, 'no scored raw deltas available for calibration'; value=max(1.0, float(stats['p80']) / float(sys.argv[2])); print(f'{value:.10g}')" "$AUDIT_OUTPUT" "$GRAPH_RPO_DELTA_MAX")
 SCALE_TAG=${GRAPH_RPO_DELTA_SCALE//./p}
 RUN_TAG="graphrpo_ref_scaled_smoke_scale${SCALE_TAG}_seed${DATA_SEED}"

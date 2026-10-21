@@ -127,7 +127,7 @@ fi
 echo "Training rollout JSONL files:"
 wc -l "${ROLLOUT_FILES[@]}"
 python scripts/audit_bc_judge_results.py "${ROLLOUT_FILES[@]}" --fail-on-integrity-error
-python scripts/audit_counterfactual_graph_credit.py "$ROLLOUT_DATA_DIR" --backend reference_answer_likelihood --fail-on-integrity-error --fail-on-semantic-noop --require-nonzero-delta --max-clip-rate "$GRAPH_RPO_AUDIT_MAX_CLIP_RATE"
+python scripts/audit_graph_credit.py "$ROLLOUT_DATA_DIR" --backend reference_answer_likelihood --fail-on-integrity-error --fail-on-semantic-noop --require-nonzero-delta --max-clip-rate "$GRAPH_RPO_AUDIT_MAX_CLIP_RATE"
 
 ADAPTER_DIR="$CHECKPOINT_ROOT/global_step_$TOTAL_TRAINING_STEPS/actor/lora_adapter"
 if [ ! -s "$ADAPTER_DIR/adapter_config.json" ] || [ ! -s "$ADAPTER_DIR/adapter_model.safetensors" ]; then

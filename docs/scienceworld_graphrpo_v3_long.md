@@ -54,8 +54,7 @@ and branch events must never be mapped onto a main-agent turn index.
 Other isolated-agent configurations can opt in with the same
 `actor_rollout_ref.rollout.plugin.graph_action_protocol=explicit_tools` field
 (use Hydra `+` when adding a field absent from that configuration). Explicit mode
-overrides old automatic-maintenance flags in a per-rollout copy. Existing E/M
-continuation uses controller checkpoints and rejects explicit mode. Non-GraphRPO
+overrides old automatic-maintenance flags in a per-rollout copy. Non-GraphRPO
 benchmark/memory-baseline launchers retain their existing protocol unless opted in.
 
 ### Action protocol and training records
@@ -128,7 +127,7 @@ The ordinary GraphRPO advantage is
 
 Main and branch streams are deduplicated by episode ID before computing the
 mean. `graphrpo_norm_adv_by_std=false` disables standard-deviation normalization;
-the global default remains `true`, and alternating E/M objectives are unaffected.
+the global default remains `true` for the main joint objective.
 The explicit `outcome_only` backend sets local graph credit `d` to zero and
 does not request evaluator/probe calls. Existing token-local process labels
 remain: tool formatting/no-call errors `-1`, unfinished final completion `-1`,
@@ -313,7 +312,7 @@ retroactively make them successful.
 Local regression coverage exercises reward precedence, peak-score reset,
 natural termination versus step cap, real executor paths with a scripted
 simulator/model, main/branch no-tool stops, native validation rewards, prompt
-matching, dynamic filtering, config composition, unchanged E/M baselines and
+matching, dynamic filtering, config composition and
 episode-deduplicated mean centering, explicit main/branch graph edits, retained
 raw evidence, absence of automatic maintenance, and exact policy-prefix alignment
 across model-selected context resets. No live GPU training or model-performance

@@ -477,8 +477,6 @@ class AlgoConfig(BaseConfig):
     # ablations may explicitly opt in to finite scalar terminal rewards.
     graphrpo_alpha: float = 1.0
     graphrpo_norm_adv_by_std: bool = True
-    graphrpo_memory_only: bool = False
-    graphrpo_alternating_roles: bool = False
     graphrpo_normalize_decision_tokens: bool = False
     graphrpo_decision_scale_max: float = 0.0
     graphrpo_dynamic_sampling: bool = False

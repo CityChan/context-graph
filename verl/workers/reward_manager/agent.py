@@ -222,7 +222,7 @@ class AgentLoopRewardManager(AbstractRewardManager):
         # Lift selected env_stats fields (set by the agent loop, packaged into
         # non_tensor_batch by agent_loop.py:720) into reward_extra_info so they
         # surface as reward/<key> in wandb. Mirrors the lift in
-        # verl/experimental/reward/reward_loop/naive.py:107-117 — that path is
+        # verl/experimental/reward/reward_loop/naive.py:107-117 鈥?that path is
         # bypassed whenever AgentLoopOutput.reward_score is non-None (which
         # fold_agent and graph_agent_isolated always set), so without this
         # block reward/task_reward and reward/graph_shaping never appear,
@@ -299,27 +299,13 @@ class AgentLoopRewardManager(AbstractRewardManager):
                       "graph_rpo_credited_edits",
                       "graph_rpo_scored_states",
                       "graph_rpo_delta_sum", "graph_rpo_delta_abs_sum",
-                      "graph_rpo_counterfactual_scored_states",
-                      "graph_rpo_counterfactual_probe_rollouts",
                       "graph_rpo_evidence_gained", "graph_rpo_evidence_lost",
                       "graph_rpo_evidence_recall", "graph_rpo_branch_decisions",
                       "graph_rpo_duplicate_branches", "graph_rpo_duplicate_branch_rate",
                       "graph_rpo_decision_tokens",
-                      "graph_rpo_continuation_skipped",
-                      "graph_rpo_continuation_failed",
                       "graph_rpo_budget_failure",
                       "compress_trunc", "compress_dup_search", "compress_dup_branch",
-                      "compress_redund", "compress_ret_redund",
-                      "graph_rpo_continuation_nonzero",
-                      "graph_rpo_continuation_advantage",
-                      "graph_rpo_continuation_abs_advantage",
-                      "graph_rpo_counterfactual_tagged_responses",
-                      "graph_rpo_counterfactual_tag_rate",
-                      "graph_rpo_counterfactual_positive_rewards",
-                      "graph_rpo_counterfactual_positive_rate",
-                      "graph_rpo_counterfactual_nonzero_edits",
-                      "graph_rpo_counterfactual_delta_sum",
-                      "graph_rpo_counterfactual_delta_abs_sum"):
+                      "compress_redund", "compress_ret_redund"):
                 # One episode can emit main plus several branch streams. The
                 # environment stats are episode-level and duplicated on every
                 # stream, so average within gen_uid first and then across
@@ -329,18 +315,5 @@ class AgentLoopRewardManager(AbstractRewardManager):
                 if not per_episode:
                     continue
                 reward_extra_info[k] = repeat(_safe_mean(list(per_episode.values())))
-
-            # These are ratios of event counts, not means of per-episode
-            # ratios. Episodes with no sampled probes report a local rate of
-            # zero; averaging those zeros understates the true batch rate.
-            probes = _env_stat_by_episode("graph_rpo_counterfactual_probe_rollouts")
-            if probes:
-                tagged = _env_stat_by_episode("graph_rpo_counterfactual_tagged_responses")
-                positive = _env_stat_by_episode("graph_rpo_counterfactual_positive_rewards")
-                probe_total = sum(probes.values())
-                tag_rate = sum(tagged.get(uid, 0.0) for uid in probes) / probe_total if probe_total else 0.0
-                positive_rate = sum(positive.get(uid, 0.0) for uid in probes) / probe_total if probe_total else 0.0
-                reward_extra_info["graph_rpo_counterfactual_tag_rate"] = repeat(tag_rate)
-                reward_extra_info["graph_rpo_counterfactual_positive_rate"] = repeat(positive_rate)
 
         return reward_extra_info

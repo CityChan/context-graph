@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Audit persisted GraphRPO edit deltas and counterfactual probe integrity."""
+"""Audit persisted graph-credit deltas for likelihood/evaluator experiments."""
 
 from __future__ import annotations
 
@@ -7,15 +7,13 @@ import argparse
 import hashlib
 import json
 import math
-import re
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any, Iterable
 
 
-BACKEND = "old_policy_counterfactual_qa"
+BACKEND = "reference_answer_likelihood"
 SUPPORTED_BACKENDS = (
-    "old_policy_counterfactual_qa",
     "reference_answer_likelihood",
     "old_policy_answer_likelihood",
     "external_evaluator",
@@ -26,15 +24,6 @@ if __package__:
     from .audit_records import input_files, load_records
 else:
     from audit_records import input_files, load_records
-
-
-def answer_format_valid(response: Any) -> bool:
-    matches = re.findall(
-        r"<answer>(.*?)</answer>",
-        str(response or ""),
-        flags=re.IGNORECASE | re.DOTALL,
-    )
-    return len(matches) == 1 and bool(matches[0].strip())
 
 
 def semantic_state_hash(state: Any) -> str | None:
@@ -70,8 +59,6 @@ def credit_evaluation_status(event: dict[str, Any]) -> str:
     if event.get("graph_rpo_outcome_gated") is False:
         return "scored"
     if event.get("graph_rpo_delta_unclipped") is not None:
-        return "scored"
-    if event.get("graph_rpo_counterfactual_before_rewards") is not None:
         return "scored"
     return "unknown"
 
@@ -116,7 +103,6 @@ def audit_results(
     files = input_files(paths)
     seen_episodes: set[str] = set()
     integrity_errors: list[dict[str, Any]] = []
-    malformed_samples: list[dict[str, Any]] = []
     record_count = 0
     episodes_with_trace = 0
     episodes_with_credit = 0
@@ -127,10 +113,6 @@ def audit_results(
     semantic_change_count = 0
     semantic_noop_count = 0
     semantic_unknown_count = 0
-    probe_count = 0
-    tagged_count = 0
-    positive_count = 0
-    paired_reward_differences = 0
     nonzero_edit_count = 0
     positive_edit_count = 0
     negative_edit_count = 0
@@ -203,74 +185,6 @@ def audit_results(
                 else:
                     semantic_unknown_count += 1
 
-                before_responses = event.get(
-                    "graph_rpo_counterfactual_before_responses", []
-                )
-                after_responses = event.get(
-                    "graph_rpo_counterfactual_after_responses", []
-                )
-                before_rewards = event.get(
-                    "graph_rpo_counterfactual_before_rewards", []
-                )
-                after_rewards = event.get(
-                    "graph_rpo_counterfactual_after_rewards", []
-                )
-                if backend == BACKEND:
-                    arrays = (
-                        before_responses,
-                        after_responses,
-                        before_rewards,
-                        after_rewards,
-                    )
-                    if not all(isinstance(value, list) for value in arrays):
-                        integrity_errors.append(
-                            {"source": str(path), "gen_uid": gen_uid, "seq": seq,
-                             "error": "probe payload is not list-valued"}
-                        )
-                        continue
-                    lengths = {len(value) for value in arrays}
-                    if len(lengths) != 1 or not lengths or next(iter(lengths)) == 0:
-                        integrity_errors.append(
-                            {"source": str(path), "gen_uid": gen_uid, "seq": seq,
-                             "error": "before/after probe lengths differ or are empty",
-                             "lengths": [len(value) for value in arrays]}
-                        )
-                        continue
-
-                    for side, responses, rewards in (
-                        ("before", before_responses, before_rewards),
-                        ("after", after_responses, after_rewards),
-                    ):
-                        for sample_index, (response, reward) in enumerate(
-                            zip(responses, rewards)
-                        ):
-                            probe_count += 1
-                            valid = answer_format_valid(response)
-                            tagged_count += int(valid)
-                            try:
-                                numeric_reward = float(reward)
-                            except (TypeError, ValueError):
-                                numeric_reward = float("nan")
-                            if numeric_reward not in (0.0, 1.0):
-                                integrity_errors.append(
-                                    {"source": str(path), "gen_uid": gen_uid,
-                                     "seq": seq, "side": side,
-                                     "sample_index": sample_index,
-                                     "error": f"non-binary reward: {reward!r}"}
-                                )
-                            positive_count += int(numeric_reward == 1.0)
-                            if not valid and len(malformed_samples) < max_samples:
-                                malformed_samples.append(
-                                    {"source": str(path), "gen_uid": gen_uid,
-                                     "seq": seq, "side": side,
-                                     "sample_index": sample_index,
-                                     "response_tail": str(response or "")[-500:]}
-                                )
-
-                    paired_reward_differences += sum(
-                        int(float(after) != float(before))
-                        for before, after in zip(before_rewards, after_rewards)
-                    )
                 delta = float(event.get("graph_rpo_delta", 0.0))
                 try:
                     numeric_delta_scale = float(event.get("graph_rpo_delta_scale"))
@@ -319,11 +233,7 @@ def audit_results(
         "records": record_count,
         "unique_episodes": len(seen_episodes),
         "episodes_with_graph_trace": episodes_with_trace,
-        "episodes_with_counterfactual_credit": (
-            episodes_with_credit if backend == BACKEND else 0
-        ),
         "episodes_with_selected_credit": episodes_with_credit,
-        "counterfactual_edits": edit_count if backend == BACKEND else 0,
         "selected_credit_edits": edit_count,
         "scored_credit_edits": scored_edit_count,
         "outcome_gated_edits": outcome_gated_edit_count,
@@ -331,12 +241,6 @@ def audit_results(
         "semantic_state_change_edits": semantic_change_count,
         "semantic_noop_edits": semantic_noop_count,
         "semantic_unknown_edits": semantic_unknown_count,
-        "probe_responses": probe_count,
-        "exactly_one_answer_tag": tagged_count,
-        "answer_tag_rate": tagged_count / probe_count if probe_count else 0.0,
-        "positive_probe_rewards": positive_count,
-        "positive_probe_rate": positive_count / probe_count if probe_count else 0.0,
-        "paired_sample_reward_differences": paired_reward_differences,
         "nonzero_edit_deltas": nonzero_edit_count,
         "nonzero_edit_rate_all": (
             nonzero_edit_count / edit_count if edit_count else 0.0
@@ -375,7 +279,6 @@ def audit_results(
     }
     return {
         "summary": summary,
-        "malformed_response_samples": malformed_samples,
         "semantic_noop_samples": semantic_noop_samples,
         "integrity_error_samples": integrity_errors[:max_samples],
     }
@@ -387,7 +290,6 @@ def main() -> None:
     parser.add_argument("--max-samples", type=int, default=20)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--backend", choices=SUPPORTED_BACKENDS, default=BACKEND)
-    parser.add_argument("--min-tag-rate", type=float)
     parser.add_argument("--min-nonzero-rate", type=float)
     parser.add_argument("--max-clip-rate", type=float)
     parser.add_argument("--expected-delta-scale", type=float)
@@ -408,8 +310,6 @@ def main() -> None:
     summary = report["summary"]
     failed = False
     if args.fail_on_integrity_error and summary["integrity_errors"]:
-        failed = True
-    if args.min_tag_rate is not None and summary["answer_tag_rate"] < args.min_tag_rate:
         failed = True
     if (
         args.min_nonzero_rate is not None

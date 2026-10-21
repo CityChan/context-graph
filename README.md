@@ -16,7 +16,7 @@ successful 32K training updates and memory fit on that topology remain unverifie
 | Understand the modules and experiment variants | [Codebase map](docs/codebase_map.md) |
 | Review confirmed fixes and remaining risks | [October 1 review](docs/project_review_20261001.md) |
 | Train Qwen3.5-9B on Vista | [RL setup, preflight, smoke and submission](docs/bcp_qwen35_9b_rl.md) |
-| Train executor and memory roles with EM-RPO | [Shared-policy training, compatibility and limitations](docs/em_rpo.md) |
+| Jointly train execution and graph management | [GraphRPO task rewards and process penalties](docs/graphrpo.md) |
 | Evaluate BC-P / text-only local GAIA | [BC-P guide](docs/bcp_qwen35_9b_eval.md), [GAIA guide](docs/gaia_qwen35_9b_eval.md) |
 | Smoke-test MemoBrain and A-MEM on BC-P | [Protocol and four-node idev commands](docs/graph_memory_baselines.md) |
 | Evaluate SWE-bench Verified or Lite | [Container, model and grading guide](docs/swebench_verified_eval.md) |

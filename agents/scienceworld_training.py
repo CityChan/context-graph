@@ -9,6 +9,9 @@ import math
 
 
 def validate_reward_profile(profile, *, ability, algorithm, is_train):
+    if is_train:
+        from agents.graph_rpo import reject_removed_graph_rpo_options
+        reject_removed_graph_rpo_options(algorithm)
     if profile not in {"binary", "v3_long"}:
         raise ValueError(f"Unknown ScienceWorld training reward profile: {profile}")
     if profile == "binary":
@@ -17,8 +20,6 @@ def validate_reward_profile(profile, *, ability, algorithm, is_train):
         raise ValueError("v3_long requires a ScienceWorld task")
     if is_train and (
         str(algorithm.get("adv_estimator", "")).lower() not in {"graphrpo", "advantageestimator.graphrpo"}
-        or algorithm.get("graphrpo_alternating_roles", False)
-        or algorithm.get("graphrpo_memory_only", False)
         or algorithm.get("graphrpo_require_binary_reward", True)
     ):
         raise ValueError("v3_long requires ordinary GraphRPO with finite scalar rewards enabled")

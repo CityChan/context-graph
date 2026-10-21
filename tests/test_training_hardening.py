@@ -32,12 +32,9 @@ def test_dynamic_deduplicates_and_retains_whole_group():
     assert informative_groups(b, config())[0] == []
     b.batch['process_reward_mask'][1, 0] = -.3
     assert informative_groups(b, config())[0] == [[0, 1, 2]]
-    assert informative_groups(b, config(), 'E')[0] == []
-    assert informative_groups(b, config(), 'M')[0] == []
     b.batch['graph_edit_credit_mask'][2, 1] = 1
-    assert informative_groups(b, config(graphrpo_memory_only=True))[0] == [[0, 1, 2]]
+    assert informative_groups(b, config())[0] == [[0, 1, 2]]
     b.batch['response_mask'][:, 1] = 0
-    assert informative_groups(b, config(), 'M')[0] == []
 
 
 def test_dynamic_bounded_exhaustion_disabled_and_partial_groups():
@@ -47,26 +44,49 @@ def test_dynamic_bounded_exhaustion_disabled_and_partial_groups():
         generated.append(value)
         return batch((0, 0, int(value == 2)), str(value))
     following, metrics = iter([1, 2, 3]), {}
-    result = sample_groups(0, following, generate, c, 'E', 2, metrics)
+    result = sample_groups(0, following, generate, c, 2, metrics)
     assert generated == [0, 1, 2] and next(following) == 3
     assert result.non_tensor_batch['uid'].tolist() == ['2'] * 3
     assert metrics['graphrpo/dynamic_gen_batches'] == 3
-    empty = sample_groups(0, iter([]), generate, c, 'E', 2, {})
+    empty = sample_groups(0, iter([]), generate, c, 2, {})
     assert empty.meta_info['dynamic_empty'] and not empty.batch['response_mask'].any()
     c.graphrpo_dynamic_sampling = False
-    untouched = sample_groups(0, iter([2]), generate, c, 'E', 2, {})
+    untouched = sample_groups(0, iter([2]), generate, c, 2, {})
     assert untouched.batch['response_mask'].all()
 
 
 def test_dynamic_multiple_batches_concatenate_without_candidate_mixing():
     c = config()
     c.graphrpo_dynamic_min_groups = 2
-    result = sample_groups('x', iter(['y']), lambda x: batch(uid=x), c, 'E', 2, {})
+    result = sample_groups('x', iter(['y']), lambda x: batch(uid=x), c, 2, {})
     assert result.non_tensor_batch['gen_uid'].tolist() == ['xa', 'xa', 'xb', 'ya', 'ya', 'yb']
     broken = batch()
     broken.batch['rm_scores'][1, 0] = 1
     with pytest.raises(ValueError, match='Streams disagree'):
         informative_groups(broken, c)
+
+
+def test_empty_dynamic_batch_is_audited_and_skipped_without_model_work():
+    import ast
+    from pathlib import Path
+    tree = ast.parse(Path('verl/trainer/ppo/ray_trainer.py').read_text(encoding='utf8'))
+    cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'RayPPOTrainer')
+    cls.body = [n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == '_skip_empty_dynamic_batch']
+    namespace = {'torch': torch}
+    exec(compile(ast.Module(body=[cls], type_ignores=[]), '<driver>', 'exec'), namespace)
+    trainer = namespace['RayPPOTrainer'].__new__(namespace['RayPPOTrainer'])
+    trainer.config = OmegaConf.create({'trainer': {'rollout_data_dir': 'audit'}})
+    audits = []
+    trainer._log_rollout_data = lambda *args: audits.append(args)
+    empty = batch()
+    empty.meta_info['dynamic_empty'] = True
+    empty.batch['response_mask'].zero_()
+    metrics = {}
+    assert trainer._skip_empty_dynamic_batch(empty, metrics, {})
+    assert metrics['training/actor_update_calls'] == 0
+    assert len(audits) == 1 and not empty.batch['token_level_scores'].any()
+    empty.batch['response_mask'][0, 0] = 1
+    assert not trainer._skip_empty_dynamic_batch(empty, {}, {})
 
 
 def test_foldgrpo_filters_outcome_ties_even_with_process_labels():
@@ -75,16 +95,6 @@ def test_foldgrpo_filters_outcome_ties_even_with_process_labels():
     b = batch((1,1,1))
     b.batch['process_reward_mask'].fill_(-1)
     assert informative_groups(b,c)[0] == []
-
-
-def test_content_filter_400_is_recoverable_but_other_400_is_not():
-    import httpx
-    from agents.graph_rpo_continuation import recoverable
-    for code, expected in [('content_filter',True),('bad_parameter',False)]:
-        response = httpx.Response(400, json={'error':{'code':code}},
-            request=httpx.Request('POST','https://example.invalid'))
-        error = httpx.HTTPStatusError('rejected',request=response.request,response=response)
-        assert recoverable(error) == expected
 
 
 def test_driver_progress_restores_epoch_independent_of_optimizer_steps(tmp_path):
@@ -185,21 +195,3 @@ def test_fragment_cache_release_is_opt_in(monkeypatch):
     monkeypatch.setenv('VERL_FRAG_EMPTY_CACHE_GB','24')
     release_fragmented_cache()
     assert calls == [1]
-
-
-@pytest.mark.parametrize('policy,budget,service,accepted', [(True,True,False,True),
-    (False,True,False,False), (True,False,False,False), (True,True,True,False)])
-def test_policy_budget_failure_never_converts_service_errors(policy,budget,service,accepted):
-    from agents.graph_rpo_continuation import _checked_episode, ContinuationUnavailable
-    output = SimpleNamespace(reward_score=1., extra_fields={'agent_name':'main','env_stats':{},
-        'hit_timeout':True,'policy_time_budget_exhausted':policy})
-    async def run(*a, **kw):
-        return [output]
-    ctx = SimpleNamespace(config=SimpleNamespace(actor_rollout_ref=SimpleNamespace(rollout=SimpleNamespace(
-        plugin={'graph_rpo_timeout_as_failure':budget}))))
-    session = SimpleNamespace(error=None, env=SimpleNamespace(env_fail=service))
-    if accepted:
-        assert asyncio.run(_checked_episode(None,ctx,run,session))[0].reward_score == 0
-    else:
-        with pytest.raises(ContinuationUnavailable):
-            asyncio.run(_checked_episode(None,ctx,run,session))

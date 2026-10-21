@@ -91,8 +91,7 @@ def test_graphrpo_adds_edit_and_process_credit_after_group_normalization():
     assert advantages[1].tolist() == pytest.approx([1.0, 1.8, 1.65, 0.85])
 
 
-@pytest.mark.parametrize("training_role,expected", [(None, [-0.3, -0.3, 0.3]), ("E", [-0.6, -0.6, 0.6])])
-def test_mean_centered_graphrpo_preserves_episode_deduplication_and_e_role(training_role, expected):
+def test_mean_centered_graphrpo_preserves_episode_deduplication():
     torch = _torch()
     from verl.trainer.ppo.core_algos import compute_graphrpo_advantage
 
@@ -101,11 +100,10 @@ def test_mean_centered_graphrpo_preserves_episode_deduplication_and_e_role(train
         response_mask=torch.ones(3, 4),
         index=np.array(["q", "q", "q"]),
         gen_uid=np.array(["main-and-branch", "main-and-branch", "other"]),
-        training_role=training_role,
         graph_decision_mask=torch.zeros(3, 4),
         config={"graphrpo_norm_adv_by_std": False, "graphrpo_require_binary_reward": False},
     )
-    assert advantages[:, 0].tolist() == pytest.approx(expected)
+    assert advantages[:, 0].tolist() == pytest.approx([-0.3, -0.3, 0.3])
 
 
 def test_mean_centered_graphrpo_keeps_tied_outcome_process_labels_and_masks_padding():
@@ -454,152 +452,7 @@ def test_old_policy_graph_requests_record_selected_backend():
     assert event["graph_rpo_credit_backend"] == "old_policy_answer_likelihood"
 
 
-def test_counterfactual_qa_credits_paired_task_outcomes_without_success_gate():
-    from agents.graph_rpo import assign_counterfactual_graph_edit_credits
-
-    calls = []
-
-    async def generate_answer(view, sample_index, seed):
-        calls.append((view, sample_index, seed))
-        answer = "correct" if view == "after graph" else "wrong"
-        return f"reasoning\n<answer>{answer}</answer>"
-
-    async def score_answer(answer, audit_sink):
-        reward = float(answer == "correct")
-        audit_sink.append({"score": reward, "judge_method": "test"})
-        return reward
-
-    class FakeAgent:
-        def __init__(self):
-            self.credits = {}
-
-        def add_graph_edit_credit(self, turn, credit):
-            self.credits[turn] = self.credits.get(turn, 0.0) + credit
-
-    event = {
-        "seq": 9,
-        "source": "model",
-        "success": True,
-        "op": "merge",
-        "before_hash": "a",
-        "after_hash": "b",
-        "rendered_before": "before graph",
-        "rendered_after": "after graph",
-        "assistant_turn_index": 12,
-    }
-    agent = FakeAgent()
-    metrics = asyncio.run(
-        assign_counterfactual_graph_edit_credits(
-            agent=agent,
-            graph_trace={"events": [event]},
-            question="question",
-            generate_answer=generate_answer,
-            score_answer=score_answer,
-            plugin_config={
-                "graph_rpo_counterfactual_samples": 2,
-                "graph_rpo_operation_costs": {"merge": 0.1},
-                "graph_rpo_delta_scale": 3.0,
-                "graph_rpo_delta_max": 1.0,
-                "graph_rpo_counterfactual_seed": 7,
-            },
-        )
-    )
-
-    assert agent.credits == {12: pytest.approx(0.3)}
-    assert [call[2] for call in calls[:2]] == [call[2] for call in calls[2:]]
-    assert event["graph_rpo_credit_backend"] == "old_policy_counterfactual_qa"
-    assert event["graph_rpo_outcome_gated"] is False
-    assert len(event["graph_rpo_counterfactual_seeds"]) == 2
-    assert event["graph_rpo_utility_before"] == pytest.approx(0.0)
-    assert event["graph_rpo_utility_after"] == pytest.approx(1.0)
-    assert event["graph_rpo_delta_unclipped"] == pytest.approx(0.9)
-    assert event["graph_rpo_delta_scale"] == pytest.approx(3.0)
-    assert event["graph_rpo_delta_scaled_unclipped"] == pytest.approx(0.3)
-    assert len(event["graph_rpo_counterfactual_before_responses"]) == 2
-    assert len(event["graph_rpo_counterfactual_after_responses"]) == 2
-    assert event["graph_rpo_counterfactual_before_rewards"] == [0.0, 0.0]
-    assert event["graph_rpo_counterfactual_after_rewards"] == [1.0, 1.0]
-    assert metrics["graph_rpo_creditable_edits"] == 1
-    assert metrics["graph_rpo_credited_edits"] == 1
-    assert metrics["graph_rpo_scored_states"] == 2
-    assert metrics["graph_rpo_delta_abs_sum"] == pytest.approx(0.3)
-    assert metrics["graph_rpo_counterfactual_scored_states"] == 2
-    assert metrics["graph_rpo_counterfactual_probe_rollouts"] == 4
-    assert metrics["graph_rpo_counterfactual_tagged_responses"] == 4
-    assert metrics["graph_rpo_counterfactual_tag_rate"] == 1.0
-    assert metrics["graph_rpo_counterfactual_positive_rewards"] == 2
-    assert metrics["graph_rpo_counterfactual_positive_rate"] == 0.5
-    assert metrics["graph_rpo_counterfactual_nonzero_edits"] == 1
-    assert metrics["graph_rpo_counterfactual_delta_abs_sum"] == pytest.approx(0.3)
-
-
-def test_counterfactual_qa_prompt_and_answer_extraction():
-    from agents.graph_rpo import (
-        extract_counterfactual_answer,
-        format_counterfactual_qa_messages,
-        graph_rpo_credit_backend,
-    )
-
-    assert graph_rpo_credit_backend({}) == "old_policy_counterfactual_qa"
-    messages = format_counterfactual_qa_messages("Who?", "[n1] evidence")
-    assert [message["role"] for message in messages] == ["system", "user"]
-    assert "Do not search or call tools" in messages[0]["content"]
-    assert "Who?" in messages[1]["content"]
-    assert "[n1] evidence" in messages[1]["content"]
-    assert extract_counterfactual_answer("x <answer>first</answer> <answer>last</answer>") == "last"
-    assert extract_counterfactual_answer("Final answer: fallback.") == "fallback"
-
-
-def test_counterfactual_qa_does_not_judge_malformed_probe_output():
-    from agents.graph_rpo import assign_counterfactual_graph_edit_credits
-
-    score_calls = []
-
-    async def generate_answer(view, sample_index, seed):
-        return "unfinished reasoning without a submitted answer"
-
-    async def score_answer(answer, audit_sink):
-        score_calls.append(answer)
-        return 1.0
-
-    class FakeAgent:
-        def add_graph_edit_credit(self, turn, credit):
-            self.credit = credit
-
-    event = {
-        "seq": 10,
-        "source": "model",
-        "success": True,
-        "op": "merge",
-        "before_hash": "a",
-        "after_hash": "b",
-        "rendered_before": "before graph",
-        "rendered_after": "after graph",
-        "assistant_turn_index": 4,
-    }
-    agent = FakeAgent()
-    metrics = asyncio.run(
-        assign_counterfactual_graph_edit_credits(
-            agent=agent,
-            graph_trace={"events": [event]},
-            question="question",
-            generate_answer=generate_answer,
-            score_answer=score_answer,
-            plugin_config={"graph_rpo_counterfactual_samples": 1},
-        )
-    )
-
-    assert score_calls == []
-    assert agent.credit == 0.0
-    assert metrics["graph_rpo_credited_edits"] == 0
-    assert metrics["graph_rpo_counterfactual_tag_rate"] == 0.0
-    assert metrics["graph_rpo_counterfactual_positive_rewards"] == 0
-    assert event["graph_rpo_counterfactual_before_judge_audits"][0][0][
-        "judge_method"
-    ] == "counterfactual_format_invalid"
-
-
-def test_local_search_can_score_counterfactual_answer_without_mutating_episode():
+def test_local_search_can_score_answer_without_mutating_episode():
     from envs.local_search import LocalSearch
 
     env = LocalSearch.__new__(LocalSearch)
@@ -1025,12 +878,6 @@ def test_graphrpo_training_wiring_is_explicit():
     old_policy_smoke_launcher = (
         root / "scripts/smoke_train_bc_ctxgraph_8b_graphrpo_old_policy_4node_2step.sh"
     ).read_text(encoding="utf-8")
-    counterfactual_smoke_launcher = (
-        root / "scripts/smoke_train_bc_ctxgraph_8b_graphrpo_counterfactual_4node_2step.sh"
-    ).read_text(encoding="utf-8")
-    counterfactual_stage2_submitter = (
-        root / "scripts/submit_stage2_graphrpo_counterfactual.sh"
-    ).read_text(encoding="utf-8")
     paperfaithful_launcher = (
         root / "scripts/train_bc_ctxgraph_8b_paperfaithful_5node_48h.sh"
     ).read_text(encoding="utf-8")
@@ -1043,11 +890,9 @@ def test_graphrpo_training_wiring_is_explicit():
     assert trainer.count('trajectory_fields["task_reward"]') >= 2
     assert trainer.count('"judge_audit", "uid", "gen_uid"') >= 2
     assert "assign_graph_edit_credits" in agent
-    assert "assign_counterfactual_graph_edit_credits" in agent
     assert "prepare_reference_graph_edit_requests" in agent
     assert "_compute_answer_likelihood_graph_credit" in trainer
     assert "old_policy_answer_likelihood" in trainer
-    assert "old_policy_counterfactual_qa" not in trainer
     assert "compute_answer_log_prob" in trainer
     assert "def compute_answer_log_prob" in fsdp_worker
     assert "process_reward_min_precedence=graph_rpo_enabled" in agent
@@ -1057,12 +902,6 @@ def test_graphrpo_training_wiring_is_explicit():
     assert '"graph_rpo_creditable_edits"' in reward_manager
     assert '"graph_rpo_scored_states"' in reward_manager
     assert '"graph_rpo_delta_abs_sum"' in reward_manager
-    assert '"graph_rpo_counterfactual_probe_rollouts"' in reward_manager
-    assert '"graph_rpo_counterfactual_tag_rate"' in reward_manager
-    assert '"graph_rpo_counterfactual_nonzero_edits"' in reward_manager
-    assert '"graph_rpo_counterfactual_delta_abs_sum"' in reward_manager
-    assert 'tag_rate = sum(tagged.get(uid, 0.0) for uid in probes) / probe_total' in reward_manager
-    assert 'positive_rate = sum(positive.get(uid, 0.0) for uid in probes) / probe_total' in reward_manager
     for metric in (
         "graph_compactness",
         "graph_structural",
@@ -1087,10 +926,8 @@ def test_graphrpo_training_wiring_is_explicit():
     assert "export POLICY_LOSS_MODE=graphrpo" in launcher
     assert 'TRAINER_RESUME_MODE=${TRAINER_RESUME_MODE:-auto}' in paperfaithful_launcher
     assert 'RESUME_ARGS=(trainer.resume_mode="$TRAINER_RESUME_MODE")' in paperfaithful_launcher
-    assert "old_policy_counterfactual_qa" in launcher
     assert "old_policy_answer_likelihood" in paperfaithful_launcher
     assert "GRAPH_RPO_EVALUATOR_URL:?" not in launcher
-    assert "old_policy_counterfactual_qa" in smoke_launcher
     assert "serve_graph_evaluator_smoke.py" not in smoke_launcher
     assert "global_step_174" in smoke_launcher
     assert "python -m verl.model_merger merge --backend fsdp" in smoke_launcher
@@ -1117,7 +954,7 @@ def test_graphrpo_training_wiring_is_explicit():
     assert "reference_delta_abs_sum:" in audit_smoke_launcher
     assert "audit_bc_judge_results.py" in audit_smoke_launcher
     assert "GRAPH_RPO_DELTA_SCALE=${GRAPH_RPO_DELTA_SCALE:-1.0}" in audit_smoke_launcher
-    assert "audit_counterfactual_graph_credit.py" in audit_smoke_launcher
+    assert "audit_graph_credit.py" in audit_smoke_launcher
     assert '--expected-delta-scale "$GRAPH_RPO_DELTA_SCALE"' in audit_smoke_launcher
     assert "--fail-on-semantic-noop" in audit_smoke_launcher
     assert "SMOKE + JUDGE AUDIT COMPLETED" in audit_smoke_launcher
@@ -1137,19 +974,6 @@ def test_graphrpo_training_wiring_is_explicit():
     assert "GRAPH_RPO_ALPHA=0.1" in old_policy_smoke_launcher
     assert "GRAPH_RPO_DELTA_MAX=0.25" in old_policy_smoke_launcher
     assert "BC_REQUIRE_WANDB=1" in old_policy_smoke_launcher
-    assert "old_policy_counterfactual_qa" in counterfactual_smoke_launcher
-    assert "GRAPH_RPO_COUNTERFACTUAL_SAMPLES" in counterfactual_smoke_launcher
-    assert "GRAPH_RPO_COUNTERFACTUAL_ENABLE_THINKING=False" in counterfactual_smoke_launcher
-    assert "RUN_TAG=${RUN_TAG:-graphrpo_counterfactual_4n_bs3_n8_2step}" in counterfactual_smoke_launcher
-    assert "audit_counterfactual_graph_credit.py" in counterfactual_smoke_launcher
-    assert "graph_rpo_counterfactual_probe_rollouts" in counterfactual_smoke_launcher
-    assert "TOTAL_TRAINING_STEPS=2" in counterfactual_smoke_launcher
-    assert "--dependency=afterok:" in counterfactual_stage2_submitter
-    assert 'if [ -n "${SLURM_JOB_ID:-}" ]' in counterfactual_stage2_submitter
-    assert "did not return a valid smoke job ID" in counterfactual_stage2_submitter
-    assert "returned no valid formal job ID" in counterfactual_stage2_submitter
-    assert "smoke_train_bc_ctxgraph_8b_graphrpo_counterfactual_4node_2step.sh" in counterfactual_stage2_submitter
-    assert "train_bc_ctxgraph_8b_graphrpo_5node_48h.sh" in counterfactual_stage2_submitter
     assert "TRAINER_NODES=$((EXPECTED_NUM_NODES - 1))" in launcher
     assert "TRAIN_BATCH_SIZE=${TRAIN_BATCH_SIZE:-$((TRAINER_NODES * 8))}" in launcher
 
@@ -1161,7 +985,7 @@ def test_graphrpo_training_wiring_is_explicit():
     assert "graph_rpo_delta_scale=$GRAPH_RPO_DELTA_SCALE" in base_launcher
     assert "GRAPH_RPO_DELTA_SCALE=${GRAPH_RPO_DELTA_SCALE:-1.0}" in launcher
     assert "GRAPH_RPO_DELTA_SCALE=${GRAPH_RPO_DELTA_SCALE:-1.0}" in zeroshot_pilot_launcher
-    assert "audit_counterfactual_graph_credit.py" in zeroshot_pilot_launcher
+    assert "audit_graph_credit.py" in zeroshot_pilot_launcher
     assert "GRAPH_RPO_AUDIT_MAX_CLIP_RATE" in zeroshot_pilot_launcher
     assert "raw_abs_delta_distribution" in matched_scale_submitter
     assert "float(stats['p80']) / float(sys.argv[2])" in matched_scale_submitter

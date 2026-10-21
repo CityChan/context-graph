@@ -48,6 +48,7 @@
 #   echo 'export OPENAI_API_KEY=sk-...' > $WORK/.openai_env && chmod 600 $WORK/.openai_env
 # ─────────────────────────────────────────────────────────────────────
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/check_joint_graphrpo_options.sh"
 
 # ── Vista cache redirects (avoid NFS flock) ──
 export TRITON_CACHE_DIR=/tmp/triton_cache_$$
@@ -311,7 +312,7 @@ if [ "$ADV_ESTIMATOR" = "graphrpo" ]; then
     echo "ERROR: GraphRPO requires BC_CTXGRAPH_PROTOCOL=controller"
     exit 1
   fi
-  GRAPH_RPO_CREDIT_BACKEND=${GRAPH_RPO_CREDIT_BACKEND:-old_policy_counterfactual_qa}
+  GRAPH_RPO_CREDIT_BACKEND=${GRAPH_RPO_CREDIT_BACKEND:-outcome_only}
   GRAPH_RPO_ALPHA=${GRAPH_RPO_ALPHA:-1.0}
   GRAPH_RPO_BETA=${GRAPH_RPO_BETA:-1.0}
   GRAPH_RPO_EPSILON=${GRAPH_RPO_EPSILON:-1e-6}
@@ -332,29 +333,7 @@ if [ "$ADV_ESTIMATOR" = "graphrpo" ]; then
     "+actor_rollout_ref.rollout.plugin.graph_rpo_operation_costs=$GRAPH_RPO_OPERATION_COSTS"
   )
   case "$GRAPH_RPO_CREDIT_BACKEND" in
-    old_policy_continuation)
-      PROCESS_REWARD_SPEC='[]'
-      case "${GRAPH_RPO_ALTERNATING_ROLES:-False}" in
-        True|true|1) GRAPH_RPO_MEMORY_ONLY=False; GRAPH_RPO_ALTERNATING_ROLES=True ;;
-        False|false|0) GRAPH_RPO_MEMORY_ONLY=True; GRAPH_RPO_ALTERNATING_ROLES=False ;;
-        *) echo "ERROR: GRAPH_RPO_ALTERNATING_ROLES must be True or False"; exit 1 ;;
-      esac
-      GRAPH_RPO_ARGS+=(
-        "algorithm.graphrpo_memory_only=$GRAPH_RPO_MEMORY_ONLY"
-        "algorithm.graphrpo_alternating_roles=$GRAPH_RPO_ALTERNATING_ROLES"
-        "algorithm.rollout_correction.rollout_is=token"
-        "algorithm.rollout_correction.rollout_is_threshold=2.0"
-        "+actor_rollout_ref.rollout.plugin.graph_rpo_continuation_samples=${GRAPH_RPO_CONTINUATION_SAMPLES:-4}"
-        "+actor_rollout_ref.rollout.plugin.graph_rpo_timeout_as_failure=${GRAPH_RPO_TIMEOUT_AS_FAILURE:-False}"
-        "+actor_rollout_ref.rollout.plugin.graph_rpo_executor_samples=${GRAPH_RPO_EXECUTOR_SAMPLES:-2}"
-        "+actor_rollout_ref.rollout.plugin.graph_rpo_continuation_checkpoint=${GRAPH_RPO_CONTINUATION_CHECKPOINT:-1}"
-        "+actor_rollout_ref.rollout.plugin.graph_rpo_continuation_checkpoint_max=${GRAPH_RPO_CONTINUATION_CHECKPOINT_MAX:-4}"
-        "+actor_rollout_ref.rollout.plugin.graph_rpo_continuation_concurrency=${GRAPH_RPO_CONTINUATION_CONCURRENCY:-2}"
-        "+actor_rollout_ref.rollout.plugin.graph_controller_temperature=${GRAPH_CONTROLLER_TEMPERATURE:-${ROLLOUT_TEMPERATURE:-1.0}}"
-        "+actor_rollout_ref.rollout.plugin.graph_controller_top_p=1.0"
-        "+actor_rollout_ref.rollout.plugin.graph_rpo_scope_process_reward=False"
-      )
-      ;;
+    outcome_only) ;;
     evidence)
       python scripts/prepare_graph_evidence_data.py --check "$TRAIN_DATA_FILE"
       GRAPH_RPO_ARGS+=(
@@ -366,22 +345,6 @@ if [ "$ADV_ESTIMATOR" = "graphrpo" ]; then
         "+actor_rollout_ref.rollout.plugin.graph_controller_temperature=${GRAPH_CONTROLLER_TEMPERATURE:-0.8}"
         "+actor_rollout_ref.rollout.plugin.graph_rpo_duplicate_threshold=${GRAPH_RPO_DUPLICATE_THRESHOLD:-0.6}"
         "+actor_rollout_ref.rollout.plugin.graph_rpo_duplicate_penalty=${GRAPH_RPO_DUPLICATE_PENALTY:-0.2}"
-      )
-      ;;
-    old_policy_counterfactual_qa)
-      GRAPH_RPO_COUNTERFACTUAL_SAMPLES=${GRAPH_RPO_COUNTERFACTUAL_SAMPLES:-2}
-      GRAPH_RPO_COUNTERFACTUAL_MAX_NEW_TOKENS=${GRAPH_RPO_COUNTERFACTUAL_MAX_NEW_TOKENS:-512}
-      GRAPH_RPO_COUNTERFACTUAL_TEMPERATURE=${GRAPH_RPO_COUNTERFACTUAL_TEMPERATURE:-$ROLLOUT_TEMPERATURE}
-      GRAPH_RPO_COUNTERFACTUAL_TOP_P=${GRAPH_RPO_COUNTERFACTUAL_TOP_P:-1.0}
-      GRAPH_RPO_COUNTERFACTUAL_SEED=${GRAPH_RPO_COUNTERFACTUAL_SEED:-42}
-      GRAPH_RPO_COUNTERFACTUAL_ENABLE_THINKING=${GRAPH_RPO_COUNTERFACTUAL_ENABLE_THINKING:-False}
-      GRAPH_RPO_ARGS+=(
-        "+actor_rollout_ref.rollout.plugin.graph_rpo_counterfactual_samples=$GRAPH_RPO_COUNTERFACTUAL_SAMPLES"
-        "+actor_rollout_ref.rollout.plugin.graph_rpo_counterfactual_max_new_tokens=$GRAPH_RPO_COUNTERFACTUAL_MAX_NEW_TOKENS"
-        "+actor_rollout_ref.rollout.plugin.graph_rpo_counterfactual_temperature=$GRAPH_RPO_COUNTERFACTUAL_TEMPERATURE"
-        "+actor_rollout_ref.rollout.plugin.graph_rpo_counterfactual_top_p=$GRAPH_RPO_COUNTERFACTUAL_TOP_P"
-        "+actor_rollout_ref.rollout.plugin.graph_rpo_counterfactual_seed=$GRAPH_RPO_COUNTERFACTUAL_SEED"
-        "+actor_rollout_ref.rollout.plugin.graph_rpo_counterfactual_enable_thinking=$GRAPH_RPO_COUNTERFACTUAL_ENABLE_THINKING"
       )
       ;;
     reference_answer_likelihood|old_policy_answer_likelihood)
@@ -418,7 +381,7 @@ if [ "$ADV_ESTIMATOR" = "graphrpo" ]; then
       )
       ;;
     *)
-      echo "ERROR: unsupported GRAPH_RPO_CREDIT_BACKEND (expected old_policy_continuation, evidence, old_policy_counterfactual_qa, reference_answer_likelihood, old_policy_answer_likelihood, or external_evaluator)"
+      echo "ERROR: unsupported GRAPH_RPO_CREDIT_BACKEND (expected outcome_only, evidence, reference_answer_likelihood, old_policy_answer_likelihood, or external_evaluator)"
       exit 1
       ;;
   esac
@@ -734,9 +697,6 @@ echo "  Graph protocol: $BC_CTXGRAPH_PROTOCOL structured_controller=$BC_STRUCTUR
 echo "  Structured memory: enabled=$STRUCTURED_MEMORY_ENABLED context_budget=$STRUCTURED_MEMORY_CONTEXT_BUDGET max_facts=$STRUCTURED_MEMORY_MAX_FACTS gap_interval=$STRUCTURED_MEMORY_GAP_INTERVAL jitter=$STRUCTURED_MEMORY_GAP_JITTER retries=$STRUCTURED_MEMORY_CONTROLLER_RETRIES stop_on_ready=$STRUCTURED_MEMORY_STOP_ON_READY step_limit=$STRUCTURED_MEMORY_STEP_LIMIT"
 if [ "$ADV_ESTIMATOR" = "graphrpo" ]; then
   echo "  GraphRPO credit: $GRAPH_RPO_CREDIT_BACKEND"
-  if [ "$GRAPH_RPO_CREDIT_BACKEND" = "old_policy_counterfactual_qa" ]; then
-    echo "  Counterfactual QA: samples/state=$GRAPH_RPO_COUNTERFACTUAL_SAMPLES max_tokens=$GRAPH_RPO_COUNTERFACTUAL_MAX_NEW_TOKENS temperature=$GRAPH_RPO_COUNTERFACTUAL_TEMPERATURE top_p=$GRAPH_RPO_COUNTERFACTUAL_TOP_P thinking=$GRAPH_RPO_COUNTERFACTUAL_ENABLE_THINKING"
-  fi
 fi
 echo "  v5 add-ons: uniqueness_weight=0.10 (Improvement #1), auto_bind_branch_edges=True with min_overlap=0.05 (Improvement #3)"
 echo "  vLLM gpu_memory_utilization=0.6 + FSDP CPU offload"
