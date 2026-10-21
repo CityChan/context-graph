@@ -323,6 +323,7 @@ def test_training_profile_reaches_base_launcher(tmp_path, profile, nodes, contex
             'BC_CONTROLLER_ACTION_POLICY': 'structural', 'PROCESS_REWARD_SPEC': '[scope]',
             'USE_KL_LOSS': 'True', 'ACTOR_KL_LOSS_COEF': '0.0005', 'ALGORITHM_KL_COEF': '0.0',
             'GRAPH_RPO_CREDIT_BACKEND': 'outcome_only',
+            'BC_CTXGRAPH_PROTOCOL': 'explicit_tools',
             'SAVE_ROLLOUT_DATA': '1',
         }.items():
             assert captured[key] == value

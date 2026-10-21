@@ -170,7 +170,7 @@ export VAL_BEFORE_TRAIN=True TEST_FREQ=10 SAVE_FREQ=5
 export TRAIN_MAX_SAMPLES=-1 VAL_MAX_SAMPLES=-1 DATALOADER_NUM_WORKERS=0
 export MAX_TURN=100 MAX_SESSION=10 VAL_MAX_SESSION=10 TURN_MAX_NEW_TOKENS=2048
 export FINAL_ANSWER_RESERVE=1024 FINAL_ANSWER_SAFETY_MARGIN=64 SESSION_TIMEOUT=3600
-export BC_CTXGRAPH_PROTOCOL=controller BC_CONTROLLER_ACTION_POLICY=balanced
+export BC_CONTROLLER_ACTION_POLICY=balanced
 export STRUCTURED_MEMORY_ENABLED=0 STRUCTURED_MEMORY_REQUIRED=0
 export CONSOLIDATION_INTERVAL=5 AUTO_PRUNE_MAX_ACTIVE=12
 # Select the complete objective after common defaults, so inherited shell settings
@@ -178,6 +178,7 @@ export CONSOLIDATION_INTERVAL=5 AUTO_PRUNE_MAX_ACTIVE=12
 export ADV_ESTIMATOR=foldgrpo POLICY_LOSS_MODE=vanilla
 if [ "$METHOD" = contextgraph ]; then
   export ADV_ESTIMATOR=graphrpo POLICY_LOSS_MODE=graphrpo
+  export BC_CTXGRAPH_PROTOCOL=${GRAPH_RPO_ACTION_PROTOCOL:-explicit_tools}
   export BC_CONTROLLER_ACTION_POLICY=structural PROCESS_REWARD_SPEC='[scope]'
   export USE_KL_LOSS=True ACTOR_KL_LOSS_COEF=0.0005 ALGORITHM_KL_COEF=0.0
   export GRAPH_RPO_CREDIT_BACKEND=${GRAPH_RPO_CREDIT_BACKEND:-outcome_only}
@@ -225,6 +226,7 @@ printf '%s\n' "adv_estimator=$ADV_ESTIMATOR" "policy_loss_mode=$POLICY_LOSS_MODE
   "actor_kl_loss_coef=$ACTOR_KL_LOSS_COEF" | tee -a "$RUN_DIR/training-config.txt"
 if [ "$METHOD" = contextgraph ]; then
   printf '%s\n' "process_reward=$PROCESS_REWARD_SPEC" "credit_backend=$GRAPH_RPO_CREDIT_BACKEND" \
+    "graph_action_protocol=$BC_CTXGRAPH_PROTOCOL" \
     "graph_alpha=$GRAPH_RPO_ALPHA" "graph_beta=$GRAPH_RPO_BETA" "graph_epsilon=$GRAPH_RPO_EPSILON" \
     "delta_scale=$GRAPH_RPO_DELTA_SCALE" "delta_max=$GRAPH_RPO_DELTA_MAX" \
     "operation_costs=$GRAPH_RPO_OPERATION_COSTS" "rollout_data_dir=$ROLLOUT_DATA_DIR" \

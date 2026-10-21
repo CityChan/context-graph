@@ -65,6 +65,7 @@ if [ "$TEST_OUTCOME" != missing_rollout ]; then printf '{}\\n' > "$ROLLOUT_DATA_
         'PPO_MINI_BATCH_SIZE': '4', 'EXPECTED_NUM_NODES': '5', 'CONTEXT_LENGTH': '32768',
         'RESPONSE_LENGTH': '24576', 'VAL_BEFORE_TRAIN': 'False', 'SAVE_FREQ': '2',
         'ADV_ESTIMATOR': 'graphrpo', 'POLICY_LOSS_MODE': 'graphrpo',
+        'BC_CTXGRAPH_PROTOCOL': 'explicit_tools',
         'USE_KL_LOSS': 'True', 'BC_CONTROLLER_ACTION_POLICY': 'balanced' if backend == 'evidence' else 'structural',
     }.items():
         assert captured[key] == value

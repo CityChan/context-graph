@@ -12,7 +12,9 @@ The pinned model is still **Qwen/Qwen3.5-9B** at revision
 | Setting | ContextGraph default |
 | --- | --- |
 | Advantage / actor loss | `graphrpo` / `graphrpo` |
-| Controller | structured, controller-owned formatting, `structural` actions |
+| Graph protocol | `explicit_tools`; model chooses when and how to edit |
+| Automatic maintenance | scheduled consolidation, auto-prune and semantic auto-links disabled |
+| Action format | one typed JSON tool call per turn; existing contract disables thinking |
 | Credit backend | `outcome_only` |
 | QA probes | removed |
 | Advantage | shared episode outcome advantage + beta 0.25 times local process labels; epsilon 1e-6 |
@@ -22,12 +24,13 @@ The pinned model is still **Qwen/Qwen3.5-9B** at revision
 | KL | actor `low_var_kl`, coefficient 0.0005; no KL in terminal reward |
 | Rollouts | saved under the run's `rollouts/` directory |
 
-The common wrapper fixes the controller and KL settings and defaults the backend
-to `outcome_only`. Other supported credit backends require an explicit override;
+The common wrapper defaults to model-owned graph timing and `outcome_only`, and
+fixes the KL settings. `GRAPH_RPO_ACTION_PROTOCOL=controller` explicitly selects
+the historical scheduled controller. Other supported credit backends require an explicit override;
 removed QA/role options fail preflight. Resolved settings are saved in
 `training-config.txt`; existing
 `overrides.txt` records the explicit trainer overrides. Training and internal
-validation share the controller and serving path. External evaluation alignment
+validation share the selected action protocol and serving path. External evaluation alignment
 is a separate check, not established by this launcher change.
 
 Execution and graph decisions share one policy update. No before/after QA reward

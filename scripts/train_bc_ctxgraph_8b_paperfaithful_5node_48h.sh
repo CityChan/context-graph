@@ -195,7 +195,7 @@ TRAIN_MAX_SAMPLES=${TRAIN_MAX_SAMPLES:--1}
 VAL_MAX_SAMPLES=${VAL_MAX_SAMPLES:--1}
 DATALOADER_NUM_WORKERS=${DATALOADER_NUM_WORKERS:-8}
 TRAINER_VAL_ONLY=${TRAINER_VAL_ONLY:-False}
-BC_CTXGRAPH_PROTOCOL=${BC_CTXGRAPH_PROTOCOL:-legacy}
+BC_CTXGRAPH_PROTOCOL=${BC_CTXGRAPH_PROTOCOL:-}
 BC_CONTROLLER_ACTION_POLICY=${BC_CONTROLLER_ACTION_POLICY:-structural}
 PROMPT_LENGTH=${PROMPT_LENGTH:-8192}
 RESPONSE_LENGTH=${RESPONSE_LENGTH:-32768}
@@ -243,20 +243,7 @@ ADV_ESTIMATOR=${ADV_ESTIMATOR:-foldgrpo}
 POLICY_LOSS_MODE=${POLICY_LOSS_MODE:-vanilla}
 PROCESS_REWARD_SPEC=${PROCESS_REWARD_SPEC:-'[flat,scope,graph]'}
 
-case "$BC_CTXGRAPH_PROTOCOL" in
-  legacy|full_policy)
-    BC_STRUCTURED_GRAPH_CONTROLLER=false
-    BC_CONTROLLER_OWNED_TOOL_FORMATTING=false
-    ;;
-  controller)
-    BC_STRUCTURED_GRAPH_CONTROLLER=true
-    BC_CONTROLLER_OWNED_TOOL_FORMATTING=true
-    ;;
-  *)
-    echo "ERROR: BC_CTXGRAPH_PROTOCOL must be full_policy, legacy, or controller; got $BC_CTXGRAPH_PROTOCOL"
-    exit 1
-    ;;
-esac
+source "$(dirname "${BASH_SOURCE[0]}")/configure_graph_training_protocol.sh"
 case "$STRUCTURED_MEMORY_ENABLED" in
   0) STRUCTURED_MEMORY_ENABLED=false ;;
   1) STRUCTURED_MEMORY_ENABLED=true ;;
@@ -308,8 +295,8 @@ fi
 
 GRAPH_RPO_ARGS=()
 if [ "$ADV_ESTIMATOR" = "graphrpo" ]; then
-  if [ "$BC_CTXGRAPH_PROTOCOL" != "controller" ]; then
-    echo "ERROR: GraphRPO requires BC_CTXGRAPH_PROTOCOL=controller"
+  if [ "$BC_CTXGRAPH_PROTOCOL" != "controller" ] && [ "$BC_CTXGRAPH_PROTOCOL" != "explicit_tools" ]; then
+    echo "ERROR: GraphRPO requires BC_CTXGRAPH_PROTOCOL=explicit_tools or controller"
     exit 1
   fi
   GRAPH_RPO_CREDIT_BACKEND=${GRAPH_RPO_CREDIT_BACKEND:-outcome_only}
@@ -338,14 +325,15 @@ if [ "$ADV_ESTIMATOR" = "graphrpo" ]; then
       python scripts/prepare_graph_evidence_data.py --check "$TRAIN_DATA_FILE"
       GRAPH_RPO_ARGS+=(
         "algorithm.graphrpo_normalize_decision_tokens=True"
-        "algorithm.rollout_correction.rollout_is=token"
-        "algorithm.rollout_correction.rollout_is_threshold=2.0"
         "+actor_rollout_ref.rollout.plugin.graph_rpo_scope_process_reward=False"
         "+actor_rollout_ref.rollout.plugin.graph_branch_history=True"
         "+actor_rollout_ref.rollout.plugin.graph_controller_temperature=${GRAPH_CONTROLLER_TEMPERATURE:-0.8}"
         "+actor_rollout_ref.rollout.plugin.graph_rpo_duplicate_threshold=${GRAPH_RPO_DUPLICATE_THRESHOLD:-0.6}"
         "+actor_rollout_ref.rollout.plugin.graph_rpo_duplicate_penalty=${GRAPH_RPO_DUPLICATE_PENALTY:-0.2}"
       )
+      if [ "$BC_CTXGRAPH_PROTOCOL" = controller ]; then
+        GRAPH_RPO_ARGS+=("algorithm.rollout_correction.rollout_is=token" "algorithm.rollout_correction.rollout_is_threshold=2.0")
+      fi
       ;;
     reference_answer_likelihood|old_policy_answer_likelihood)
       if [ "$USE_KL_LOSS" != "True" ] && [ "$USE_KL_LOSS" != "true" ]; then
@@ -692,13 +680,13 @@ ray status || echo "WARN: ray status check failed"
 echo "=============================================================="
 echo "  Launching ContextGraph ${ADV_ESTIMATOR} + v5 ($MODEL_PATH, update=$MODEL_UPDATE_LABEL, $NUM_NODES nodes [1 search + $((NUM_NODES - 1)) trainer], $TOTAL_TRAINING_STEPS steps, BS=$TRAIN_BATCH_SIZE, rollout_n=$ROLLOUT_N, ppo_mini=$PPO_MINI_BATCH_SIZE, context=$CONTEXT_LENGTH, $DATASET_LABEL)"
 echo "  Optimization: lr=$TRAIN_LR use_kl_loss=$USE_KL_LOSS clip=[$CLIP_RATIO_LOW,$CLIP_RATIO_HIGH]"
-echo "  CG-specific: workflow=search_graph, process_reward=$PROCESS_REWARD_SPEC, lambda_compact=0.2, lambda_cost=0.02, consolidation K=5"
+echo "  CG-specific: workflow=search_graph, process_reward=$PROCESS_REWARD_SPEC, consolidation_interval=$CONSOLIDATION_INTERVAL auto_prune_max_active=$AUTO_PRUNE_MAX_ACTIVE"
 echo "  Graph protocol: $BC_CTXGRAPH_PROTOCOL structured_controller=$BC_STRUCTURED_GRAPH_CONTROLLER controller_formatting=$BC_CONTROLLER_OWNED_TOOL_FORMATTING action_policy=$BC_CONTROLLER_ACTION_POLICY"
 echo "  Structured memory: enabled=$STRUCTURED_MEMORY_ENABLED context_budget=$STRUCTURED_MEMORY_CONTEXT_BUDGET max_facts=$STRUCTURED_MEMORY_MAX_FACTS gap_interval=$STRUCTURED_MEMORY_GAP_INTERVAL jitter=$STRUCTURED_MEMORY_GAP_JITTER retries=$STRUCTURED_MEMORY_CONTROLLER_RETRIES stop_on_ready=$STRUCTURED_MEMORY_STOP_ON_READY step_limit=$STRUCTURED_MEMORY_STEP_LIMIT"
 if [ "$ADV_ESTIMATOR" = "graphrpo" ]; then
   echo "  GraphRPO credit: $GRAPH_RPO_CREDIT_BACKEND"
 fi
-echo "  v5 add-ons: uniqueness_weight=0.10 (Improvement #1), auto_bind_branch_edges=True with min_overlap=0.05 (Improvement #3)"
+echo "  Graph auto-links: auto_bind_branch_edges=$BC_AUTO_BIND_BRANCH_EDGES min_overlap=0.05"
 echo "  vLLM gpu_memory_utilization=0.6 + FSDP CPU offload"
 echo "  val_before_train=$VAL_BEFORE_TRAIN, save_freq=$SAVE_FREQ, val every $TEST_FREQ steps"
 echo "=============================================================="
@@ -801,7 +789,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   +actor_rollout_ref.rollout.plugin.graph_invalid_penalty=-0.3 \
   +actor_rollout_ref.rollout.plugin.max_traj=11 \
   +actor_rollout_ref.rollout.plugin.uniqueness_weight=0.10 \
-  +actor_rollout_ref.rollout.plugin.auto_bind_branch_edges=True \
+  +actor_rollout_ref.rollout.plugin.auto_bind_branch_edges="$BC_AUTO_BIND_BRANCH_EDGES" \
   +actor_rollout_ref.rollout.plugin.auto_bind_min_overlap=0.05 \
   +actor_rollout_ref.rollout.plugin.must_finish=False \
   +actor_rollout_ref.rollout.plugin.double_check=False \
@@ -822,6 +810,7 @@ srun --overlap --nodes=1 --ntasks=1 -w "$TRAINER_HEAD_NODE" --chdir="$PROJECT_RO
   "${ROLLOUT_DATA_ARGS[@]}" \
   "${VALIDATION_DATA_ARGS[@]}" \
   "${GRAPH_RPO_ARGS[@]}" \
+  "${GRAPH_PROTOCOL_ARGS[@]}" \
   "${RESUME_ARGS[@]}" \
   "$@"
 RC=$?

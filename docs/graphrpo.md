@@ -7,8 +7,11 @@ and ROCm allocation controls are documented in
 The main design jointly optimizes task execution and graph management with one
 policy and optimizer. The default `graph_rpo_credit_backend=outcome_only` uses
 verified task reward plus non-positive process penalties; it makes no extra QA
-requests. Controller scheduling remains framework-owned. Both execution and
-management tokens receive the episode's group-relative task advantage.
+requests. Default RL launchers use `explicit_tools`: the policy chooses task
+actions or graph tools on every turn, including the timing of each graph edit.
+Both execution and management tokens receive the episode's group-relative task
+advantage. Scheduled consolidation, heuristic pruning and semantic auto-linking
+are disabled.
 
 The main token advantage is `A_task + beta * p`, with `p <= 0`. Invalid graph
 decisions receive `-0.3`; tool/format errors and missing finish receive `-1`;
@@ -23,8 +26,11 @@ The paired before/after QA backend, maintenance-only continuation training and
 alternating E/M training have been removed. Old backend values and role-specific
 configuration keys are rejected instead of silently selecting another objective.
 
-The auto/controller training loop still preserves immutable history; this change
-does not enable training-time history replacement or establish GPU training gains.
+The policy calls `graph_compact` to replace its working context after choosing
+which graph contents to retain; merge/prune alone do not shorten the conversation.
+Sampled prefixes and loss masks remain preserved for training. The historical
+auto/controller path is retained for demonstration collection and explicit
+comparison runs; it is not the default RL protocol.
 
 ## Training semantics
 
@@ -47,9 +53,15 @@ adds branch credit and a separate normalization for decision tokens.
   episode, then uniformly over episodes for a question, then over questions in
   the global batch. The same weights are used for entropy and low-variance KL.
 
-The default launchers use the structured graph controller, with one decision per
-controller response. The explicit-tools protocol is also supported: task actions
-and graph operations remain jointly trained under the same episode advantage.
+The existing explicit-tools contract emits one typed JSON action per response,
+currently with thinking disabled. It checks syntax and legality but does not
+choose when to edit or require an edit quota. Original JSON policy tokens remain
+training targets, including rejected graph decisions with local penalties.
+`GRAPH_RPO_ACTION_PROTOCOL=controller` explicitly selects the older scheduled
+controller in the main wrappers; the base launcher accepts
+`BC_CTXGRAPH_PROTOCOL=controller`. Changing protocols requires a fresh run rather
+than silently resuming an old run. Neither local tests nor protocol changes
+establish GPU training gains.
 
 ## Evidence and branch-credit experiment
 
