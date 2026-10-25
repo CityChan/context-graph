@@ -67,6 +67,41 @@ def test_branch_constraints_keep_return_and_exclude_finish_and_branch():
     assert not re.fullmatch(schema, '<function=branch><parameter=description>x</parameter><parameter=prompt>x</parameter></function>')
 
 
+@pytest.mark.parametrize('role,tool,field,prefix,old_cap', [
+    ('main', 'branch', 'prompt', '<parameter=description>Identify the critic</parameter>', 384),
+    ('branch', 'return', 'message', '', 512),
+    ('main', 'finish', 'explanation', '<parameter=answer>Unknown</parameter>', 256),
+])
+def test_recovery_does_not_force_argument_closure_at_old_character_caps(role, tool, field, prefix, old_cap):
+    # Complete evidence/delegations must remain expressible past the old bound.
+    value = 'Keep the exact date constraints and verify them against cited sources. ' * 10
+    assert len(value) > old_cap
+    opening = f'<function={tool}>{prefix}<parameter={field}>'
+    text = opening + value + '</parameter></function>'
+    schema = constraint(role, final=tool == 'finish')['regex']
+    assert re.fullmatch(schema, text)
+    assert not re.fullmatch(schema, opening + value)
+    assert not re.fullmatch(schema, text + SEARCH)
+
+
+def test_incomplete_recovery_at_output_cap_is_preserved_but_not_dispatched():
+    async def run():
+        # The fake tokenizer emits one ID per character, plus EOS. Token budget
+        # exhaustion must not be hidden by injecting closing XML tags.
+        partial = '<function=branch><parameter=description>Find sources</parameter><parameter=prompt>'
+        partial = partial + 'x' * (511 - len(partial))
+        agent = recovering_agent([partial])
+        agent.task_recovery_pending = True
+        result = await agent.step()
+        assert 'retry rejected' in result
+        assert agent.task_recovery_failed
+        assert agent.model_contexts[-1]['response'] == partial
+        assert len(agent.model_contexts[-1]['output_ids']) == 512
+        assert agent.llm_client.calls[-1][1]['max_new_tokens'] == 512
+        assert len(agent.llm_client.calls) == 1
+    asyncio.run(run())
+
+
 @pytest.mark.parametrize('reply,expected', [(FINISH, True), ('Still thinking in a loop.', False), (SEARCH, False)])
 def test_finalizer_is_constrained_and_never_wraps_failed_reasoning(reply, expected):
     from agents.finalizer import submit_emergency_final_answer

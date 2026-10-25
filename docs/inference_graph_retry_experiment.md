@@ -30,6 +30,14 @@ graph policy paths do not enable it. Set `EVAL_ACTION_RECOVERY=0` to reproduce
 the earlier task-output behavior. This shared actor change means new runs cannot
 be directly compared with the earlier raw baseline as an isolated guard effect.
 
+Recovery arguments have no per-field character ceilings. The earlier 384-character
+branch prompt, 512-character return and 256-character explanation caps could force
+closing tags in the middle of a sentence, even with `finish_reason=stop`. The
+512-token request cap remains; the instruction asks for concise, complete arguments.
+An incomplete XML response at the token cap is rejected, not repaired or dispatched.
+Syntactic acceptance still does not establish that a delegation or return preserves
+all relevant evidence; inspect the saved text before drawing quality conclusions.
+
 The guarded arm adds dynamic node/edge constraints, action-specific controller
 arity, rejection accounting, short error feedback, and a failure cache based on
 target state (not counters). After three consecutive failures, explicit tools

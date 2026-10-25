@@ -27,18 +27,21 @@ def constraint(role, final=False):
         raise ValueError('Unknown task recovery role')
     ws = r'[ \t\r\n]*'
 
-    def param(name, size=256):
-        return '<parameter=' + name + '>' + r'[^<>\s][^<>]{0,' + str(size - 1) + '}</parameter>' + ws
+    def param(name):
+        # Bound the request in tokens, not each argument in characters. A hard
+        # character ceiling forces XML closure mid-sentence while still passing
+        # syntactic validation (notably branch prompts and evidence returns).
+        return '<parameter=' + name + '>' + r'[^<>\s][^<>]*</parameter>' + ws
 
     def call(name, body):
         return '<function=' + name + '>' + ws + body + '</function>'
 
-    ending = call('finish', param('answer') + '(?:' + param('explanation') + ')?' + '(?:' + param('confidence', 32) + ')?') if role == 'main' else call('return', param('message', 512))
+    ending = call('finish', param('answer') + '(?:' + param('explanation') + ')?' + '(?:' + param('confidence') + ')?') if role == 'main' else call('return', param('message'))
     calls = [ending]
     if not final:
-        calls += [call('search', param('query')), call('open_page', '(?:' + param('docid', 128) + '|' + param('url') + ')')]
+        calls += [call('search', param('query')), call('open_page', '(?:' + param('docid') + '|' + param('url') + ')')]
         if role == 'main':
-            calls.append(call('branch', param('description', 96) + param('prompt', 384)))
+            calls.append(call('branch', param('description') + param('prompt')))
     return {'regex': ws + '(?:' + '|'.join(calls) + ')' + ws}
 
 
@@ -52,6 +55,8 @@ async def recover(agent, max_new_tokens=None):
     instruction = ('Submit exactly one finish tool call using available evidence.' if final else
                    'The last response did not execute a task tool. Output exactly one complete native XML tool call now. '
                    'Choose the next task action yourself; do not repeat analysis. Main may branch; branches must return instead of finish.')
+    instruction += (' Keep arguments concise and complete. Preserve the essential task constraints in branch prompts, '
+                    'and distinguish verified evidence from hypotheses in returns. Reserve space to close every XML tag.')
     if messages and messages[-1]['role'] == 'user':
         messages[-1]['content'] += '\n\n' + instruction
     else:
