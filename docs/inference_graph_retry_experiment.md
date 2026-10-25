@@ -34,10 +34,15 @@ cd ../context-graph-retry-smoke
 SAMPLES=3 bash scripts/smoke_graph_retry_ab_4node_idev.sh
 ```
 
-Run inside the existing four-node idev. Defaults are Qwen/Qwen3.5-27B, BC-P,
+Run inside the existing four-node idev. Defaults are Qwen/Qwen3.8-27B, BC-P,
 64K rendered working context, repaired memory, controller protocol, seed 42,
 one concurrent episode per server. An existing local scratch model snapshot is
-required. Override MODEL_ID for Qwen/Qwen3.5-9B or Qwen/Qwen3.8-27B.
+required. Override MODEL_ID for Qwen/Qwen3.5-9B or Qwen/Qwen3.5-27B.
+MODEL_PATH is preserved when supplied. Without it, the resolver uses the selected
+model's cached refs/main, or its sole complete snapshot if refs/main is absent.
+Multiple complete snapshots require an explicit MODEL_PATH. It never downloads
+weights or silently selects a different model; missing caches list repository
+directories for diagnosis. A path inside another model's HF cache is rejected.
 Set GRAPH_ACTION_PROTOCOL=explicit_tools to test model-owned timing separately;
 do not combine results from different protocols.
 

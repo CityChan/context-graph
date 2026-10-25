@@ -7,8 +7,9 @@ cd "$PROJECT_ROOT"
 : "${SCRATCH:?Missing SCRATCH}"
 [[ $(scontrol show hostnames "$SLURM_JOB_NODELIST" | wc -l) -eq 4 ]] || { echo 'Requires exactly four nodes'; exit 2; }
 git diff --quiet HEAD -- agents scripts || { echo 'Commit experiment code before running'; exit 2; }
-export MODEL_ID=${MODEL_ID:-Qwen/Qwen3.5-27B}
-unset MODEL_PATH
+export MODEL_ID=${MODEL_ID:-Qwen/Qwen3.8-27B}
+# Preserve an explicitly supplied offline checkpoint; resolver validates it.
+export MODEL_PATH=${MODEL_PATH:-}
 export BENCHMARK=bcp MEMORY_MODE=repaired
 export GRAPH_ACTION_PROTOCOL=${GRAPH_ACTION_PROTOCOL:-controller}
 export EVAL_CONTEXT_LENGTH=65536 MODEL_MAX_LEN=65536

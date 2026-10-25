@@ -204,7 +204,7 @@ fi
 export OPENAI_API_KEY
 unset OPENAI_URL
 export MODEL_PATH=${MODEL_PATH:-}
-MODEL_PATH=$(python -c 'import os,json; from pathlib import Path; from huggingface_hub import snapshot_download; scratch=Path(os.environ["SCRATCH"]).resolve(); p=Path(os.environ["MODEL_PATH"] or snapshot_download(os.environ["MODEL_ID"], cache_dir=str(scratch/"hf_cache"/"hub"), local_files_only=True)).resolve(); assert p.is_relative_to(scratch), "Model must be under SCRATCH"; idx=json.loads((p/"model.safetensors.index.json").read_text()); shards=set(idx["weight_map"].values()); assert shards and all((p/s).is_file() and (p/s).stat().st_size>0 for s in shards), "Incomplete checkpoint"; print(p)')
+MODEL_PATH=$(python scripts/resolve_bcp_checkpoint.py)
 export MODEL_PATH
 echo "Resolved HF checkpoint: $MODEL_PATH"
 python -c 'import os,pandas as pd; from scripts.eval_bcp_qwen38 import validate_dataset; f=pd.read_parquet(os.environ["DATA_PATH"]); validate_dataset(f.to_dict("records"),os.environ["BENCHMARK"]); print("Dataset protocol preflight passed:",len(f),"rows")'
