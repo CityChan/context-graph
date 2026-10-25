@@ -2,6 +2,8 @@
 """Verify real server schema support before spending a paired evaluation run."""
 import argparse
 import json
+import os
+import re
 from pathlib import Path
 import sys
 
@@ -43,6 +45,16 @@ def main():
             value = json.loads(response.choices[0].text)
             _validate(value, schema)
             checks.append({'profile': name, 'passed': True})
+        if os.environ.get('EVAL_ACTION_RECOVERY') == '1':
+            from agents.task_action_recovery import constraint
+            for role, final in [('main', False), ('branch', False), ('main', True)]:
+                schema = constraint(role, final)
+                response = client.completions.create(model=args.model,
+                    prompt='Output exactly one short native XML tool call. No explanation.\n',
+                    max_tokens=512, temperature=0, extra_body={'structured_outputs': schema})
+                if re.fullmatch(schema['regex'], response.choices[0].text) is None:
+                    raise ValueError('Task recovery backend constraint preflight failed')
+                checks.append({'profile': f'task_recovery_{role}_{final}', 'passed': True})
     Path(args.output).write_text(json.dumps({'scope': 'schema mechanics only', 'checks': checks}, indent=2))
     print('GRAPH_RETRY_SCHEMA_PREFLIGHT_OK')
 

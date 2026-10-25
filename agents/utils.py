@@ -752,6 +752,9 @@ class Agent(SessionSummaryMixin, AgentContext):
             getattr(config.plugin, 'sft_teacher_profile', 'evaluation') == ASSISTED_PROFILE else None)
 
     async def step(self, max_new_tokens=None, retry_cjk=0, completion_kwargs=None):
+        if getattr(self, 'task_recovery_role', None) and (getattr(self, 'task_recovery_pending', False) or getattr(self, 'force_task_finish', False)):
+            from .task_action_recovery import recover
+            return await recover(self, max_new_tokens)
         if self.sft_maintenance is not None:
             self.sft_maintenance.prepare(self)
         prompt = self.context()
@@ -814,6 +817,8 @@ class Agent(SessionSummaryMixin, AgentContext):
         self.total_request_tokens = getattr(self, 'total_request_tokens', 0) + len(prompt) + len(completion['choices'][0]['message'].get('raw_output_ids', []))
         if context_record is not None:
             context_record['response'] = response
+            context_record['raw_output_text'] = completion['choices'][0]['message'].get('raw_output_text')
+            context_record['finish_reason'] = completion['choices'][0].get('finish_reason')
             context_record['output_ids'] = list(completion['choices'][0]['message'].get('raw_output_ids', []))
         self.append({'role': 'assistant', 'content': response}, completion)
         if self.action_contract is not None:
@@ -871,6 +876,11 @@ class Agent(SessionSummaryMixin, AgentContext):
                         "tool_format_repairs": repairs,
                     },
                 )
+        if getattr(self, 'task_recovery_role', None):
+            from .task_action_recovery import has_task_call
+            self.task_recovery_pending = not has_task_call(response, self.task_recovery_role)
+            if self.task_recovery_pending:
+                return '[Task action format rejected] No complete native task call; constrained retry next turn.'
         return response
 
     async def react(self, run_action, max_turn=64, max_tokens=None, session_timeout=60 * 60,

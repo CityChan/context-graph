@@ -17,6 +17,19 @@ Both arms use the same limits and thinking settings. These short runs are not
 directly comparable with the original full-length A/B. A zero-task-tool baseline
 fails before launching guarded; inspect existing artifacts first.
 
+Controller smoke also defaults `EVAL_ACTION_RECOVERY=1` in **both** arms. If an
+ordinary task response has no complete, role-appropriate native tool call, the
+next ordinary turn is a single no-thinking, regex-constrained retry capped at
+512 output tokens. The policy still chooses search/open_page/branch/finish (main)
+or search/open_page/return (branch). A failed constrained retry terminates with a
+format error; it is never dispatched. Finalization uses the same no-thinking
+constraint restricted to finish. Successful ordinary turns keep their thinking
+settings. Exact retry inputs/outputs are captured, and retries consume turn,
+window and request accounting. This is inference-only; training and explicit
+graph policy paths do not enable it. Set `EVAL_ACTION_RECOVERY=0` to reproduce
+the earlier task-output behavior. This shared actor change means new runs cannot
+be directly compared with the earlier raw baseline as an isolated guard effect.
+
 The guarded arm adds dynamic node/edge constraints, action-specific controller
 arity, rejection accounting, short error feedback, and a failure cache based on
 target state (not counters). After three consecutive failures, explicit tools
@@ -35,6 +48,15 @@ This first patch does not yet detect every legal-but-unproductive read/compact
 loop, and does not change SFT or RL policies.
 
 ## Four-node Vista smoke
+
+Before repeating the graph A/B, use
+`bash scripts/smoke_bcp_action_recovery_4node_idev.sh` inside the experiment
+worktree. It selects original BC-P indices 28 and 70, runs one guarded arm with
+shared actor recovery enabled, and limits each episode to six normal turns
+(plus the existing finalizer reserve). It reports `task-recovery-audit.json`;
+success requires real task tools on both questions and at least one valid
+constrained retry. This verifies recovery mechanics, not answer accuracy or a
+benefit from graph guards. Startup/model loading is still required once.
 
 Use a separate checkout so running master jobs never import modified files:
 

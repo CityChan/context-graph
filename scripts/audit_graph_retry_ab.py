@@ -7,7 +7,26 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from scripts.evaluation_records import task_tool_count
+from scripts.evaluation_records import read_evaluation, task_tool_count
+
+
+def audit_task_recovery(root):
+    root = Path(root)
+    manifests, rows, summary = read_evaluation(root)
+    plugin = manifests[0]['config']['actor_rollout_ref']['rollout']['plugin']
+    assert plugin.get('inference_task_action_recovery'), 'recovery not enabled'
+    tasks = [{'source_index': row['source_index'], 'status': row['status'],
+              'task_tools': task_tool_count(row),
+              'retry_requests': row.get('env_stats', {}).get('task_format_retry_requests', 0),
+              'valid_retry_calls': row.get('env_stats', {}).get('task_format_recovery_successes', 0),
+              'failed_retry': row.get('env_stats', {}).get('hit_format_retry_limit', 0)} for row in rows]
+    complete = all((root / f"trajectory-{r['source_index']}.json").is_file() for r in rows)
+    exercised = any(t['valid_retry_calls'] for t in tasks)
+    passed = bool(tasks) and complete and exercised and all(t['status'] == 'ok' and (t['task_tools'] or 0) > 0 and not t['failed_retry'] for t in tasks)
+    result = {'scope': 'task-action recovery mechanics only; not a graph-guard A/B or accuracy claim',
+              'passed': passed, 'recovery_exercised': exercised, 'tasks': tasks}
+    (root / 'task-recovery-audit.json').write_text(json.dumps(result, indent=2) + '\n')
+    return result
 
 
 def normalized_manifest(manifest):
@@ -84,6 +103,8 @@ def audit(root):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('root')
-    result = audit(parser.parse_args().root)
+    parser.add_argument('--task-recovery-only', action='store_true')
+    args = parser.parse_args()
+    result = audit_task_recovery(args.root) if args.task_recovery_only else audit(args.root)
     print(json.dumps(result, indent=2))
     sys.exit(0 if result['passed'] else 1)

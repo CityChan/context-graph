@@ -101,9 +101,10 @@ class TokenClient:
                     "max_tokens": limit, "structured_outputs": body.get("structured_outputs"),
                     "usage": data.get("usage"), "finish_reason": choice.get("finish_reason")}) + "\n")
             return {"choices": [{"message": {"content": text, "raw_output_ids": ids,
+                "raw_output_text": self.tokenizer.decode(ids, skip_special_tokens=False),
                 "response_log_probs": [0.0] * len(ids),
                 "extra_data": {"input_ids": list(input_ids)},
-                "metrics": {"usage": data.get("usage", {})}}}]}
+                "metrics": {"usage": data.get("usage", {})}}, "finish_reason": choice.get('finish_reason')}]}
         except Exception:
             self.failed = True
             raise
@@ -123,9 +124,10 @@ def config_for(args):
     session_timeout = int(os.environ.get('EVAL_SESSION_TIMEOUT', '3600'))
     episode_timeout = int(os.environ.get('EVAL_EPISODE_TIMEOUT', '0'))
     no_tool_limit = int(os.environ.get('EVAL_NO_TOOL_LIMIT', '0'))
+    task_recovery = os.environ.get('EVAL_ACTION_RECOVERY', '0') == '1'
     if min(max_turn, session_timeout) < 1 or min(episode_timeout, no_tool_limit) < 0:
         raise ValueError('Invalid evaluation turn/time/no-tool limits')
-    if no_tool_limit and (args.method != 'contextgraph' or getattr(args, 'graph_action_protocol', 'controller') != 'controller'):
+    if (no_tool_limit or task_recovery) and (args.method != 'contextgraph' or getattr(args, 'graph_action_protocol', 'controller') != 'controller'):
         raise ValueError('EVAL_NO_TOOL_LIMIT currently supports controller ContextGraph only')
     workflow = {"react": "search", "foldagent": "search_branch", "agentfold": "search_agentfold",
                 "contextgraph": "search_graph", "supo": "search_supo",
@@ -138,6 +140,7 @@ def config_for(args):
             "workflow": workflow, "max_turn": max_turn, "val_max_turn": max_turn,
             "max_session": 10, "val_max_session": 10, "session_timeout": session_timeout,
             "eval_episode_timeout": episode_timeout, "inference_no_tool_limit": no_tool_limit,
+            "inference_task_action_recovery": task_recovery,
             "eval_require_task_tools": os.environ.get('EVAL_REQUIRE_TASK_TOOLS', '0') == '1',
             "branch_len": window - 8192, "turn_max_new_tokens": 2048,
             "graph_retry_guard": guard_flag == '1',

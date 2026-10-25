@@ -244,11 +244,15 @@ async def submit_emergency_final_answer(
     print(f"[FINALIZER] forcing best-effort answer with {final_budget} tokens")
     contract = getattr(agent, 'action_contract', None)
     previous_phase = getattr(agent, 'force_action_finish', False)
+    previous_task_phase = getattr(agent, 'force_task_finish', False)
+    if getattr(agent, 'task_recovery_role', None):
+        agent.force_task_finish = True
     if contract is not None:
         agent.force_action_finish = True
     try:
         response = await agent.step(max_new_tokens=final_budget)
     finally:
+        agent.force_task_finish = previous_task_phase
         if contract is not None:
             agent.force_action_finish = previous_phase
         if context_overlay and overlay_idx is not None:

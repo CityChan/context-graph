@@ -32,6 +32,8 @@ def diagnose(root, index, variant='baseline'):
                         'response_head': text[:240], 'response_tail': text[-400:],
                         'preceding_user_tail': str(users[-1])[-400:] if users else '',
                         'has_think_close': '</think>' in text,
+                        'raw_output_has_think_close': ('</think>' in record['raw_output_text']) if record.get('raw_output_text') is not None else None,
+                        'marker_note': 'Decoded response may omit special tokens; absent closing markers alone do not prove unfinished thinking.',
                         'complete_xml_call_names': re.findall(r'<function=([^>]+)>.*?</function>', text, re.S),
                         'action_protocol_error': record.get('action_protocol_error')})
     stats = trajectory.get('env_stats', {})

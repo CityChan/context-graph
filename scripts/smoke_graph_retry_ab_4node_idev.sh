@@ -14,7 +14,7 @@ export BENCHMARK=bcp MEMORY_MODE=repaired
 export GRAPH_ACTION_PROTOCOL=${GRAPH_ACTION_PROTOCOL:-controller}
 export EVAL_CONTEXT_LENGTH=65536 MODEL_MAX_LEN=65536
 export AGENT_BUDGET_MODE=working_context
-export GRAPH_RETRY_AB=1 GRAPH_RETRY_GUARD=0
+export GRAPH_RETRY_AB=${GRAPH_RETRY_AB:-1} GRAPH_RETRY_GUARD=${GRAPH_RETRY_GUARD:-0}
 export GRAPH_RETRY_FAILURE_LIMIT=${GRAPH_RETRY_FAILURE_LIMIT:-3}
 export SAMPLES=${SAMPLES:-3} WORKERS=${WORKERS:-1} SEED=${SEED:-42}
 export EVAL_MAX_TURN=${EVAL_MAX_TURN:-12}
@@ -23,8 +23,10 @@ export EVAL_EPISODE_TIMEOUT=${EVAL_EPISODE_TIMEOUT:-900}
 export EVAL_REQUIRE_TASK_TOOLS=1
 if [[ "$GRAPH_ACTION_PROTOCOL" == controller ]]; then
   export EVAL_NO_TOOL_LIMIT=${EVAL_NO_TOOL_LIMIT:-3}
+  export EVAL_ACTION_RECOVERY=${EVAL_ACTION_RECOVERY:-1}
 else
   export EVAL_NO_TOOL_LIMIT=${EVAL_NO_TOOL_LIMIT:-0}
+  export EVAL_ACTION_RECOVERY=${EVAL_ACTION_RECOVERY:-0}
 fi
 printf 'SMOKE_LIMITS turns=%s session_seconds=%s episode_seconds=%s no_tool_limit=%s (both arms; not benchmark performance)\n' "$EVAL_MAX_TURN" "$EVAL_SESSION_TIMEOUT" "$EVAL_EPISODE_TIMEOUT" "$EVAL_NO_TOOL_LIMIT"
 # Worktrees can share the immutable evaluation dataset, not logs or results.
@@ -37,4 +39,8 @@ set +u
 source "${CONDA_SH:-/work/09281/chc_1996/vista/miniconda3/etc/profile.d/conda.sh}"
 conda activate "${AGENT_CONDA_ENV:-cxtgraph}"
 set -u
-python scripts/audit_graph_retry_ab.py "$RUN_ROOT"
+if [[ "$GRAPH_RETRY_AB" == 1 ]]; then
+  python scripts/audit_graph_retry_ab.py "$RUN_ROOT"
+else
+  python scripts/audit_graph_retry_ab.py "$RUN_ROOT" --task-recovery-only
+fi

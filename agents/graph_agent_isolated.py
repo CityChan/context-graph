@@ -228,6 +228,9 @@ async def process_item(
     no_tool_guard = NoToolGuard(limit=5 if scienceworld_reward_profile == "v3_long" else inference_no_tool_limit)
 
     def observe_action_turn(response, acting_agent):
+        if getattr(acting_agent, 'task_recovery_failed', False):
+            no_tool_guard.stopped = True
+            return False
         if not no_tool_guard.limit:
             return True
         has_tool = extract_fn_call(response) is not None
@@ -239,6 +242,9 @@ async def process_item(
     gen_uid = item.non_tensor_batch.get('gen_uid', None)
 
     EnvClass = select_env(ability, config)
+    task_action_recovery = coerce_bool(getattr(config.plugin, 'inference_task_action_recovery', False), default=False)
+    if task_action_recovery and (is_train or explicit_graph_tools or EnvClass.__name__ != 'LocalSearch'):
+        raise ValueError('Task action recovery supports inference-only LocalSearch controller protocol')
     print(is_train, EnvClass, '[ISOLATED]')
     env = EnvClass(config, tokenizer, ability)
 
@@ -623,6 +629,8 @@ async def process_item(
             process_reward_min_precedence=graph_rpo_enabled,
             action_contract=ActionContract(ability, env, retry_guard=retry_guard) if explicit_graph_tools else None,
         )
+        if task_action_recovery:
+            agent['main'].task_recovery_role = 'main'
         if explicit_graph_tools:
             agent['main'].graph_base_prompt = copy.deepcopy(agent['main'].chat[:prompt_turn])
 
@@ -1105,6 +1113,8 @@ async def process_item(
                         process_reward_min_precedence=graph_rpo_enabled,
                         action_contract=ActionContract(ability, env, branch=True, retry_guard=retry_guard) if explicit_graph_tools else None,
                     )
+                    if task_action_recovery:
+                        agent[agent_name].task_recovery_role = 'branch'
                     branch_prompt_formatted = (f'You are BRANCH. Assigned subtask: {message_to_branch}\n'
                                                'Use the shared graph to inspect existing evidence before repeating research. '
                                                'Use return to report findings, source IDs and unresolved work to MAIN.'
@@ -1987,10 +1997,17 @@ async def process_item(
             max_turn=effective_max_turn,
             timed_out=timed_out,
         )
-        if no_tool_guard.limit:
+        if no_tool_guard.limit or no_tool_guard.stopped:
             env.stats['hit_no_tool_limit'] = int(no_tool_guard.stopped)
             if no_tool_guard.stopped:
                 rollout_status['termination_reason'] = 'no_tool_limit'
+        if task_action_recovery:
+            env.stats['task_action_recovery_requests'] = sum(getattr(a, 'task_recovery_requests', 0) for a in agent.values())
+            env.stats['task_format_retry_requests'] = sum(getattr(a, 'task_format_retry_requests', 0) for a in agent.values())
+            env.stats['task_format_recovery_successes'] = sum(getattr(a, 'task_recovery_successes', 0) for a in agent.values())
+            env.stats['hit_format_retry_limit'] = int(any(getattr(a, 'task_recovery_failed', False) for a in agent.values()))
+            if env.stats['hit_format_retry_limit']:
+                rollout_status['termination_reason'] = 'tool_format_retry_limit'
         if scienceworld_reward_profile == "v3_long":
             # An adapter step-cap/error closes the simulator but is not a
             # natural finish. Keep that distinction for process penalties too.
