@@ -214,12 +214,21 @@ def test_paired_audit_rejects_changed_protocol_and_incomplete_outputs(tmp_path):
             (arm / f'manifest-{rank}.json').write_text(json.dumps(manifest))
             row = {'source_index': 7, 'task_id': 'q', 'status': 'ok', 'task_reward': 0,
                    'env_stats': {'token_budget_mode': 'working_context',
+                                 'search': 1, 'open_page': 0,
                                  'graph_retry_guard': {'enabled': enabled, 'requests': 0}}}
             (arm / f'results-{rank}.jsonl').write_text(json.dumps(row) + '\n' if rank == 0 else '')
         (arm / 'trajectory-7.json').write_text('{}')
         (arm / 'summary.json').write_text('{"generation_quality_passed":true}')
     result = audit(tmp_path)
     assert result['passed'] and not result['guard_exercised']
+    result_path = tmp_path / 'baseline/results-0.jsonl'
+    zero_tool_row = json.loads(result_path.read_text())
+    zero_tool_row['env_stats']['search'] = 0
+    result_path.write_text(json.dumps(zero_tool_row) + '\n')
+    result = audit(tmp_path)
+    assert not result['passed'] and result['arms']['baseline']['zero_tool_tasks'] == 1
+    zero_tool_row['env_stats']['search'] = 1
+    result_path.write_text(json.dumps(zero_tool_row) + '\n')
     path = tmp_path / 'guarded/manifest-0.json'
     manifest = json.loads(path.read_text())
     manifest['seed'] = 43
@@ -259,7 +268,7 @@ def test_shared_server_evaluation_loop_passes_flag_to_all_shards(tmp_path, paire
                       'python() { printf "%s\\n" "$*" > "$RUN_ROOT/merge-called"; }\n' + loop)
     run = tmp_path / 'fresh-run'
     run.mkdir()
-    env = dict(os.environ, RUN_ROOT=run.as_posix(), GRAPH_RETRY_AB=str(int(paired)), GRAPH_RETRY_GUARD='0')
+    env = dict(os.environ, RUN_ROOT=run.as_posix(), GRAPH_RETRY_AB=str(int(paired)), GRAPH_RETRY_GUARD='0', EVAL_PROGRESS_INTERVAL='0.01')
     result = subprocess.run([bash, script.as_posix()], env=env, capture_output=True, text=True,
                             timeout=20, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
     assert result.returncode == 0, result.stderr

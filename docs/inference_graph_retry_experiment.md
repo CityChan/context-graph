@@ -5,6 +5,18 @@ The feature is off unless `plugin.graph_retry_guard=true`. Training rejects this
 option. Existing auto/controller timing, task prompts, thinking settings,
 compression schedules and global turn/time limits remain the comparison controls.
 
+The smoke wrapper now sets the same bounded diagnostic limits in both arms:
+12 turns, a 600-second cooperative session limit, a 900-second asyncio episode
+deadline covering rollout and grading, and (controller mode only) a three-turn
+no-parsed-tool limit shared by main and branches. `EVAL_MAX_TURN`,
+`EVAL_SESSION_TIMEOUT`, `EVAL_EPISODE_TIMEOUT`, and `EVAL_NO_TOOL_LIMIT` override
+these values; the ordinary evaluator defaults remain 100/3600/0/0. Async deadlines
+depend on cooperative cancellation, not an OS process kill. A timed-out episode
+is an execution error and retains its request log, not a valid completed trace.
+Both arms use the same limits and thinking settings. These short runs are not
+directly comparable with the original full-length A/B. A zero-task-tool baseline
+fails before launching guarded; inspect existing artifacts first.
+
 The guarded arm adds dynamic node/edge constraints, action-specific controller
 arity, rejection accounting, short error feedback, and a failure cache based on
 target state (not counters). After three consecutive failures, explicit tools
@@ -60,3 +72,13 @@ but does not verify recovery on real model failures. Baseline graph_invalid_ops
 misses structured-controller failures; compare controller_errors and traces too.
 The guarded arm has warm caches, so wall-clock latency is not a controlled metric.
 Three questions do not establish an accuracy gain.
+
+## Diagnose saved zero-tool episodes
+
+`scripts/diagnose_bcp_stalled_actions.py RUN_ROOT` reads the saved baseline
+trajectories for indices 28 and 70, reports finish reasons/output-limit counts,
+and prints bounded first/last response samples plus preceding feedback. It uses
+only Python's standard library and never loads a model or makes API calls.
+Override `--indices` or `--variant` for other saved episodes. Zero-tool episodes
+now make the paired audit fail even when process status is `ok`. Guard invocation
+and actual failure/recovery exercise are reported separately.

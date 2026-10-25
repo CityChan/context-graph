@@ -278,6 +278,16 @@ for variant in "${variants[@]}"; do
     EVAL_PIDS+=("$!")
   done
   echo "Three evaluation shards running; variant=$variant results=$RUN_ROOT/results-*.jsonl"
+  while :; do
+    running=0
+    for pid in "${EVAL_PIDS[@]}"; do
+      if kill -0 "$pid" 2>/dev/null; then running=$((running+1)); fi
+    done
+    [[ "$running" -gt 0 ]] || break
+    completed=$(cat "$RUN_ROOT"/results-*.jsonl 2>/dev/null | wc -l) || true
+    printf 'EVAL_PROGRESS variant=%s completed=%s active_shards=%s time=%(%FT%T%z)T logs=%s/eval-*.log\n' "$variant" "$completed" "$running" -1 "$RUN_ROOT"
+    sleep "${EVAL_PROGRESS_INTERVAL:-30}"
+  done
   rc=0
   for pid in "${EVAL_PIDS[@]}"; do wait "$pid" || rc=1; done
   EVAL_PIDS=()

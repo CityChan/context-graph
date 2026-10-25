@@ -4,6 +4,10 @@ import argparse
 import copy
 import json
 from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from scripts.evaluation_records import task_tool_count
 
 
 def normalized_manifest(manifest):
@@ -55,15 +59,20 @@ def audit(root):
             'failed_input_tokens': guard_total('failed_input_tokens'),
             'failed_output_tokens': guard_total('failed_output_tokens'),
             'blocked_attempts': guard_total('blocked_attempts'), 'cooldowns': guard_total('cooldowns'),
+            'zero_tool_tasks': sum(task_tool_count(r) == 0 for r in rows),
+            'unknown_tool_counts': sum(task_tool_count(r) is None for r in rows),
+            'no_tool_limit_tasks': total('hit_no_tool_limit'),
         }
         identities[variant] = sorted((r['source_index'], r['task_id']) for r in rows)
         manifests[variant] = [normalized_manifest(m) for m in arm_manifests]
     assert identities['baseline'] == identities['guarded'], 'unpaired tasks'
     assert manifests['baseline'] == manifests['guarded'], 'code/model/seed/data/protocol differs beyond guard flag'
     result = {
-        'scope': 'paired integration smoke; no benchmark improvement claim', 'passed': True,
+        'scope': 'paired integration smoke; no benchmark improvement claim',
+        'passed': all(not r['zero_tool_tasks'] and not r['unknown_tool_counts'] and not r['no_tool_limit_tasks'] for r in reports.values()),
         'guard_exercised': reports['guarded']['guard_requests'] > 0,
         'cooldown_exercised': reports['guarded']['cooldowns'] > 0,
+        'failure_guard_exercised': reports['guarded']['guard_failures'] > 0,
         'accounting_note': 'Baseline controller failures are undercounted in graph_invalid_ops; compare controller_errors and saved traces as well.',
         'timing_note': 'Servers are reused; guarded runs second with warm caches. Do not infer latency improvement.',
         'arms': reports,
@@ -75,4 +84,6 @@ def audit(root):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('root')
-    print(json.dumps(audit(parser.parse_args().root), indent=2))
+    result = audit(parser.parse_args().root)
+    print(json.dumps(result, indent=2))
+    sys.exit(0 if result['passed'] else 1)

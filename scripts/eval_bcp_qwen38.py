@@ -119,6 +119,14 @@ def config_for(args):
         raise ValueError('GRAPH_RETRY_GUARD must be 0 or 1')
     if guard_flag == '1' and args.method != 'contextgraph':
         raise ValueError('GRAPH_RETRY_GUARD only applies to contextgraph')
+    max_turn = int(os.environ.get('EVAL_MAX_TURN', '100'))
+    session_timeout = int(os.environ.get('EVAL_SESSION_TIMEOUT', '3600'))
+    episode_timeout = int(os.environ.get('EVAL_EPISODE_TIMEOUT', '0'))
+    no_tool_limit = int(os.environ.get('EVAL_NO_TOOL_LIMIT', '0'))
+    if min(max_turn, session_timeout) < 1 or min(episode_timeout, no_tool_limit) < 0:
+        raise ValueError('Invalid evaluation turn/time/no-tool limits')
+    if no_tool_limit and (args.method != 'contextgraph' or getattr(args, 'graph_action_protocol', 'controller') != 'controller'):
+        raise ValueError('EVAL_NO_TOOL_LIMIT currently supports controller ContextGraph only')
     workflow = {"react": "search", "foldagent": "search_branch", "agentfold": "search_agentfold",
                 "contextgraph": "search_graph", "supo": "search_supo",
                 "memobrain": "search_memobrain", "amem": "search_amem"}[args.method]
@@ -127,8 +135,10 @@ def config_for(args):
     config = OmegaConf.create({"algorithm": {"adv_estimator": ""}, "actor_rollout_ref": {"rollout": {
         "prompt_length": 8192, "response_length": window - 8192,
         "plugin": {
-            "workflow": workflow, "max_turn": 100, "val_max_turn": 100,
-            "max_session": 10, "val_max_session": 10, "session_timeout": 3600,
+            "workflow": workflow, "max_turn": max_turn, "val_max_turn": max_turn,
+            "max_session": 10, "val_max_session": 10, "session_timeout": session_timeout,
+            "eval_episode_timeout": episode_timeout, "inference_no_tool_limit": no_tool_limit,
+            "eval_require_task_tools": os.environ.get('EVAL_REQUIRE_TASK_TOOLS', '0') == '1',
             "branch_len": window - 8192, "turn_max_new_tokens": 2048,
             "graph_retry_guard": guard_flag == '1',
             "graph_retry_failure_limit": int(os.environ.get('GRAPH_RETRY_FAILURE_LIMIT', '3')),
@@ -178,7 +188,7 @@ def tokenizer_preflight(tokenizer, config):
 
 def summarize(root):
     root = Path(root)
-    _, results, summary = read_evaluation(root)
+    manifests, results, summary = read_evaluation(root)
     paths = [root / f"requests-{row['source_index']}.jsonl" for row in results]
     summary.update(degeneration_stats(path for path in paths if path.exists()))
     summary["generation_unaudited_records"] = sum(not path.exists() for path in paths)
@@ -193,6 +203,9 @@ def summarize(root):
         raise RuntimeError("Evaluation contains summary-format failures; do not treat as a clean score")
     if summary["execution_errors"] or summary["judge_parse_failures"]:
         raise RuntimeError("Evaluation contains execution/judge failures; do not treat as a clean score")
+    plugin = manifests[0].get('config', {}).get('actor_rollout_ref', {}).get('rollout', {}).get('plugin', {})
+    if plugin.get('eval_require_task_tools', False) and summary['zero_tool_tasks']:
+        raise RuntimeError('Smoke contains zero-task-tool episodes; inspect saved responses before running the next arm')
 
 
 async def evaluate(args):
@@ -282,15 +295,18 @@ async def evaluate(args):
             row = frame.iloc[index].to_dict()
             workflow = config.actor_rollout_ref.rollout.plugin.workflow
             item = _make_dataproto(row, workflow)
-            item.meta_info["max_turn"] = 100
+            plugin = config.actor_rollout_ref.rollout.plugin
+            item.meta_info["max_turn"] = plugin.val_max_turn
             client = TokenClient(args.endpoint, args.model, tokenizer, config.actor_rollout_ref.rollout,
                                  args.seed + index, root / f"requests-{index}.jsonl")
             result = {"source_index": index, "task_id": str(item.non_tensor_batch["uid"][0]),
                       "status": "error", "task_reward": 0.0, "is_finish": False}
+            episode_started = asyncio.get_running_loop().time()
             try:
                 context = TaskContext(config=config, global_step=0, llm_client=client,
                                       is_train=False, tokenizer=tokenizer)
-                output = await _process_item_for_workflow(workflow)(item, context)
+                rollout = _process_item_for_workflow(workflow)(item, context)
+                output = await asyncio.wait_for(rollout, timeout=plugin.eval_episode_timeout or None)
                 if not output or client.failed:
                     raise RuntimeError("Empty rollout or model request failure")
                 reward, shaped, finish, extra = _metrics_from_output(output)
@@ -298,6 +314,12 @@ async def evaluate(args):
                               is_finish=finish, env_stats=extra.get("env_stats", {}))
                 (root / f"trajectory-{index}.json").write_text(
                     json.dumps(extra, ensure_ascii=False, default=str), encoding="utf-8")
+            except asyncio.TimeoutError as exc:
+                elapsed = asyncio.get_running_loop().time() - episode_started
+                wall_timeout = plugin.eval_episode_timeout > 0 and elapsed >= plugin.eval_episode_timeout
+                result['error'] = 'episode_wall_timeout' if wall_timeout else repr(exc)
+                result['env_stats'] = {'hit_episode_wall_timeout': int(wall_timeout)}
+                print(f'EPISODE_TIMEOUT source_index={index} wall_limit={wall_timeout}; partial requests remain in requests-{index}.jsonl', flush=True)
             except Exception as exc:
                 result["error"] = repr(exc)
                 traceback.print_exc()

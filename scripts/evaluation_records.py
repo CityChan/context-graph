@@ -4,6 +4,15 @@ import json
 from pathlib import Path
 
 
+def task_tool_count(row):
+    stats = row.get('env_stats', {})
+    if 'environment_steps' in stats:
+        return stats['environment_steps']
+    if 'search' in stats or 'open_page' in stats:
+        return stats.get('search', 0) + stats.get('open_page', 0)
+    return None
+
+
 def read_evaluation(root):
     root = Path(root)
     manifests = [json.loads((root / f"manifest-{rank}.json").read_text(encoding="utf-8")) for rank in range(3)]
@@ -45,7 +54,7 @@ def read_evaluation(root):
         "execution_errors": sum(row["status"] != "ok" for row in results),
         "format_retry_failures": sum(bool(row.get("env_stats", {}).get("hit_format_retry_limit", 0)) for row in results),
         "summary_format_failures": sum(bool(row.get("env_stats", {}).get("invalid_summary", 0)) for row in results),
-        "zero_tool_tasks": sum(row.get("env_stats", {}).get("environment_steps") == 0 for row in results),
+        "zero_tool_tasks": sum(task_tool_count(row) == 0 for row in results),
         "judge_parse_failures": sum(row.get("env_stats", {}).get("judge_parse_failure", 0) for row in results),
         "action_protocol_errors": sum(row.get("env_stats", {}).get("action_protocol_errors", 0) for row in results),
         "natural_finishes": sum(row.get("env_stats", {}).get("natural_finish", 0) for row in results),

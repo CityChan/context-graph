@@ -222,7 +222,10 @@ async def process_item(
     scienceworld_reward_profile = getattr(config.plugin, "scienceworld_training_reward_profile", "binary")
     validate_reward_profile(scienceworld_reward_profile, ability=ability,
                             algorithm=context.config.algorithm, is_train=is_train)
-    no_tool_guard = NoToolGuard(limit=5 if scienceworld_reward_profile == "v3_long" else 0)
+    inference_no_tool_limit = int(getattr(config.plugin, 'inference_no_tool_limit', 0))
+    if inference_no_tool_limit < 0 or (is_train and inference_no_tool_limit):
+        raise ValueError('inference_no_tool_limit must be nonnegative and inference-only')
+    no_tool_guard = NoToolGuard(limit=5 if scienceworld_reward_profile == "v3_long" else inference_no_tool_limit)
 
     def observe_action_turn(response, acting_agent):
         if not no_tool_guard.limit:
@@ -1984,6 +1987,10 @@ async def process_item(
             max_turn=effective_max_turn,
             timed_out=timed_out,
         )
+        if no_tool_guard.limit:
+            env.stats['hit_no_tool_limit'] = int(no_tool_guard.stopped)
+            if no_tool_guard.stopped:
+                rollout_status['termination_reason'] = 'no_tool_limit'
         if scienceworld_reward_profile == "v3_long":
             # An adapter step-cap/error closes the simulator but is not a
             # natural finish. Keep that distinction for process penalties too.

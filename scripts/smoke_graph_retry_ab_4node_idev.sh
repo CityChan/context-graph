@@ -17,6 +17,16 @@ export AGENT_BUDGET_MODE=working_context
 export GRAPH_RETRY_AB=1 GRAPH_RETRY_GUARD=0
 export GRAPH_RETRY_FAILURE_LIMIT=${GRAPH_RETRY_FAILURE_LIMIT:-3}
 export SAMPLES=${SAMPLES:-3} WORKERS=${WORKERS:-1} SEED=${SEED:-42}
+export EVAL_MAX_TURN=${EVAL_MAX_TURN:-12}
+export EVAL_SESSION_TIMEOUT=${EVAL_SESSION_TIMEOUT:-600}
+export EVAL_EPISODE_TIMEOUT=${EVAL_EPISODE_TIMEOUT:-900}
+export EVAL_REQUIRE_TASK_TOOLS=1
+if [[ "$GRAPH_ACTION_PROTOCOL" == controller ]]; then
+  export EVAL_NO_TOOL_LIMIT=${EVAL_NO_TOOL_LIMIT:-3}
+else
+  export EVAL_NO_TOOL_LIMIT=${EVAL_NO_TOOL_LIMIT:-0}
+fi
+printf 'SMOKE_LIMITS turns=%s session_seconds=%s episode_seconds=%s no_tool_limit=%s (both arms; not benchmark performance)\n' "$EVAL_MAX_TURN" "$EVAL_SESSION_TIMEOUT" "$EVAL_EPISODE_TIMEOUT" "$EVAL_NO_TOOL_LIMIT"
 # Worktrees can share the immutable evaluation dataset, not logs or results.
 export DATA_PATH=${DATA_PATH:-/work/09281/chc_1996/vista/context-graph/data/bc_test.parquet}
 SUITE_PARENT=$(mktemp -d "$SCRATCH/graph-retry-ab-${SLURM_JOB_ID}-XXXXXX")
