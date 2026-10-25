@@ -111,18 +111,28 @@ class TokenClient:
 
 def config_for(args):
     from omegaconf import OmegaConf
+    window = int(os.environ.get('EVAL_CONTEXT_LENGTH', '32768'))
+    if window not in (32768, 65536):
+        raise ValueError('EVAL_CONTEXT_LENGTH must be 32768 or 65536')
+    guard_flag = os.environ.get('GRAPH_RETRY_GUARD', '0')
+    if guard_flag not in ('0', '1'):
+        raise ValueError('GRAPH_RETRY_GUARD must be 0 or 1')
+    if guard_flag == '1' and args.method != 'contextgraph':
+        raise ValueError('GRAPH_RETRY_GUARD only applies to contextgraph')
     workflow = {"react": "search", "foldagent": "search_branch", "agentfold": "search_agentfold",
                 "contextgraph": "search_graph", "supo": "search_supo",
                 "memobrain": "search_memobrain", "amem": "search_amem"}[args.method]
     # The graph executor reads this even for inference. An empty estimator
     # explicitly leaves training-only GraphRPO credit assignment disabled.
     config = OmegaConf.create({"algorithm": {"adv_estimator": ""}, "actor_rollout_ref": {"rollout": {
-        "prompt_length": 8192, "response_length": 24576,
+        "prompt_length": 8192, "response_length": window - 8192,
         "plugin": {
             "workflow": workflow, "max_turn": 100, "val_max_turn": 100,
             "max_session": 10, "val_max_session": 10, "session_timeout": 3600,
-            "branch_len": 24576, "turn_max_new_tokens": 2048,
-            "val_response_length": 24576, "process_reward": None,
+            "branch_len": window - 8192, "turn_max_new_tokens": 2048,
+            "graph_retry_guard": guard_flag == '1',
+            "graph_retry_failure_limit": int(os.environ.get('GRAPH_RETRY_FAILURE_LIMIT', '3')),
+            "val_response_length": window - 8192, "process_reward": None,
             "max_traj": 11, "must_finish": False, "double_check": False,
             "must_search": True, "enable_summary": False,
             "final_answer_reserve": 1024, "final_answer_safety_margin": 64,

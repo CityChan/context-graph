@@ -538,6 +538,10 @@ async def process_item(
         # ── Initialize parent ContextGraph ──
         graph = ContextGraph(tokenizer, namespace_prefix="n", memory_policy=mode)
         graph.model_owned = explicit_graph_tools
+        from .graph_retry_guard import configured_guard, request_cost
+        retry_guard = configured_guard(graph, config.plugin, is_train=is_train)
+        if retry_guard and not (explicit_graph_tools or structured_graph_controller):
+            raise ValueError('graph_retry_guard requires controller or explicit_tools')
         query_text = env.instance_info['problem_statement']
         root_id = graph.add_node(query_text, NodeType.QUERY)
         structured_memory = (
@@ -584,6 +588,7 @@ async def process_item(
             credit_view_renderer=evidence_view if evidence_training else None,
             credit_metadata=(lambda: {'evidence_document_count': len(env.evidence_documents)}) if evidence_training else None)
         graph_controller = GraphActionController(
+            retry_guard=retry_guard,
             max_candidates=int(
                 getattr(config.plugin, "graph_controller_max_candidates", 12)
             ),
@@ -613,7 +618,7 @@ async def process_item(
             config,
             prompt_turn=prompt_turn,
             process_reward_min_precedence=graph_rpo_enabled,
-            action_contract=ActionContract(ability, env) if explicit_graph_tools else None,
+            action_contract=ActionContract(ability, env, retry_guard=retry_guard) if explicit_graph_tools else None,
         )
         if explicit_graph_tools:
             agent['main'].graph_base_prompt = copy.deepcopy(agent['main'].chat[:prompt_turn])
@@ -934,11 +939,14 @@ async def process_item(
             new_evidence_text = None
 
             # ── Graph operations on parent graph ──
+            short_graph_failure = False
             if explicit_graph_tools and response.startswith('[Action protocol rejected]'):
                 observation = response
+                short_graph_failure = bool(retry_guard)
             elif explicit_graph_tools and detect_graph_call(response):
                 observation = execute_graph_tool(graph, graph_trace, agent['main'], response,
                     agent_name='main', turn_id=main_turn_count, penalize=bool(process_reward and is_train))
+                short_graph_failure = bool(retry_guard and not observation.success)
             elif (
                 structured_graph_controller
                 and fn_call is not None
@@ -946,6 +954,9 @@ async def process_item(
             ):
                 controller_mode_rejections += 1
                 trace_before = graph_trace.capture(graph)
+                if retry_guard:
+                    graph.record_graph_op(False)
+                    retry_guard.record(fn_call, False, **request_cost(agent['main']))
                 observation = (
                     "[CONTROLLER MODE REJECTION] Graph-management XML is not an "
                     "environment tool. Continue with search, open_page, branch, or "
@@ -1089,7 +1100,7 @@ async def process_item(
                         config,
                         prompt_turn=prompt_turn,
                         process_reward_min_precedence=graph_rpo_enabled,
-                        action_contract=ActionContract(ability, env, branch=True) if explicit_graph_tools else None,
+                        action_contract=ActionContract(ability, env, branch=True, retry_guard=retry_guard) if explicit_graph_tools else None,
                     )
                     branch_prompt_formatted = (f'You are BRANCH. Assigned subtask: {message_to_branch}\n'
                                                'Use the shared graph to inspect existing evidence before repeating research. '
@@ -1125,10 +1136,14 @@ async def process_item(
                                 result = execute_graph_tool(graph, graph_trace, agent[agent_name], response,
                                     agent_name=agent_name, turn_id=iteration + (len(agent[agent_name].chat) - agent[agent_name].prompt_turn) // 2,
                                     penalize=bool(process_reward and is_train))
-                                return str(result) + '\n\n' + decision_state(graph, agent[agent_name])
+                                return str(result) if retry_guard and not result.success else str(result) + '\n\n' + decision_state(graph, agent[agent_name])
                             before = graph_trace.capture(graph)
                             result = await run_action(env, response)
                             if result is not None:
+                                if retry_guard:
+                                    task_call = extract_fn_call(response)
+                                    if task_call and task_call['function'] in {'search', 'open_page', 'action', 'python_exec'}:
+                                        retry_guard.task_executed()
                                 node_id = record_observation(graph, response, result)
                                 event = graph_trace.record(graph, before, turn_id=iteration, source='environment',
                                     op='add_observation', args={'node_id': node_id}, success=True)
@@ -1278,6 +1293,8 @@ async def process_item(
             else:
                 trace_before = graph_trace.capture(graph)
                 observation = await run_action(env, response)
+                if retry_guard and fn_call and fn_call['function'] in {'search', 'open_page', 'action', 'python_exec'}:
+                    retry_guard.task_executed()
                 if observation is None:
                     mask_rollout = False
                     natural_finish = True
@@ -1475,7 +1492,7 @@ async def process_item(
             # The original protocol appends the complete graph after every action.
             # Long-horizon environments can disable this duplicate payload while
             # still receiving graph state after explicit controller checkpoints.
-            if inject_graph_state_after_action:
+            if inject_graph_state_after_action and not short_graph_failure:
                 observation = (
                     f"{observation}\n\n"
                     "[Latest ContextGraph state]\n"
@@ -1520,6 +1537,8 @@ async def process_item(
             checkpoint_budget_error = (
                 graph.graph_op_budget_error() if checkpoint_due else None
             )
+            if checkpoint_due and retry_guard and retry_guard.task_only:
+                checkpoint_budget_error = 'graph retry cooldown; task action required'
             if checkpoint_due and checkpoint_budget_error:
                 consolidation_stats['budget_skips'] += 1
                 print(f'[CONSOL SKIP] {checkpoint_budget_error}')
@@ -1625,6 +1644,8 @@ async def process_item(
                         # mutation code.
                         decision_context["decision_raw"] = controller_response
                     graph_call = None
+                    rejected_by_guard = False
+                    controller_succeeded = False
                     repeat_select_hint = ""
                     try:
                         graph_call = graph_controller.resolve_action(
@@ -1635,6 +1656,11 @@ async def process_item(
                             action_policy=controller_action_policy,
                         )
                         controller_action = graph_call['function']
+                        if retry_guard:
+                            guard_error = retry_guard.blocked(graph_call)
+                            if guard_error:
+                                rejected_by_guard = True
+                                raise GraphControllerError(guard_error)
                         repeat_select_hint = ""
                         if diagnostic_fix == "repeat" and controller_action == 'pass' and decision_context.get('decision', {}).get('action') == 'select':
                             repeat_select_hint = repeat_advice.observe('select_noop', {'node_id': graph.active_node_id})
@@ -1655,6 +1681,11 @@ async def process_item(
                                 )
                     except GraphControllerError as exc:
                         consolidation_stats['controller_errors'] += 1
+                        if retry_guard:
+                            graph.record_graph_op(False)
+                            retry_guard.record(graph_call or {'function': 'malformed_controller',
+                                'arguments': {'response': controller_response}}, False,
+                                blocked=rejected_by_guard, **request_cost(agent['main']))
                         graph_trace.record(
                             graph,
                             trace_before,
@@ -1681,7 +1712,12 @@ async def process_item(
                             "[GRAPH ACTION REJECTED] The controller could not safely "
                             "apply this decision; continue the environment task."
                         )
+                        if retry_guard:
+                            controller_ack = retry_guard.feedback(f'[GRAPH ACTION REJECTED] {exc}')
                     else:
+                        controller_succeeded = True
+                        if retry_guard:
+                            retry_guard.record(graph_call, True, **request_cost(agent['main']))
                         if controller_action == 'pass':
                             consolidation_stats['pass_valid'] += 1
                         else:
@@ -1717,9 +1753,10 @@ async def process_item(
                             f"{controller_observation[:300]}"
                         )
 
+                    controller_state = (f'\n\n[Latest ContextGraph state]\n{graph.to_state_text()}\n\n'
+                                        if not retry_guard or controller_succeeded else '\n')
                     controller_ack = (
-                        f"{controller_ack}\n\n[Latest ContextGraph state]\n"
-                        f"{graph.to_state_text()}\n\n"
+                        f"{controller_ack}{controller_state}"
                         "[ENVIRONMENT MODE RESTORED] Continue the task normally. "
                         "Your next response must use only an environment or branch "
                         "tool described in the system prompt, in its normal XML format."
@@ -2028,6 +2065,8 @@ async def process_item(
         env.stats['graph_n_edges'] = len(graph.active_edges)
         env.stats['graph_ops'] = graph.operation_count
         env.stats['graph_op_attempts'] = graph.graph_op_attempt_count
+        if retry_guard:
+            env.stats['graph_retry_guard'] = retry_guard.stats()
         env.stats['graph_explicit_ops'] = graph.explicit_op_count
         env.stats['graph_invalid_ops'] = graph.invalid_op_count
         env.stats['graph_invalid_op_rate'] = (

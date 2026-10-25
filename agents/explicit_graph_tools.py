@@ -246,8 +246,13 @@ def execute_graph_tool(graph, trace, agent, response, *, agent_name, turn_id, pe
     call = {"function": attempted, "arguments": {}}
     turn = len(agent.chat) - 1
     agent.add_graph_edit_credit(turn, 0.0)
+    guard = getattr(graph, 'retry_guard', None)
+    blocked = None
     try:
         call = parse_graph_call(response)
+        blocked = guard.blocked(call) if guard else None
+        if blocked:
+            raise ValueError(blocked)
         name, args = call["function"], call["arguments"]
         if name in GRAPH_OPS:
             result = {"merge": handle_merge, "prune": handle_prune, "select": handle_select,
@@ -280,6 +285,11 @@ def execute_graph_tool(graph, trace, agent, response, *, agent_name, turn_id, pe
     except (ValueError, KeyError) as exc:
         result = GraphOpResult(f"[Graph tool rejected] {exc}", False)
     graph.record_graph_op(result.success)
+    if guard:
+        from .graph_retry_guard import request_cost
+        guard.record(call, result.success, blocked=bool(blocked), **request_cost(agent))
+        if not result.success:
+            result = GraphOpResult(guard.feedback(result), False)
     event = trace.record(graph, before, turn_id=turn_id, source="model", op=attempted,
                         args=call["arguments"], success=result.success,
                         error=None if result.success else str(result), assistant_content=agent.chat[turn]['content'],

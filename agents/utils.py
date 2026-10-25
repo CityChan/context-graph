@@ -821,6 +821,21 @@ class Agent(SessionSummaryMixin, AgentContext):
                 payload, wire = self.action_contract.decode(response, action_schema)
             except (ValueError, TypeError) as error:
                 self.action_protocol_errors += 1
+                guard = getattr(self.action_contract, 'retry_guard', None)
+                if guard is not None:
+                    import json
+                    from .graph_retry_guard import request_cost
+                    # No graph edit happened. Count a malformed graph decision in
+                    # the circuit breaker as well, even if backend constraints failed.
+                    try:
+                        attempted = json.loads(response)
+                    except (ValueError, TypeError):
+                        attempted = {}
+                    from .graph_retry_guard import GRAPH_TOOLS
+                    if isinstance(attempted, dict) and attempted.get('tool') in GRAPH_TOOLS:
+                        guard.graph.record_graph_op(False)
+                        guard.record({'function': 'malformed', 'arguments': {'response': response}},
+                                     False, **request_cost(self))
                 self.additional_info[-1] = {'action_protocol_error': str(error)}
                 if context_record is not None:
                     context_record['action_protocol_error'] = str(error)

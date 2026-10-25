@@ -149,6 +149,7 @@ class GraphActionController:
         max_candidates: int = 12,
         preview_chars: int = 360,
         min_completion_tokens: int = 256,
+        retry_guard=None,
     ):
         if max_candidates < 2:
             raise ValueError("max_candidates must be at least 2")
@@ -157,6 +158,7 @@ class GraphActionController:
         self.max_candidates = int(max_candidates)
         self.preview_chars = max(int(preview_chars), 80)
         self.min_completion_tokens = int(min_completion_tokens)
+        self.retry_guard = retry_guard
 
     def has_completion_budget(
         self,
@@ -336,6 +338,9 @@ class GraphActionController:
         allow_pass: bool = False,
         action_policy: str = "balanced",
     ) -> dict[str, Any]:
+        if self.retry_guard is not None:
+            return {"json": self.guarded_schema(snapshot, allow_pass=allow_pass,
+                                                action_policy=action_policy)}
         return {
             "json": self.action_schema(
                 snapshot,
@@ -343,6 +348,45 @@ class GraphActionController:
                 action_policy=action_policy,
             ),
         }
+
+    def guarded_schema(self, snapshot, *, allow_pass, action_policy):
+        """Bind arity and unused fields to the action, instead of the flat schema.
+
+        Uses anyOf/enum/const, also used by the existing typed-action interface;
+        no if/then or uniqueItems support is assumed from the decoding backend.
+        """
+        from .action_contract import obj
+        graph = self.retry_guard.graph
+        allowed = self.action_schema(snapshot, allow_pass=allow_pass,
+                                     action_policy=action_policy)['properties']['action']['enum']
+        indices = [c.index for c in snapshot.candidates]
+        by_index = {c.index: c.node_id for c in snapshot.candidates}
+        choices = []
+        for name in allowed:
+            if self.retry_guard.task_only and name != 'pass':
+                continue
+            if name == 'merge':
+                choices.append(obj({'action': {'const': name}, 'candidate_indices': {
+                    'type': 'array', 'items': {'type': 'integer', 'enum': indices},
+                    'minItems': 2, 'maxItems': min(6, len(indices))},
+                    'summary': {'type': 'string', 'minLength': 1}, 'relation': {'const': 'semantic'}}))
+            elif name == 'add_edge':
+                for relation in ('causal', 'semantic', 'temporal'):
+                    pairs = [[a, b] for a in indices for b in indices if a != b and not any(
+                        e.source == by_index[a] and e.target == by_index[b] and e.relation.value == relation
+                        for e in graph.edges)]
+                    if pairs:
+                        choices.append(obj({'action': {'const': name}, 'candidate_indices': {'enum': pairs},
+                                            'summary': {'const': ''}, 'relation': {'const': relation}}))
+            else:
+                options = [[]] if name == 'pass' else [[i] for i in indices if not self.retry_guard.blocked(
+                    {'function': name, 'arguments': {'node_id': by_index[i]}})]
+                if options:
+                    choices.append(obj({'action': {'const': name}, 'candidate_indices': {'enum': options},
+                                        'summary': {'const': ''}, 'relation': {'const': 'semantic'}}))
+        if not choices:
+            raise GraphControllerError('no legal guarded graph decisions')
+        return {'anyOf': choices}
 
     @staticmethod
     def _parse_decision(response: str) -> dict[str, Any]:
@@ -384,6 +428,13 @@ class GraphActionController:
         if self.graph_hash(graph) != snapshot.graph_hash:
             raise GraphControllerError("graph changed after candidate snapshot")
         decision = self._parse_decision(response)
+        if self.retry_guard is not None:
+            from .action_contract import _validate
+            try:
+                _validate(decision, self.guarded_schema(snapshot, allow_pass=allow_pass,
+                                                       action_policy=action_policy))
+            except ValueError as exc:
+                raise GraphControllerError(str(exc)) from exc
         action = decision.get("action")
         if action not in {"merge", "prune", "add_edge", "select", "pass"}:
             raise GraphControllerError("unknown graph action")
@@ -413,6 +464,8 @@ class GraphActionController:
         if action == "merge":
             if not 2 <= len(indices) <= 6:
                 raise GraphControllerError("merge requires 2 to 6 candidate indices")
+            if self.retry_guard is not None and len(set(indices)) != len(indices):
+                raise GraphControllerError('merge requires distinct candidates')
             # Preserve first-choice order while owning uniqueness in Python.
             indices = list(dict.fromkeys(indices))
             if len(indices) < 2:

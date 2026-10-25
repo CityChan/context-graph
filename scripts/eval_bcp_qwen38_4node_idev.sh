@@ -21,12 +21,21 @@ esac
 case "$MODEL_ID" in
   Qwen/Qwen3.8-27B) MODEL_TAG=qwen38 ;;
   Qwen/Qwen3.5-9B) MODEL_TAG=qwen35-9b ;;
+  Qwen/Qwen3.5-27B) MODEL_TAG=qwen35-27b ;;
   *) echo "Unsupported MODEL_ID: $MODEL_ID"; exit 2 ;;
 esac
 export SEARCH_PORT=${SEARCH_PORT:-18999} MODEL_PORT=${MODEL_PORT:-18000}
 export SAMPLES=${SAMPLES:-8} SEED=${SEED:-42} WORKERS=${WORKERS:-2}
 export MEMORY_MODE=${MEMORY_MODE:-repaired}
 export GRAPH_ACTION_PROTOCOL=${GRAPH_ACTION_PROTOCOL:-controller}
+export EVAL_CONTEXT_LENGTH=${EVAL_CONTEXT_LENGTH:-32768}
+export GRAPH_RETRY_GUARD=${GRAPH_RETRY_GUARD:-0}
+export GRAPH_RETRY_FAILURE_LIMIT=${GRAPH_RETRY_FAILURE_LIMIT:-3}
+export GRAPH_RETRY_AB=${GRAPH_RETRY_AB:-0}
+case "$GRAPH_RETRY_AB" in 0|1) ;; *) echo 'GRAPH_RETRY_AB must be 0 or 1'; exit 2 ;; esac
+case "$EVAL_CONTEXT_LENGTH" in 32768|65536) ;; *) echo 'EVAL_CONTEXT_LENGTH must be 32768 or 65536'; exit 2 ;; esac
+export MODEL_MAX_LEN=${MODEL_MAX_LEN:-$EVAL_CONTEXT_LENGTH}
+[[ "$MODEL_MAX_LEN" -ge "$EVAL_CONTEXT_LENGTH" ]] || { echo 'MODEL_MAX_LEN is smaller than evaluator context'; exit 2; }
 case "$GRAPH_ACTION_PROTOCOL" in controller|explicit_tools) ;; *) echo 'Invalid GRAPH_ACTION_PROTOCOL'; exit 2 ;; esac
 export DATA_PATH=${DATA_PATH:-$PROJECT_ROOT/data/$DEFAULT_DATA}
 export SEARCH_HF_HOME=${SEARCH_HF_HOME:-/work/09281/chc_1996/vista/cache}
@@ -248,13 +257,32 @@ wait_health "$LOCAL_SEARCH_URL/health" "${SERVICE_PIDS[0]}" search
 for rank in 0 1 2; do
   wait_health "http://${MODEL_IPS[$rank]}:$MODEL_PORT/health" "${SERVICE_PIDS[$((rank+1))]}" "model-$rank"
 done
-for rank in 0 1 2; do
-  srun --overlap -N 1 -n 1 -w "${NODES[$((rank+1))]}" bash "$SELF" _eval "http://${MODEL_IPS[$rank]}:$MODEL_PORT" "$rank" >"$RUN_ROOT/eval-$rank.log" 2>&1 &
-  EVAL_PIDS+=("$!")
+if [[ "$GRAPH_RETRY_AB" == 1 || "$GRAPH_RETRY_GUARD" == 1 ]]; then
+  python scripts/preflight_graph_retry_schema.py --endpoint "http://${MODEL_IPS[0]}:$MODEL_PORT" --model "$MODEL_ID" --output "$RUN_ROOT/graph-schema-preflight.json"
+fi
+SUITE_ROOT=$RUN_ROOT
+variants=(single)
+if [[ "$GRAPH_RETRY_AB" == 1 ]]; then
+  [[ "$METHOD" == contextgraph ]] || { echo 'Retry A/B requires contextgraph'; exit 2; }
+  variants=(baseline guarded)
+fi
+for variant in "${variants[@]}"; do
+  if [[ "$variant" != single ]]; then
+    export RUN_ROOT="$SUITE_ROOT/$variant"
+    mkdir "$RUN_ROOT"
+    if [[ "$variant" == guarded ]]; then export GRAPH_RETRY_GUARD=1; else export GRAPH_RETRY_GUARD=0; fi
+  fi
+  EVAL_PIDS=()
+  for rank in 0 1 2; do
+    srun --overlap -N 1 -n 1 -w "${NODES[$((rank+1))]}" bash "$SELF" _eval "http://${MODEL_IPS[$rank]}:$MODEL_PORT" "$rank" >"$RUN_ROOT/eval-$rank.log" 2>&1 &
+    EVAL_PIDS+=("$!")
+  done
+  echo "Three evaluation shards running; variant=$variant results=$RUN_ROOT/results-*.jsonl"
+  rc=0
+  for pid in "${EVAL_PIDS[@]}"; do wait "$pid" || rc=1; done
+  EVAL_PIDS=()
+  if [ "$rc" -ne 0 ]; then echo "Evaluation shard failed; inspect $RUN_ROOT/eval-*.log"; exit 1; fi
+  python scripts/eval_bcp_qwen38.py --merge --output "$RUN_ROOT"
 done
-echo "Three evaluation shards running; per-task results stream into $RUN_ROOT/results-*.jsonl"
-rc=0
-for pid in "${EVAL_PIDS[@]}"; do wait "$pid" || rc=1; done
-if [ "$rc" -ne 0 ]; then echo "Evaluation shard failed; inspect eval-*.log"; exit 1; fi
-python scripts/eval_bcp_qwen38.py --merge --output "$RUN_ROOT"
+export RUN_ROOT=$SUITE_ROOT
 echo "${BENCHMARK^^}_EVAL_COMPLETE method=$METHOD output=$RUN_ROOT"

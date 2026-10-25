@@ -96,9 +96,10 @@ def _unique_object(pairs):
 
 
 class ActionContract:
-    def __init__(self, ability, env, *, branch=False):
+    def __init__(self, ability, env, *, branch=False, retry_guard=None):
         self.kind = task_kind(ability)
         self.env, self.branch = env, branch
+        self.retry_guard = retry_guard
 
     def schema(self, *, final=False):
         text = string()
@@ -135,7 +136,11 @@ class ActionContract:
             choices.append(action('action', {'command': {'anyOf': commands}}))
         if not self.branch and self.kind in ('search', 'swe'):
             choices.append(finish)
-        return {'anyOf': choices}
+        schema = {'anyOf': choices}
+        if self.retry_guard is not None:
+            from .graph_retry_guard import constrain_explicit_schema
+            schema = constrain_explicit_schema(schema, self.retry_guard)
+        return schema
 
     def decode(self, response, schema):
         payload = json.loads(response, object_pairs_hook=_unique_object,
