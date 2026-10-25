@@ -38,6 +38,16 @@ An incomplete XML response at the token cap is rejected, not repaired or dispatc
 Syntactic acceptance still does not establish that a delegation or return preserves
 all relevant evidence; inspect the saved text before drawing quality conclusions.
 
+Task-format backend preflight uses the evaluator's local tokenizer, a rendered
+no-thinking chat prompt, generated token IDs and the same special-token decoding
+as real recovery. It asks for short sample calls under the full production regex;
+it does not prove completion on arbitrary task prompts. Every probe, including a
+failure, is saved in `graph-schema-preflight.json` with its request, response,
+finish reason and elapsed time. Invalid or incomplete output still stops the run
+before evaluation; the preflight does not retry, relax the regex or restore field
+character caps. The previous bare-text probe did not match recovery's chat input
+and discarded its failed response, so its failure cannot identify a backend cause.
+
 The guarded arm adds dynamic node/edge constraints, action-specific controller
 arity, rejection accounting, short error feedback, and a failure cache based on
 target state (not counters). After three consecutive failures, explicit tools

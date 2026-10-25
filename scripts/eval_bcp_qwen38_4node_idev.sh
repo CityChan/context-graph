@@ -258,7 +258,7 @@ for rank in 0 1 2; do
   wait_health "http://${MODEL_IPS[$rank]}:$MODEL_PORT/health" "${SERVICE_PIDS[$((rank+1))]}" "model-$rank"
 done
 if [[ "$GRAPH_RETRY_AB" == 1 || "$GRAPH_RETRY_GUARD" == 1 ]]; then
-  python scripts/preflight_graph_retry_schema.py --endpoint "http://${MODEL_IPS[0]}:$MODEL_PORT" --model "$MODEL_ID" --output "$RUN_ROOT/graph-schema-preflight.json"
+  python scripts/preflight_graph_retry_schema.py --endpoint "http://${MODEL_IPS[0]}:$MODEL_PORT" --model "$MODEL_ID" --tokenizer "$MODEL_PATH" --output "$RUN_ROOT/graph-schema-preflight.json"
 fi
 SUITE_ROOT=$RUN_ROOT
 variants=(single)
