@@ -213,6 +213,11 @@ def compact_context(agent, graph):
     from .utils import AgentContext
 
     prompt, cost, charge = compaction_plan(agent, graph)
+    from .exact_context import checksum
+    fingerprint = checksum(prompt)
+    if (getattr(agent.config.plugin, 'graph_reject_repeated_compact', False)
+            and getattr(agent, 'last_graph_compact_fingerprint', None) == fingerprint):
+        raise ValueError('repeated graph_compact with unchanged retained context')
     from .token_budget import window_budget
     use_window = window_budget(agent.config)
     window = getattr(agent, 'working_context_limit', None) or (agent.config.prompt_length + agent.config.response_length)
@@ -236,6 +241,7 @@ def compact_context(agent, graph):
     agent.summary_sessions = sessions
     agent.graph_context_tokens = getattr(agent, "graph_context_tokens", 0) + charge
     agent.context_uid = str(uuid.uuid4())
+    agent.last_graph_compact_fingerprint = fingerprint
     return GraphOpResult("Working context rebuilt from every active node selected by your graph edits. Continue the task.", True)
 
 
@@ -296,6 +302,7 @@ def execute_graph_tool(graph, trace, agent, response, *, agent_name, turn_id, pe
         maintenance.executed(attempted, result.success, context_before, len(agent.context()))
     if not result.success and penalize:
         agent.set_process_reward(turn, -0.3)
+        agent.additional_info[turn]['graph_invalid_penalty'] = -0.3
     return result
 
 

@@ -55,6 +55,23 @@ def test_dynamic_bounded_exhaustion_disabled_and_partial_groups():
     assert untouched.batch['response_mask'].all()
 
 
+def test_dynamic_retains_invalid_action_signal_even_with_zero_process_coefficient():
+    b = batch((1, 1, 1))
+    c = config(graphrpo_beta=0., graphrpo_alpha=0.,
+               graphrpo_invalid_action_policy='negative_invalid_graph')
+    with pytest.raises(ValueError, match='provenance'):
+        informative_groups(b, c)
+    b.batch['graph_invalid_penalty_mask'] = torch.zeros(3, 2)
+    assert informative_groups(b, c)[0] == []
+    b.batch['graph_invalid_penalty_mask'][1, 0] = -.3
+    assert informative_groups(b, c)[0] == [[0, 1, 2]]
+    b.batch['response_mask'][1, 0] = 0
+    assert informative_groups(b, c)[0] == []
+    b.batch['graph_invalid_penalty_mask'][0, 0] = -2.
+    with pytest.raises(ValueError, match='Invalid graph penalty'):
+        informative_groups(b, c)
+
+
 def test_dynamic_multiple_batches_concatenate_without_candidate_mixing():
     c = config()
     c.graphrpo_dynamic_min_groups = 2

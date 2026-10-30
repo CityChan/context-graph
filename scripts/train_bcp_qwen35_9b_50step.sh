@@ -201,7 +201,7 @@ if [ "${SMOKE_TEST:-0}" = 1 ]; then
   export TRAIN_MAX_SAMPLES=3 VAL_MAX_SAMPLES=3
   export MAX_TURN=4 MAX_SESSION=1 VAL_MAX_SESSION=1 TURN_MAX_NEW_TOKENS=512 SESSION_TIMEOUT=600
   export BC_DISABLE_WANDB=1
-  echo "Smoke: 3 prompts x 2 rollouts, 3 trainer ranks, 1 step, 12K context; not a performance evaluation."
+  echo "Smoke: 3 prompts x 2 rollouts, 3 trainer ranks, 1 step; context is recorded in training-config.txt; not a performance evaluation."
   if [ "$METHOD" = contextgraph ] && [ "$GRAPH_RPO_CREDIT_BACKEND" = evidence ]; then
     export MAX_TURN=16 MAX_SESSION=3 CONSOLIDATION_INTERVAL=2
     echo "Evidence smoke: allow 16 turns and 3 branches; decision-credit audit required."
@@ -212,7 +212,16 @@ if [ "$BCP_GRAPH_RPO_SMOKE" = 1 ]; then
   export VAL_BEFORE_TRAIN=False TEST_FREQ=-1 SAVE_FREQ=2
   echo "GraphRPO smoke: 4 prompts x 4 rollouts, 4 trainer ranks, 2 steps, 32K context; credit audit required."
 fi
+if [ "${GRAPH_RPO_GUARD_PROFILE:-none}" = invalid_action_v1 ]; then
+  [ "$METHOD" = contextgraph ] && [ "$GRAPH_RPO_CREDIT_BACKEND" = outcome_only ] || { echo 'Guarded joint RL requires contextgraph outcome_only' >&2; exit 2; }
+  export GRAPH_RPO_ACTION_PROTOCOL=explicit_tools BC_CTXGRAPH_PROTOCOL=explicit_tools
+  export GRAPH_RPO_INVALID_ACTION_POLICY=negative_invalid_graph PROCESS_REWARD_SPEC='[graphrpo]'
+  export CONSOLIDATION_INTERVAL=0 AUTO_PRUNE_MAX_ACTIVE=0
+  export PROMPT_LENGTH=8192 RESPONSE_LENGTH=57344 CONTEXT_LENGTH=65536 AGENT_BUDGET_MODE=working_context
+  echo 'Guarded joint RL: binary outcome, negative invalid graph actions, verified sampled prefixes, model-owned maintenance, 64K'
+fi
 printf '%s\n' "profile=$BCP_TRAIN_PROFILE" "model_revision=$MODEL_REVISION" \
+  "graph_rl_guard_profile=${GRAPH_RPO_GUARD_PROFILE:-none}" "invalid_action_policy=${GRAPH_RPO_INVALID_ACTION_POLICY:-additive}" \
   "steps=$TOTAL_TRAINING_STEPS" "prompt_length=$PROMPT_LENGTH" \
   "response_length=$RESPONSE_LENGTH" "context_length=$CONTEXT_LENGTH" \
   "train_batch_size=$TRAIN_BATCH_SIZE" "rollout_n=$ROLLOUT_N" \

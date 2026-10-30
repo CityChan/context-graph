@@ -590,6 +590,9 @@ class AgentContext:
         return sum(self.chat_ids, []) + self.get_generation_prompt()
 
     def append(self, turn, completion=None, additional_info=None):
+        if completion is not None and getattr(getattr(self.config, 'plugin', None), 'verify_training_context', False):
+            from .training_context_audit import record_sample
+            record_sample(self, self.context(), completion)
         self.chat.append(turn)
         self.chat_completions.append(completion)
         self.additional_info.append(additional_info)
@@ -684,6 +687,11 @@ class AgentContext:
             for turn, info in zip(self.chat_ids, self.additional_info)
         ][prompt_turn:], [])
         graph_decision_mask = [v * m for v, m in zip(graph_decision_mask, response_mask)][:response_length]
+        graph_invalid_penalty_mask = sum([
+            [info.get('graph_invalid_penalty', 0) if isinstance(info, dict) else 0] * len(turn)
+            for turn, info in zip(self.chat_ids, self.additional_info)
+        ][prompt_turn:], [])
+        graph_invalid_penalty_mask = [v * m for v, m in zip(graph_invalid_penalty_mask, response_mask)][:response_length]
         response_turn_token_indices = {}
         response_offset = 0
         for turn_index in range(prompt_turn, len(self.chat_ids)):
@@ -708,6 +716,7 @@ class AgentContext:
             'process_reward_mask': process_reward_mask,
             'graph_edit_credit_mask': graph_edit_credit_mask,
             'graph_decision_mask': graph_decision_mask,
+            'graph_invalid_penalty_mask': graph_invalid_penalty_mask,
             'response_turn_token_indices': response_turn_token_indices,
             'num_turns': len(self.chat_ids),
             'messages': self.chat,

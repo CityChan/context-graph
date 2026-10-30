@@ -244,7 +244,17 @@ def test_ray_batch_retains_decision_mask_including_zero_reward_decision():
             position_ids=torch.arange(4).unsqueeze(0), graph_decision_mask=decision,
             graph_edit_credit_mask=torch.zeros(1, 2), reward_score=0., num_turns=1,
             response_logprobs=None, routed_experts=None, process_reward_mask=None, extra_fields={},
+            graph_invalid_penalty_mask=None,
             multi_modal_inputs=None, metrics=SimpleNamespace(model_dump=lambda: {})))
     batch = ns['_postprocess'](SimpleNamespace(), items)
     assert batch.batch['graph_decision_mask'].tolist() == [[1., 0.], [0., 0.]]
     assert batch.batch['graph_edit_credit_mask'].sum() == 0
+    assert 'graph_invalid_penalty_mask' not in batch.batch
+    items[0].graph_invalid_penalty_mask = torch.tensor([[-.3, 0.]])
+    with pytest.raises(ValueError, match='provenance'):
+        ns['_postprocess'](SimpleNamespace(), items)
+    items[1].graph_invalid_penalty_mask = torch.zeros(1, 2)
+    batch = ns['_postprocess'](SimpleNamespace(), items)
+    assert batch.batch['graph_invalid_penalty_mask'].dtype == torch.float32
+    assert batch.batch['graph_invalid_penalty_mask'][0, 0].item() == pytest.approx(-.3)
+    assert not batch.batch['graph_invalid_penalty_mask'][1].any()

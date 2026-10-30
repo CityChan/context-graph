@@ -376,6 +376,7 @@ def compute_advantage(
             process_reward_mask=data.batch.get("process_reward_mask"),
             graph_edit_credit_mask=data.batch.get("graph_edit_credit_mask"),
             graph_decision_mask=data.batch.get("graph_decision_mask"),
+            graph_invalid_penalty_mask=data.batch.get('graph_invalid_penalty_mask'),
             excluded_gen_uids=excluded_gen_uids,
             config=config,
         )
@@ -1319,7 +1320,7 @@ class RayPPOTrainer:
         # Dummy tokens must not contribute to policy, entropy, or KL losses.
         # Keep this zero independently of overlong_mask as defense in depth.
         dummy_sample.batch["response_mask"] = torch.zeros_like(dummy_sample.batch["response_mask"])
-        for key in ("graph_edit_credit_mask", "graph_decision_mask", "process_reward_mask"):
+        for key in ("graph_edit_credit_mask", "graph_decision_mask", "process_reward_mask", "graph_invalid_penalty_mask"):
             if key in dummy_sample.batch:
                 dummy_sample.batch[key] = torch.zeros_like(dummy_sample.batch[key])
         if "overlong_mask" in dummy_sample.batch:

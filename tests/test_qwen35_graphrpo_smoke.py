@@ -91,3 +91,36 @@ def test_graph_smoke_rejects_incompatible_method_or_profile(tmp_path, method, pr
                             creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
     assert result.returncode == 2
     assert 'GraphRPO smoke requires' in result.stderr
+
+
+def test_guarded_entry_uses_64k_four_nodes_and_preserves_legacy_entry(tmp_path):
+    (tmp_path / 'scripts').mkdir()
+    (tmp_path / 'data').mkdir()
+    for name in ('bc_train.parquet', 'bc_test.parquet'):
+        (tmp_path / 'data' / name).write_text('fixture')
+    (tmp_path / 'scripts/check_qwen3_observation_tokens.sh').write_text('exit 0\n')
+    (tmp_path / 'scripts/train_bc_ctxgraph_8b_paperfaithful_5node_48h.sh').write_text(
+        'env > "$PROJECT_ROOT/captured.env"\nexit 23\n', newline='\n')
+    setup = tmp_path / 'run.sh'
+    setup.write_text('\n'.join([
+        'scontrol() { printf "%s\\n" node0 node1 node2 node3; }',
+        'git() { if [ "$1" = -C ]; then echo "$TEST_ROOT"; elif [ "$1" = rev-parse ]; then echo fake-sha; fi; return 0; }',
+        'source() { :; }', 'conda() { :; }', 'find() { echo /dev/null; }', 'python() { unset LD_PRELOAD; return 0; }',
+        'export -f scontrol git source conda find python',
+        f'bash "{(ROOT / "scripts/train_bcp_qwen35_9b_guarded_rl.sh").as_posix()}"',
+    ]) + '\n', newline='\n')
+    env = dict(os.environ, TEST_ROOT=tmp_path.as_posix(), SCRATCH=tmp_path.as_posix(),
+               CONDA_PREFIX=tmp_path.as_posix(), SLURM_JOB_ID='fixture', SLURM_JOB_NODELIST='fixture',
+               OPENAI_API_KEY='fixture', SMOKE_TEST='1', PREFLIGHT_ONLY='0',
+               BCP_GRAPH_RPO_SMOKE='1', BCP_TRAIN_TOPOLOGY='idev4_dp2')
+    result = subprocess.run([BASH, setup.as_posix()], cwd=ROOT, env=env, capture_output=True,
+                            text=True, timeout=30, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+    assert result.returncode == 23, result.stdout + result.stderr
+    captured = dict(line.split('=', 1) for line in (tmp_path / 'captured.env').read_text().splitlines() if '=' in line)
+    for key, value in dict(GRAPH_RPO_GUARD_PROFILE='invalid_action_v1',
+            GRAPH_RPO_INVALID_ACTION_POLICY='negative_invalid_graph', GRAPH_RPO_CREDIT_BACKEND='outcome_only',
+            BC_CTXGRAPH_PROTOCOL='explicit_tools', PROCESS_REWARD_SPEC='[graphrpo]',
+            CONTEXT_LENGTH='65536', PROMPT_LENGTH='8192', RESPONSE_LENGTH='57344',
+            EXPECTED_NUM_NODES='4', TOTAL_TRAINING_STEPS='1', CONSOLIDATION_INTERVAL='0',
+            AUTO_PRUNE_MAX_ACTIVE='0', AGENT_BUDGET_MODE='working_context').items():
+        assert captured[key] == value

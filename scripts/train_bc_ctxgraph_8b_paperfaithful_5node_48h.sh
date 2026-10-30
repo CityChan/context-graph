@@ -313,12 +313,31 @@ if [ "$ADV_ESTIMATOR" = "graphrpo" ]; then
     "algorithm.graphrpo_dynamic_max_gen_batches=${GRAPH_RPO_DYNAMIC_MAX_GEN_BATCHES:-4}"
     "algorithm.graphrpo_dynamic_min_groups=${GRAPH_RPO_DYNAMIC_MIN_GROUPS:-1}"
     "algorithm.graphrpo_beta=$GRAPH_RPO_BETA"
+    "algorithm.graphrpo_invalid_action_policy=${GRAPH_RPO_INVALID_ACTION_POLICY:-additive}"
     "algorithm.graphrpo_epsilon=$GRAPH_RPO_EPSILON"
     "+actor_rollout_ref.rollout.plugin.graph_rpo_credit_backend=$GRAPH_RPO_CREDIT_BACKEND"
     "+actor_rollout_ref.rollout.plugin.graph_rpo_delta_scale=$GRAPH_RPO_DELTA_SCALE"
     "+actor_rollout_ref.rollout.plugin.graph_rpo_delta_max=$GRAPH_RPO_DELTA_MAX"
     "+actor_rollout_ref.rollout.plugin.graph_rpo_operation_costs=$GRAPH_RPO_OPERATION_COSTS"
   )
+  if [ "${GRAPH_RPO_GUARD_PROFILE:-none}" != none ]; then
+    [ "$GRAPH_RPO_GUARD_PROFILE" = invalid_action_v1 ] && [ "$BC_CTXGRAPH_PROTOCOL" = explicit_tools ] && [ "$GRAPH_RPO_CREDIT_BACKEND" = outcome_only ] || { echo 'Guard profile requires explicit outcome-only GraphRPO' >&2; exit 2; }
+    GRAPH_RPO_ARGS+=(
+      "++algorithm.graphrpo_invalid_action_policy=negative_invalid_graph"
+      "algorithm.graphrpo_require_binary_reward=True"
+      "+actor_rollout_ref.rollout.plugin.graph_rl_guard_profile=invalid_action_v1"
+      "+actor_rollout_ref.rollout.plugin.verify_training_context=True"
+      "+actor_rollout_ref.rollout.plugin.graph_reject_repeated_compact=True"
+      "++actor_rollout_ref.rollout.plugin.graph_rpo_scope_process_reward=False"
+      "++actor_rollout_ref.rollout.plugin.structured_graph_controller=False"
+      "++actor_rollout_ref.rollout.plugin.consolidation_interval=0"
+      "++actor_rollout_ref.rollout.plugin.initial_consolidation_turn=0"
+      "++actor_rollout_ref.rollout.plugin.auto_prune_max_active=0"
+      "++actor_rollout_ref.rollout.plugin.auto_bind_branch_edges=False"
+      "++actor_rollout_ref.rollout.plugin.enable_retrieval_memory=False"
+      "++actor_rollout_ref.rollout.plugin.enable_summary=False"
+    )
+  fi
   case "$GRAPH_RPO_CREDIT_BACKEND" in
     outcome_only) ;;
     evidence)

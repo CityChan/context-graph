@@ -178,6 +178,7 @@ class _InternalAgentLoopOutput(AgentLoopOutput):
     graph_edit_credit_mask: Optional[torch.Tensor] = None
     """Padded GraphRPO edit-credit mask."""
     graph_decision_mask: Optional[torch.Tensor] = None
+    graph_invalid_penalty_mask: Optional[torch.Tensor] = None
 
 
 # make hydra.utils.instantiate happy
@@ -560,6 +561,14 @@ class AgentLoopWorkerBase:
 
 
         graph_decision_mask = None
+        graph_invalid_penalty_mask = None
+        invalid_list = output.extra_fields.get('graph_invalid_penalty_mask')
+        if invalid_list is not None:
+            if len(invalid_list) != len(output.response_ids):
+                raise ValueError('Invalid graph penalty length differs from sampled responses')
+            pad_size = self.config.actor_rollout_ref.rollout.response_length - len(invalid_list)
+            graph_invalid_penalty_mask = torch.tensor(invalid_list + [0] * max(pad_size, 0), dtype=torch.float32).unsqueeze(0)
+            graph_invalid_penalty_mask *= response_mask.to(torch.float32)
         decision_list = output.extra_fields.get("graph_decision_mask")
         if decision_list is not None:
             pad_size = self.config.actor_rollout_ref.rollout.response_length - len(decision_list)
@@ -677,6 +686,7 @@ class AgentLoopWorkerBase:
             process_reward_mask=process_reward_mask,
             graph_edit_credit_mask=graph_edit_credit_mask,
             graph_decision_mask=graph_decision_mask,
+            graph_invalid_penalty_mask=graph_invalid_penalty_mask,
         )
 
     def _postprocess(self, inputs: list[_InternalAgentLoopOutput]) -> DataProto:
@@ -731,6 +741,10 @@ class AgentLoopWorkerBase:
                 else torch.zeros_like(item.response_mask, dtype=torch.float32) for item in inputs], dim=0)
         if mask_rollout is not None:
             batch["mask_rollout"] = mask_rollout
+        if any(item.graph_invalid_penalty_mask is not None for item in inputs):
+            if any(item.graph_invalid_penalty_mask is None for item in inputs):
+                raise ValueError('Mixed rollout provenance: missing invalid graph penalty mask')
+            batch['graph_invalid_penalty_mask'] = torch.cat([item.graph_invalid_penalty_mask for item in inputs], dim=0)
 
         scores = [input.reward_score for input in inputs]
         # Replace None with 0.0 so that a few skipped rollouts (max_new_tokens < 10)

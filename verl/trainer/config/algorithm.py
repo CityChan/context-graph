@@ -486,6 +486,8 @@ class AlgoConfig(BaseConfig):
     foldgrpo_dynamic_max_gen_batches: int = 4
     foldgrpo_dynamic_min_groups: int = 1
     graphrpo_beta: float = 1.0
+    # Opt-in: cap only verified invalid graph decisions at their raw negative label.
+    graphrpo_invalid_action_policy: str = 'additive'
     graphrpo_epsilon: float = 1e-6
     graphrpo_require_binary_reward: bool = True
     # Whether to fix bad positive advantages

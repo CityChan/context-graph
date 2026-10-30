@@ -138,6 +138,7 @@ algorithm:
   foldgrpo_dynamic_max_gen_batches: 4
   foldgrpo_dynamic_min_groups: 1
   graphrpo_beta: 1.0
+  graphrpo_invalid_action_policy: additive
   graphrpo_epsilon: 1.0e-6
   # Preserve formal binary GraphRPO rewards unless an ablation explicitly
   # enables finite scalar terminal rewards (for example, QeRL-style 2.0+0.2).

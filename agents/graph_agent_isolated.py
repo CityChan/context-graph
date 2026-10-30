@@ -202,6 +202,8 @@ async def process_item(
             else:
                 setattr(config.plugin, name, value)
     validate_session_summary(config.plugin)
+    from .graph_rl_profile import validate_profile
+    validate_profile(context.config.algorithm, config.plugin)
     is_train = context.is_train
     if explicit_graph_tools and is_train:
         from .action_contract import validate_training_contract
@@ -2391,9 +2393,11 @@ async def process_item(
                     'message_str': print_chat(session_message),
                     'meta_info': f"N: {len(agent)} | {name} | G:{len(graph.nodes)}n/{len(graph.active_edges)}e [iso]",
                     'process_reward_mask': out['process_reward_mask'],
+                    'training_context_verified_turns': out.get('verified_sampled_turns', 0),
                     **(
                         {'graph_edit_credit_mask': out['graph_edit_credit_mask'],
-                         'graph_decision_mask': out['graph_decision_mask']}
+                         'graph_decision_mask': out['graph_decision_mask'],
+                         'graph_invalid_penalty_mask': out['graph_invalid_penalty_mask']}
                         if graph_rpo_enabled
                         else {}
                     ),

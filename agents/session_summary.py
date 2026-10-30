@@ -154,13 +154,27 @@ class SessionSummaryMixin:
         from .utils import AgentContext
 
         for index, start, view in self.session_views():
+            verify = getattr(self.config.plugin, 'verify_training_context', False)
+            if verify:
+                # Read the full native segment before auditing or packing it.
+                view = copy.copy(view)
+                view.prompt_length = max(view.prompt_length, sum(map(len, view.chat_ids[:view.prompt_turn])))
+                view.response_length = max(view.response_length, sum(map(len, view.chat_ids[view.prompt_turn:])))
             data = await AgentContext.get_data(view)
             data["response_turn_token_indices"] = {
                 turn - (view.prompt_turn if index else 0) + start: ids
                 for turn, ids in data["response_turn_token_indices"].items()
             }
             data["summary_session_index"] = index
-            yield data
+            if verify:
+                from .training_context_audit import validate_segment, pack_verified_segment
+                sessions = getattr(self, 'summary_sessions', [])
+                end = sessions[index]['start'] if index < len(sessions) else len(self.chat)
+                data['verified_sampled_turns'] = validate_segment(self, start, end, data)
+                for packed in pack_verified_segment(self, data):
+                    yield packed
+            else:
+                yield data
 
 
 async def iter_agent_data(agents, is_train, max_traj=None):

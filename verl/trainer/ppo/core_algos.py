@@ -630,6 +630,7 @@ def compute_graphrpo_advantage(
     process_reward_mask: Optional[torch.Tensor] = None,
     graph_edit_credit_mask: Optional[torch.Tensor] = None,
     graph_decision_mask: Optional[torch.Tensor] = None,
+    graph_invalid_penalty_mask: Optional[torch.Tensor] = None,
     excluded_gen_uids: Optional[set[Any]] = None,
     config: Optional[AlgoConfig] = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
@@ -766,6 +767,23 @@ def compute_graphrpo_advantage(
             + alpha * graph_credit[row]
             + beta * process_labels[row]
         ) * response_mask[row]
+    invalid_policy = config.get('graphrpo_invalid_action_policy', 'additive') if config is not None else 'additive'
+    if invalid_policy not in {'additive', 'negative_invalid_graph'}:
+        raise ValueError('Unknown GraphRPO invalid action policy')
+    if invalid_policy == 'negative_invalid_graph':
+        if graph_invalid_penalty_mask is None or graph_invalid_penalty_mask.shape != response_mask.shape:
+            raise ValueError('Negative invalid graph policy requires graph_invalid_penalty_mask')
+        penalty = torch.where(response_mask.bool(), graph_invalid_penalty_mask.to(torch.float32), 0.0)
+        if not torch.isfinite(penalty).all() or torch.any(penalty > 0) or torch.any(penalty < -1):
+            raise ValueError('Invalid graph penalties must be finite and within [-1, 0]')
+        if graph_decision_mask is None or graph_decision_mask.shape != response_mask.shape:
+            raise ValueError('Invalid graph penalties require decision provenance')
+        if torch.any((penalty < 0) & (graph_decision_mask != 1)):
+            raise ValueError('Invalid graph penalties must belong to graph decisions')
+        for row, episode_id in enumerate(episode_ids):
+            if episode_id not in excluded:
+                advantages[row] = torch.where(penalty[row] < 0,
+                    torch.minimum(advantages[row], penalty[row]), advantages[row])
     if not torch.isfinite(advantages).all():
         raise ValueError('Nonfinite GraphRPO advantages')
     return advantages, advantages
