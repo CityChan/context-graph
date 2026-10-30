@@ -6,6 +6,17 @@ from pathlib import Path
 from scripts.eval_bcp_qwen38 import completion_budget
 
 
+def execution_text(tokenizer, ids, explicit=False):
+    """Keep reasoning in native labels, dispatch only final JSON in explicit mode."""
+    if explicit:
+        marker = tokenizer.encode('</think>', add_special_tokens=False)
+        endings = [i + len(marker) for i in range(len(ids) - len(marker) + 1)
+                   if marker and ids[i:i + len(marker)] == marker]
+        if endings:
+            ids = ids[endings[-1]:]
+    return tokenizer.decode(ids, skip_special_tokens=True).strip() if explicit else tokenizer.decode(ids, skip_special_tokens=True)
+
+
 class RouteAClient:
     def __init__(self, args, tokenizer, config, audit_path, client=None):
         if client is None:
@@ -27,7 +38,10 @@ class RouteAClient:
                     return_token_ids=True, skip_special_tokens=False, seed=self.args.seed,
                     **sampling)
         constraints = kwargs.get("structured_outputs")
-        if constraints is not None:
+        explicit = getattr(self.args, 'collection_mode', '') == 'explicit_distillation'
+        # Raw reasoning is generated before the final JSON. A JSON-only decoder
+        # would constrain those tokens too. Validate the final action in Agent.step.
+        if constraints is not None and not explicit:
             body["structured_outputs"] = normalize_structured_outputs(constraints)
         response = await self.client.post("/v1/completions", json=body)
         response.raise_for_status()
@@ -37,7 +51,7 @@ class RouteAClient:
         choice = data["choices"][0]
         ids = token_list(choice.get("token_ids"))
         # Keep the original IDs (including thinking and EOS); no re-tokenization.
-        content = self.tokenizer.decode(ids, skip_special_tokens=True)
+        content = execution_text(self.tokenizer, ids, getattr(self.args, 'collection_mode', '') == 'explicit_distillation')
         record = {"context_uid": kwargs.get("uid", "preflight"),
                   "messages": copy.deepcopy(kwargs["messages"]),
                   "input_ids": list(input_ids), "output_ids": ids, "response": content,
@@ -46,6 +60,10 @@ class RouteAClient:
                   "usage": data.get("usage"), "sampling": sampling, "seed": self.args.seed,
                   "requested_model": self.args.teacher_model, "returned_model": data.get("model"),
                   "transport": "vllm_tokens", "native_token_ids": True}
+        if getattr(self.args, 'collection_mode', '') == 'explicit_distillation':
+            record['backend_constrained'] = False
+            record['raw_output_text'] = self.tokenizer.decode(ids, skip_special_tokens=False)
+            record['sft_assistance'] = kwargs.get('sft_assistance')
         with self.audit_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(record, ensure_ascii=False) + "\n")
         return {"choices": [{"message": {"content": content, "raw_output_ids": ids,

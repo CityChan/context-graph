@@ -262,7 +262,11 @@ async def process_item(
             user_prompt[0]['content'] += '\n\n' + EXPLICIT_GRAPH_PROMPT
             from .action_contract import (ActionContract, PROMPT as ACTION_PROMPT, PROFILE as ACTION_PROFILE,
                                           BRANCH_HANDOFF_RESERVE, MIN_ACTION_TOKENS)
-            user_prompt[0]['content'] += '\n\n' + ACTION_PROMPT
+            if getattr(config.plugin, 'explicit_action_thinking', False):
+                from .action_contract import THINKING_PROMPT
+                user_prompt[0]['content'] += '\n\n' + THINKING_PROMPT
+            else:
+                user_prompt[0]['content'] += '\n\n' + ACTION_PROMPT
             from .sft_teacher_guidance import teacher_guidance
             guidance = teacher_guidance(getattr(config.plugin, 'sft_teacher_profile', 'evaluation'))
             if guidance:

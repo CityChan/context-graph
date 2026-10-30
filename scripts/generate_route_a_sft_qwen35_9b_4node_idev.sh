@@ -15,10 +15,20 @@ set +u
 source "$CONDA_SH"
 conda activate "$AGENT_CONDA_ENV"
 set -u
-export MODEL_ID=Qwen/Qwen3.5-9B
-export MODEL_PATH=${QWEN35_9B_MODEL_PATH:-}
+collection_mode=${SFT_COLLECTION_MODE:-route_a}
+case "$collection_mode" in
+  route_a) export MODEL_ID=Qwen/Qwen3.5-9B MODEL_PATH=${QWEN35_9B_MODEL_PATH:-}; protocol=controller; teacher_profile=evaluation ;;
+  explicit_distillation)
+    : "${DISTILL_TEACHER_CHECKPOINT:?Set the local HF teacher checkpoint (for example exported RL step60)}"
+    export MODEL_ID=${DISTILL_TEACHER_MODEL_ID:-Qwen/Qwen3.5-9B} MODEL_PATH=$DISTILL_TEACHER_CHECKPOINT
+    protocol=explicit_tools; teacher_profile=explicit_distillation_guidance_v1 ;;
+  *) echo 'Unsupported SFT collection mode' >&2; exit 2 ;;
+esac
 MODEL_PATH=$(python -c 'import os; from pathlib import Path; from huggingface_hub import snapshot_download; p=Path(os.environ["MODEL_PATH"] or snapshot_download(os.environ["MODEL_ID"],cache_dir=os.environ["SCRATCH"]+"/hf_cache/hub",local_files_only=True)).resolve(); assert (p/"config.json").is_file(); print(p)')
 export MODEL_PATH
+if [[ "$collection_mode" == explicit_distillation ]]; then
+  case "$MODEL_PATH" in "$SCRATCH"/*) ;; *) echo 'Explicit teacher checkpoint must resolve under SCRATCH' >&2; exit 2 ;; esac
+fi
 export CONTEXT_LENGTH=${CONTEXT_LENGTH:-65536} PROMPT_LENGTH=${PROMPT_LENGTH:-8192}
 [[ "$CONTEXT_LENGTH" =~ ^[1-9][0-9]*$ && "$PROMPT_LENGTH" =~ ^[1-9][0-9]*$ ]] || exit 2
 (( CONTEXT_LENGTH > PROMPT_LENGTH )) || exit 2
@@ -51,10 +61,10 @@ else
   export SEARCH_HF_HOME=${SEARCH_HF_HOME:-/work/09281/chc_1996/vista/cache}
   export SEARCH_HF_HUB_CACHE=${SEARCH_HF_HUB_CACHE:-$SEARCH_HF_HOME/hub}
 fi
-collect=(scripts/generate_bcp_graph_sft.py --collection-mode route_a --graph-protocol controller --teacher-profile evaluation --transport vllm_tokens --benchmark "$domain" --data "$data" --heldout "$heldout" --output "$run/collection" --teacher-model "$MODEL_ID" --teacher-checkpoint "$MODEL_PATH" --tokenizer "$MODEL_PATH" --teacher-url "$endpoint" --search-url "${LOCAL_SEARCH_URL:-}" --selection "$selection" --samples "$SAMPLES" --start "${START_INDEX:-0}" --candidates "$CANDIDATES" --workers "$WORKERS" --seed "$SEED" --temperature "${TEMPERATURE:-0.7}" --prompt-length "$PROMPT_LENGTH" --response-length "$((CONTEXT_LENGTH - PROMPT_LENGTH))" --branch-len "${BRANCH_LENGTH:-8192}" --max-turn "${MAX_TURN:-100}" --max-steps "${MAX_STEPS:-100}" --turn-max-tokens "${TURN_MAX_TOKENS:-4096}")
+collect=(scripts/generate_bcp_graph_sft.py --collection-mode "$collection_mode" --graph-protocol "$protocol" --teacher-profile "$teacher_profile" --transport vllm_tokens --benchmark "$domain" --data "$data" --heldout "$heldout" --output "$run/collection" --teacher-model "$MODEL_ID" --teacher-checkpoint "$MODEL_PATH" --tokenizer "$MODEL_PATH" --teacher-url "$endpoint" --search-url "${LOCAL_SEARCH_URL:-}" --selection "$selection" --samples "$SAMPLES" --start "${START_INDEX:-0}" --candidates "$CANDIDATES" --workers "$WORKERS" --seed "$SEED" --temperature "${TEMPERATURE:-0.7}" --prompt-length "$PROMPT_LENGTH" --response-length "$((CONTEXT_LENGTH - PROMPT_LENGTH))" --branch-len "${BRANCH_LENGTH:-8192}" --max-turn "${MAX_TURN:-100}" --max-steps "${MAX_STEPS:-100}" --turn-max-tokens "${TURN_MAX_TOKENS:-4096}")
 # Validate train split and resume contract before occupying GPUs.
 python "${collect[@]}" --dry-run
-echo "ROUTE_A_START model=$MODEL_ID thinking=enabled context=$CONTEXT_LENGTH samples=$SAMPLES candidates=$CANDIDATES run=$run"
+echo "SFT_COLLECTION_START mode=$collection_mode model=$MODEL_ID thinking=enabled context=$CONTEXT_LENGTH samples=$SAMPLES candidates=$CANDIDATES run=$run"
 pids=()
 cleanup() { for pid in "${pids[@]}"; do kill "$pid" 2>/dev/null || true; done; wait || true; }
 trap cleanup EXIT
@@ -82,5 +92,10 @@ srun --overlap --nodes=1 --ntasks=1 --nodelist="${nodes[2]}" "$CONDA_PREFIX/bin/
 export_dir=$(mktemp -d "$run/sft-XXXXXXXX")
 build_args=(--require-complete)
 [[ "$SAMPLES" == -1 ]] || build_args+=(--smoke)
-python scripts/build_route_a_sft.py "$run/collection" --output "$export_dir" --tokenizer "$MODEL_PATH" --max-length "$CONTEXT_LENGTH" --control-ratio "${CONTROL_RATIO:-0.5}" --seed "$SEED" "${build_args[@]}"
-echo "ROUTE_A_COMPLETE artifacts=$export_dir (see manifest training_ready and validation_ready)"
+builder=scripts/build_route_a_sft.py
+if [[ "$collection_mode" == explicit_distillation ]]; then
+  builder=scripts/build_explicit_distillation_sft.py
+  build_args+=(--data "$data" --heldout "$heldout")
+fi
+python "$builder" "$run/collection" --output "$export_dir" --tokenizer "$MODEL_PATH" --max-length "$CONTEXT_LENGTH" --control-ratio "${CONTROL_RATIO:-0.5}" --seed "$SEED" "${build_args[@]}"
+echo "SFT_COLLECTION_COMPLETE mode=$collection_mode artifacts=$export_dir (see manifest training_ready and validation_ready)"

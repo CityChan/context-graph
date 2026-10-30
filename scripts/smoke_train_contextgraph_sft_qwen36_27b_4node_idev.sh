@@ -203,6 +203,10 @@ mkdir -p "$PROJECT_ROOT/logs" "$CHECKPOINT_ROOT"
 cd "$PROJECT_ROOT"
 activate_train_env
 
+if [ -n "${SFT_EXPLICIT_EXPORT:-}" ]; then
+  python scripts/check_explicit_distillation_sft.py --data "$SFT_EXPLICIT_EXPORT" --heldout "$SFT_EXPLICIT_HELDOUT" --tokenizer "$MODEL_PATH" --max-length "$MAX_LENGTH"
+fi
+
 echo "$MODEL_ID ContextGraph SFT training smoke"
 echo "Model: $MODEL_PATH"
 echo "Train data: $TRAIN_FILE (max_samples=$TRAIN_MAX_SAMPLES)"

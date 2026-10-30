@@ -408,8 +408,8 @@ class MultiTurnSFTDataset(Dataset):
         enable_thinking = self.enable_thinking[item] if self.enable_thinking is not None else None
 
         # 1. tokenize the conversation and build the assistant-only loss mask
-        if row_dict.get("sft_profile") in {"route_a_v1", "route_a_mixed_v1"} and self.loss_mask_mode != "agent_context":
-            raise ValueError("Route A requires loss_mask_mode=agent_context")
+        if row_dict.get("sft_profile") in {"route_a_v1", "route_a_mixed_v1", "explicit_context_distillation_v1"} and self.loss_mask_mode != "agent_context":
+            raise ValueError("Native-target SFT requires loss_mask_mode=agent_context")
         if self.loss_mask_mode == "agent_context":
             from agents.exact_context import tokenizer_signature, validate_agent_context
             if self.processor is not None or self.truncation != "error":

@@ -26,10 +26,11 @@ PROFILE = "bcp_explicit_teacher_v1"
 SCIENCEWORLD_PROFILE = "scienceworld_explicit_teacher_v1"
 AUTO_PROFILE = "contextgraph_auto_teacher_v1"
 ROUTE_A_PROFILE = "contextgraph_route_a_v1"
+DISTILL_PROFILE = "contextgraph_explicit_distillation_v1"
 
 
 def collection_client(args, *positional):
-    if getattr(args, "collection_mode", "teacher") == "route_a":
+    if getattr(args, "collection_mode", "teacher") in {"route_a", "explicit_distillation"}:
         from scripts.route_a_client import RouteAClient
         return RouteAClient(args, *positional)
     return TeacherClient(args, *positional)
@@ -120,9 +121,15 @@ def make_config(args):
         rollout.plugin.enable_retrieval_memory = True
     # Teacher chat collection is non-thinking; Route A retains policy thinking.
     route_a = getattr(args, "collection_mode", "teacher") == "route_a"
+    distill = getattr(args, "collection_mode", "teacher") == "explicit_distillation"
     if route_a and (protocol != "controller" or args.transport != "vllm_tokens"):
         raise ValueError("Route A requires controller protocol and vllm_tokens transport")
-    rollout.plugin.apply_chat_template_kwargs = {"enable_thinking": route_a}
+    if distill and (protocol != "explicit_tools" or args.transport != "vllm_tokens"
+                    or profile != "explicit_distillation_guidance_v1"):
+        raise ValueError("Explicit distillation requires explicit_tools, vllm_tokens and registered collection guidance")
+    rollout.plugin.apply_chat_template_kwargs = {"enable_thinking": route_a or distill}
+    if distill:
+        rollout.plugin.explicit_action_thinking = True
     return config
 
 
@@ -223,10 +230,13 @@ async def preflight(args, tokenizer, config, root):
         for branch in (False, True):
             contract = ActionContract("ScienceWorld@real" if scienceworld else "LocalSearch", None, branch=branch)
             messages = [{"role": "user", "content": 'Return JSON: {"tool":"graph_read","arguments":{}}'}]
+            distill = getattr(args, 'collection_mode', '') == 'explicit_distillation'
             ids = tokenizer.apply_chat_template(messages, tokenize=True, add_generation_prompt=True,
-                                                enable_thinking=False)
-            result = await teacher.create_completion(ids, messages=messages, max_new_tokens=256,
+                                                enable_thinking=distill, return_dict=False)
+            result = await teacher.create_completion(ids, messages=messages, max_new_tokens=args.turn_max_tokens if distill else 256,
                                                       structured_outputs={"json": contract.schema()})
+            if distill and result['choices'][0].get('finish_reason') != 'stop':
+                raise ValueError('Explicit thinking preflight did not finish within the configured turn budget')
             payload, _ = contract.decode(result["choices"][0]["message"]["content"], contract.schema())
             if payload["tool"] != "graph_read":
                 raise ValueError("Teacher preflight did not produce the requested action")
@@ -256,7 +266,7 @@ async def collect(args, rows, indices, config, tokenizer, root):
             attempt = episode_root / ("attempt-" + uuid.uuid4().hex[:12])
             attempt.mkdir(parents=True)
             candidate_args = copy.copy(args)
-            if getattr(args, "collection_mode", "teacher") == "route_a":
+            if getattr(args, "collection_mode", "teacher") in {"route_a", "explicit_distillation"}:
                 candidate_args.seed = args.seed + index * args.candidates + candidate
             client = collection_client(candidate_args, tokenizer, config.actor_rollout_ref.rollout, attempt / "requests.jsonl")
             row = copy.deepcopy(rows[index])
@@ -376,7 +386,7 @@ def parse_args():
     p.add_argument("--teacher-model", default=os.getenv("DEEPSEEK_MODEL", "deepseek-flash"))
     p.add_argument("--teacher-checkpoint", default=os.getenv("TEACHER_CHECKPOINT_PATH"))
     p.add_argument("--transport", choices=["deepseek", "vllm", "vllm_tokens"], default="deepseek")
-    p.add_argument("--collection-mode", choices=["teacher", "route_a"], default="teacher")
+    p.add_argument("--collection-mode", choices=["teacher", "route_a", "explicit_distillation"], default="teacher")
     p.add_argument("--search-url", default=os.getenv("LOCAL_SEARCH_URL"))
     p.add_argument("--samples", type=int, default=25)
     p.add_argument("--start", type=int, default=0)
@@ -385,7 +395,7 @@ def parse_args():
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--temperature", type=float, default=0.7)
     p.add_argument("--selection", choices=["uniform", "task_balanced"], default="uniform")
-    p.add_argument("--teacher-profile", choices=["evaluation", "graph_demonstration_v1", "framework_assisted_v1"], default="evaluation")
+    p.add_argument("--teacher-profile", choices=["evaluation", "graph_demonstration_v1", "framework_assisted_v1", "explicit_distillation_guidance_v1"], default="evaluation")
     p.add_argument("--graph-protocol", choices=["explicit_tools", "controller"], default="explicit_tools")
     p.add_argument("--prompt-length", type=int, default=8192)
     p.add_argument("--response-length", type=int, default=24576)
@@ -403,11 +413,11 @@ def main():
     import subprocess
     from omegaconf import OmegaConf
     args = parse_args()
-    if args.collection_mode == "route_a":
+    if args.collection_mode in {"route_a", "explicit_distillation"}:
         if not args.teacher_checkpoint or Path(args.teacher_checkpoint).resolve() != Path(args.tokenizer).resolve():
-            raise ValueError("Route A must use the same local checkpoint for policy and tokenizer")
+            raise ValueError("Native collection must use the same local checkpoint for policy and tokenizer")
     elif args.transport == "vllm_tokens":
-        raise ValueError("vllm_tokens is reserved for Route A collection")
+        raise ValueError("vllm_tokens requires a native-token collection mode")
     if min(args.workers, args.candidates, args.prompt_length, args.response_length, args.branch_len, args.max_turn, args.max_steps) < 1 or args.turn_max_tokens < 256:
         raise ValueError("Positive budgets/workers/candidates and turn-max-tokens >= 256 required")
     if any(word in Path(args.data).stem.lower() for word in ("test", "validation", "heldout")):
@@ -445,13 +455,17 @@ def main():
     if args.benchmark == 'bcp':
         manifest['managed_search'] = managed_search_provenance()
     route_a_tokenizer = None
-    if args.collection_mode == "route_a":
+    if args.collection_mode in {"route_a", "explicit_distillation"}:
         from transformers import AutoTokenizer
         from agents.exact_context import tokenizer_signature
         route_a_tokenizer = AutoTokenizer.from_pretrained(args.tokenizer, local_files_only=True)
-        manifest.update(profile=ROUTE_A_PROFILE,
+        manifest.update(profile=ROUTE_A_PROFILE if args.collection_mode == "route_a" else DISTILL_PROFILE,
                         tokenizer_sha256=tokenizer_signature(route_a_tokenizer),
                         accounting="native policy input/output IDs; same-checkpoint SFT, not RL logprobs")
+        if args.collection_mode == "explicit_distillation":
+            from agents.sft_teacher_guidance import DISTILL_GUIDANCE
+            manifest.update(collection_guidance=DISTILL_GUIDANCE,
+                            accounting="native teacher IDs; student prefix re-rendered after registered guidance removal; offline SFT only")
     save_collection_manifest(root, manifest)
     print(json.dumps({"selected_questions": len(indices), "planned_episodes": len(indices) * args.candidates,
                       "teacher_profile": args.teacher_profile, "selection": args.selection,

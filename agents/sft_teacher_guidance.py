@@ -2,6 +2,17 @@
 
 PROFILE = "graph_demonstration_v1"
 ASSISTED_PROFILE = "framework_assisted_v1"
+DISTILL_PROFILE = "explicit_distillation_guidance_v1"
+DISTILL_START = "[BEGIN COLLECTION GUIDANCE explicit_distillation_v1]"
+DISTILL_END = "[END COLLECTION GUIDANCE explicit_distillation_v1]"
+DISTILL_GUIDANCE = DISTILL_START + "\n" + """Complete the task using evidence. You decide when and how to use graph tools.
+Merge related findings when a summary preserves needed source IDs and qualifications.
+Prune only obsolete or redundant evidence; retain unique evidence and unresolved constraints.
+Use graph_read/recall to check uncertainty, and graph_compact when retained memory can
+replace a growing history. Continue the task after maintenance. Do not use operations
+to meet a quota. Distinguish observations from hypotheses. Reason as needed, then emit
+one action in the existing JSON interface. No framework maintenance schedule is enabled.
+""" + DISTILL_END
 
 PROMPT = """SFT demonstration collection (not the ordinary evaluation prompt).
 Complete the task while demonstrating useful, model-chosen graph memory.
@@ -29,6 +40,8 @@ action interface; do not add prose or a separate reasoning response.
 
 
 def teacher_guidance(profile):
+    if profile == DISTILL_PROFILE:
+        return DISTILL_GUIDANCE
     if profile == "evaluation":
         return ""
     if profile == ASSISTED_PROFILE:

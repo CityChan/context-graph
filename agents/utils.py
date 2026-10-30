@@ -733,7 +733,8 @@ class Agent(SessionSummaryMixin, AgentContext):
         self.action_budget_skips = 0
         self.forced_branch_returns = 0
         if action_contract is not None:
-            chat_template_kwargs = {**(chat_template_kwargs or {}), 'enable_thinking': False}
+            chat_template_kwargs = {**(chat_template_kwargs or {}), 'enable_thinking':
+                                    bool(getattr(config.plugin, 'explicit_action_thinking', False))}
         super().__init__(
             conversations,
             tokenizer,

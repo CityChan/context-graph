@@ -40,6 +40,12 @@ decisions; invalid targets are rejected without silently changing your choice.
 '''
 
 
+THINKING_PROMPT = PROMPT.replace(
+    'constrains syntax and serializes the environment call. Do not emit XML, markdown\nor a thinking block.',
+    'validates the final JSON and serializes the environment call. Reason in the thinking\n'
+    'channel if needed, then end thinking and emit only the JSON action, without XML or markdown.')
+
+
 def obj(properties, required=None):
     return {'type': 'object', 'properties': properties,
             'required': list(properties if required is None else required), 'additionalProperties': False}
