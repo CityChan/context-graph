@@ -212,13 +212,18 @@ if [ "$BCP_GRAPH_RPO_SMOKE" = 1 ]; then
   export VAL_BEFORE_TRAIN=False TEST_FREQ=-1 SAVE_FREQ=2
   echo "GraphRPO smoke: 4 prompts x 4 rollouts, 4 trainer ranks, 2 steps, 32K context; credit audit required."
 fi
-if [ "${GRAPH_RPO_GUARD_PROFILE:-none}" = invalid_action_v1 ]; then
-  [ "$METHOD" = contextgraph ] && [ "$GRAPH_RPO_CREDIT_BACKEND" = outcome_only ] || { echo 'Guarded joint RL requires contextgraph outcome_only' >&2; exit 2; }
+if [ "${GRAPH_RPO_GUARD_PROFILE:-none}" != none ]; then
+  case "$GRAPH_RPO_GUARD_PROFILE:$GRAPH_RPO_CREDIT_BACKEND" in
+    invalid_action_v1:outcome_only) export GRAPH_RPO_REQUIRE_BINARY=True ;;
+    graph_management_v1:management) export GRAPH_RPO_REQUIRE_BINARY=False GRAPH_RPO_ALPHA=1.0 GRAPH_RPO_BETA=1.0 ;;
+    *) echo 'Guard profile and credit backend do not match' >&2; exit 2 ;;
+  esac
+  [ "$METHOD" = contextgraph ] || { echo 'Guarded joint RL requires contextgraph' >&2; exit 2; }
   export GRAPH_RPO_ACTION_PROTOCOL=explicit_tools BC_CTXGRAPH_PROTOCOL=explicit_tools
   export GRAPH_RPO_INVALID_ACTION_POLICY=negative_invalid_graph PROCESS_REWARD_SPEC='[graphrpo]'
   export CONSOLIDATION_INTERVAL=0 AUTO_PRUNE_MAX_ACTIVE=0
   export PROMPT_LENGTH=8192 RESPONSE_LENGTH=57344 CONTEXT_LENGTH=65536 AGENT_BUDGET_MODE=working_context
-  echo 'Guarded joint RL: binary outcome, negative invalid graph actions, verified sampled prefixes, model-owned maintenance, 64K'
+  echo "Guarded joint RL: profile=$GRAPH_RPO_GUARD_PROFILE backend=$GRAPH_RPO_CREDIT_BACKEND; negative invalid graph actions, verified sampled prefixes, model-owned maintenance, 64K"
 fi
 printf '%s\n' "profile=$BCP_TRAIN_PROFILE" "model_revision=$MODEL_REVISION" \
   "graph_rl_guard_profile=${GRAPH_RPO_GUARD_PROFILE:-none}" "invalid_action_policy=${GRAPH_RPO_INVALID_ACTION_POLICY:-additive}" \
@@ -270,7 +275,7 @@ ARGS=(
   +actor_rollout_ref.rollout.plugin.apply_chat_template_kwargs.preserve_thinking=True
 )
 if [ "$METHOD" = contextgraph ]; then
-  ARGS+=(algorithm.use_kl_in_reward=False algorithm.graphrpo_require_binary_reward=True
+  ARGS+=(algorithm.use_kl_in_reward=False algorithm.graphrpo_require_binary_reward=${GRAPH_RPO_REQUIRE_BINARY:-True}
     actor_rollout_ref.actor.kl_loss_type=low_var_kl)
 fi
 if [ "${SMOKE_TEST:-0}" = 1 ] || [ "$BCP_GRAPH_RPO_SMOKE" = 1 ]; then

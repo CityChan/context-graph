@@ -300,6 +300,10 @@ def execute_graph_tool(graph, trace, agent, response, *, agent_name, turn_id, pe
                                     'cumulative_refresh_tokens': agent.graph_context_tokens}
     if maintenance is not None:
         maintenance.executed(attempted, result.success, context_before, len(agent.context()))
+    if penalize and getattr(agent.config.plugin, 'graph_rpo_credit_backend', None) == 'management':
+        from .graph_management_reward import record_operation
+        credit = record_operation(graph, agent, event, context_before, len(agent.context()))
+        agent.add_graph_edit_credit(turn, credit)
     if not result.success and penalize:
         agent.set_process_reward(turn, -0.3)
         agent.additional_info[turn]['graph_invalid_penalty'] = -0.3

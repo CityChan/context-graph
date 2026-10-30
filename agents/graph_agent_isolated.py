@@ -2283,8 +2283,15 @@ async def process_item(
                                 agent[name].set_cache('reward', 0 + 0.2)
 
         reference_edit_requests = []
+        management_training_reward = None
         if graph_rpo_enabled and is_train:
-            if graph_rpo_backend == "outcome_only":
+            if graph_rpo_backend == 'management':
+                from .graph_management_reward import terminal_reward
+                management_training_reward, graph_rpo_metrics = terminal_reward(graph, native_task_reward)
+                env.stats['training_reward'] = management_training_reward
+                print('[GRAPH MANAGEMENT REWARD]', {'native_task_reward': native_task_reward,
+                    'training_reward': management_training_reward, **graph_rpo_metrics})
+            elif graph_rpo_backend == "outcome_only":
                 # Ordinary task/process learning without evaluator calls or
                 # artificial local graph credit. Keep decision-span markers.
                 for acting_agent in agent.values():
@@ -2340,6 +2347,8 @@ async def process_item(
                         })
                 env.stats['graph_rpo_creditable_edits'] = len(reference_edits_with_spans)
             agent_reward = score[1]
+            if management_training_reward is not None:
+                agent_reward = management_training_reward
 
             # Every trajectory emitted from one gen_uid is another view of the
             # same episode. Give main and branches the same terminal graph reward;
@@ -2379,7 +2388,7 @@ async def process_item(
                     'action_output_profile': ACTION_PROFILE if explicit_graph_tools else 'legacy',
                     'graph_decision_profile': GRAPH_DECISION_PROFILE if explicit_graph_tools else 'legacy',
                     'native_task_reward': native_task_reward,
-                    'training_reward_applied': scienceworld_reward_profile == 'v3_long' and is_train,
+                    'training_reward_applied': management_training_reward is not None or (scienceworld_reward_profile == 'v3_long' and is_train),
                     'hit_no_tool_limit': int(no_tool_guard.stopped),
                     'is_finish': is_finish,
                     'agent_name': name,

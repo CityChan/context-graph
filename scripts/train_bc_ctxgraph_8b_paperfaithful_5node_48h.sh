@@ -321,11 +321,18 @@ if [ "$ADV_ESTIMATOR" = "graphrpo" ]; then
     "+actor_rollout_ref.rollout.plugin.graph_rpo_operation_costs=$GRAPH_RPO_OPERATION_COSTS"
   )
   if [ "${GRAPH_RPO_GUARD_PROFILE:-none}" != none ]; then
-    [ "$GRAPH_RPO_GUARD_PROFILE" = invalid_action_v1 ] && [ "$BC_CTXGRAPH_PROTOCOL" = explicit_tools ] && [ "$GRAPH_RPO_CREDIT_BACKEND" = outcome_only ] || { echo 'Guard profile requires explicit outcome-only GraphRPO' >&2; exit 2; }
+    case "$GRAPH_RPO_GUARD_PROFILE:$GRAPH_RPO_CREDIT_BACKEND" in
+      invalid_action_v1:outcome_only) GRAPH_RPO_REQUIRE_BINARY=True ;;
+      graph_management_v1:management)
+        GRAPH_RPO_REQUIRE_BINARY=False
+        GRAPH_RPO_ARGS+=("++algorithm.graphrpo_alpha=1.0" "++algorithm.graphrpo_beta=1.0" "algorithm.graphrpo_norm_adv_by_std=False") ;;
+      *) echo 'Guard profile and credit backend do not match' >&2; exit 2 ;;
+    esac
+    [ "$BC_CTXGRAPH_PROTOCOL" = explicit_tools ] || { echo 'Guard profile requires explicit_tools' >&2; exit 2; }
     GRAPH_RPO_ARGS+=(
       "++algorithm.graphrpo_invalid_action_policy=negative_invalid_graph"
-      "algorithm.graphrpo_require_binary_reward=True"
-      "+actor_rollout_ref.rollout.plugin.graph_rl_guard_profile=invalid_action_v1"
+      "algorithm.graphrpo_require_binary_reward=$GRAPH_RPO_REQUIRE_BINARY"
+      "+actor_rollout_ref.rollout.plugin.graph_rl_guard_profile=$GRAPH_RPO_GUARD_PROFILE"
       "+actor_rollout_ref.rollout.plugin.verify_training_context=True"
       "+actor_rollout_ref.rollout.plugin.graph_reject_repeated_compact=True"
       "++actor_rollout_ref.rollout.plugin.graph_rpo_scope_process_reward=False"
@@ -339,7 +346,7 @@ if [ "$ADV_ESTIMATOR" = "graphrpo" ]; then
     )
   fi
   case "$GRAPH_RPO_CREDIT_BACKEND" in
-    outcome_only) ;;
+    outcome_only|management) ;;
     evidence)
       python scripts/prepare_graph_evidence_data.py --check "$TRAIN_DATA_FILE"
       GRAPH_RPO_ARGS+=(
@@ -388,7 +395,7 @@ if [ "$ADV_ESTIMATOR" = "graphrpo" ]; then
       )
       ;;
     *)
-      echo "ERROR: unsupported GRAPH_RPO_CREDIT_BACKEND (expected outcome_only, evidence, reference_answer_likelihood, old_policy_answer_likelihood, or external_evaluator)"
+      echo "ERROR: unsupported GRAPH_RPO_CREDIT_BACKEND (expected outcome_only, management, evidence, reference_answer_likelihood, old_policy_answer_likelihood, or external_evaluator)"
       exit 1
       ;;
   esac

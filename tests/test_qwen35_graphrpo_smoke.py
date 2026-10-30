@@ -93,7 +93,8 @@ def test_graph_smoke_rejects_incompatible_method_or_profile(tmp_path, method, pr
     assert 'GraphRPO smoke requires' in result.stderr
 
 
-def test_guarded_entry_uses_64k_four_nodes_and_preserves_legacy_entry(tmp_path):
+@pytest.mark.parametrize('profile,backend', [('graph_management_v1', 'management'), ('invalid_action_v1', 'outcome_only')])
+def test_guarded_entry_uses_64k_four_nodes_and_preserves_legacy_entry(tmp_path, profile, backend):
     (tmp_path / 'scripts').mkdir()
     (tmp_path / 'data').mkdir()
     for name in ('bc_train.parquet', 'bc_test.parquet'):
@@ -112,15 +113,41 @@ def test_guarded_entry_uses_64k_four_nodes_and_preserves_legacy_entry(tmp_path):
     env = dict(os.environ, TEST_ROOT=tmp_path.as_posix(), SCRATCH=tmp_path.as_posix(),
                CONDA_PREFIX=tmp_path.as_posix(), SLURM_JOB_ID='fixture', SLURM_JOB_NODELIST='fixture',
                OPENAI_API_KEY='fixture', SMOKE_TEST='1', PREFLIGHT_ONLY='0',
-               BCP_GRAPH_RPO_SMOKE='1', BCP_TRAIN_TOPOLOGY='idev4_dp2')
+               BCP_GRAPH_RPO_SMOKE='1', BCP_TRAIN_TOPOLOGY='idev4_dp2', GRAPH_RPO_GUARD_PROFILE=profile)
     result = subprocess.run([BASH, setup.as_posix()], cwd=ROOT, env=env, capture_output=True,
                             text=True, timeout=30, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
     assert result.returncode == 23, result.stdout + result.stderr
     captured = dict(line.split('=', 1) for line in (tmp_path / 'captured.env').read_text().splitlines() if '=' in line)
-    for key, value in dict(GRAPH_RPO_GUARD_PROFILE='invalid_action_v1',
-            GRAPH_RPO_INVALID_ACTION_POLICY='negative_invalid_graph', GRAPH_RPO_CREDIT_BACKEND='outcome_only',
+    for key, value in dict(GRAPH_RPO_GUARD_PROFILE=profile,
+            GRAPH_RPO_INVALID_ACTION_POLICY='negative_invalid_graph', GRAPH_RPO_CREDIT_BACKEND=backend,
             BC_CTXGRAPH_PROTOCOL='explicit_tools', PROCESS_REWARD_SPEC='[graphrpo]',
             CONTEXT_LENGTH='65536', PROMPT_LENGTH='8192', RESPONSE_LENGTH='57344',
             EXPECTED_NUM_NODES='4', TOTAL_TRAINING_STEPS='1', CONSOLIDATION_INTERVAL='0',
             AUTO_PRUNE_MAX_ACTIVE='0', AGENT_BUDGET_MODE='working_context').items():
         assert captured[key] == value
+    assert captured['GRAPH_RPO_REQUIRE_BINARY'] == ('False' if backend == 'management' else 'True')
+    if backend == 'management':
+        assert captured['GRAPH_RPO_ALPHA'] == captured['GRAPH_RPO_BETA'] == '1.0'
+
+
+def test_management_hydra_overrides_compose_into_runtime_profile(tmp_path):
+    from hydra import compose, initialize
+    from hydra.core.config_store import ConfigStore
+    from omegaconf import OmegaConf
+    from verl.trainer.config.algorithm import AlgoConfig
+    from agents.graph_rl_profile import validate_profile
+    source = (ROOT / 'scripts/train_bc_ctxgraph_8b_paperfaithful_5node_48h.sh').read_text(encoding='utf8')
+    block = 'GRAPH_RPO_ARGS=()' + source.split('GRAPH_RPO_ARGS=()', 1)[1].split('\nfi\n', 1)[0] + '\nfi\n'
+    script = tmp_path / 'overrides.sh'
+    script.write_text('set -eu\n' + block + 'printf "%s\\n" "${GRAPH_RPO_ARGS[@]}"\n', newline='\n')
+    result = subprocess.run([BASH, script.as_posix()], env=dict(os.environ,
+        ADV_ESTIMATOR='graphrpo', BC_CTXGRAPH_PROTOCOL='explicit_tools',
+        GRAPH_RPO_GUARD_PROFILE='graph_management_v1', GRAPH_RPO_CREDIT_BACKEND='management'),
+        capture_output=True, text=True, timeout=30,
+        creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+    assert result.returncode == 0, result.stderr
+    ConfigStore.instance().store(name='management_test', node=dict(algorithm=OmegaConf.structured(AlgoConfig),
+        actor_rollout_ref=dict(rollout=dict(plugin=dict(graph_action_protocol='explicit_tools')))))
+    with initialize(version_base=None):
+        config = compose(config_name='management_test', overrides=['algorithm.adv_estimator=graphrpo', *result.stdout.splitlines()])
+    validate_profile(config.algorithm, config.actor_rollout_ref.rollout.plugin)

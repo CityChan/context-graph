@@ -1,5 +1,11 @@
 # Joint GraphRPO with invalid-action guards
 
+This page describes the preserved `invalid_action_v1` profile. The guarded entry
+now defaults to [graph_management_v1](graphrpo_graph_management.md), which adds
+graph-size/edge-density shaping and bounded effective-operation credit. Select
+`GRAPH_RPO_GUARD_PROFILE=invalid_action_v1` to reproduce this page's binary-outcome
+recipe.
+
 `invalid_action_v1` implements the joint execution/graph-management design: one
 policy chooses task actions and explicit graph tools, including when to compact.
 The final task reward is binary. The profile has no automatic prune, compact,
@@ -56,7 +62,7 @@ logprobs, not numerical equality with GPU-recomputed old-policy logprobs.
 From a clean checkout of this branch inside a four-node allocation:
 
 ```bash
-bash scripts/train_bcp_qwen35_9b_guarded_rl.sh
+GRAPH_RPO_GUARD_PROFILE=invalid_action_v1 bash scripts/train_bcp_qwen35_9b_guarded_rl.sh
 ```
 
 This defaults to the existing Qwen3.5-9B checkpoint, 65,536 context tokens
@@ -69,7 +75,7 @@ prove that invalid-action or compaction guards were exercised.
 Inside a five-node allocation, the existing 50-step recipe can be selected with:
 
 ```bash
-SMOKE_TEST=0 bash scripts/train_bcp_qwen35_9b_guarded_rl.sh
+GRAPH_RPO_GUARD_PROFILE=invalid_action_v1 SMOKE_TEST=0 bash scripts/train_bcp_qwen35_9b_guarded_rl.sh
 ```
 
 The final configuration is recorded in `training-config.txt`; checkpoint and
