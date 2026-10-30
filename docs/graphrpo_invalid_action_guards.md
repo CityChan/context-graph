@@ -1,5 +1,8 @@
 # Joint GraphRPO with invalid-action guards
 
+For the simplified binary outcome + success-gated prune credit + search deduplication
+recipe, use the separate opt-in [prune_search_v1 launcher](graphrpo_prune_search.md).
+
 This page describes the preserved `invalid_action_v1` profile. The guarded entry
 now defaults to [graph_management_full_v1](graphrpo_full_alignment.md), which adds
 structural and process shaping, `negative_all`, and optional automatic maintenance. Select

@@ -499,9 +499,11 @@ class LocalSearch:
             )
 
     async def run_action(self, response):
+        self.last_action_outcome = {'success': False, 'documents': 0, 'new_documents': 0}
         self.stats['action'] += 1
         fn_call = extract_fn_call(response)
         if fn_call is None or len(fn_call) == 0:
+            self.last_action_outcome['rejected'] = True
             # Improved message for no function call
             return {'observation': 'No function call was detected in the model response.'}
         else:
@@ -514,9 +516,11 @@ class LocalSearch:
                     topk = (lambda v: int(v) if str(v).isdigit() else 10)(fn['arguments'].get('topk', 10))
                     topk = min(max(topk, 1), self.search_topk_cap)
                     if not query:
+                        self.last_action_outcome['rejected'] = True
                         observation += '[Error] The "search" function requires a "query" argument.'
                     else:
                         observation += f'[Search Results for "{query}"]\n'
+                        visited_before = len(self.visited_pages)
                         serp = await self.client.search(query, 50)
                         self.stats['is_search'] = 1
                         show_topk = 0
@@ -544,6 +548,8 @@ class LocalSearch:
                             if show_topk >= topk:
                                 break
                         observation += "\n"
+                        self.last_action_outcome.update(success=True, documents=i if serp else 0,
+                            new_documents=len(self.visited_pages) - visited_before)
 
                 elif name == 'open_page':
                     self.stats['open_page'] += 1
@@ -551,11 +557,14 @@ class LocalSearch:
                     url = fn['arguments'].get('url', None)
                     docid = fn['arguments'].get('docid', None)
                     if not docid and not url:
+                        self.last_action_outcome['rejected'] = True
                         # Clearer error for missing parameters
                         observation += '[Error] The "open_page" function requires either a "docid" or a "url".'
                     else:
                         open_pages = await self.client.open(url, docid)
+                        valid_documents = 0
                         for page in open_pages:
+                            valid_documents += int(page['text'] not in ('Document not found for given docid.', 'Missing docid and url, or url not indexed.'))
                             # Structured format for opened page content
                             page['text'] = keep_first_n_words(
                                 page['text'], self.open_page_words,
@@ -570,11 +579,14 @@ class LocalSearch:
                                 f"content: {page['text']}\n"
                             )
                         observation += "\n"
+                        self.last_action_outcome.update(success=bool(valid_documents), documents=valid_documents,
+                            rejected=bool(open_pages) and not valid_documents)
                 elif name == 'finish':
                     answer = fn['arguments'].get('answer', "")
                     explanation = fn['arguments'].get('explanation', None)
                     confidence = fn['arguments'].get('confidence', None)
                     if len(answer.strip()) == 0:
+                        self.last_action_outcome['rejected'] = True
                         print(response)
                         observation = ("Fail to parse answer. Please resubmit with the correct tool call format, eg\n"
                                        "<function=finish>\n" "<parameter=answer>YOUR ANSWER</parameter>\n"
@@ -587,6 +599,7 @@ class LocalSearch:
 
                     if not self.stats['is_search']:
                         if self.must_search:
+                            self.last_action_outcome['rejected'] = True
                             observation = "Answer submission failed. You MUST use the search tool to verify the answer and all the evidence, and cite the correct source document in your explanation to support your claim."
                             return {'observation': observation.strip()}
                         answer = ""  # No search no reward
@@ -605,6 +618,7 @@ class LocalSearch:
                                 missing.append(k)
 
                         if len(missing) > 0:
+                            self.last_action_outcome['rejected'] = True
                             observation = f"Answer submission failed. The answer is missing the following questions: {', '.join(missing)}. Make sure submit answer for all the questions. Ensure all the answers are submitted in one finish tool call."
                             return {'observation': observation.strip()}
 
@@ -628,6 +642,7 @@ Once you’re confident everything is covered and verified, submit the final ans
                     return {'action': 'finish'}
                 else:
                     # Clearer error for unsupported functions
+                    self.last_action_outcome['rejected'] = True
                     observation = f'[Error] The function "{name}" is not supported.'
             if (
                 observation

@@ -630,6 +630,13 @@ async def process_item(
             management_runtime = GraphManagementRuntime(graph, graph_trace, config.plugin, train=is_train,
                 answers=_get(item.non_tensor_batch['extra_info']).get('answer', ()))
             management_runtime.register(agent['main'], 'main')
+        prune_runtime = None
+        if getattr(config.plugin, 'graph_rl_guard_profile', None) == 'prune_search_v1':
+            from .prune_search import PruneSearchRuntime
+            if not hasattr(env, 'search_topk_cap'):
+                raise ValueError('prune_search_v1 requires the LocalSearch executor')
+            prune_runtime = PruneSearchRuntime(graph, env, train=is_train)
+            prune_runtime.register(agent['main'])
 
         async def call_structured_memory_controller(prompt, schema, max_new_tokens):
             """Run an isolated controller call with bounded schema-repair retries."""
@@ -1051,8 +1058,12 @@ async def process_item(
                 trace_before = graph_trace.capture(graph)
                 if iteration >= effective_max_turn:
                     observation = "No remaining turn budget to start a branch."
+                    if prune_runtime is not None:
+                        prune_runtime.rejected(agent['main'], 'branch_budget_rejection')
                 elif len(branches) + 1 > max_session:
                     observation = f"You've already reached the limit of {len(branches)} branch calls. Continue working independently."
+                    if prune_runtime is not None:
+                        prune_runtime.rejected(agent['main'], 'branch_budget_rejection')
                     graph_trace.record(
                         graph, trace_before, turn_id=main_turn_count,
                         source="model", op="branch",
@@ -1134,6 +1145,8 @@ async def process_item(
                             parent_turn=branch_turn_index,
                             high_pressure=getattr(agent['main'], 'gm_last_input_tokens', len(agent['main'].context())) >= .75 * management_runtime.window(agent['main']))
                     wrapped_action = make_graph_aware_run_action(env, child_graph)
+                    if prune_runtime is not None:
+                        prune_runtime.register(agent[agent_name])
                     if explicit_graph_tools:
                         async def wrapped_action(response):
                             if response.startswith('[Action protocol rejected]'):
@@ -1146,6 +1159,9 @@ async def process_item(
                             before = graph_trace.capture(graph)
                             result = await run_action(env, response)
                             if result is not None:
+                                if prune_runtime is not None and not prune_runtime.observed(
+                                        agent[agent_name], agent[agent_name].additional_info[-1].get('policy_action', {})):
+                                    return result + '\n\n' + decision_state(graph, agent[agent_name])
                                 node_id = record_observation(graph, response, result)
                                 event = graph_trace.record(graph, before, turn_id=iteration, source='environment',
                                     op='add_observation', args={'node_id': node_id}, success=True)
@@ -1305,7 +1321,10 @@ async def process_item(
 
                 if fn_call is not None:
                     if explicit_graph_tools:
-                        new_evidence_node_id = record_observation(graph, response, observation)
+                        supplies_evidence = prune_runtime is None or prune_runtime.observed(
+                            agent['main'], agent['main'].additional_info[-1].get('policy_action', {}))
+                        if supplies_evidence:
+                            new_evidence_node_id = record_observation(graph, response, observation)
                         new_evidence_tool_name = fn_call['function']
                         new_evidence_text = observation
                     elif fn_call['function'] == 'search':
@@ -2194,7 +2213,9 @@ async def process_item(
             env.stats.update(apply_compress_penalties(agent,
                 context_limit=config.prompt_length + config.response_length, branch_limit=max_session - 1))
 
-        if process_reward and is_train:
+        if prune_runtime is not None and is_train:
+            mask_rollout = False  # Retain local learning signal, including failed episodes.
+        if process_reward and is_train and prune_runtime is None:
             mask_rollout = False
 
             if 'cjk' in process_reward:
@@ -2319,6 +2340,8 @@ async def process_item(
                         if isinstance(info, dict) and 'graph_edit_credit' in info:
                             info['graph_edit_credit'] = 0.0
                 graph_rpo_metrics = {'graph_rpo_outcome_only': 1}
+                if prune_runtime is not None:
+                    graph_rpo_metrics.update(prune_runtime.finish(native_task_reward))
             elif graph_rpo_backend == "evidence":
                 graph_rpo_metrics = assign_evidence_credits(agent=agent['main'],
                     graph_trace=graph_trace_payload, gold=evidence_gold,
@@ -2345,6 +2368,8 @@ async def process_item(
                 env.stats['graph_rpo_decision_tokens'] = sum(
                     sum(agent['main'].token_mask[i]) for i, info in enumerate(agent['main'].additional_info)
                     if isinstance(info, dict) and 'graph_edit_credit' in info)
+        if prune_runtime is not None and not is_train:
+            env.stats.update(prune_runtime.stats())
 
         use_graph_reward = (
             not graph_rpo_enabled and process_reward and 'graph' in process_reward

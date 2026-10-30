@@ -85,7 +85,8 @@ class TokenClient:
         body = dict(model=self.model, prompt=list(input_ids), max_tokens=limit,
                     temperature=0.0, top_p=1.0, seed=self.seed,
                     return_token_ids=True, skip_special_tokens=False)
-        if kwargs.get("structured_outputs") is not None:
+        explicit_thinking = kwargs.get('explicit_action_thinking', False)
+        if kwargs.get("structured_outputs") is not None and not explicit_thinking:
             body["structured_outputs"] = normalize_structured_outputs(kwargs["structured_outputs"])
         try:
             response = await self.client.post("/v1/completions", json=body)
@@ -95,7 +96,8 @@ class TokenClient:
             ids = choice.get("token_ids")
             if not isinstance(ids, list) or not ids:
                 raise RuntimeError("vLLM must return nonempty generated token_ids")
-            text = self.tokenizer.decode(ids, skip_special_tokens=True)
+            from agents.action_contract import execution_text
+            text = execution_text(self.tokenizer, ids, explicit_thinking)
             with self.audit_path.open("a", encoding="utf-8") as handle:
                 handle.write(json.dumps({"input_ids": list(input_ids), "output_ids": ids,
                     "max_tokens": limit, "structured_outputs": body.get("structured_outputs"),
@@ -145,7 +147,25 @@ def config_for(args):
         from agents.graph_memory_baselines import settings
         config.actor_rollout_ref.rollout.plugin.update(settings(args))
     from agents.explicit_graph_tools import configure_evaluation_protocol
-    return configure_evaluation_protocol(config, args.method, getattr(args, 'graph_action_protocol', 'controller'))
+    config = configure_evaluation_protocol(config, args.method, getattr(args, 'graph_action_protocol', 'controller'))
+    if getattr(args, 'graph_rl_profile', 'none') == 'prune_search_v1':
+        if args.method != 'contextgraph' or getattr(args, 'graph_action_protocol', '') != 'explicit_tools':
+            raise ValueError('prune_search_v1 evaluation requires contextgraph and explicit_tools')
+        config.algorithm.update(adv_estimator='graphrpo', graphrpo_require_binary_reward=True,
+            graphrpo_alpha=1., graphrpo_beta=1., graphrpo_norm_adv_by_std=False,
+            graphrpo_invalid_action_policy='negative_all')
+        rollout = config.actor_rollout_ref.rollout
+        rollout.response_length = 57344
+        rollout.plugin.update(graph_rl_guard_profile='prune_search_v1', graph_rpo_credit_backend='outcome_only',
+            verify_training_context=True, graph_reject_repeated_compact=True, process_reward=['graphrpo'],
+            graph_rpo_scope_process_reward=False, gm_auto_prune_max_active=0, gm_auto_compact=False,
+            explicit_action_thinking=True, branch_len=57344, val_response_length=57344,
+            token_budget_mode='working_context', search_topk_cap=10, search_snippet_words=512,
+            search_snippet_chars=12000,
+            apply_chat_template_kwargs={'enable_thinking': True, 'preserve_thinking': True})
+        from agents.graph_rl_profile import validate_profile
+        validate_profile(config.algorithm, rollout.plugin)
+    return config
 
 
 def tokenizer_preflight(tokenizer, config):
@@ -253,11 +273,12 @@ async def evaluate(args):
             from agents.action_contract import ActionContract
             contract = ActionContract('LocalSearch', None)
             schema = contract.schema()
+            thinking = config.actor_rollout_ref.rollout.plugin.get('explicit_action_thinking', False)
             action_prompt = tokenizer.apply_chat_template([{'role': 'user', 'content':
                 'Return {"tool":"graph_read","arguments":{}}.'}],
-                tokenize=True, add_generation_prompt=True, enable_thinking=False)
-            answer = await probe.create_completion(action_prompt, max_new_tokens=256,
-                                                    structured_outputs={'json': schema})
+                tokenize=True, add_generation_prompt=True, enable_thinking=thinking)
+            answer = await probe.create_completion(action_prompt, max_new_tokens=2048 if thinking else 256,
+                explicit_action_thinking=thinking, structured_outputs={'json': schema})
             contract.decode(answer['choices'][0]['message']['content'], schema)
             print('Typed action schema preflight passed')
     finally:
@@ -315,6 +336,7 @@ def main():
     parser.add_argument("--supo-summary-max-tokens", type=int, default=1024)
     parser.add_argument("--memory-mode", choices=["legacy", "repaired"], default="repaired")
     parser.add_argument('--graph-action-protocol', choices=['controller', 'explicit_tools'], default='controller')
+    parser.add_argument('--graph-rl-profile', choices=['none', 'prune_search_v1'], default='none')
     parser.add_argument("--model", default="Qwen/Qwen3.8-27B")
     parser.add_argument("--model-path")
     parser.add_argument("--endpoint")

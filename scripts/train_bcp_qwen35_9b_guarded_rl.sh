@@ -6,7 +6,7 @@ export PROJECT_ROOT=$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)
 export GRAPH_RPO_GUARD_PROFILE=${GRAPH_RPO_GUARD_PROFILE:-graph_management_full_v1}
 case "$GRAPH_RPO_GUARD_PROFILE" in
   graph_management_v1|graph_management_full_v1) export GRAPH_RPO_CREDIT_BACKEND=management ;;
-  invalid_action_v1) export GRAPH_RPO_CREDIT_BACKEND=outcome_only ;;
+  invalid_action_v1|prune_search_v1) export GRAPH_RPO_CREDIT_BACKEND=outcome_only ;;
   *) echo 'Unknown guarded RL profile' >&2; exit 2 ;;
 esac
 export GRAPH_RPO_ACTION_PROTOCOL=explicit_tools

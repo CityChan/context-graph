@@ -811,6 +811,8 @@ class Agent(SessionSummaryMixin, AgentContext):
             if 'structured_outputs' in completion_kwargs:
                 raise ValueError('Action contract cannot be overridden by another output schema')
             completion_kwargs['structured_outputs'] = {'json': action_schema}
+            if getattr(self.config.plugin, 'explicit_action_thinking', False):
+                completion_kwargs['explicit_action_thinking'] = True
         context_record = None
         if getattr(self.config.plugin, "capture_model_contexts", False):
             context_record = {
@@ -844,10 +846,20 @@ class Agent(SessionSummaryMixin, AgentContext):
             except (ValueError, TypeError) as error:
                 self.action_protocol_errors += 1
                 self.additional_info[-1] = {'action_protocol_error': str(error)}
+                prune_runtime = getattr(self, 'prune_search_runtime', None)
+                if prune_runtime is not None:
+                    prune_runtime.rejected(self, 'invalid_format')
                 if context_record is not None:
                     context_record['action_protocol_error'] = str(error)
                 return '[Action protocol rejected] No tool executed: ' + str(error)
             self.additional_info[-1] = {'policy_action': payload, 'dispatched_action': wire}
+            prune_runtime = getattr(self, 'prune_search_runtime', None)
+            if prune_runtime is not None:
+                rejection = prune_runtime.before_dispatch(self, payload)
+                if rejection is not None:
+                    if context_record is not None:
+                        context_record['executor_rejection'] = rejection
+                    return rejection
             if runtime is not None:
                 runtime.sampled(self, payload, len(prompt))
             if self.sft_maintenance is not None:

@@ -215,13 +215,14 @@ fi
 if [ "${GRAPH_RPO_GUARD_PROFILE:-none}" != none ]; then
   case "$GRAPH_RPO_GUARD_PROFILE:$GRAPH_RPO_CREDIT_BACKEND" in
     invalid_action_v1:outcome_only) export GRAPH_RPO_REQUIRE_BINARY=True ;;
+    prune_search_v1:outcome_only) export GRAPH_RPO_REQUIRE_BINARY=True GRAPH_RPO_ALPHA=1.0 GRAPH_RPO_BETA=1.0 ;;
     graph_management_v1:management|graph_management_full_v1:management) export GRAPH_RPO_REQUIRE_BINARY=False GRAPH_RPO_ALPHA=1.0 GRAPH_RPO_BETA=1.0 ;;
     *) echo 'Guard profile and credit backend do not match' >&2; exit 2 ;;
   esac
   [ "$METHOD" = contextgraph ] || { echo 'Guarded joint RL requires contextgraph' >&2; exit 2; }
   export GRAPH_RPO_ACTION_PROTOCOL=explicit_tools BC_CTXGRAPH_PROTOCOL=explicit_tools
   export GRAPH_RPO_INVALID_ACTION_POLICY=negative_invalid_graph PROCESS_REWARD_SPEC='[graphrpo]'
-  if [ "$GRAPH_RPO_GUARD_PROFILE" = graph_management_full_v1 ]; then export GRAPH_RPO_INVALID_ACTION_POLICY=negative_all; fi
+  if [ "$GRAPH_RPO_GUARD_PROFILE" = graph_management_full_v1 ] || [ "$GRAPH_RPO_GUARD_PROFILE" = prune_search_v1 ]; then export GRAPH_RPO_INVALID_ACTION_POLICY=negative_all; fi
   export CONSOLIDATION_INTERVAL=0 AUTO_PRUNE_MAX_ACTIVE=0
   export PROMPT_LENGTH=8192 RESPONSE_LENGTH=57344 CONTEXT_LENGTH=65536 AGENT_BUDGET_MODE=working_context
   echo "Guarded joint RL: profile=$GRAPH_RPO_GUARD_PROFILE backend=$GRAPH_RPO_CREDIT_BACKEND policy=$GRAPH_RPO_INVALID_ACTION_POLICY; verified sampled prefixes, 64K"

@@ -30,6 +30,7 @@ def environment():
     env.donotgiveup = False
     env.double_check = False
     env.search_topk_cap = 5
+    env.visited_pages = set()
     env.search_skill_context = None
     env.use_skills_only_memory = False
     env.client = Client()
@@ -49,6 +50,7 @@ def test_rejected_finish_does_not_set_completed_or_score_guess(answer):
         for _ in range(2):
             result = await env.run_action(finish(answer))
             assert "observation" in result
+            assert env.last_action_outcome['rejected']
             assert not env.is_finish
             assert not env.stats["is_finish"]
             assert env.predicted_answer is None

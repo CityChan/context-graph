@@ -78,6 +78,50 @@ def test_selection_matches_across_methods_and_shards():
         select_indices(150, 151, 42)
 
 
+def test_prune_search_eval_uses_same_explicit_constraints_and_64k():
+    from scripts.eval_bcp_qwen38 import config_for
+    args = SimpleNamespace(method='contextgraph', memory_mode='repaired',
+        graph_action_protocol='explicit_tools', graph_rl_profile='prune_search_v1')
+    config = config_for(args)
+    rollout = config.actor_rollout_ref.rollout
+    assert rollout.prompt_length + rollout.response_length == 65536
+    assert rollout.plugin.token_budget_mode == 'working_context'
+    assert rollout.plugin.graph_rl_guard_profile == 'prune_search_v1'
+    assert rollout.plugin.explicit_action_thinking
+    assert not rollout.plugin.gm_auto_compact and not rollout.plugin.auto_prune_max_active
+    assert config.algorithm.graphrpo_require_binary_reward
+    args.graph_action_protocol = 'controller'
+    with pytest.raises(ValueError, match='explicit_tools'):
+        config_for(args)
+
+
+def test_explicit_thinking_eval_dispatches_final_json_but_keeps_native_ids(tmp_path):
+    from tests.test_session_restart import Tokenizer
+    tokenizer = Tokenizer()
+    final = '{"tool":"search","arguments":{"query":"evidence"}}'
+    ids = tokenizer.encode('reasoning</think>\n' + final)
+    requests = []
+    def handle(request):
+        requests.append(json.loads(request.content))
+        return httpx.Response(200, json={'choices': [{'token_ids': ids}], 'usage': {}})
+    async def run():
+        config = SimpleNamespace(prompt_length=8192, response_length=57344,
+            plugin=SimpleNamespace(turn_max_new_tokens=2048))
+        client = TokenClient('http://model', 'model', tokenizer, config, 42, tmp_path / 'audit.jsonl')
+        await client.client.aclose()
+        client.client = httpx.AsyncClient(transport=httpx.MockTransport(handle), base_url='http://model')
+        try:
+            result = await client.create_completion([1, 2], explicit_action_thinking=True,
+                structured_outputs={'json': {'type': 'object'}})
+            assert result['choices'][0]['message']['content'] == final
+            assert result['choices'][0]['message']['raw_output_ids'] == ids
+        finally:
+            await client.client.aclose()
+    asyncio.run(run())
+    assert 'structured_outputs' not in requests[0]
+    assert json.loads((tmp_path / 'audit.jsonl').read_text())['output_ids'] == ids
+
+
 def test_budget_preserves_finalizer_override_without_exceeding_context():
     config = SimpleNamespace(prompt_length=8, response_length=24,
                              plugin=SimpleNamespace(turn_max_new_tokens=12))

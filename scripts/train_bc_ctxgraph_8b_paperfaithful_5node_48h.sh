@@ -323,6 +323,9 @@ if [ "$ADV_ESTIMATOR" = "graphrpo" ]; then
   if [ "${GRAPH_RPO_GUARD_PROFILE:-none}" != none ]; then
     case "$GRAPH_RPO_GUARD_PROFILE:$GRAPH_RPO_CREDIT_BACKEND" in
       invalid_action_v1:outcome_only) GRAPH_RPO_REQUIRE_BINARY=True ;;
+      prune_search_v1:outcome_only)
+        GRAPH_RPO_REQUIRE_BINARY=True
+        GRAPH_RPO_ARGS+=("++algorithm.graphrpo_alpha=1.0" "++algorithm.graphrpo_beta=1.0" "algorithm.graphrpo_norm_adv_by_std=False") ;;
       graph_management_v1:management|graph_management_full_v1:management)
         GRAPH_RPO_REQUIRE_BINARY=False
         GRAPH_RPO_ARGS+=("++algorithm.graphrpo_alpha=1.0" "++algorithm.graphrpo_beta=1.0" "algorithm.graphrpo_norm_adv_by_std=False") ;;
@@ -330,6 +333,14 @@ if [ "$ADV_ESTIMATOR" = "graphrpo" ]; then
     esac
     [ "$BC_CTXGRAPH_PROTOCOL" = explicit_tools ] || { echo 'Guard profile requires explicit_tools' >&2; exit 2; }
     GRAPH_RPO_INVALID_ACTION_POLICY=negative_invalid_graph
+    if [ "$GRAPH_RPO_GUARD_PROFILE" = prune_search_v1 ]; then
+      GRAPH_RPO_INVALID_ACTION_POLICY=negative_all
+      GRAPH_RPO_ARGS+=(
+        "++actor_rollout_ref.rollout.plugin.explicit_action_thinking=True"
+        "++actor_rollout_ref.rollout.plugin.gm_auto_compact=False"
+        "++actor_rollout_ref.rollout.plugin.gm_auto_prune_max_active=0"
+      )
+    fi
     if [ "$GRAPH_RPO_GUARD_PROFILE" = graph_management_full_v1 ]; then
       GRAPH_RPO_INVALID_ACTION_POLICY=negative_all
       GRAPH_RPO_ARGS+=(

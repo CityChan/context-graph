@@ -114,6 +114,11 @@ Examples:
 
 def explicit_graph_prompt(plugin):
     """Keep legacy prompts stable; describe enabled full-profile maintenance truthfully."""
+    if getattr(plugin, 'graph_rl_guard_profile', None) == 'prune_search_v1':
+        return EXPLICIT_GRAPH_PROMPT + ('\nRepeated successful searches with the same normalized query and effective topk '
+            'are blocked across MAIN and BRANCH, even after prune/compact. Failed searches may be retried. '
+            'A blocked request still consumes a turn and creates no evidence node. Use graph_read/recall '
+            'to recover stored evidence. Prune only evidence you judge unnecessary; do not prune to meet a quota.')
     if getattr(plugin, 'graph_rl_guard_profile', None) != 'graph_management_full_v1':
         return EXPLICIT_GRAPH_PROMPT
     prune = int(getattr(plugin, 'gm_auto_prune_max_active', 0))
@@ -343,6 +348,9 @@ def execute_graph_tool(graph, trace, agent, response, *, agent_name, turn_id, pe
     runtime = getattr(agent, 'graph_management_runtime', None)
     if runtime is not None:
         runtime.edited(agent, event)
+    prune_runtime = getattr(agent, 'prune_search_runtime', None)
+    if prune_runtime is not None:
+        prune_runtime.edited(agent, event)
     return result
 
 
