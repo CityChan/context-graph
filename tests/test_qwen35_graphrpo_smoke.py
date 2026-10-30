@@ -93,7 +93,7 @@ def test_graph_smoke_rejects_incompatible_method_or_profile(tmp_path, method, pr
     assert 'GraphRPO smoke requires' in result.stderr
 
 
-@pytest.mark.parametrize('profile,backend', [('graph_management_v1', 'management'), ('invalid_action_v1', 'outcome_only')])
+@pytest.mark.parametrize('profile,backend', [('graph_management_full_v1', 'management'), ('graph_management_v1', 'management'), ('invalid_action_v1', 'outcome_only')])
 def test_guarded_entry_uses_64k_four_nodes_and_preserves_legacy_entry(tmp_path, profile, backend):
     (tmp_path / 'scripts').mkdir()
     (tmp_path / 'data').mkdir()
@@ -119,7 +119,7 @@ def test_guarded_entry_uses_64k_four_nodes_and_preserves_legacy_entry(tmp_path, 
     assert result.returncode == 23, result.stdout + result.stderr
     captured = dict(line.split('=', 1) for line in (tmp_path / 'captured.env').read_text().splitlines() if '=' in line)
     for key, value in dict(GRAPH_RPO_GUARD_PROFILE=profile,
-            GRAPH_RPO_INVALID_ACTION_POLICY='negative_invalid_graph', GRAPH_RPO_CREDIT_BACKEND=backend,
+            GRAPH_RPO_INVALID_ACTION_POLICY='negative_all' if profile == 'graph_management_full_v1' else 'negative_invalid_graph', GRAPH_RPO_CREDIT_BACKEND=backend,
             BC_CTXGRAPH_PROTOCOL='explicit_tools', PROCESS_REWARD_SPEC='[graphrpo]',
             CONTEXT_LENGTH='65536', PROMPT_LENGTH='8192', RESPONSE_LENGTH='57344',
             EXPECTED_NUM_NODES='4', TOTAL_TRAINING_STEPS='1', CONSOLIDATION_INTERVAL='0',
@@ -130,7 +130,8 @@ def test_guarded_entry_uses_64k_four_nodes_and_preserves_legacy_entry(tmp_path, 
         assert captured['GRAPH_RPO_ALPHA'] == captured['GRAPH_RPO_BETA'] == '1.0'
 
 
-def test_management_hydra_overrides_compose_into_runtime_profile(tmp_path):
+@pytest.mark.parametrize('profile', ['graph_management_v1', 'graph_management_full_v1'])
+def test_management_hydra_overrides_compose_into_runtime_profile(tmp_path, profile):
     from hydra import compose, initialize
     from hydra.core.config_store import ConfigStore
     from omegaconf import OmegaConf
@@ -142,7 +143,7 @@ def test_management_hydra_overrides_compose_into_runtime_profile(tmp_path):
     script.write_text('set -eu\n' + block + 'printf "%s\\n" "${GRAPH_RPO_ARGS[@]}"\n', newline='\n')
     result = subprocess.run([BASH, script.as_posix()], env=dict(os.environ,
         ADV_ESTIMATOR='graphrpo', BC_CTXGRAPH_PROTOCOL='explicit_tools',
-        GRAPH_RPO_GUARD_PROFILE='graph_management_v1', GRAPH_RPO_CREDIT_BACKEND='management'),
+        GRAPH_RPO_GUARD_PROFILE=profile, GRAPH_RPO_CREDIT_BACKEND='management'),
         capture_output=True, text=True, timeout=30,
         creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
     assert result.returncode == 0, result.stderr
@@ -151,3 +152,7 @@ def test_management_hydra_overrides_compose_into_runtime_profile(tmp_path):
     with initialize(version_base=None):
         config = compose(config_name='management_test', overrides=['algorithm.adv_estimator=graphrpo', *result.stdout.splitlines()])
     validate_profile(config.algorithm, config.actor_rollout_ref.rollout.plugin)
+    if profile == 'graph_management_full_v1':
+        assert config.algorithm.graphrpo_invalid_action_policy == 'negative_all'
+        assert config.actor_rollout_ref.rollout.plugin.gm_auto_compact
+        assert config.actor_rollout_ref.rollout.plugin.graph_compact_node_chars == 1500

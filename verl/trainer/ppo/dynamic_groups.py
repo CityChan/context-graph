@@ -37,6 +37,13 @@ def informative_groups(batch, algorithm):
             continue
         useful = len(set(outcomes.values())) > 1
         if str(algorithm.adv_estimator).lower() == 'graphrpo':
+            if algorithm.get('graphrpo_invalid_action_policy', 'additive') == 'negative_all':
+                if 'process_reward_mask' not in batch.batch:
+                    raise ValueError('negative_all requires process reward provenance')
+                labels = batch.batch['process_reward_mask'][rows]
+                if not torch.isfinite(labels[mask[rows]]).all():
+                    raise ValueError('Nonfinite process reward in dynamic sampling')
+                useful |= bool(((labels < 0) & mask[rows]).any())
             if algorithm.get('graphrpo_invalid_action_policy', 'additive') == 'negative_invalid_graph':
                 if 'graph_invalid_penalty_mask' not in batch.batch:
                     raise ValueError('Missing invalid graph penalty provenance in dynamic sampling')

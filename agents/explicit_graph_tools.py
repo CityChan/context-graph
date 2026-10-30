@@ -1,4 +1,4 @@
-"""Model-initiated graph tools, without scheduled or heuristic maintenance."""
+"""Explicit model graph tools and shared snapshot rendering for optional maintenance."""
 
 import copy
 import json
@@ -112,6 +112,30 @@ Examples:
 """
 
 
+def explicit_graph_prompt(plugin):
+    """Keep legacy prompts stable; describe enabled full-profile maintenance truthfully."""
+    if getattr(plugin, 'graph_rl_guard_profile', None) != 'graph_management_full_v1':
+        return EXPLICIT_GRAPH_PROMPT
+    prune = int(getattr(plugin, 'gm_auto_prune_max_active', 0))
+    auto = bool(getattr(plugin, 'gm_auto_compact', False))
+    chars = int(getattr(plugin, 'graph_compact_node_chars', 0))
+    maintenance = ('There are no scheduled controller turns, automatic merges or semantic edges. '
+                   f'Framework low-value auto-prune target: {prune if prune else "disabled"}. '
+                   f'Framework automatic compact: {"enabled" if auto else "disabled"}. '
+                   'Framework maintenance is separate from your actions.')
+    text = EXPLICIT_GRAPH_PROMPT.replace(
+        'There are no scheduled graph checkpoints, automatic prune/merge/semantic edges,\n'
+        'automatic branch archival, or automatic context summaries.', maintenance)
+    cap = (f'Each node content is capped at {chars} characters in the snapshot; use graph_read '
+           'to recover the full stored content.' if chars else 'Node contents are not character-truncated.')
+    text = text.replace('ALL currently active graph contents.', 'ALL currently active nodes. ' + cap)
+    text = text.replace('Only this explicit call shortens conversation history.',
+                        'Enabled framework automatic compact can also replace conversation history.')
+    text = text.replace('but makes no\nsemantic decisions.',
+                        'and applies only the configured automatic maintenance.')
+    return text
+
+
 def graph_call(text):
     """Recognize even malformed/mixed graph calls so they cannot reach the env."""
     names = re.findall(r"<function=([^>]+)>", (text or "").rsplit("</think>", 1)[-1])
@@ -160,17 +184,26 @@ def parse_graph_call(text):
 def compaction_plan(agent, graph):
     """Read-only rendering shared by the model-visible estimate and executor."""
     active = sorted(graph.active_nodes, key=lambda n: (n.id != graph.active_node_id, n.id))
+    char_limit = int(getattr(agent.config.plugin, 'graph_compact_node_chars', 0))
+    if char_limit < 0:
+        raise ValueError('graph_compact_node_chars must be nonnegative')
+    def content(node):
+        raw = node.metadata.get('raw_content', node.content)
+        return raw[:char_limit] if char_limit else raw
     snapshot = json.dumps({
         "focus": graph.active_node_id,
         "nodes": [{"id": n.id, "type": n.type.value,
-                   "content": n.metadata.get("raw_content", n.content),
+                   "content": content(n),
+                   **({'content_truncated': len(content(n)) < len(n.metadata.get('raw_content', n.content)),
+                       'raw_content_chars': len(n.metadata.get('raw_content', n.content))} if char_limit else {}),
                    "metadata": {k: v for k, v in n.metadata.items() if k != 'raw_content'}} for n in active],
         "edges": [{"source": e.source, "target": e.target, "relation": e.relation.value}
                   for e in graph.active_edges],
     }, ensure_ascii=False)
     # For branches this includes their assigned task, not the main's full history.
     prompt = copy.deepcopy(getattr(agent, "graph_base_prompt", agent.chat[:agent.prompt_turn]))
-    prompt[-1]["content"] += "\n\n[Model-selected active graph]\n" + snapshot
+    label = 'Active graph' if getattr(agent.config.plugin, 'graph_rl_guard_profile', None) == 'graph_management_full_v1' else 'Model-selected active graph'
+    prompt[-1]["content"] += f"\n\n[{label}]\n" + snapshot
     cost = len(agent._render_prefix(prompt))
     base_cost = len(agent._render_prefix(getattr(agent, "graph_base_prompt", agent.chat[:agent.prompt_turn])))
     charge = max(cost - base_cost, 0)
@@ -208,8 +241,8 @@ def decision_state(graph, agent):
             'merge/prune alone do not. Recorded computation is never refunded.')
 
 
-def compact_context(agent, graph):
-    """Start a new immutable training segment only at the model's request."""
+def compact_context(agent, graph, *, source='model'):
+    """Start an immutable segment and record whether model or framework requested it."""
     from .utils import AgentContext
 
     prompt, cost, charge = compaction_plan(agent, graph)
@@ -237,7 +270,7 @@ def compact_context(agent, graph):
     if prefix.messages() != prompt:
         raise ValueError('compacted graph prefix would be truncated')
     sessions = getattr(agent, "summary_sessions", [])
-    sessions.append({"start": len(agent.chat), "prefix": prefix, "reason": "model_graph_compact"})
+    sessions.append({"start": len(agent.chat), "prefix": prefix, "reason": source + "_graph_compact"})
     agent.summary_sessions = sessions
     agent.graph_context_tokens = getattr(agent, "graph_context_tokens", 0) + charge
     agent.context_uid = str(uuid.uuid4())
@@ -307,6 +340,9 @@ def execute_graph_tool(graph, trace, agent, response, *, agent_name, turn_id, pe
     if not result.success and penalize:
         agent.set_process_reward(turn, -0.3)
         agent.additional_info[turn]['graph_invalid_penalty'] = -0.3
+    runtime = getattr(agent, 'graph_management_runtime', None)
+    if runtime is not None:
+        runtime.edited(agent, event)
     return result
 
 

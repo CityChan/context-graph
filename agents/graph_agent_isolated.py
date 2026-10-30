@@ -261,7 +261,8 @@ async def process_item(
             scienceworld_prompt_profile=getattr(config.plugin, "scienceworld_prompt_profile", "legacy"),
         )
         if explicit_graph_tools:
-            user_prompt[0]['content'] += '\n\n' + EXPLICIT_GRAPH_PROMPT
+            from .explicit_graph_tools import explicit_graph_prompt
+            user_prompt[0]['content'] += '\n\n' + explicit_graph_prompt(config.plugin)
             from .action_contract import (ActionContract, PROMPT as ACTION_PROMPT, PROFILE as ACTION_PROFILE,
                                           BRANCH_HANDOFF_RESERVE, MIN_ACTION_TOKENS)
             if getattr(config.plugin, 'explicit_action_thinking', False):
@@ -623,6 +624,12 @@ async def process_item(
         )
         if explicit_graph_tools:
             agent['main'].graph_base_prompt = copy.deepcopy(agent['main'].chat[:prompt_turn])
+        management_runtime = None
+        if getattr(config.plugin, 'graph_rl_guard_profile', None) == 'graph_management_full_v1':
+            from .graph_management_runtime import GraphManagementRuntime
+            management_runtime = GraphManagementRuntime(graph, graph_trace, config.plugin, train=is_train,
+                answers=_get(item.non_tensor_batch['extra_info']).get('answer', ()))
+            management_runtime.register(agent['main'], 'main')
 
         async def call_structured_memory_controller(prompt, schema, max_new_tokens):
             """Run an isolated controller call with bounded schema-repair retries."""
@@ -1122,6 +1129,10 @@ async def process_item(
 
                     # 3. Branch runs with a graph-aware run_action that tracks
                     #    its observations into the child graph (not the parent)
+                    if management_runtime is not None:
+                        management_runtime.register(agent[agent_name], agent_name, parent=agent['main'],
+                            parent_turn=branch_turn_index,
+                            high_pressure=getattr(agent['main'], 'gm_last_input_tokens', len(agent['main'].context())) >= .75 * management_runtime.window(agent['main']))
                     wrapped_action = make_graph_aware_run_action(env, child_graph)
                     if explicit_graph_tools:
                         async def wrapped_action(response):
@@ -1139,6 +1150,9 @@ async def process_item(
                                 event = graph_trace.record(graph, before, turn_id=iteration, source='environment',
                                     op='add_observation', args={'node_id': node_id}, success=True)
                                 event['agent_name'] = agent_name
+                                if management_runtime is not None:
+                                    management_runtime.observation(agent[agent_name],
+                                        agent[agent_name].additional_info[-1].get('policy_action', {}), result)
                                 result += '\n\n' + decision_state(graph, agent[agent_name])
                             return result
                     agent_return = await agent[agent_name].react(
@@ -1370,6 +1384,8 @@ async def process_item(
                     new_evidence_node_id,
                     new_evidence_tool_name or "unknown",
                 )
+            if management_runtime is not None and new_evidence_node_id is not None:
+                management_runtime.observation(agent['main'], agent['main'].additional_info[-1].get('policy_action', {}), observation)
             await maybe_refresh_structured_memory_gaps(main_turn_count)
 
             # Parent graph stays small (subtask + summary + main observations),
@@ -2287,7 +2303,11 @@ async def process_item(
         if graph_rpo_enabled and is_train:
             if graph_rpo_backend == 'management':
                 from .graph_management_reward import terminal_reward
-                management_training_reward, graph_rpo_metrics = terminal_reward(graph, native_task_reward)
+                management_training_reward, graph_rpo_metrics = terminal_reward(graph, native_task_reward,
+                    full=management_runtime is not None, natural_finish=natural_finish,
+                    total_tokens=sum(getattr(a, 'total_request_tokens', 0) for a in agent.values()))
+                if management_runtime is not None:
+                    graph_rpo_metrics.update(management_runtime.finish(native_task_reward))
                 env.stats['training_reward'] = management_training_reward
                 print('[GRAPH MANAGEMENT REWARD]', {'native_task_reward': native_task_reward,
                     'training_reward': management_training_reward, **graph_rpo_metrics})

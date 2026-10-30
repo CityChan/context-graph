@@ -323,14 +323,29 @@ if [ "$ADV_ESTIMATOR" = "graphrpo" ]; then
   if [ "${GRAPH_RPO_GUARD_PROFILE:-none}" != none ]; then
     case "$GRAPH_RPO_GUARD_PROFILE:$GRAPH_RPO_CREDIT_BACKEND" in
       invalid_action_v1:outcome_only) GRAPH_RPO_REQUIRE_BINARY=True ;;
-      graph_management_v1:management)
+      graph_management_v1:management|graph_management_full_v1:management)
         GRAPH_RPO_REQUIRE_BINARY=False
         GRAPH_RPO_ARGS+=("++algorithm.graphrpo_alpha=1.0" "++algorithm.graphrpo_beta=1.0" "algorithm.graphrpo_norm_adv_by_std=False") ;;
       *) echo 'Guard profile and credit backend do not match' >&2; exit 2 ;;
     esac
     [ "$BC_CTXGRAPH_PROTOCOL" = explicit_tools ] || { echo 'Guard profile requires explicit_tools' >&2; exit 2; }
+    GRAPH_RPO_INVALID_ACTION_POLICY=negative_invalid_graph
+    if [ "$GRAPH_RPO_GUARD_PROFILE" = graph_management_full_v1 ]; then
+      GRAPH_RPO_INVALID_ACTION_POLICY=negative_all
+      GRAPH_RPO_ARGS+=(
+        "++actor_rollout_ref.rollout.plugin.explicit_action_thinking=True"
+        "+actor_rollout_ref.rollout.plugin.graph_compact_node_chars=${GRAPH_COMPACT_NODE_CHARS:-1500}"
+        "+actor_rollout_ref.rollout.plugin.gm_auto_prune_max_active=${GRAPH_MANAGEMENT_AUTO_PRUNE_MAX_ACTIVE:-12}"
+        "+actor_rollout_ref.rollout.plugin.gm_auto_compact=${GRAPH_MANAGEMENT_AUTO_COMPACT:-True}"
+        "+actor_rollout_ref.rollout.plugin.gm_auto_compact_threshold=${GRAPH_MANAGEMENT_AUTO_COMPACT_THRESHOLD:-0.75}"
+        "+actor_rollout_ref.rollout.plugin.gm_auto_compact_cooldown=${GRAPH_MANAGEMENT_AUTO_COMPACT_COOLDOWN:-4}"
+        "+actor_rollout_ref.rollout.plugin.gm_auto_compact_max=${GRAPH_MANAGEMENT_AUTO_COMPACT_MAX:-6}"
+        "+actor_rollout_ref.rollout.plugin.gm_auto_compact_min_gain=${GRAPH_MANAGEMENT_AUTO_COMPACT_MIN_GAIN:-0.25}"
+        "+actor_rollout_ref.rollout.plugin.gm_branch_similarity_threshold=${GRAPH_MANAGEMENT_BRANCH_SIMILARITY:-0.8}"
+      )
+    fi
     GRAPH_RPO_ARGS+=(
-      "++algorithm.graphrpo_invalid_action_policy=negative_invalid_graph"
+      "++algorithm.graphrpo_invalid_action_policy=$GRAPH_RPO_INVALID_ACTION_POLICY"
       "algorithm.graphrpo_require_binary_reward=$GRAPH_RPO_REQUIRE_BINARY"
       "+actor_rollout_ref.rollout.plugin.graph_rl_guard_profile=$GRAPH_RPO_GUARD_PROFILE"
       "+actor_rollout_ref.rollout.plugin.verify_training_context=True"

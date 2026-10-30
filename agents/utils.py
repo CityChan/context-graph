@@ -217,7 +217,13 @@ class CallLLM(LLMClass):  # Call LLM in Verl RL env
             int(sampling_params.get('max_tokens', max_new_tokens)),
             max_new_tokens,
         )
-        if structured_outputs is not None:
+        plugin = getattr(self.config, 'plugin', None)
+        explicit_thinking = (getattr(plugin, 'graph_action_protocol', None) == 'explicit_tools'
+                             and bool(getattr(plugin, 'explicit_action_thinking', False)))
+        if explicit_thinking and (sampling_params.get('guided_decoding') is not None
+                                  or sampling_params.get('structured_outputs') is not None):
+            raise ValueError('Explicit thinking cannot use a whole-response constrained decoder')
+        if structured_outputs is not None and not explicit_thinking:
             if sampling_params.get('guided_decoding') is not None:
                 raise ValueError(
                     "structured_outputs and guided_decoding cannot both be set"
@@ -248,7 +254,9 @@ class CallLLM(LLMClass):  # Call LLM in Verl RL env
                     f"{len(output.log_probs)} != {len(output.token_ids)}"
                 )
 
-        response_text = await self.loop.run_in_executor( None, lambda: self.tokenizer.decode(output.token_ids, skip_special_tokens=True))
+        from .action_contract import execution_text
+        response_text = await self.loop.run_in_executor(
+            None, lambda: execution_text(self.tokenizer, output.token_ids, explicit=explicit_thinking))
 
         return {
             "choices": [{
@@ -261,7 +269,8 @@ class CallLLM(LLMClass):  # Call LLM in Verl RL env
                         if getattr(output, 'log_probs', None) is not None
                         else [0.0] * len(output.token_ids)
                     ),
-                    "extra_data": {"input_ids": input_ids, "max_tokens": sampling_params['max_tokens']},
+                    "extra_data": {"input_ids": input_ids, "max_tokens": sampling_params['max_tokens'],
+                                   "backend_constrained": structured_outputs is not None and not explicit_thinking},
                     "metrics": {}
                 }
             }]
@@ -762,6 +771,9 @@ class Agent(SessionSummaryMixin, AgentContext):
             getattr(config.plugin, 'sft_teacher_profile', 'evaluation') == ASSISTED_PROFILE else None)
 
     async def step(self, max_new_tokens=None, retry_cjk=0, completion_kwargs=None):
+        runtime = getattr(self, 'graph_management_runtime', None)
+        if runtime is not None:
+            runtime.maintain(self)
         if self.sft_maintenance is not None:
             self.sft_maintenance.prepare(self)
         prompt = self.context()
@@ -836,6 +848,8 @@ class Agent(SessionSummaryMixin, AgentContext):
                     context_record['action_protocol_error'] = str(error)
                 return '[Action protocol rejected] No tool executed: ' + str(error)
             self.additional_info[-1] = {'policy_action': payload, 'dispatched_action': wire}
+            if runtime is not None:
+                runtime.sampled(self, payload, len(prompt))
             if self.sft_maintenance is not None:
                 self.sft_maintenance.sampled(payload)
             if context_record is not None:
@@ -898,6 +912,9 @@ class Agent(SessionSummaryMixin, AgentContext):
             if time.time() - session_start_time > session_timeout:  # TODO add session timeout
                 print('[SESSION] Session Timeout')
                 break
+            runtime = getattr(self, 'graph_management_runtime', None)
+            if runtime is not None:
+                runtime.maintain(self)
             used = self.response_tokens_used() if explicit_tools else len(self.context()) - init_len
             available = self.remaining_generation_tokens() - reserve if use_window else max_tokens - used
             if (available <= 0 if use_window else used > max_tokens or (explicit_tools and used >= max_tokens)):

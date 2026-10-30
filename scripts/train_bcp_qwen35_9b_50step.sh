@@ -215,15 +215,16 @@ fi
 if [ "${GRAPH_RPO_GUARD_PROFILE:-none}" != none ]; then
   case "$GRAPH_RPO_GUARD_PROFILE:$GRAPH_RPO_CREDIT_BACKEND" in
     invalid_action_v1:outcome_only) export GRAPH_RPO_REQUIRE_BINARY=True ;;
-    graph_management_v1:management) export GRAPH_RPO_REQUIRE_BINARY=False GRAPH_RPO_ALPHA=1.0 GRAPH_RPO_BETA=1.0 ;;
+    graph_management_v1:management|graph_management_full_v1:management) export GRAPH_RPO_REQUIRE_BINARY=False GRAPH_RPO_ALPHA=1.0 GRAPH_RPO_BETA=1.0 ;;
     *) echo 'Guard profile and credit backend do not match' >&2; exit 2 ;;
   esac
   [ "$METHOD" = contextgraph ] || { echo 'Guarded joint RL requires contextgraph' >&2; exit 2; }
   export GRAPH_RPO_ACTION_PROTOCOL=explicit_tools BC_CTXGRAPH_PROTOCOL=explicit_tools
   export GRAPH_RPO_INVALID_ACTION_POLICY=negative_invalid_graph PROCESS_REWARD_SPEC='[graphrpo]'
+  if [ "$GRAPH_RPO_GUARD_PROFILE" = graph_management_full_v1 ]; then export GRAPH_RPO_INVALID_ACTION_POLICY=negative_all; fi
   export CONSOLIDATION_INTERVAL=0 AUTO_PRUNE_MAX_ACTIVE=0
   export PROMPT_LENGTH=8192 RESPONSE_LENGTH=57344 CONTEXT_LENGTH=65536 AGENT_BUDGET_MODE=working_context
-  echo "Guarded joint RL: profile=$GRAPH_RPO_GUARD_PROFILE backend=$GRAPH_RPO_CREDIT_BACKEND; negative invalid graph actions, verified sampled prefixes, model-owned maintenance, 64K"
+  echo "Guarded joint RL: profile=$GRAPH_RPO_GUARD_PROFILE backend=$GRAPH_RPO_CREDIT_BACKEND policy=$GRAPH_RPO_INVALID_ACTION_POLICY; verified sampled prefixes, 64K"
 fi
 printf '%s\n' "profile=$BCP_TRAIN_PROFILE" "model_revision=$MODEL_REVISION" \
   "graph_rl_guard_profile=${GRAPH_RPO_GUARD_PROFILE:-none}" "invalid_action_policy=${GRAPH_RPO_INVALID_ACTION_POLICY:-additive}" \
@@ -235,6 +236,18 @@ printf '%s\n' "profile=$BCP_TRAIN_PROFILE" "model_revision=$MODEL_REVISION" \
   "allocated_nodes=$ALLOCATED_NODE_COUNT" "active_nodes=${NODES[*]}" "unused_nodes=${UNUSED_NODES[*]}" \
   "batch_reference=sunnweiwei/FoldAgent@58a2d6964ecebe99940529eace50a0558901b8a5/scripts/train_bc_qwen3_8b.sh" \
   | tee "$RUN_DIR/training-config.txt"
+if [ "${GRAPH_RPO_GUARD_PROFILE:-none}" = graph_management_full_v1 ]; then
+  printf '%s\n' "explicit_action_thinking=True" \
+    "compact_node_chars=${GRAPH_COMPACT_NODE_CHARS:-1500}" \
+    "gm_auto_prune_max_active=${GRAPH_MANAGEMENT_AUTO_PRUNE_MAX_ACTIVE:-12}" \
+    "gm_auto_compact=${GRAPH_MANAGEMENT_AUTO_COMPACT:-True}" \
+    "gm_auto_compact_threshold=${GRAPH_MANAGEMENT_AUTO_COMPACT_THRESHOLD:-0.75}" \
+    "gm_auto_compact_cooldown=${GRAPH_MANAGEMENT_AUTO_COMPACT_COOLDOWN:-4}" \
+    "gm_auto_compact_max=${GRAPH_MANAGEMENT_AUTO_COMPACT_MAX:-6}" \
+    "gm_auto_compact_min_gain=${GRAPH_MANAGEMENT_AUTO_COMPACT_MIN_GAIN:-0.25}" \
+    "gm_branch_similarity=${GRAPH_MANAGEMENT_BRANCH_SIMILARITY:-0.8}" \
+    | tee -a "$RUN_DIR/training-config.txt"
+fi
 printf '%s\n' "adv_estimator=$ADV_ESTIMATOR" "policy_loss_mode=$POLICY_LOSS_MODE" \
   "controller_action_policy=$BC_CONTROLLER_ACTION_POLICY" "use_kl_loss=$USE_KL_LOSS" \
   "actor_kl_loss_coef=$ACTOR_KL_LOSS_COEF" | tee -a "$RUN_DIR/training-config.txt"

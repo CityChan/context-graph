@@ -768,7 +768,7 @@ def compute_graphrpo_advantage(
             + beta * process_labels[row]
         ) * response_mask[row]
     invalid_policy = config.get('graphrpo_invalid_action_policy', 'additive') if config is not None else 'additive'
-    if invalid_policy not in {'additive', 'negative_invalid_graph'}:
+    if invalid_policy not in {'additive', 'negative_invalid_graph', 'negative_all'}:
         raise ValueError('Unknown GraphRPO invalid action policy')
     if invalid_policy == 'negative_invalid_graph':
         if graph_invalid_penalty_mask is None or graph_invalid_penalty_mask.shape != response_mask.shape:
@@ -784,6 +784,13 @@ def compute_graphrpo_advantage(
             if episode_id not in excluded:
                 advantages[row] = torch.where(penalty[row] < 0,
                     torch.minimum(advantages[row], penalty[row]), advantages[row])
+    elif invalid_policy == 'negative_all':
+        if process_reward_mask is None:
+            raise ValueError('negative_all requires process reward provenance')
+        for row, episode_id in enumerate(episode_ids):
+            if episode_id not in excluded:
+                advantages[row] = torch.where(process_labels[row] < 0,
+                    torch.minimum(advantages[row], process_labels[row]), advantages[row])
     if not torch.isfinite(advantages).all():
         raise ValueError('Nonfinite GraphRPO advantages')
     return advantages, advantages

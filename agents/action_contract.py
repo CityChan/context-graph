@@ -164,3 +164,15 @@ class ActionContract:
             raise ValueError('ScienceWorld command must be a single line')
         wire = f'<function={name}>' + ''.join(f'<parameter={key}>{value}</parameter>' for key, value in values.items()) + '</function>'
         return payload, wire
+
+
+def execution_text(tokenizer, ids, explicit=False):
+    """Dispatch final JSON while preserving the native reasoning/EOS token ledger."""
+    if explicit:
+        marker = tokenizer.encode('</think>', add_special_tokens=False)
+        endings = [i + len(marker) for i in range(len(ids) - len(marker) + 1)
+                   if marker and ids[i:i + len(marker)] == marker]
+        if endings:
+            ids = ids[endings[-1]:]
+    text = tokenizer.decode(ids, skip_special_tokens=True)
+    return text.strip() if explicit else text

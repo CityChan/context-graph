@@ -1,8 +1,8 @@
 # Joint GraphRPO with invalid-action guards
 
 This page describes the preserved `invalid_action_v1` profile. The guarded entry
-now defaults to [graph_management_v1](graphrpo_graph_management.md), which adds
-graph-size/edge-density shaping and bounded effective-operation credit. Select
+now defaults to [graph_management_full_v1](graphrpo_full_alignment.md), which adds
+structural and process shaping, `negative_all`, and optional automatic maintenance. Select
 `GRAPH_RPO_GUARD_PROFILE=invalid_action_v1` to reproduce this page's binary-outcome
 recipe.
 

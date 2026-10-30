@@ -68,8 +68,13 @@ def append_observation_preserving_final_answer(
     observation = str(observation)
     reserve_tokens = max(int(reserve_tokens or 0), 0)
     safety_tokens = max(int(safety_tokens or 0), 0)
+    def append_visible(candidate):
+        agent.append({"role": "user", "content": candidate})
+        runtime = getattr(agent, 'graph_management_runtime', None)
+        if runtime is not None:
+            runtime.visible_observation(agent, agent.tokenizer.decode(agent.chat_ids[-1], skip_special_tokens=True))
     if reserve_tokens == 0:
-        agent.append({"role": "user", "content": observation})
+        append_visible(observation)
         return observation
 
     protected_tokens = reserve_tokens + safety_tokens
@@ -90,7 +95,7 @@ def append_observation_preserving_final_answer(
         return rendered_cost <= max_append_tokens and enough_room
 
     if fits(observation):
-        agent.append({"role": "user", "content": observation})
+        append_visible(observation)
         return observation
 
     token_ids = agent.tokenizer.encode(observation, add_special_tokens=False)
@@ -112,7 +117,7 @@ def append_observation_preserving_final_answer(
         )
         return None
 
-    agent.append({"role": "user", "content": fitted})
+    append_visible(fitted)
     print(
         "[FINALIZER] truncated observation to preserve "
         f"{protected_tokens} protected tokens"
@@ -145,6 +150,9 @@ async def step_preserving_final_answer(
         )
 
     try:
+        runtime = getattr(agent, 'graph_management_runtime', None)
+        if runtime is not None:
+            runtime.maintain(agent)
         reserve_tokens = max(int(reserve_tokens or 0), 0)
         if reserve_tokens == 0:
             if completion_kwargs is None:

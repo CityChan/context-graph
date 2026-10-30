@@ -4,17 +4,7 @@ import json
 from pathlib import Path
 
 from scripts.eval_bcp_qwen38 import completion_budget
-
-
-def execution_text(tokenizer, ids, explicit=False):
-    """Keep reasoning in native labels, dispatch only final JSON in explicit mode."""
-    if explicit:
-        marker = tokenizer.encode('</think>', add_special_tokens=False)
-        endings = [i + len(marker) for i in range(len(ids) - len(marker) + 1)
-                   if marker and ids[i:i + len(marker)] == marker]
-        if endings:
-            ids = ids[endings[-1]:]
-    return tokenizer.decode(ids, skip_special_tokens=True).strip() if explicit else tokenizer.decode(ids, skip_special_tokens=True)
+from agents.action_contract import execution_text
 
 
 class RouteAClient:

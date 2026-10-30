@@ -1,7 +1,9 @@
 # Graph size, model-edge density, and effective-operation credit
 
-The guarded RL entry now defaults to `graph_management_v1` with backend
-`management`. It restores the structural reward terms requested in the supplied
+This page describes the retained `graph_management_v1` profile with backend
+`management`. The guarded entry now defaults to the extended
+[`graph_management_full_v1` recipe](graphrpo_full_alignment.md).
+The original profile restores the structural reward terms requested in the supplied
 recipe screenshots while retaining model-owned timing, invalid graph-action
 negative advantages, repeated-compact protection, and native-context audits.
 
@@ -66,14 +68,14 @@ this change. There are no QA probes or alternating execution/management phases.
 In an existing four-node Vista allocation, from a clean checkout:
 
 ```bash
-bash scripts/train_bcp_qwen35_9b_guarded_rl.sh
+GRAPH_RPO_GUARD_PROFILE=graph_management_v1 bash scripts/train_bcp_qwen35_9b_guarded_rl.sh
 ```
 
 This is a 64K, one-step mechanics smoke (one search node and three trainer ranks).
 For the existing five-node, 50-step recipe:
 
 ```bash
-SMOKE_TEST=0 bash scripts/train_bcp_qwen35_9b_guarded_rl.sh
+GRAPH_RPO_GUARD_PROFILE=graph_management_v1 SMOKE_TEST=0 bash scripts/train_bcp_qwen35_9b_guarded_rl.sh
 ```
 
 To reproduce the previous binary-outcome guarded profile:
